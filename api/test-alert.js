@@ -5,7 +5,9 @@
 // real asset from Airtable (if you pass ?asset=ASSET_ID), or a generic
 // demo message if you don't. Built for live pitches: click, and a real
 // message lands on a real phone in seconds.
-//
+
+import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+
 // Usage:
 //   /api/test-alert?key=YOUR_DEMO_KEY                → generic demo message
 //   /api/test-alert?key=YOUR_DEMO_KEY&asset=FP-002    → real data for that asset
@@ -18,7 +20,7 @@ export default async function handler(req, res) {
   try {
     const message = req.query.asset
       ? await buildRealMessage(req.query.asset)
-      : `[DEMO] Fire Pump FP-002 at Basement 1 — service due 2026-07-20. 3 days remaining. This is a live test alert from GVC Facility Asset Manager.`;
+      : `Fire Pump FP-002 at Basement 1 — service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 
     if (!message) {
       return res.status(404).json({ error: `Asset "${req.query.asset}" not found in Airtable.` });
@@ -55,7 +57,7 @@ async function buildRealMessage(assetId) {
   if (!data.records || data.records.length === 0) return null;
 
   const f = data.records[0].fields;
-  return `[DEMO] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${f["Next Service Due"]}. This is a live test alert from GVC Facility Asset Manager.`;
+  return `${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${f["Next Service Due"]}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 }
 
 async function logDemoAlert(message, assetId) {
@@ -86,6 +88,9 @@ async function logDemoAlert(message, assetId) {
 }
 
 async function sendEmail(message) {
+  const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
+  if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return { ok: false, text: async () => "No recipients configured" }; }
+
   return fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -93,15 +98,19 @@ async function sendEmail(message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: process.env.ALERT_FROM_EMAIL,
-      to: [process.env.ALERT_TO_EMAIL],
-      subject: "GVC FAM Alert [DEMO]",
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">This is a demo trigger — sent live from GVC Facility Asset Manager.</p>`,
+      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: toList,
+      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert`,
+      html: `<p>${message}</p><p style="color:#888;font-size:12px;">This alert was sent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
+      text: `${message}\n\nThis alert was sent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
     }),
   });
 }
 
 async function sendSms(message) {
+  const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
+  if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return { ok: false, text: async () => "No recipients configured" }; }
+
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   return fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -114,7 +123,7 @@ async function sendSms(message) {
       schedule_time: "",
       encoding: 0,
       message: message.slice(0, 160),
-      recipients: [{ recipient_id: 1, dest_addr: process.env.ALERT_TO_PHONE }],
+      recipients: buildBeemRecipients(phoneList),
     }),
   });
 }

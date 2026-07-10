@@ -5,7 +5,14 @@
 // offset token until every record is retrieved, however many there are).
 // Returns them in the exact shape the dashboard's JavaScript expects.
 
+import { getSession } from "../lib/auth.js";
+
 export default async function handler(req, res) {
+  const session = getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: "Not logged in" });
+  }
+
   try {
     const assets = await fetchAllRecords();
     return res.status(200).json({ assets, count: assets.length });
