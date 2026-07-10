@@ -24,8 +24,8 @@ body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(
 button { font-family: inherit; cursor: pointer; }
 
 .header { background: var(--navy); padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.header-logo { width: 40px; height: 40px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; }
-.header-logo span { color: #fff; font-weight: 700; font-size: 14px; letter-spacing: 1px; }
+.header-logo { width: 40px; height: 40px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 3px; box-sizing: border-box; }
+.header-logo img { width: 100%; height: 100%; object-fit: contain; }
 .header-left { display: flex; align-items: center; gap: 14px; }
 .header-title { color: #fff; font-weight: 700; font-size: 18px; letter-spacing: 0.5px; }
 .header-sub { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 2px; }
@@ -201,13 +201,16 @@ button { font-family: inherit; cursor: pointer; }
 
 <div class="header">
   <div class="header-left">
-    <div class="header-logo"><span>GVC</span></div>
+    <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
     <div>
       <div class="header-title">Facility Asset Manager</div>
       <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
     </div>
   </div>
-  <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
+    <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
+  </div>
 </div>
 
 <div class="tabs">
@@ -231,6 +234,10 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     Level View
   </button>
+  <button class="tab-btn" data-tab="workorders" onclick="switchTab('workorders')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Work Orders
+  </button>
 </div>
 
 <div id="loading-screen" style="text-align:center;padding:100px 20px;">
@@ -245,6 +252,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-systems" class="view"></div>
   <div id="view-maintenance" class="view"></div>
   <div id="view-levelview" class="view"></div>
+  <div id="view-workorders" class="view"></div>
 </div>
 
 <div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
@@ -324,6 +332,7 @@ function switchTab(tab) {
   if(tab==='systems') renderSystems();
   if(tab==='maintenance') renderMaintenance();
   if(tab==='levelview') renderLevelView();
+  if(tab==='workorders') renderWorkOrders();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -659,6 +668,71 @@ function renderLevelView() {
   document.getElementById('view-levelview').innerHTML = html;
 }
 
+async function renderWorkOrders() {
+  const container = document.getElementById('view-workorders');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
+
+  try {
+    const resp = await fetch('/api/work-orders');
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
+    const data = await resp.json();
+    const orders = data.workOrders || [];
+
+    const open = orders.filter(o => o.status === 'Open').length;
+    const inProgress = orders.filter(o => o.status === 'In Progress').length;
+    const completed = orders.filter(o => o.status === 'Completed').length;
+
+    let html = `<div class="summary-grid">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
+    </div>`;
+
+    if (orders.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
+    } else {
+      html += `<div class="asset-list">`;
+      orders.forEach(o => {
+        html += `<div class="asset-row" style="cursor:default">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span></div>
+            <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
+            <select onchange="updateWorkOrderStatus('${o.id}', this.value)" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
+              <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
+              <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
+              <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
+            </select>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load work orders: ' + err.message + '</div>';
+  }
+}
+
+async function updateWorkOrderStatus(recordId, status) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, status }),
+    });
+    if (!resp.ok) throw new Error('Update failed');
+    renderWorkOrders(); // refresh the summary counts
+  } catch (err) {
+    alert('Could not update work order: ' + err.message);
+  }
+}
+
 // Init — load live data from Airtable before rendering anything
 // ---------------------------------------------------------------------
 // Document generation — real, built from whatever is currently loaded
@@ -804,6 +878,10 @@ async function loadAssetsAndInit() {
   const loadingEl = document.getElementById('loading-screen');
   try {
     const resp = await fetch('/api/get-assets');
+    if (resp.status === 401) {
+      window.location.href = '/login.html';
+      return;
+    }
     if (!resp.ok) throw new Error('Failed to load asset data (' + resp.status + ')');
     const data = await resp.json();
     assets = data.assets || [];
@@ -819,6 +897,12 @@ async function loadAssetsAndInit() {
     console.error(err);
   }
 }
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+}
+
 loadAssetsAndInit();
 
 </script>
