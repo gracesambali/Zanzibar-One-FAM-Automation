@@ -195,6 +195,7 @@ button { font-family: inherit; cursor: pointer; }
   .dash-kpi-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 }
 </style>
+<script src="https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
 
@@ -230,10 +231,6 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     Level View
   </button>
-  <button class="tab-btn" data-tab="scenario" onclick="switchTab('scenario')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    Live Scenario
-  </button>
 </div>
 
 <div id="loading-screen" style="text-align:center;padding:100px 20px;">
@@ -248,7 +245,6 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-systems" class="view"></div>
   <div id="view-maintenance" class="view"></div>
   <div id="view-levelview" class="view"></div>
-  <div id="view-scenario" class="view"></div>
 </div>
 
 <div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
@@ -307,29 +303,15 @@ const systemDefs = [
   { name:"Fire Detection", desc:"Smoke and heat detection loops with central control panel providing early warning coverage across every floor.", color:"#F97316" },
 ];
 
-const scenarioSteps = [
-  { time:"Day 1", title:"Quarterly Test Deadline Approaching", detail:"GVC platform flags fire pumps FP-001 and FP-002 are 14 days from quarterly compliance test deadline. Last tested 20 Dec 2025. Notification sent to FM team and compliance officer.", type:"alert", auto:true },
-  { time:"Day 7", title:"7-Day Reminder Escalated", detail:"No test scheduled. System escalates: second notification to FM manager and building owner. Dashboard compliance status changes from 'Upcoming' to 'At Risk.' Insurance validity flag raised.", type:"alert", auto:true },
-  { time:"Day 14", title:"Deadline Missed — Compliance Breach", detail:"Quarterly fire pump test not completed. System logs compliance breach. Status changed to 'Overdue — Non-Compliant.' Automated report generated for building owner showing insurance exposure.", type:"overdue", auto:true },
-  { time:"Day 15", title:"FM Manager Schedules Emergency Test", detail:"FM manager engages fire pump service contractor. Test scheduled for Day 17. Work order WO-2026-1203 created and assigned. Test procedure checklist auto-attached from asset library.", type:"work", auto:false },
-  { time:"Day 17", title:"Test Conducted — Issue Found", detail:"Diesel standby pump FP-002 fails to reach rated pressure. Flow test shows 78% of design capacity. Technician reports: fuel injector fouling suspected. Main electric pump FP-001 passes all checks.", type:"response", auto:false },
-  { time:"Day 17", title:"Corrective Work Order Raised", detail:"WO-2026-1210 created: 'Diesel fire pump FP-002 — fuel injector service and retest.' Parts ordered. Estimated repair: 3 days. Building insurance notified of interim status. FP-001 confirmed operational as primary.", type:"work", auto:true },
-  { time:"Day 21", title:"Repair Complete — Full Compliance Restored", detail:"FP-002 injectors serviced and replaced. Retest: pump achieves 102% rated pressure. Both pumps compliant. Compliance certificate generated. Insurance file updated. Next quarterly test auto-scheduled for Day 111.", type:"resolved", auto:true },
-];
-
 let currentSystemFilter = "All";
 let currentLevelFilter = "All";
 let currentStatusFilter = "All";
 let currentSearch = "";
-let scenarioStep = -1;
-let scenarioTimer = null;
 
 function statusBadge(s) { return s==="Operational"?"badge-good":s==="Scheduled Maintenance"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="Critical"?"badge-crit":c==="High"?"badge-high":"badge-medium"; }
 function statusBg(s) { return s==="Operational"?"var(--green-bg)":s==="Scheduled Maintenance"?"var(--amber-bg)":"var(--red-bg)"; }
 function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
-function stepColor(t) { return t==="alert"?"var(--amber)":t==="overdue"?"var(--red)":t==="work"?"var(--navy)":"var(--green)"; }
-function stepBg(t) { return t==="alert"?"var(--amber-bg)":t==="overdue"?"var(--red-bg)":t==="work"?"var(--navy-pale)":"var(--green-bg)"; }
 function fmt(n) { return n.toLocaleString(); }
 function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date('2026-07-08')) / 86400000); }
 
@@ -342,7 +324,6 @@ function switchTab(tab) {
   if(tab==='systems') renderSystems();
   if(tab==='maintenance') renderMaintenance();
   if(tab==='levelview') renderLevelView();
-  if(tab==='scenario') renderScenario();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -434,12 +415,20 @@ function renderDashboard() {
     <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Fire Detection Loop Test — L4</div><div style="font-size:11px;color:var(--muted)">Level 4 Office</div></div><div style="font-size:12px;color:var(--muted)">Jul 15</div></div>
   </div>`;
 
-  // Documents — Asset Register (real CSV export), Maintenance Plan (real printable PDF),
-  // Monthly Report (honest placeholder — needs an alert-history log to be real, see note)
+  // Documents — Asset Register (real xlsx export, bold header, correct
+  // unicode), Maintenance Plan (windowed by days, real printable PDF),
+  // Monthly Report (real summary from Alert Log)
   const todayLabel = new Date().toISOString().split('T')[0];
   html += `<div class="dash-panel"><div class="dash-panel-title">Key Documents</div>
-    <div class="doc-item" style="cursor:pointer" onclick="exportAssetRegisterCSV()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Asset Register <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Download CSV</span></div><div style="font-size:10px;color:var(--muted)">${total} assets · Live as of ${todayLabel}</div></div></div>
-    <div class="doc-item" style="cursor:pointer" onclick="printMaintenancePlan()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Maintenance Plan <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Print / Save as PDF</span></div><div style="font-size:10px;color:var(--muted)">Generated live from current schedule</div></div></div>
+    <div class="doc-item" style="cursor:pointer" onclick="exportAssetRegisterCSV()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Asset Register <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Download XLSX</span></div><div style="font-size:10px;color:var(--muted)">${total} assets · Live as of ${todayLabel}</div></div></div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Maintenance Plan</div><div style="font-size:10px;color:var(--muted)">Pick a window — shows only what falls due in that period</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="printMaintenancePlan(7)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">7 days</button>
+        <button onclick="printMaintenancePlan(14)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">14 days</button>
+        <button onclick="printMaintenancePlan(21)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">21 days</button>
+        <button onclick="printMaintenancePlan(30)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">30 days</button>
+      </div>
+    </div>
     <div class="doc-item" style="cursor:pointer" onclick="generateMonthlyReport()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Generate</span></div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
   </div>`;
 
@@ -522,7 +511,7 @@ function showDetail(idx) {
   const eol = parseInt(a.installDate.split("-")[0]) + a.lifespan;
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system} · ${a.klass}</div></div>
-  <div style="display:flex;gap:8px"><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+  <div style="display:flex;gap:8px;align-items:center"><button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
   <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span></div></div>
   <div class="detail-grid">`;
   [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService]].forEach(([l,v])=>{
@@ -670,84 +659,61 @@ function renderLevelView() {
   document.getElementById('view-levelview').innerHTML = html;
 }
 
-function renderScenario() {
-  let html = `<div class="scenario-intro"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-    <div style="width:36px;height:36px;border-radius:8px;background:var(--red-bg);display:flex;align-items:center;justify-content:center;color:var(--red)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-    <div><div style="font-weight:700;font-size:16px">Scenario: Missed Fire Pump Compliance Test</div><div style="font-size:13px;color:var(--muted)">Fire Pumps FP-001 & FP-002 · Quarterly Test · Zanzibar One Tower</div></div></div>
-    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-top:12px">Fire pump testing is a regulatory and insurance requirement. Missing a quarterly test can void building insurance, expose the owner to liability, and endanger tenants. This scenario shows how the GVC platform tracks compliance deadlines, escalates missed tests, and manages corrective action when issues are found.</div></div>`;
-
-  if(scenarioStep === -1) {
-    html += `<div class="start-center"><button class="start-btn" onclick="startScenario()">▶ Start Compliance Scenario</button><div class="start-hint">Watch how the system tracks and escalates fire safety compliance</div></div>`;
-  } else {
-    html += `<div class="timeline"><div class="timeline-line"></div>`;
-    scenarioSteps.forEach((s,i) => {
-      const vis = i <= scenarioStep;
-      const act = i === scenarioStep;
-      const sc = stepColor(s.type), sb = stepBg(s.type);
-      html += `<div class="timeline-step${vis?' visible':''}${act?' active':''}" >
-        <div style="width:40px;display:flex;flex-direction:column;align-items:center;flex-shrink:0"><div class="timeline-dot" style="background:${vis?sc:'var(--border)'};border-color:${vis?sb:'#F0F0F0'}${act?';box-shadow:0 0 0 4px '+sb:''}"></div></div>
-        <div class="timeline-card" style="border-color:${act?sc:'var(--border)'}${act?';box-shadow:0 2px 12px '+sb:''}">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-            <div style="display:flex;align-items:center;gap:8px"><span style="font-weight:700;font-size:14px;color:${sc}">${s.time}</span><span style="font-weight:600;font-size:14px">${s.title}</span></div>
-            <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;color:${s.auto?'var(--green)':'var(--navy)'};background:${s.auto?'var(--green-bg)':'var(--navy-pale)'}">${s.auto?'Automated':'Human'}</span>
-          </div><div style="font-size:13px;color:var(--muted);margin-top:8px;line-height:1.6">${s.detail}</div></div></div>`;
-    });
-    html += `</div>`;
-    if(scenarioStep >= scenarioSteps.length - 1) {
-      html += `<div class="resolved-box"><div class="resolved-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Compliance Restored</div>
-        <div class="resolved-grid">
-          <div><div class="resolved-label">Days Non-Compliant</div><div class="resolved-value">7</div></div>
-          <div><div class="resolved-label">Root Cause</div><div class="resolved-value">Injector fouling</div></div>
-          <div><div class="resolved-label">Insurance Impact</div><div class="resolved-value">Notified, no lapse</div></div>
-          <div><div class="resolved-label">Next Test Auto-Scheduled</div><div class="resolved-value">Yes</div></div>
-        </div>
-        <div class="resolved-compare"><strong>Without this system:</strong> Missed test goes unnoticed for months. Insurance audit reveals non-compliance — policy voided retroactively. Diesel pump degradation undetected until an actual fire event. Building owner exposed to criminal liability under fire safety regulations.</div>
-        <button class="replay-btn" onclick="scenarioStep=-1;clearTimeout(scenarioTimer);renderScenario()">↻ Replay Scenario</button></div>`;
-    }
-  }
-  document.getElementById('view-scenario').innerHTML = html;
-}
-
-function startScenario() {
-  scenarioStep = 0;
-  renderScenario();
-  advanceScenario();
-}
-
-function advanceScenario() {
-  if(scenarioStep < scenarioSteps.length - 1) {
-    scenarioTimer = setTimeout(() => { scenarioStep++; renderScenario(); advanceScenario(); }, 2800);
-  }
-}
-
 // Init — load live data from Airtable before rendering anything
 // ---------------------------------------------------------------------
 // Document generation — real, built from whatever is currently loaded
 // ---------------------------------------------------------------------
 
-function exportAssetRegisterCSV() {
+// Shared utility: builds a real .xlsx file (bold header row, correct
+// unicode handling — no more broken "—" characters) from any array of
+// asset objects. Used by both the full register download and the
+// single-asset download button.
+function exportAssetsXLSX(assetList, filenameSuffix) {
   const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
-  const rows = assets.map(a => [a.id, a.name, a.system, a.klass, a.level, a.location, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
-  const csvContent = [headers, ...rows]
-    .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
-    .join('\n');
+  const rows = assetList.map(a => [a.id, a.name, a.system, a.klass, a.level, a.location, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${CLIENT_CONFIG.clientName.replace(/\s+/g,'_')}_Asset_Register_${new Date().toISOString().split('T')[0]}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+  // Bold the header row
+  const headerRange = XLSX.utils.decode_range(worksheet['!ref']);
+  for (let col = headerRange.s.c; col <= headerRange.e.c; col++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
+    if (!worksheet[cellRef]) continue;
+    worksheet[cellRef].s = { font: { bold: true } };
+  }
+
+  // Reasonable column widths so it's readable on open, not cramped
+  worksheet['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 14) }));
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Asset Register");
+
+  const filename = `${CLIENT_CONFIG.clientName.replace(/\s+/g,'_')}_${filenameSuffix}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  XLSX.writeFile(workbook, filename, { cellStyles: true });
 }
 
-function printMaintenancePlan() {
-  const win = window.open('', '_blank');
-  const rows = assets
+function exportAssetRegisterCSV() {
+  exportAssetsXLSX(assets, "Asset_Register");
+}
+
+function exportSingleAssetXLSX(assetId) {
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset) { alert("Asset not found."); return; }
+  exportAssetsXLSX([asset], `Asset_${assetId}`);
+}
+
+
+function printMaintenancePlan(windowDays) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + windowDays);
+
+  const filtered = assets
+    .filter(a => a.nextService && new Date(a.nextService) <= cutoff)
     .slice()
-    .sort((a,b) => new Date(a.nextService) - new Date(b.nextService))
+    .sort((a,b) => new Date(a.nextService) - new Date(b.nextService));
+
+  const win = window.open('', '_blank');
+  const rows = filtered
     .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${a.location}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
     .join('');
 
@@ -756,22 +722,26 @@ function printMaintenancePlan() {
     <style>
       body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
       h1 { color:#1A3566; font-size:20px; }
-      .sub { color:#6B7280; font-size:12px; margin-bottom:24px; }
+      .sub { color:#6B7280; font-size:12px; margin-bottom:16px; }
+      .empty { color:#6B7280; font-style:italic; padding:12px 0; }
       table { width:100%; border-collapse:collapse; font-size:12px; }
       th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
       td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
       tr:nth-child(even) { background:#F8FAFC; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      @media print { .download-btn { display:none; } }
     </style></head>
     <body>
-      <h1>Maintenance Plan</h1>
-      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · ${assets.length} assets, sorted by next service date</div>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <h1>Maintenance Plan — Next ${windowDays} Days</h1>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
+      ${filtered.length === 0 ? '<div class="empty">Nothing due for service within this window.</div>' : `
       <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
-      <tbody>${rows}</tbody></table>
+      <tbody>${rows}</tbody></table>`}
     </body></html>
   `);
   win.document.close();
   win.focus();
-  setTimeout(() => win.print(), 300);
 }
 
 // ---------------------------------------------------------------------
@@ -804,8 +774,11 @@ async function generateMonthlyReport() {
         td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
         tr:nth-child(even) { background:#F8FAFC; }
         .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+        .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+        @media print { .download-btn { display:none; } }
       </style></head>
       <body>
+        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
         <h1>Monthly Report — Last 30 Days</h1>
         <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
 
@@ -822,7 +795,6 @@ async function generateMonthlyReport() {
     `);
     win.document.close();
     win.focus();
-    setTimeout(() => win.print(), 300);
   } catch (err) {
     alert('Could not generate report: ' + err.message);
   }
