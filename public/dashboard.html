@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title id="page-title">GVC Facility Asset Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #1A3566; --navy-light: #2A4A7F; --navy-pale: #E8EDF4;
+  --red: #E74C3C; --red-bg: #FDE8E6;
+  --green: #27AE60; --green-bg: #E8F8EF;
+  --amber: #F39C12; --amber-bg: #FEF5E7;
+  --blue: #3B82F6; --blue-bg: #EBF2FF;
+  --purple: #8B5CF6; --purple-bg: #F3EEFF;
+  --teal: #14B8A6; --teal-bg: #E6FBF8;
+  --pink: #EC4899; --pink-bg: #FDEBF3;
+  --gold: #D4A843; --gold-bg: #FBF3E3;
+  --bg: #F0F2F6; --white: #FFFFFF; --text: #1A1A2E; --muted: #6B7280; --border: #E2E6ED;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+button { font-family: inherit; cursor: pointer; }
+
+.header { background: var(--navy); padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.header-logo { width: 40px; height: 40px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; }
+.header-logo span { color: #fff; font-weight: 700; font-size: 14px; letter-spacing: 1px; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-title { color: #fff; font-weight: 700; font-size: 18px; letter-spacing: 0.5px; }
+.header-sub { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 2px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+.live-label { color: rgba(255,255,255,0.7); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+
+.tabs { display: flex; background: var(--white); border-bottom: 1px solid var(--border); padding: 0 24px; overflow-x: auto; }
+.tab-btn { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border: none; background: none; color: var(--muted); border-bottom: 2.5px solid transparent; font-weight: 400; font-size: 13.5px; white-space: nowrap; transition: all 0.2s; }
+.tab-btn.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
+.tab-btn svg { width: 18px; height: 18px; }
+
+.content { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+.view { display: none; } .view.active { display: block; }
+
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.summary-card { background: var(--white); border-radius: 10px; padding: 16px 18px; border: 1px solid var(--border); }
+.summary-val { font-size: 28px; font-weight: 700; }
+.summary-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--white); color: var(--text); font-size: 12.5px; font-weight: 400; transition: all 0.2s; }
+.filter-btn.active { border-color: var(--navy); background: var(--navy); color: #fff; font-weight: 600; }
+.filter-select { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--white); font-size: 12.5px; font-family: inherit; color: var(--text); }
+.search-input { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; font-family: inherit; flex: 1; min-width: 180px; }
+.filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+
+.asset-list { display: flex; flex-direction: column; gap: 8px; }
+.asset-row { display: flex; align-items: center; justify-content: space-between; background: var(--white); border-radius: 10px; padding: 14px 18px; border: 1px solid var(--border); cursor: pointer; text-align: left; width: 100%; transition: box-shadow 0.2s; gap: 10px; }
+.asset-row:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.asset-name { font-weight: 600; font-size: 14px; }
+.asset-id { font-size: 11px; color: var(--muted); font-family: monospace; }
+.asset-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.asset-class { font-size: 10.5px; color: var(--navy); background: var(--navy-pale); padding: 1px 8px; border-radius: 8px; display: inline-block; margin-top: 4px; }
+.badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.badge-good { color: var(--green); background: var(--green-bg); }
+.badge-warning { color: var(--amber); background: var(--amber-bg); }
+.badge-overdue { color: var(--red); background: var(--red-bg); }
+.badge-crit { color: var(--red); background: rgba(0,0,0,0.04); font-weight: 500; }
+.badge-high { color: var(--amber); background: rgba(0,0,0,0.04); font-weight: 500; }
+.badge-medium { color: var(--muted); background: rgba(0,0,0,0.04); font-weight: 500; }
+.result-count { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+
+.detail-panel { background: var(--white); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+.detail-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.detail-title { font-size: 20px; font-weight: 700; }
+.detail-sub { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: monospace; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.detail-field { padding: 14px 24px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+.detail-field-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.detail-field-value { font-size: 14px; font-weight: 500; margin-top: 4px; }
+.detail-alert { padding: 16px 24px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.lifecycle-bar-wrap { padding: 16px 24px; }
+.lifecycle-bar-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.lifecycle-track { background: #E5E7EB; border-radius: 6px; height: 10px; overflow: hidden; }
+.lifecycle-fill { height: 100%; border-radius: 6px; transition: width 0.6s; }
+.lifecycle-range { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.back-btn { border: none; background: none; color: var(--navy); font-weight: 600; font-size: 13px; padding: 0; margin-bottom: 16px; cursor: pointer; }
+
+.scenario-intro { background: var(--white); border-radius: 12px; border: 1px solid var(--border); padding: 24px; margin-bottom: 20px; }
+.start-btn { background: var(--navy); color: #fff; border: none; border-radius: 10px; padding: 14px 32px; font-size: 15px; font-weight: 600; transition: transform 0.15s; }
+.start-btn:hover { transform: scale(1.03); }
+.start-center { text-align: center; padding: 40px 0; }
+.start-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+.timeline { display: flex; flex-direction: column; position: relative; }
+.timeline-line { position: absolute; left: 19px; top: 0; bottom: 0; width: 2px; background: var(--border); z-index: 0; }
+.timeline-step { display: flex; gap: 16px; margin-bottom: 8px; position: relative; z-index: 1; opacity: 0.15; transition: opacity 0.5s, transform 0.5s; transform: translateY(8px); }
+.timeline-step.visible { opacity: 1; transform: translateY(0); }
+.timeline-dot { width: 16px; height: 16px; border-radius: 50%; border: 3px solid #F0F0F0; background: var(--border); transition: all 0.3s; }
+.timeline-step.active .timeline-dot { width: 20px; height: 20px; }
+.timeline-card { flex: 1; background: var(--white); border-radius: 10px; padding: 14px 18px; border: 1px solid var(--border); transition: all 0.3s; }
+
+.resolved-box { background: var(--green-bg); border-radius: 12px; padding: 20px 24px; margin-top: 12px; margin-left: 56px; border: 1px solid rgba(39,174,96,0.13); }
+.resolved-title { font-weight: 700; font-size: 15px; color: var(--green); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.resolved-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.resolved-label { font-size: 11px; color: var(--muted); }
+.resolved-value { font-weight: 600; font-size: 14px; margin-top: 2px; }
+.resolved-compare { margin-top: 14px; padding: 12px 16px; background: var(--white); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.replay-btn { margin-top: 14px; background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13px; font-weight: 600; }
+
+/* Dashboard styles */
+.dash-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.dash-kpi { background: var(--white); border-radius: 10px; padding: 16px; border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+.dash-kpi-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.dash-kpi-val { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.dash-kpi-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.dash-panel { background: var(--white); border-radius: 10px; padding: 18px; border: 1px solid var(--border); }
+.dash-panel-title { font-size: 13px; font-weight: 700; margin-bottom: 14px; }
+.dash-grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+
+.donut-wrap { display: flex; align-items: center; gap: 16px; }
+.donut-legend { font-size: 12px; line-height: 2; }
+.donut-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+.bar-chart-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.bar-chart-label { font-size: 11px; min-width: 30px; text-align: right; color: var(--muted); }
+.bar-group { display: flex; gap: 3px; flex:1; }
+.bar-planned { height: 18px; border-radius: 3px; background: var(--navy); }
+.bar-completed { height: 18px; border-radius: 3px; background: var(--green); }
+.bar-overdue { height: 18px; border-radius: 3px; background: var(--red); }
+
+.cat-bar-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+.cat-bar-label { width:130px; font-size:11.5px; color:var(--muted); text-align:right; flex-shrink:0; }
+.cat-bar-track { flex:1; height:18px; background:#EEF1F6; border-radius:4px; overflow:hidden; }
+.cat-bar-fill { height:100%; border-radius:4px; display:flex; align-items:center; padding-left:8px; font-size:10.5px; font-weight:600; color:#fff; }
+
+.wo-summary { display: flex; gap: 12px; text-align: center; }
+.wo-box { flex: 1; padding: 12px 8px; border-radius: 10px; }
+.wo-box-val { font-size: 22px; font-weight: 700; }
+.wo-box-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+.alert-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.alert-item:last-child { border-bottom: none; }
+.alert-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
+.alert-time { font-size: 10px; color: var(--muted); white-space: nowrap; margin-left: auto; flex-shrink: 0; }
+
+.maint-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.maint-item:last-child { border-bottom: none; }
+.maint-icon { margin-right: 8px; }
+
+.doc-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.doc-item:last-child { border-bottom: none; }
+.doc-icon { width: 28px; height: 28px; border-radius: 6px; background: var(--navy-pale); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+.view-link { font-size: 12px; color: var(--navy); font-weight: 600; margin-top: 10px; display: inline-block; }
+
+.footer { text-align: center; padding: 24px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 40px; }
+
+/* Systems tab */
+.sys-card { background:var(--white); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:14px; }
+.sys-card-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
+.sys-card-name { font-size:15px; font-weight:700; color:var(--navy); }
+.sys-card-count { font-size:11px; font-weight:600; padding:4px 12px; border-radius:12px; background:var(--navy-pale); color:var(--navy); }
+.sys-card-desc { font-size:13px; color:var(--muted); line-height:1.6; }
+
+/* Maintenance tab */
+.freq-row { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
+.freq-label { width:150px; font-size:12px; color:var(--muted); text-align:right; flex-shrink:0; }
+.freq-track { flex:1; height:20px; background:#EEF1F6; border-radius:4px; overflow:hidden; }
+.freq-fill { height:100%; border-radius:4px; display:flex; align-items:center; padding-left:8px; font-size:11px; font-weight:600; color:#fff; }
+
+.wo-flow { display:flex; flex-direction:column; gap:0; }
+.wo-flow-step { display:flex; gap:14px; position:relative; padding-bottom:22px; }
+.wo-flow-step::before { content:''; position:absolute; left:15px; top:32px; bottom:0; width:2px; background:var(--border); }
+.wo-flow-step:last-child::before { display:none; }
+.wo-flow-num { width:32px; height:32px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; flex-shrink:0; }
+.wo-flow-body { flex:1; padding-top:2px; }
+.wo-flow-title { font-weight:600; font-size:13.5px; }
+.wo-flow-desc { font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.5; }
+.wo-flow-channel { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:8px; margin-top:6px; margin-right:6px; }
+.chan-sms { background:var(--blue-bg); color:var(--blue); }
+.chan-email { background:var(--purple-bg); color:var(--purple); }
+.chan-system { background:var(--green-bg); color:var(--green); }
+
+/* Level view */
+.level-row { display:flex; justify-content:space-between; align-items:flex-start; padding:12px 0; border-bottom:1px solid var(--border); gap:10px; }
+.level-row:last-child { border-bottom:none; }
+.level-name { font-size:13.5px; font-weight:700; color:var(--navy); }
+.level-detail { font-size:11.5px; color:var(--muted); margin-top:2px; }
+.level-count { font-size:12px; color:var(--muted); white-space:nowrap; font-weight:600; }
+
+@media (max-width: 700px) {
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-grid-4 { grid-template-columns: 1fr; }
+  .dash-kpi-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo"><span>GVC</span></div>
+    <div>
+      <div class="header-title">Facility Asset Manager</div>
+      <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
+    </div>
+  </div>
+  <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Dashboard
+  </button>
+  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
+    Asset Register
+  </button>
+  <button class="tab-btn" data-tab="systems" onclick="switchTab('systems')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
+    Systems
+  </button>
+  <button class="tab-btn" data-tab="maintenance" onclick="switchTab('maintenance')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    Maintenance
+  </button>
+  <button class="tab-btn" data-tab="levelview" onclick="switchTab('levelview')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+    Level View
+  </button>
+  <button class="tab-btn" data-tab="scenario" onclick="switchTab('scenario')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    Live Scenario
+  </button>
+</div>
+
+<div id="loading-screen" style="text-align:center;padding:100px 20px;">
+  <div style="width:36px;height:36px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto 16px;animation:spin 0.8s linear infinite;"></div>
+  <div style="font-size:14px;color:#6B7280;">Loading live asset data…</div>
+</div>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+<div class="content" style="display:none;">
+  <div id="view-dashboard" class="view active"></div>
+  <div id="view-assets" class="view"></div>
+  <div id="view-systems" class="view"></div>
+  <div id="view-maintenance" class="view"></div>
+  <div id="view-levelview" class="view"></div>
+  <div id="view-scenario" class="view"></div>
+</div>
+
+<div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
+
+<script>
+// ============================================================
+// BRANDING CONFIG — edit these 4 lines for each client deployment.
+// Nothing else in this file needs to change per client.
+// ============================================================
+const CLIENT_CONFIG = {
+  clientName: "Sali International Hospital",
+  buildingLabel: "[Floor/Zone — confirm after site survey]", // fill in once the pilot floor/zone is agreed (Field 1 of the scope PDF)
+  accentColor: "#1A3566",
+  pageTitle: "GVC Facility Asset Manager"
+};
+
+// Apply config to the page (header text, browser tab title)
+document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
+document.addEventListener('DOMContentLoaded', () => {
+  const sub = document.getElementById('header-subtitle');
+  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · MEP Systems`;
+});
+
+let assets = []; // populated live from Airtable via /api/get-assets
+
+const levelDefs = [
+  { id:"B2", label:"Basement 2 — Plant & Parking", count:5 },
+  { id:"B1", label:"Basement 1 — Plant, Substation & Parking", count:9 },
+  { id:"L1", label:"Level 1 — Ground Floor / Lobby & Retail", count:10 },
+  { id:"L2", label:"Level 2 — Retail", count:4 },
+  { id:"L3", label:"Level 3 — Retail", count:4 },
+  { id:"L4", label:"Level 4 — Office", count:4 },
+  { id:"L5", label:"Level 5 — Office", count:4 },
+  { id:"L6", label:"Level 6 — Office", count:4 },
+  { id:"L7", label:"Level 7 — Office", count:4 },
+  { id:"L8", label:"Level 8 — Mechanical Floor", count:3 },
+  { id:"L9", label:"Level 9 — Office", count:4 },
+  { id:"L10", label:"Level 10 — Office", count:4 },
+  { id:"L11", label:"Level 11 — Office", count:4 },
+  { id:"L12", label:"Level 12 — Office", count:4 },
+  { id:"L13", label:"Level 13 — Office", count:4 },
+  { id:"L14", label:"Level 14 — Office", count:4 },
+  { id:"L15", label:"Level 15 — Rooftop Plant", count:5 }
+];
+
+const systemDefs = [
+  { name:"HVAC", desc:"Chillers, cooling towers, air handling units and fan coil units maintaining comfort conditions across all occupied floors.", color:"var(--navy)" },
+  { name:"Fire Protection", desc:"Electric and diesel fire pumps, jockey pump, and wet-riser distribution ensuring code-compliant fire suppression capacity.", color:"var(--red)" },
+  { name:"Electrical", desc:"HV/LV transformers, main switchgear, standby generator and UPS supporting building power resilience.", color:"var(--amber)" },
+  { name:"Vertical Transport", desc:"Passenger and freight lifts moving people and goods between all 15 levels and both basements.", color:"var(--blue)" },
+  { name:"Plumbing", desc:"Domestic water boosting and basement drainage/sump systems.", color:"var(--purple)" },
+  { name:"Controls", desc:"Building Management System (BMS) head-end monitoring and control across all connected systems.", color:"#D1D5DB" },
+  { name:"CCTV & Access Control", desc:"Camera coverage and access readers securing common areas, entrances, office floors and parking levels.", color:"var(--teal)" },
+  { name:"Parking System", desc:"Barrier gates and payment kiosks managing vehicle access across both basement parking levels.", color:"var(--pink)" },
+  { name:"Retail Tenant Interface", desc:"Tenant-facing kiosks and portals supporting retail zone operations and tenant communication.", color:"var(--gold)" },
+  { name:"Fire Detection", desc:"Smoke and heat detection loops with central control panel providing early warning coverage across every floor.", color:"#F97316" },
+];
+
+const scenarioSteps = [
+  { time:"Day 1", title:"Quarterly Test Deadline Approaching", detail:"GVC platform flags fire pumps FP-001 and FP-002 are 14 days from quarterly compliance test deadline. Last tested 20 Dec 2025. Notification sent to FM team and compliance officer.", type:"alert", auto:true },
+  { time:"Day 7", title:"7-Day Reminder Escalated", detail:"No test scheduled. System escalates: second notification to FM manager and building owner. Dashboard compliance status changes from 'Upcoming' to 'At Risk.' Insurance validity flag raised.", type:"alert", auto:true },
+  { time:"Day 14", title:"Deadline Missed — Compliance Breach", detail:"Quarterly fire pump test not completed. System logs compliance breach. Status changed to 'Overdue — Non-Compliant.' Automated report generated for building owner showing insurance exposure.", type:"overdue", auto:true },
+  { time:"Day 15", title:"FM Manager Schedules Emergency Test", detail:"FM manager engages fire pump service contractor. Test scheduled for Day 17. Work order WO-2026-1203 created and assigned. Test procedure checklist auto-attached from asset library.", type:"work", auto:false },
+  { time:"Day 17", title:"Test Conducted — Issue Found", detail:"Diesel standby pump FP-002 fails to reach rated pressure. Flow test shows 78% of design capacity. Technician reports: fuel injector fouling suspected. Main electric pump FP-001 passes all checks.", type:"response", auto:false },
+  { time:"Day 17", title:"Corrective Work Order Raised", detail:"WO-2026-1210 created: 'Diesel fire pump FP-002 — fuel injector service and retest.' Parts ordered. Estimated repair: 3 days. Building insurance notified of interim status. FP-001 confirmed operational as primary.", type:"work", auto:true },
+  { time:"Day 21", title:"Repair Complete — Full Compliance Restored", detail:"FP-002 injectors serviced and replaced. Retest: pump achieves 102% rated pressure. Both pumps compliant. Compliance certificate generated. Insurance file updated. Next quarterly test auto-scheduled for Day 111.", type:"resolved", auto:true },
+];
+
+let currentSystemFilter = "All";
+let currentLevelFilter = "All";
+let currentStatusFilter = "All";
+let currentSearch = "";
+let scenarioStep = -1;
+let scenarioTimer = null;
+
+function statusBadge(s) { return s==="Operational"?"badge-good":s==="Scheduled Maintenance"?"badge-warning":"badge-overdue"; }
+function critBadge(c) { return c==="Critical"?"badge-crit":c==="High"?"badge-high":"badge-medium"; }
+function statusBg(s) { return s==="Operational"?"var(--green-bg)":s==="Scheduled Maintenance"?"var(--amber-bg)":"var(--red-bg)"; }
+function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
+function stepColor(t) { return t==="alert"?"var(--amber)":t==="overdue"?"var(--red)":t==="work"?"var(--navy)":"var(--green)"; }
+function stepBg(t) { return t==="alert"?"var(--amber-bg)":t==="overdue"?"var(--red-bg)":t==="work"?"var(--navy-pale)":"var(--green-bg)"; }
+function fmt(n) { return n.toLocaleString(); }
+function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date('2026-07-08')) / 86400000); }
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-'+tab).classList.add('active');
+  if(tab==='dashboard') renderDashboard();
+  if(tab==='assets') renderAssets();
+  if(tab==='systems') renderSystems();
+  if(tab==='maintenance') renderMaintenance();
+  if(tab==='levelview') renderLevelView();
+  if(tab==='scenario') renderScenario();
+}
+
+function drawDonut(canvas, segments, size) {
+  const ctx = canvas.getContext('2d');
+  const cx = size/2, cy = size/2, r = size*0.38, inner = size*0.26;
+  let start = -Math.PI/2;
+  const total = segments.reduce((s,seg)=>s+seg.value,0);
+  segments.forEach(seg => {
+    const angle = (seg.value/total)*Math.PI*2;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,start,start+angle);
+    ctx.closePath(); ctx.fillStyle = seg.color; ctx.fill();
+    start += angle;
+  });
+  ctx.beginPath(); ctx.arc(cx,cy,inner,0,Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+}
+
+function renderDashboard() {
+  const total = assets.length;
+  const operational = assets.filter(a=>a.status==="Operational").length;
+  const schedMaint = assets.filter(a=>a.status==="Scheduled Maintenance").length;
+  const needsAttn = assets.filter(a=>a.status==="Needs Attention").length;
+  const opPct = Math.round((operational/total)*100);
+  const attnPct = Math.round((needsAttn/total)*100);
+  const criticalAlerts = assets.filter(a=>a.criticality==="Critical" && a.status!=="Operational").length;
+  const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=30; }).length;
+
+  let html = '';
+
+  // KPI row — Total Asset Value removed per brief
+  html += `<div class="dash-kpi-grid">
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--navy-pale);color:var(--navy)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg></div><div><div class="dash-kpi-val" style="color:var(--navy)">${fmt(total)}</div><div class="dash-kpi-label">Total Assets · All 17 levels</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Operational · ${opPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Needs Attention · ${attnPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--red-bg);color:var(--red)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div><div class="dash-kpi-val" style="color:var(--red)">${criticalAlerts}</div><div class="dash-kpi-label">Critical Alerts · High priority</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next 30 Days</div></div></div>
+  </div>`;
+
+  // Row 1: Asset Health + Maintenance Overview
+  html += `<div class="dash-grid">`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Asset Health Overview</div><div class="donut-wrap"><canvas id="health-donut" width="140" height="140"></canvas><div style="display:flex;flex-direction:column;gap:2px"><div class="donut-legend"><span class="donut-dot" style="background:var(--green)"></span>Operational <strong>${operational}</strong> (${opPct}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--amber)"></span>Scheduled Maintenance <strong>${schedMaint}</strong> (${Math.round(schedMaint/total*100)}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--red)"></span>Needs Attention <strong>${needsAttn}</strong> (${attnPct}%)</div></div></div></div>`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Overview</div><div style="display:flex;flex-direction:column;gap:4px">`;
+  const maintData = [{m:'Jan',p:8,c:7,o:1},{m:'Feb',p:9,c:8,o:1},{m:'Mar',p:10,c:9,o:1},{m:'Apr',p:7,c:6,o:1},{m:'May',p:11,c:9,o:2},{m:'Jun',p:12,c:10,o:2}];
+  const maxM = 14;
+  maintData.forEach(d => {
+    html += `<div class="bar-chart-row"><div class="bar-chart-label">${d.m}</div><div class="bar-group"><div class="bar-planned" style="width:${(d.p/maxM)*100}%"></div><div class="bar-completed" style="width:${(d.c/maxM)*100}%"></div><div class="bar-overdue" style="width:${(d.o/maxM)*100}%"></div></div></div>`;
+  });
+  html += `<div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:var(--muted)"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--navy);margin-right:4px"></span>Planned</span><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green);margin-right:4px"></span>Completed</span><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--red);margin-right:4px"></span>Overdue</span></div></div></div>`;
+
+  html += `</div><div class="dash-grid">`;
+
+  // Assets by Category — count-based, replaces "Top Asset Categories by Value"
+  html += `<div class="dash-panel"><div class="dash-panel-title">Assets by Category</div>`;
+  const sysCounts = {};
+  systemDefs.forEach(s => sysCounts[s.name] = assets.filter(a=>a.system===s.name).length);
+  const maxCount = Math.max(...Object.values(sysCounts));
+  systemDefs.slice().sort((a,b)=>sysCounts[b.name]-sysCounts[a.name]).forEach(s => {
+    const cnt = sysCounts[s.name];
+    html += `<div class="cat-bar-row"><div class="cat-bar-label">${s.name}</div><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(cnt/maxCount)*100}%;background:${s.color}">${cnt}</div></div></div>`;
+  });
+  html += `</div>`;
+
+  // Recent Alerts — tied to real assets
+  html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>
+    <div class="alert-item"><div class="alert-icon" style="background:var(--red-bg);color:var(--red)">⚠</div><div><div style="font-size:13px;font-weight:600">Fire Pumps FP-001 / FP-002 — Test Overdue</div><div style="font-size:11px;color:var(--muted)">Basement 1 — Plant Room</div></div><div class="alert-time">Needs Attention</div></div>
+    <div class="alert-item"><div class="alert-icon" style="background:var(--amber-bg);color:var(--amber)">⚠</div><div><div style="font-size:13px;font-weight:600">Chiller CH-002 — Elevated Vibration</div><div style="font-size:11px;color:var(--muted)">Basement 2 — Plant Room</div></div><div class="alert-time">Scheduled</div></div>
+    <div class="alert-item"><div class="alert-icon" style="background:var(--amber-bg);color:var(--amber)">⚠</div><div><div style="font-size:13px;font-weight:600">Sump Pump SP-001 — Float Switch Intermittent</div><div style="font-size:11px;color:var(--muted)">Basement 2 — Sump Pit</div></div><div class="alert-time">Scheduled</div></div>
+    <a class="view-link" href="#" onclick="switchTab('assets');return false;">View asset register →</a>
+  </div>`;
+
+  html += `</div>`;
+
+  // Row 3: Work Orders + Planned Maintenance + Documents (3 cols now, lifecycle forecast removed)
+  html += `<div class="dash-grid-4">`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
+    <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">8</div><div class="wo-box-label">Open</div></div>
+    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">3</div><div class="wo-box-label">In Progress</div></div>
+    <div class="wo-box" style="background:var(--red-bg)"><div class="wo-box-val" style="color:var(--red)">2</div><div class="wo-box-label">Overdue</div></div>
+    <div class="wo-box" style="background:var(--green-bg)"><div class="wo-box-val" style="color:var(--green)">46</div><div class="wo-box-label">Completed YTD</div></div>
+  </div><a class="view-link" href="#" onclick="switchTab('maintenance');return false;">View maintenance schedule →</a></div>`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Planned Maintenance (Next 7 Days)</div>
+    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Cooling Tower CT-1 Inspection</div><div style="font-size:11px;color:var(--muted)">Rooftop Level 15</div></div><div style="font-size:12px;color:var(--muted)">Jul 12</div></div>
+    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Parking Barrier Service — B1</div><div style="font-size:11px;color:var(--muted)">Basement 1</div></div><div style="font-size:12px;color:var(--muted)">Jul 13</div></div>
+    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Fire Detection Loop Test — L4</div><div style="font-size:11px;color:var(--muted)">Level 4 Office</div></div><div style="font-size:12px;color:var(--muted)">Jul 15</div></div>
+  </div>`;
+
+  // Documents — Asset Register (real CSV export), Maintenance Plan (real printable PDF),
+  // Monthly Report (honest placeholder — needs an alert-history log to be real, see note)
+  const todayLabel = new Date().toISOString().split('T')[0];
+  html += `<div class="dash-panel"><div class="dash-panel-title">Key Documents</div>
+    <div class="doc-item" style="cursor:pointer" onclick="exportAssetRegisterCSV()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Asset Register <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Download CSV</span></div><div style="font-size:10px;color:var(--muted)">${total} assets · Live as of ${todayLabel}</div></div></div>
+    <div class="doc-item" style="cursor:pointer" onclick="printMaintenancePlan()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Maintenance Plan <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Print / Save as PDF</span></div><div style="font-size:10px;color:var(--muted)">Generated live from current schedule</div></div></div>
+    <div class="doc-item" style="cursor:pointer" onclick="generateMonthlyReport()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Generate</span></div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+  </div>`;
+
+  html += `</div>`;
+
+  document.getElementById('view-dashboard').innerHTML = html;
+
+  setTimeout(() => {
+    const hc = document.getElementById('health-donut');
+    if(hc) drawDonut(hc, [{value:operational,color:'#27AE60'},{value:schedMaint,color:'#F39C12'},{value:needsAttn,color:'#E74C3C'}], 140);
+  }, 50);
+}
+
+function getFilteredAssets() {
+  return assets.filter(a => {
+    if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
+    if(currentLevelFilter!=="All" && a.level!==currentLevelFilter) return false;
+    if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
+    if(currentSearch) {
+      const q = currentSearch.toLowerCase();
+      const hay = (a.id+" "+a.name+" "+a.location+" "+a.manufacturer+" "+a.model+" "+a.klass).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAssets() {
+  const systems = ["All", ...systemDefs.map(s=>s.name)];
+  const filtered = getFilteredAssets();
+  const total = assets.length, crit = assets.filter(a=>a.criticality==="Critical").length;
+  const attn = assets.filter(a=>a.status==="Needs Attention").length;
+  const sched = assets.filter(a=>a.status==="Scheduled Maintenance").length;
+
+  let html = `<div class="summary-grid">
+    <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Scheduled Maintenance</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Needs Attention</div></div>
+  </div>`;
+
+  html += `<div class="filter-row">
+    <input type="text" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssets()">
+    <select class="filter-select" onchange="currentLevelFilter=this.value;renderAssets()">
+      <option value="All">All Levels</option>
+      ${levelDefs.map(l=>`<option value="${l.id}"${currentLevelFilter===l.id?' selected':''}>${l.label}</option>`).join('')}
+    </select>
+    <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
+      <option value="All">All Status</option>
+      <option value="Operational"${currentStatusFilter==='Operational'?' selected':''}>Operational</option>
+      <option value="Scheduled Maintenance"${currentStatusFilter==='Scheduled Maintenance'?' selected':''}>Scheduled Maintenance</option>
+      <option value="Needs Attention"${currentStatusFilter==='Needs Attention'?' selected':''}>Needs Attention</option>
+    </select>
+  </div>`;
+
+  html += `<div class="filters">`;
+  systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
+  html += `</div>`;
+
+  html += `<div class="result-count">Showing ${filtered.length} of ${total} assets</div>`;
+
+  html += `<div class="asset-list">`;
+  filtered.forEach((a) => {
+    const idx = assets.indexOf(a);
+    html += `<button class="asset-row" onclick="showDetail(${idx})">
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
+      <div class="asset-meta">${a.location} · ${a.manufacturer} ${a.model}</div>
+      <span class="asset-class">${a.klass}</span></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0"><span class="badge ${statusBadge(a.status)}">${a.status}</span><span class="badge ${critBadge(a.criticality)}">${a.criticality}</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
+  });
+  html += `</div>`;
+  document.getElementById('view-assets').innerHTML = html;
+}
+
+function showDetail(idx) {
+  const a = assets[idx];
+  const age = 2026 - parseInt(a.installDate.split("-")[0]);
+  const pct = Math.min((age/a.lifespan)*100, 100);
+  const eol = parseInt(a.installDate.split("-")[0]) + a.lifespan;
+  let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
+  <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system} · ${a.klass}</div></div>
+  <div style="display:flex;gap:8px"><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+  <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span></div></div>
+  <div class="detail-grid">`;
+  [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService]].forEach(([l,v])=>{
+    html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
+  });
+  html += `</div>`;
+  if(a.note) {
+    html += `<div class="detail-alert" style="background:${statusBg(a.status)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span><strong>Note:</strong> ${a.note}</span></div>`;
+  }
+  html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div></div>`;
+  document.getElementById('view-assets').innerHTML = html;
+}
+
+function renderSystems() {
+  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
+  systemDefs.forEach(s => {
+    const cnt = assets.filter(a=>a.system===s.name).length;
+    const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="Critical").length;
+    html += `<div class="sys-card"><div class="sys-card-head"><div class="sys-card-name">${s.name}</div><div class="sys-card-count">${cnt} asset${cnt!==1?'s':''}${critCnt>0?' · '+critCnt+' critical':''}</div></div><div class="sys-card-desc">${s.desc}</div></div>`;
+  });
+  document.getElementById('view-systems').innerHTML = html;
+}
+
+function renderMaintenance() {
+  let html = `<div class="dash-grid">`;
+
+  // Upcoming schedule timeline
+  html += `<div class="dash-panel"><div class="dash-panel-title">Upcoming Maintenance Schedule</div><div class="timeline" style="position:static">`;
+  const schedule = [
+    {date:"Jul 12", title:"Cooling Tower CT-1 Inspection", desc:"Rooftop L15 — quarterly visual and performance check.", color:"var(--green)"},
+    {date:"Jul 13", title:"Parking Barrier Service — B1", desc:"Basement 1 — actuator lubrication and sensor calibration.", color:"var(--blue)"},
+    {date:"Jul 15", title:"Fire Detection Loop Test — L4", desc:"Level 4 — smoke detector functional test.", color:"var(--amber)"},
+    {date:"Jul 20", title:"Fire Pump Emergency Retest", desc:"FP-001 / FP-002 — corrective retest following overdue flag.", color:"var(--red)"},
+    {date:"Jul 22", title:"Chiller CH-002 Vibration Check", desc:"Basement 2 — follow-up on elevated vibration reading.", color:"var(--amber)"},
+    {date:"Aug 05", title:"Lift Annual Inspection — Core A & B", desc:"All 3 lifts — statutory annual inspection and certification.", color:"var(--blue)"},
+    {date:"Aug 15", title:"Transformer & Switchgear Thermal Scan", desc:"Substation B1 — annual thermal imaging survey.", color:"var(--green)"},
+  ];
+  schedule.forEach(s => {
+    html += `<div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:8px;height:8px;border-radius:50%;background:${s.color};margin-top:6px;flex-shrink:0"></div><div><div style="font-size:12.5px;font-weight:600">${s.title} <span style="font-weight:400;color:var(--muted)">— ${s.date}</span></div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${s.desc}</div></div></div>`;
+  });
+  html += `</div></div>`;
+
+  // Frequency matrix
+  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Frequency by System</div>`;
+  const freqs = [
+    {name:"Fire Protection", freq:"Quarterly", pct:100, color:"var(--red)"},
+    {name:"Fire Detection", freq:"Quarterly", pct:100, color:"#F97316"},
+    {name:"HVAC", freq:"Semi-Annual", pct:60, color:"var(--navy)"},
+    {name:"Electrical", freq:"Annual", pct:35, color:"var(--amber)"},
+    {name:"Vertical Transport", freq:"Annual (Statutory)", pct:35, color:"var(--blue)"},
+    {name:"CCTV & Access Control", freq:"Semi-Annual", pct:60, color:"var(--teal)"},
+    {name:"Plumbing", freq:"Semi-Annual", pct:60, color:"var(--purple)"},
+    {name:"Parking System", freq:"Quarterly", pct:100, color:"var(--pink)"},
+    {name:"Controls (BMS)", freq:"Annual", pct:35, color:"#D1D5DB"},
+    {name:"Retail Tenant Interface", freq:"Annual", pct:35, color:"var(--gold)"},
+  ];
+  freqs.forEach(f => {
+    html += `<div class="freq-row"><div class="freq-label">${f.name}</div><div class="freq-track"><div class="freq-fill" style="width:${f.pct}%;background:${f.color}">${f.freq}</div></div></div>`;
+  });
+  html += `</div>`;
+
+  html += `</div>`;
+
+  // Work Order Flow — conceptual, not yet functional
+  html += `<div class="dash-panel" style="margin-top:14px"><div class="dash-panel-title">Work Order Communication Flow — Concept</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6">This is how an alert would move from detection to resolution and confirmation. Channel mix (SMS + Email) is proposed to keep setup simple — final routing and cadence to be confirmed during pilot.</div>
+    <div class="wo-flow">
+      <div class="wo-flow-step"><div class="wo-flow-num">1</div><div class="wo-flow-body"><div class="wo-flow-title">Scheduled maintenance due in 14 days</div><div class="wo-flow-desc">System detects upcoming due date and sends the first alert to the assigned FM contact.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">2</div><div class="wo-flow-body"><div class="wo-flow-title">Reminder — 7 days out</div><div class="wo-flow-desc">If no action logged, a reminder goes out. Cadence from here: every 3 days, or weekly — to be set per system criticality.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">3</div><div class="wo-flow-body"><div class="wo-flow-title">Overdue escalation</div><div class="wo-flow-desc">Deadline passed with no update. Escalation notice sent to FM manager, asset flagged "Needs Attention" on the dashboard.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">4</div><div class="wo-flow-body"><div class="wo-flow-title">Technician completes the work</div><div class="wo-flow-desc">Technician marks the work order complete in the system, with notes if needed.</div><span class="wo-flow-channel chan-system">System Update</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">5</div><div class="wo-flow-body"><div class="wo-flow-title">Confirmation sent back</div><div class="wo-flow-desc">Requester and FM manager receive confirmation that the task is closed. Next due date is recalculated automatically.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+    </div>
+  </div>`;
+
+  document.getElementById('view-maintenance').innerHTML = html;
+}
+
+function renderLevelView() {
+  let html = `<div class="dash-grid">`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Floor-by-Floor Asset Summary</div>`;
+  [...levelDefs].reverse().forEach(l => {
+    const lvlAssets = assets.filter(a=>a.level===l.id);
+    const bySys = {};
+    lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+    const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
+    html += `<div class="level-row"><div><div class="level-name">${l.label}</div><div class="level-detail">${breakdown}</div></div><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div></div>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Building Section — Vertical System Distribution</div>
+    <svg viewBox="0 0 380 460" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="bldg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A4A7F"/><stop offset="1" stop-color="#1A3566"/></linearGradient></defs>
+      <rect x="60" y="15" width="270" height="430" rx="4" fill="url(#bldg2)" opacity=".07" stroke="#1A3566" stroke-width="1.2"/>
+      <!-- zone lines -->
+      <line x1="60" y1="15" x2="330" y2="15" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="75" x2="330" y2="75" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="180" x2="330" y2="180" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="225" x2="330" y2="225" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="330" x2="330" y2="330" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="375" x2="330" y2="375" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="410" x2="330" y2="410" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="445" x2="330" y2="445" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <!-- labels -->
+      <text x="50" y="48" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L15 Roof</text>
+      <text x="50" y="130" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L9–L14</text>
+      <text x="50" y="205" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L8 Mech</text>
+      <text x="50" y="280" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L4–L7</text>
+      <text x="50" y="355" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L2–L3</text>
+      <text x="50" y="395" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L1 GF</text>
+      <text x="50" y="430" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B1</text>
+      <text x="50" y="460" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B2</text>
+      <!-- risers -->
+      <rect x="80" y="18" width="7" height="425" rx="2" fill="#3B82F6" opacity=".3"/><text x="83.5" y="12" text-anchor="middle" font-size="7" fill="#3B82F6">CHW</text>
+      <rect x="100" y="18" width="7" height="425" rx="2" fill="#E74C3C" opacity=".3"/><text x="103.5" y="12" text-anchor="middle" font-size="7" fill="#E74C3C">FP</text>
+      <rect x="120" y="18" width="7" height="425" rx="2" fill="#14B8A6" opacity=".3"/><text x="123.5" y="12" text-anchor="middle" font-size="7" fill="#14B8A6">CCTV</text>
+      <rect x="140" y="18" width="7" height="425" rx="2" fill="#F97316" opacity=".3"/><text x="143.5" y="12" text-anchor="middle" font-size="7" fill="#F97316">FD</text>
+      <!-- Rooftop L15 -->
+      <rect x="175" y="22" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Cooling Twr</text>
+      <rect x="235" y="22" width="55" height="17" rx="3" fill="#3B82F6"/><text x="262" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 AHU</text>
+      <!-- L9-L14 -->
+      <rect x="175" y="120" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 FCU</text>
+      <rect x="235" y="120" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 CCTV</text>
+      <!-- L8 Mech -->
+      <rect x="175" y="195" width="115" height="17" rx="3" fill="#3B82F6"/><text x="232" y="207" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">AHU-002 · Serves L2–L7</text>
+      <!-- L4-L7 -->
+      <rect x="175" y="270" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 FCU</text>
+      <rect x="235" y="270" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 Access</text>
+      <!-- L2-L3 Retail -->
+      <rect x="175" y="345" width="115" height="17" rx="3" fill="#D4A843"/><text x="232" y="357" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Retail Tenant Interface ×2</text>
+      <!-- L1 GF -->
+      <rect x="175" y="385" width="55" height="17" rx="3" fill="#3B82F6"/><text x="202" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Lifts</text>
+      <rect x="235" y="385" width="55" height="17" rx="3" fill="#EC4899"/><text x="262" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Generator</text>
+      <!-- B1 -->
+      <rect x="175" y="418" width="55" height="17" rx="3" fill="#E74C3C"/><text x="202" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Fire Pumps</text>
+      <rect x="235" y="418" width="55" height="17" rx="3" fill="#F39C12"/><text x="262" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Transformers</text>
+      <!-- B2 -->
+      <rect x="175" y="450" width="55" height="9" rx="2" fill="#8B5CF6"/><text x="202" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">2 Chillers</text>
+      <rect x="235" y="450" width="55" height="9" rx="2" fill="#EC4899"/><text x="262" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">Parking</text>
+    </svg>
+  </div>`;
+
+  html += `</div>`;
+  document.getElementById('view-levelview').innerHTML = html;
+}
+
+function renderScenario() {
+  let html = `<div class="scenario-intro"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+    <div style="width:36px;height:36px;border-radius:8px;background:var(--red-bg);display:flex;align-items:center;justify-content:center;color:var(--red)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+    <div><div style="font-weight:700;font-size:16px">Scenario: Missed Fire Pump Compliance Test</div><div style="font-size:13px;color:var(--muted)">Fire Pumps FP-001 & FP-002 · Quarterly Test · Zanzibar One Tower</div></div></div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-top:12px">Fire pump testing is a regulatory and insurance requirement. Missing a quarterly test can void building insurance, expose the owner to liability, and endanger tenants. This scenario shows how the GVC platform tracks compliance deadlines, escalates missed tests, and manages corrective action when issues are found.</div></div>`;
+
+  if(scenarioStep === -1) {
+    html += `<div class="start-center"><button class="start-btn" onclick="startScenario()">▶ Start Compliance Scenario</button><div class="start-hint">Watch how the system tracks and escalates fire safety compliance</div></div>`;
+  } else {
+    html += `<div class="timeline"><div class="timeline-line"></div>`;
+    scenarioSteps.forEach((s,i) => {
+      const vis = i <= scenarioStep;
+      const act = i === scenarioStep;
+      const sc = stepColor(s.type), sb = stepBg(s.type);
+      html += `<div class="timeline-step${vis?' visible':''}${act?' active':''}" >
+        <div style="width:40px;display:flex;flex-direction:column;align-items:center;flex-shrink:0"><div class="timeline-dot" style="background:${vis?sc:'var(--border)'};border-color:${vis?sb:'#F0F0F0'}${act?';box-shadow:0 0 0 4px '+sb:''}"></div></div>
+        <div class="timeline-card" style="border-color:${act?sc:'var(--border)'}${act?';box-shadow:0 2px 12px '+sb:''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-weight:700;font-size:14px;color:${sc}">${s.time}</span><span style="font-weight:600;font-size:14px">${s.title}</span></div>
+            <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;color:${s.auto?'var(--green)':'var(--navy)'};background:${s.auto?'var(--green-bg)':'var(--navy-pale)'}">${s.auto?'Automated':'Human'}</span>
+          </div><div style="font-size:13px;color:var(--muted);margin-top:8px;line-height:1.6">${s.detail}</div></div></div>`;
+    });
+    html += `</div>`;
+    if(scenarioStep >= scenarioSteps.length - 1) {
+      html += `<div class="resolved-box"><div class="resolved-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Compliance Restored</div>
+        <div class="resolved-grid">
+          <div><div class="resolved-label">Days Non-Compliant</div><div class="resolved-value">7</div></div>
+          <div><div class="resolved-label">Root Cause</div><div class="resolved-value">Injector fouling</div></div>
+          <div><div class="resolved-label">Insurance Impact</div><div class="resolved-value">Notified, no lapse</div></div>
+          <div><div class="resolved-label">Next Test Auto-Scheduled</div><div class="resolved-value">Yes</div></div>
+        </div>
+        <div class="resolved-compare"><strong>Without this system:</strong> Missed test goes unnoticed for months. Insurance audit reveals non-compliance — policy voided retroactively. Diesel pump degradation undetected until an actual fire event. Building owner exposed to criminal liability under fire safety regulations.</div>
+        <button class="replay-btn" onclick="scenarioStep=-1;clearTimeout(scenarioTimer);renderScenario()">↻ Replay Scenario</button></div>`;
+    }
+  }
+  document.getElementById('view-scenario').innerHTML = html;
+}
+
+function startScenario() {
+  scenarioStep = 0;
+  renderScenario();
+  advanceScenario();
+}
+
+function advanceScenario() {
+  if(scenarioStep < scenarioSteps.length - 1) {
+    scenarioTimer = setTimeout(() => { scenarioStep++; renderScenario(); advanceScenario(); }, 2800);
+  }
+}
+
+// Init — load live data from Airtable before rendering anything
+// ---------------------------------------------------------------------
+// Document generation — real, built from whatever is currently loaded
+// ---------------------------------------------------------------------
+
+function exportAssetRegisterCSV() {
+  const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
+  const rows = assets.map(a => [a.id, a.name, a.system, a.klass, a.level, a.location, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${CLIENT_CONFIG.clientName.replace(/\s+/g,'_')}_Asset_Register_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function printMaintenancePlan() {
+  const win = window.open('', '_blank');
+  const rows = assets
+    .slice()
+    .sort((a,b) => new Date(a.nextService) - new Date(b.nextService))
+    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${a.location}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
+    .join('');
+
+  win.document.write(`
+    <html><head><title>Maintenance Plan — ${CLIENT_CONFIG.clientName}</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
+      h1 { color:#1A3566; font-size:20px; }
+      .sub { color:#6B7280; font-size:12px; margin-bottom:24px; }
+      table { width:100%; border-collapse:collapse; font-size:12px; }
+      th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
+      td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
+      tr:nth-child(even) { background:#F8FAFC; }
+    </style></head>
+    <body>
+      <h1>Maintenance Plan</h1>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · ${assets.length} assets, sorted by next service date</div>
+      <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+// ---------------------------------------------------------------------
+
+async function generateMonthlyReport() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
+    const data = await resp.json();
+
+    const win = window.open('', '_blank');
+    const urgencyRows = Object.entries(data.byUrgency)
+      .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+    const eventRows = data.events
+      .map(e => `<tr><td>${new Date(e.timestamp).toLocaleString()}</td><td>${e.assetId}</td><td>${e.assetName}</td><td>${e.system}</td><td>${e.urgency}</td><td>${e.channel}</td></tr>`)
+      .join('');
+
+    win.document.write(`
+      <html><head><title>Monthly Report — ${CLIENT_CONFIG.clientName}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
+        h1 { color:#1A3566; font-size:20px; }
+        h2 { color:#1A3566; font-size:14px; margin-top:24px; margin-bottom:10px; }
+        .sub { color:#6B7280; font-size:12px; margin-bottom:20px; }
+        .kpi { display:inline-block; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:12px 20px; margin-right:12px; margin-bottom:16px; }
+        .kpi-val { font-size:22px; font-weight:700; color:#1A3566; }
+        .kpi-label { font-size:11px; color:#6B7280; }
+        table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:20px; }
+        th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
+        td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
+        tr:nth-child(even) { background:#F8FAFC; }
+        .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+      </style></head>
+      <body>
+        <h1>Monthly Report — Last 30 Days</h1>
+        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
+
+        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts Sent</div></div>
+
+        ${data.totalAlerts === 0 ? '<div class="empty">No alerts have been sent yet in this period. This report will populate as the system runs.</div>' : `
+        <h2>By Urgency</h2>
+        <table><thead><tr><th>Urgency</th><th>Count</th></tr></thead><tbody>${urgencyRows}</tbody></table>
+
+        <h2>Full Alert History</h2>
+        <table><thead><tr><th>Date/Time</th><th>Asset ID</th><th>Asset Name</th><th>System</th><th>Urgency</th><th>Channel</th></tr></thead><tbody>${eventRows}</tbody></table>
+        `}
+      </body></html>
+    `);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 300);
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
+
+async function loadAssetsAndInit() {
+  const loadingEl = document.getElementById('loading-screen');
+  try {
+    const resp = await fetch('/api/get-assets');
+    if (!resp.ok) throw new Error('Failed to load asset data (' + resp.status + ')');
+    const data = await resp.json();
+    assets = data.assets || [];
+    if (loadingEl) loadingEl.style.display = 'none';
+    document.querySelector('.content').style.display = 'block';
+    renderDashboard();
+  } catch (err) {
+    if (loadingEl) {
+      loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
+        '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Could not load live data</div>' +
+        '<div style="font-size:13px;color:var(--muted,#6B7280)">' + err.message + '</div></div>';
+    }
+    console.error(err);
+  }
+}
+loadAssetsAndInit();
+
+</script>
+</body>
+</html>
