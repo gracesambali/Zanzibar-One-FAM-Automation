@@ -85,6 +85,32 @@ Make sure your Airtable API token (from Step 1) has read/write access
 to this table too — if you scoped the token to specific tables rather
 than the whole base, add `Alert Log` to that list.
 
+## Step 1c — Set up the Work Orders table (real, trackable tasks)
+
+In the same base, add a third table named `Work Orders` with these
+columns:
+
+| Column name | Type |
+|---|---|
+| WO ID | Single line text |
+| Asset ID | Single line text |
+| Asset Name | Single line text |
+| System | Single line text |
+| Location | Single line text |
+| Status | Single select — options: Open, In Progress, Completed |
+| Urgency | Single line text |
+| Created | Single line text |
+| Notes | Long text |
+
+Leave it empty — every real alert automatically creates a new Work
+Order here with Status "Open." This is what the engineer sees and
+updates from the **Work Orders** tab in the dashboard — not just a
+notification that was sent once, but an actual task with a status
+that moves as work happens.
+
+Same as before: make sure your Airtable token has access to this
+table too if you scoped it narrowly.
+
 ## Step 2 — Resend, Beem Africa, GitHub, Vercel
 
 Same as before — see the earlier walkthrough. If you're starting
@@ -94,21 +120,51 @@ command line needed), then import that repo into Vercel.
 
 ## Step 3 — Environment variables in Vercel
 
-Same list as before, no new variables needed — `get-assets.js` and the
-updated `check-maintenance.js` and `test-alert.js` all use the same
-`AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID`, `AIRTABLE_TABLE_NAME` you
-already set up.
+Use the full list in `.env.example` — a few are worth explaining:
+
+**Multiple recipients (engineer + technician):** set `ALERT_TO_EMAIL`
+and `ALERT_TO_PHONE` as comma-separated lists, e.g.
+`ALERT_TO_EMAIL=engineer@x.com,technician@x.com` and
+`ALERT_TO_PHONE=255700000000,255710000000`. Every real alert — daily
+check, instant webhook, or manual test — now goes to everyone in both
+lists, not just one hardcoded contact.
+
+**Login credentials:** set `ENGINEER_USERNAME`, `ENGINEER_PASSWORD`,
+and `SESSION_SECRET` (a long random string — this signs the login
+session, so keep it private and never share it, unlike the username
+and password which you *do* share with the engineer). Once these are
+set, the dashboard requires a real login — visiting it without signing
+in redirects straight to `/login.html`.
+
+**`ALERT_FROM_NAME`**: set this to `Sali Asset Management` (or
+whatever the client-facing sender name should be) — this is what
+recipients see as the sender, instead of a raw email address.
 
 ## Step 4 — Deploy and test
 
 1. Deploy on Vercel
-2. Visit `https://your-app.vercel.app/dashboard.html` — you should see
-   all 80 assets, all five tabs, loaded live from Airtable
-3. Visit `https://your-app.vercel.app` (the landing page) → enter your
+2. Visit `https://your-app.vercel.app/dashboard.html` — since login is
+   now required, you'll be redirected straight to `/login.html`. Sign
+   in with the `ENGINEER_USERNAME` / `ENGINEER_PASSWORD` you set. On
+   success you land on the real dashboard — all six tabs (Dashboard,
+   Asset Register, Systems, Maintenance, Level View, Work Orders),
+   loaded live from Airtable.
+3. Click **Log Out** (top right) to confirm it actually clears your
+   session and sends you back to the login page.
+4. The public landing page (`https://your-app.vercel.app`, no login
+   needed) still works the same way as before — enter your
    `DEMO_TRIGGER_KEY` → click **Send Live Test Alert** → check your
-   phone and email
-4. To test a real asset-specific alert:
+   phone and email. This one stays separate from the real login on
+   purpose, since it's meant for quick pitches before a client has
+   real credentials yet.
+5. To test a real asset-specific alert:
    `https://your-app.vercel.app/api/test-alert?key=YOUR_KEY&asset=FP-002`
+6. To see real-time work order creation: change any asset's **Next
+   Service Due** date to a date within the alert window, trigger a
+   check (see Step 5 below for the instant path), then log into the
+   dashboard and open the **Work Orders** tab — a new record should
+   appear automatically with Status "Open." Try changing its status
+   from the dropdown and confirm it saves.
 
 ## Step 5 — Make it truly live (instant alerts, not just daily)
 
