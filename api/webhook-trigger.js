@@ -1,155 +1,97 @@
-// api/webhook-trigger.js
-//
-// This is the "live connection" — Airtable calls THIS endpoint the
-// instant a record is edited (via an Airtable Automation you configure,
-// see README). No waiting for the daily cron. Change a date to
-// yesterday in Airtable, and within seconds a real alert fires.
-//
-// This does NOT replace the daily cron (check-maintenance.js) — that
-// stays as a safety net in case a webhook call ever fails to fire.
-// This is the instant path; the cron is the guaranteed-eventually path.
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GVC Facility Asset Manager — Live Alert Demo</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px; }
+  .card { background:#fff; border-radius:16px; max-width:480px; width:100%; padding:36px 32px; box-shadow:0 4px 24px rgba(0,0,0,.08); }
+  .logo-row { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .logo { width:42px; height:42px; border-radius:50%; background:#1A3566; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:12px; flex-shrink:0; }
+  h1 { font-size:19px; color:#1A3566; }
+  .sub { font-size:13px; color:#6B7280; margin-top:4px; margin-bottom:24px; }
+  label { font-size:12px; font-weight:600; color:#1A3566; display:block; margin-bottom:6px; margin-top:16px; }
+  input { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; font-family:inherit; }
+  button { width:100%; margin-top:22px; padding:14px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:15px; font-weight:600; cursor:pointer; transition:transform .15s; }
+  button:hover { transform:scale(1.02); }
+  button:disabled { opacity:.6; cursor:wait; }
+  .result { margin-top:20px; padding:16px; border-radius:10px; font-size:13.5px; line-height:1.6; display:none; }
+  .result.show { display:block; }
+  .result.success { background:#E8F8EF; color:#065F46; border:1px solid rgba(39,174,96,.2); }
+  .result.error { background:#FDE8E6; color:#991B1B; border:1px solid rgba(231,76,60,.2); }
+  .row { display:flex; justify-content:space-between; padding:4px 0; }
+  .footer { text-align:center; font-size:11px; color:#9CA3AF; margin-top:24px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-row">
+      <div class="logo">GVC</div>
+      <h1>Facility Asset Manager</h1>
+    </div>
+    <div class="sub">Live Alert Demo — Zanzibar One Tower</div>
 
-export default async function handler(req, res) {
-  // Airtable's webhook action can't easily send custom headers on all
-  // plans, so we check a shared secret as a query parameter instead —
-  // set this in the webhook URL you configure inside Airtable.
-  if (req.query.secret !== process.env.WEBHOOK_SECRET) {
-    return res.status(401).json({ error: "Unauthorized" });
+    <p style="font-size:13.5px; color:#374151; line-height:1.6;">
+      This sends a real, live maintenance alert — one email and one SMS —
+      to show exactly what happens the moment an asset needs attention.
+    </p>
+
+    <label for="key">Demo Access Key</label>
+    <input id="key" type="password" placeholder="Enter the demo key" autocomplete="off">
+
+    <button id="sendBtn" onclick="triggerDemo()">Send Live Test Alert</button>
+
+    <div id="result" class="result"></div>
+
+    <a href="/dashboard.html" style="display:block; text-align:center; margin-top:20px; font-size:13px; color:#1A3566; font-weight:600; text-decoration:none;">
+      View Full Facility Asset Manager →
+    </a>
+
+    <div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
+  </div>
+
+<script>
+async function triggerDemo() {
+  const key = document.getElementById('key').value.trim();
+  const btn = document.getElementById('sendBtn');
+  const result = document.getElementById('result');
+
+  if (!key) {
+    result.className = 'result error show';
+    result.innerHTML = 'Please enter the demo access key first.';
+    return;
   }
 
-  const recordId = req.body?.recordId || req.query.recordId;
-  if (!recordId) {
-    return res.status(400).json({ error: "Missing recordId" });
-  }
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  result.className = 'result show';
+  result.innerHTML = 'Sending live alert…';
 
   try {
-    const record = await fetchRecord(recordId);
-    if (!record) return res.status(404).json({ error: "Record not found" });
+    const resp = await fetch('/api/test-alert?key=' + encodeURIComponent(key));
+    const data = await resp.json();
 
-    const f = record.fields;
-    const dueDateRaw = f["Next Service Due"];
-    if (!dueDateRaw) {
-      return res.status(200).json({ triggered: false, reason: "No due date set" });
+    if (resp.ok && data.success) {
+      result.className = 'result success show';
+      result.innerHTML = `
+        <div class="row"><span>Email</span><strong>${data.email}</strong></div>
+        <div class="row"><span>SMS</span><strong>${data.sms}</strong></div>
+        <div style="margin-top:8px;">Check your inbox and phone now.</div>
+      `;
+    } else {
+      result.className = 'result error show';
+      result.innerHTML = data.error || 'Something went wrong. Check your access key.';
     }
-
-    const daysUntil = daysBetween(new Date(), new Date(dueDateRaw));
-    const alreadyAlertedToday = f["Last Alert Sent"] === todayString();
-    const ALERT_WINDOW_DAYS = 14;
-
-    if (daysUntil > ALERT_WINDOW_DAYS || alreadyAlertedToday) {
-      return res.status(200).json({
-        triggered: false,
-        reason: alreadyAlertedToday ? "Already alerted today" : "Not within alert window yet",
-        daysUntil,
-      });
-    }
-
-    const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-    const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
-
-    await Promise.all([
-      sendEmail(f, urgency, message),
-      sendSms(message),
-      markAlerted(recordId),
-      logAlert(f, urgency, message),
-    ]);
-
-    return res.status(200).json({ triggered: true, urgency, asset: f["Asset ID"], message });
   } catch (err) {
-    console.error("webhook-trigger error:", err);
-    return res.status(500).json({ error: err.message });
+    result.className = 'result error show';
+    result.innerHTML = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Live Test Alert';
   }
 }
-
-async function fetchRecord(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  return resp.json();
-}
-
-async function markAlerted(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Alert Sent": todayString() } }),
-  });
-}
-
-async function logAlert(f, urgency, message) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Location"] || "",
-        "Urgency": urgency,
-        "Channel": "Email + SMS (instant webhook)",
-        "Message": message,
-      },
-    }),
-  });
-}
-
-async function sendEmail(f, urgency, message) {
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: process.env.ALERT_FROM_EMAIL,
-      to: [process.env.ALERT_TO_EMAIL],
-      subject: `GVC FAM Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent instantly by GVC Facility Asset Manager, triggered by a live Airtable update.</p>`,
-    }),
-  });
-  if (!resp.ok) console.error("Resend error:", await resp.text());
-}
-
-async function sendSms(message) {
-  const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  const resp = await fetch("https://apisms.beem.africa/v1/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      source_addr: process.env.BEEM_SENDER_ID || "INFO",
-      schedule_time: "",
-      encoding: 0,
-      message: message.slice(0, 160),
-      recipients: [{ recipient_id: 1, dest_addr: process.env.ALERT_TO_PHONE }],
-    }),
-  });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
-}
-
-function daysBetween(from, to) {
-  const a = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  const b = new Date(to.getFullYear(), to.getMonth(), to.getDate());
-  return Math.round((b - a) / 86400000);
-}
-
-function todayString() {
-  return new Date().toISOString().split("T")[0];
-}
+</script>
+</body>
+</html>
