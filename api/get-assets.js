@@ -14,7 +14,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const assets = await fetchAllRecords();
+    const allAssets = await fetchAllRecords();
+    // Decommissioned assets are hidden from the live register by
+    // default (soft-deleted, not destroyed) — their history stays
+    // intact for past work orders and certificates. Pass
+    // ?includeInactive=true to see everything.
+    const showInactive = req.query.includeInactive === "true";
+    const assets = showInactive ? allAssets : allAssets.filter(a => a.active);
     return res.status(200).json({ assets, count: assets.length });
   } catch (err) {
     console.error("get-assets error:", err);
@@ -53,6 +59,7 @@ async function fetchAllRecords() {
 function normalizeRecord(record) {
   const f = record.fields;
   return {
+    recordId: record.id,
     id: f["Asset ID"] || "",
     name: f["Name"] || "",
     system: f["System"] || "",
@@ -68,5 +75,6 @@ function normalizeRecord(record) {
     nextService: f["Next Service Due"] || "",
     lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
     note: f["Note"] || undefined,
+    active: f["Active"] !== false, // defaults to true for existing assets with no Active field set
   };
 }

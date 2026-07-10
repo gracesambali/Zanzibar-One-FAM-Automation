@@ -29,6 +29,7 @@ export default async function handler(req, res) {
           status: r.fields["Status"] || "Open",
           urgency: r.fields["Urgency"] || "",
           created: r.fields["Created"] || "",
+          completedDate: r.fields["Completed Date"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -85,6 +86,13 @@ async function updateWorkOrder(recordId, status, notes) {
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const fields = { "Status": status };
   if (notes !== undefined) fields["Notes"] = notes;
+  // Capture the REAL completion date at the moment status becomes
+  // Completed — not whenever someone later opens the certificate.
+  // This matters for compliance documents where the date has to be
+  // accurate, not just "whenever I happened to print it."
+  if (status === "Completed") {
+    fields["Completed Date"] = new Date().toISOString();
+  }
 
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
     method: "PATCH",
