@@ -100,16 +100,68 @@ columns:
 | Status | Single select — options: Open, In Progress, Completed |
 | Urgency | Single line text |
 | Created | Single line text |
+| Completed Date | Single line text |
 | Notes | Long text |
 
 Leave it empty — every real alert automatically creates a new Work
 Order here with Status "Open." This is what the engineer sees and
 updates from the **Work Orders** tab in the dashboard — not just a
 notification that was sent once, but an actual task with a status
-that moves as work happens.
+that moves as work happens. When a work order is marked "Completed,"
+the real completion date is captured automatically — this is what
+makes the maintenance certificate accurate (see Step 1e).
 
 Same as before: make sure your Airtable token has access to this
 table too if you scoped it narrowly.
+
+## Step 1d — Add the "Active" field to Components (enables decommissioning)
+
+Back in your `Components` table, add one more column:
+
+| Column name | Type |
+|---|---|
+| Active | Checkbox |
+
+Leave every existing asset unchecked/blank — the system treats a
+missing value as Active by default, so this won't hide anything you
+already have. Going forward, decommissioning an asset (from its detail
+view in the dashboard) sets this to unchecked, which removes it from
+the live register without deleting its history — past work orders and
+certificates tied to it stay valid and referenceable.
+
+## Step 1e — What's new: Add/Decommission Assets, Staff Reporting, Certificates
+
+Three real workflows now live on top of everything above:
+
+**Adding a new asset** (Asset Register tab → "+ Add Asset") creates a
+real record in Airtable — and genuinely rejects a duplicate Asset ID
+rather than silently allowing one. Use this when onboarding a
+replacement unit.
+
+**Decommissioning an asset** (open any asset's detail view → "Decommission")
+soft-deletes it — it disappears from the active register, but the
+record itself isn't destroyed. This matters because its maintenance
+history and any certificates generated for it stay valid.
+
+**Staff breakdown reporting** — a separate, no-login page at
+`/report.html`, meant for people outside the technical team (ward
+staff, procurement, anyone). They enter the Asset ID (or arrive via a
+link with `?asset=FP-002` already filled in — useful later if you add
+QR codes to equipment), their name, and what's wrong. This creates a
+real Work Order and sends the same email/SMS alert as an automated
+detection, with the reporter's name attached for accountability.
+Because it's meant to be usable by literally anyone in the building,
+this page intentionally does **not** require the engineer's login —
+accountability comes from capturing who reported it, not from
+restricting who's allowed to.
+
+**Certificates of Maintenance** — once a Work Order is marked
+"Completed" in the Work Orders tab, a "📄 Certificate" button appears
+next to it. This generates a real, GVC-branded PDF-ready certificate
+showing the asset, what was done, and the actual date it was
+completed (not the date someone happened to print it) — the kind of
+document medical/facilities staff can reference to confirm an item was
+properly maintained.
 
 ## Step 2 — Resend, Beem Africa, GitHub, Vercel
 
