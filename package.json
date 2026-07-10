@@ -1,0 +1,9 @@
+{
+  "name": "gvc-fam-automation",
+  "version": "1.0.0",
+  "description": "GVC Facility Asset Manager - automated maintenance alert system (email + SMS)",
+  "private": true,
+  "engines": {
+    "node": ">=18.x"
+  }
+}
