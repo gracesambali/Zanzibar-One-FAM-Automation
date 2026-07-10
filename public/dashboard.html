@@ -472,7 +472,8 @@ function renderAssets() {
   const attn = assets.filter(a=>a.status==="Needs Attention").length;
   const sched = assets.filter(a=>a.status==="Scheduled Maintenance").length;
 
-  let html = `<div class="summary-grid">
+  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button></div>`;
+  html += `<div class="summary-grid">
     <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Scheduled Maintenance</div></div>
@@ -520,7 +521,7 @@ function showDetail(idx) {
   const eol = parseInt(a.installDate.split("-")[0]) + a.lifespan;
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system} · ${a.klass}</div></div>
-  <div style="display:flex;gap:8px;align-items:center"><button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+  <div style="display:flex;gap:8px;align-items:center"><button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button><button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
   <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span></div></div>
   <div class="detail-grid">`;
   [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService]].forEach(([l,v])=>{
@@ -668,6 +669,8 @@ function renderLevelView() {
   document.getElementById('view-levelview').innerHTML = html;
 }
 
+let lastWorkOrders = [];
+
 async function renderWorkOrders() {
   const container = document.getElementById('view-workorders');
   container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
@@ -678,6 +681,7 @@ async function renderWorkOrders() {
     if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
     const data = await resp.json();
     const orders = data.workOrders || [];
+    lastWorkOrders = orders; // cache for generateCertificate() to reference
 
     const open = orders.filter(o => o.status === 'Open').length;
     const inProgress = orders.filter(o => o.status === 'In Progress').length;
@@ -702,6 +706,7 @@ async function renderWorkOrders() {
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
+            ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
             <select onchange="updateWorkOrderStatus('${o.id}', this.value)" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
               <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
@@ -731,6 +736,64 @@ async function updateWorkOrderStatus(recordId, status) {
   } catch (err) {
     alert('Could not update work order: ' + err.message);
   }
+}
+
+function generateCertificate(recordId) {
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  if (!wo) { alert('Work order not found — try refreshing the tab.'); return; }
+
+  // Use the REAL date the work was marked complete. Older work orders
+  // from before this feature existed won't have one — flag that
+  // honestly rather than guessing at a date.
+  const completedDate = wo.completedDate
+    ? new Date(wo.completedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : 'Not recorded — completed before certificate tracking was enabled';
+
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><head><title>Certificate of Maintenance — ${wo.assetName}</title>
+    <style>
+      body { font-family: Georgia, 'Times New Roman', serif; padding: 50px; color:#1A1A2E; }
+      .border { border: 3px double #1A3566; padding: 40px; max-width: 700px; margin: 0 auto; }
+      .header { text-align:center; margin-bottom: 30px; }
+      .logo { width:70px; height:70px; border-radius:50%; margin: 0 auto 12px; display:block; }
+      .title { font-size:24px; color:#1A3566; letter-spacing:1px; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; font-style:italic; }
+      .divider { border-top: 1px solid #E2E6ED; margin: 24px 0; }
+      .field-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px dotted #D1D5DB; font-size:14px; }
+      .field-label { color:#6B7280; }
+      .field-value { font-weight:600; color:#1A1A2E; }
+      .notes-box { margin-top:20px; padding:16px; background:#F8FAFC; border-radius:8px; font-size:13px; line-height:1.7; }
+      .signoff { display:flex; justify-content:space-between; margin-top:50px; font-size:12px; }
+      .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="border">
+        <div class="header">
+          <img class="logo" src="/logo.png" alt="GVC">
+          <div class="title">Certificate of Maintenance</div>
+          <div class="subtitle">${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel}</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-row"><span class="field-label">Asset</span><span class="field-value">${wo.assetName}</span></div>
+        <div class="field-row"><span class="field-label">Asset ID</span><span class="field-value">${wo.assetId}</span></div>
+        <div class="field-row"><span class="field-label">System</span><span class="field-value">${wo.system}</span></div>
+        <div class="field-row"><span class="field-label">Location</span><span class="field-value">${wo.location}</span></div>
+        <div class="field-row"><span class="field-label">Work Order</span><span class="field-value">${wo.woId}</span></div>
+        <div class="field-row"><span class="field-label">Date Maintained</span><span class="field-value">${completedDate}</span></div>
+        <div class="notes-box"><strong>Work Performed:</strong><br>${wo.notes || 'No additional notes recorded for this work order.'}</div>
+        <div class="signoff">
+          <div class="sig-line">Technician Signature</div>
+          <div class="sig-line">Date</div>
+        </div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
 }
 
 // Init — load live data from Airtable before rendering anything
@@ -871,6 +934,117 @@ async function generateMonthlyReport() {
     win.focus();
   } catch (err) {
     alert('Could not generate report: ' + err.message);
+  }
+}
+
+function openAddAssetForm() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addAssetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px;max-height:90vh;overflow-y:auto">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Add New Asset</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Onboarding a replacement? Decommission the old unit first from its detail view, then add the new one here.</div>
+      <div id="addAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset ID *</label>
+      <input id="na_id" placeholder="e.g. FCU-081" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
+      <input id="na_name" placeholder="e.g. Fan Coil Unit" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
+      <select id="na_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location</label>
+      <input id="na_location" placeholder="e.g. Level 4 — Ward Corridor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
+      <input id="na_manufacturer" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
+      <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+        <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+      </select>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeAddAssetForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="na_submit" onclick="submitNewAsset()" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Add Asset</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function closeAddAssetForm() {
+  const overlay = document.getElementById('addAssetOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function submitNewAsset() {
+  const id = document.getElementById('na_id').value.trim();
+  const name = document.getElementById('na_name').value.trim();
+  const errorBox = document.getElementById('addAssetError');
+  const btn = document.getElementById('na_submit');
+
+  if (!id || !name) {
+    errorBox.textContent = 'Asset ID and Name are required.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  errorBox.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id, name,
+        system: document.getElementById('na_system').value,
+        location: document.getElementById('na_location').value.trim(),
+        manufacturer: document.getElementById('na_manufacturer').value.trim(),
+        model: document.getElementById('na_model').value.trim(),
+        criticality: document.getElementById('na_criticality').value,
+      }),
+    });
+    const data = await resp.json();
+
+    if (resp.status === 409) {
+      // Duplicate Asset ID — this is the real enforcement in action
+      errorBox.textContent = data.error;
+      errorBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Add Asset';
+      return;
+    }
+    if (!resp.ok) throw new Error(data.error || 'Failed to add asset');
+
+    closeAddAssetForm();
+    loadAssetsAndInit(); // refresh live data so the new asset appears immediately
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Add Asset';
+  }
+}
+
+async function decommissionAsset(recordId, assetName) {
+  const reason = prompt(`Decommissioning "${assetName}". Optional reason (e.g. "replaced before end of lifecycle"):`);
+  if (reason === null) return; // cancelled
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, reason }),
+    });
+    if (!resp.ok) throw new Error('Failed to decommission asset');
+    alert('Asset decommissioned. Its history stays intact, but it no longer appears in the active register.');
+    renderAssets();
+    loadAssetsAndInit();
+  } catch (err) {
+    alert('Error: ' + err.message);
   }
 }
 
