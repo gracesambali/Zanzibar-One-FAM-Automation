@@ -2,17 +2,24 @@
 //
 // Public demo tool (protected by DEMO_TRIGGER_KEY, not a full login —
 // this needs to work live in front of a prospect without anyone
-// needing an account). You provide a real Asset ID and any date, and
-// this:
-//   1. Sets that asset's REAL "Next Service Due" to the date you give
-//   2. Runs the exact same production logic as the live system
-//      (webhook-trigger.js / check-maintenance.js) — same 7-day
-//      initial window, same 5-day reminder cadence, same dedup rules
+// needing an account).
 //
-// This is not a simplified demo shortcut — what a prospect sees here
-// is genuinely how the real system behaves, because it's the same
-// code path, just triggered manually with a key instead of Airtable's
-// automation or the daily cron.
+// How it actually works: you give a real Asset ID (its real due date
+// in Airtable is NEVER touched) and a "test date" — a stand-in for
+// "today." This checks what the real system would do if today were
+// that date, comparing it against the asset's real, unmodified due
+// date. Nothing in Airtable's schedule changes; this is a read-only
+// simulation of the real comparison logic.
+//
+//   - test date is more than 7 days before the real due date → outside
+//     the alert window, nothing fires (matches real production rules)
+//   - test date is 4–7 days before the real due date → UPCOMING
+//   - test date is 0–3 days before the real due date → URGENT
+//   - test date is AFTER the real due date → OVERDUE
+//
+// A real email/SMS/Work Order still fires when the simulated check
+// says it should — this proves the real pipeline works, it just
+// doesn't corrupt the asset's actual schedule to do it.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
@@ -25,39 +32,41 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { key, assetId, date } = req.body || {};
+  const { key, assetId, testDate } = req.body || {};
 
   if (key !== process.env.DEMO_TRIGGER_KEY) {
     return res.status(401).json({ error: "Incorrect demo key" });
   }
-  if (!assetId || !date) {
-    return res.status(400).json({ error: "Asset ID and date are both required" });
+  if (!assetId || !testDate) {
+    return res.status(400).json({ error: "Asset ID and a test date are both required" });
   }
 
   try {
     const record = await fetchRecordByAssetId(assetId);
     if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
-    // Set the REAL due date — this is genuinely changing the asset's
-    // schedule, not simulating it. That's intentional: it makes the
-    // demo real, not staged.
-    await setRealDueDate(record.id, date);
-    const updated = await fetchRecordByAssetId(assetId);
-    const f = updated.fields;
+    const f = record.fields;
+    const realDueDate = f["Next Service Due"];
+    if (!realDueDate) {
+      return res.status(200).json({ triggered: false, reason: `"${assetId}" has no due date set in Airtable — nothing to test against.` });
+    }
 
-    const daysUntil = daysBetween(new Date(), new Date(date));
+    // The real due date is READ, never written. daysUntil is computed
+    // as if "testDate" were today.
+    const daysUntil = daysBetween(new Date(testDate), new Date(realDueDate));
     const existingWO = await findOpenWorkOrder(f["Asset ID"] || "");
 
     if (!existingWO) {
       if (daysUntil > ALERT_WINDOW_DAYS) {
         return res.status(200).json({
           triggered: false,
-          reason: `That date is ${daysUntil} days out — outside the 7-day alert window, so no notification fires yet. Try a closer date to see it trigger.`,
+          reason: `As of ${testDate}, this asset's real due date (${realDueDate}) is ${daysUntil} days away — outside the 7-day window, so no alert fires yet. Try a test date closer to ${realDueDate} to see it trigger.`,
           daysUntil,
+          realDueDate,
         });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${date}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${realDueDate}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"} (simulated as of ${testDate}).`;
 
       const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       const [logResult, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
@@ -67,6 +76,7 @@ export default async function handler(req, res) {
         type: "initial",
         urgency,
         daysUntil,
+        realDueDate,
         message,
         email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
         sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
@@ -86,7 +96,7 @@ export default async function handler(req, res) {
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${date}.`;
+      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${realDueDate}.`;
 
       const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
@@ -95,6 +105,7 @@ export default async function handler(req, res) {
         triggered: true,
         type: "reminder",
         urgency,
+        realDueDate,
         message,
         email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
         sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
@@ -120,19 +131,6 @@ async function fetchRecordByAssetId(assetId) {
   return data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
-async function setRealDueDate(recordId, dueDateStr) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Next Service Due": dueDateStr } }),
-  });
-}
-
 async function logAlert(f, urgency, message) {
   const base = process.env.AIRTABLE_BASE_ID;
   const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
@@ -150,7 +148,7 @@ async function logAlert(f, urgency, message) {
         "System": f["System"] || "",
         "Location": f["Location"] || "",
         "Urgency": urgency,
-        "Channel": "Email + SMS (public demo trigger)",
+        "Channel": "Email + SMS (public demo trigger — simulated date, real due date untouched)",
         "Message": message,
       },
     }),
