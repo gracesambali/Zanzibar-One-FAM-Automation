@@ -586,14 +586,14 @@ function renderMaintenance() {
   html += `</div>`;
 
   // Work Order Flow — conceptual, not yet functional
-  html += `<div class="dash-panel" style="margin-top:14px"><div class="dash-panel-title">Work Order Communication Flow — Concept</div>
-    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6">This is how an alert would move from detection to resolution and confirmation. Channel mix (SMS + Email) is proposed to keep setup simple — final routing and cadence to be confirmed during pilot.</div>
+  html += `<div class="dash-panel" style="margin-top:14px"><div class="dash-panel-title">Work Order Communication Flow — Live</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6">This is how an alert actually moves from detection to resolution — this is the real, live behavior of the system, not a proposal.</div>
     <div class="wo-flow">
-      <div class="wo-flow-step"><div class="wo-flow-num">1</div><div class="wo-flow-body"><div class="wo-flow-title">Scheduled maintenance due in 14 days</div><div class="wo-flow-desc">System detects upcoming due date and sends the first alert to the assigned FM contact.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">2</div><div class="wo-flow-body"><div class="wo-flow-title">Reminder — 7 days out</div><div class="wo-flow-desc">If no action logged, a reminder goes out. Cadence from here: every 3 days, or weekly — to be set per system criticality.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">3</div><div class="wo-flow-body"><div class="wo-flow-title">Overdue escalation</div><div class="wo-flow-desc">Deadline passed with no update. Escalation notice sent to FM manager, asset flagged "Needs Attention" on the dashboard.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">4</div><div class="wo-flow-body"><div class="wo-flow-title">Technician completes the work</div><div class="wo-flow-desc">Technician marks the work order complete in the system, with notes if needed.</div><span class="wo-flow-channel chan-system">System Update</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">5</div><div class="wo-flow-body"><div class="wo-flow-title">Confirmation sent back</div><div class="wo-flow-desc">Requester and FM manager receive confirmation that the task is closed. Next due date is recalculated automatically.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">1</div><div class="wo-flow-body"><div class="wo-flow-title">Maintenance due within 7 days (or overdue)</div><div class="wo-flow-desc">System detects the due date, sends the first real alert, and opens a Work Order automatically.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">2</div><div class="wo-flow-body"><div class="wo-flow-title">Reminder every 5 days while still open</div><div class="wo-flow-desc">If the Work Order hasn't been marked Completed, a reminder repeats every 5 days — referencing the same open Work Order, not creating a new one each time.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">3</div><div class="wo-flow-body"><div class="wo-flow-title">Staff can also report an issue directly</div><div class="wo-flow-desc">Anyone can report a breakdown from the public homepage (no login) — this opens a Work Order the same way, tagged REPORTED, with the reporter's name attached.</div><span class="wo-flow-channel chan-system">No Login Needed</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">4</div><div class="wo-flow-body"><div class="wo-flow-title">Technician updates status in the dashboard</div><div class="wo-flow-desc">Open → In Progress → Completed, updated directly from the Work Orders tab.</div><span class="wo-flow-channel chan-system">System Update</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">5</div><div class="wo-flow-body"><div class="wo-flow-title">Marking Completed stops the reminders</div><div class="wo-flow-desc">Once Status is Completed, no further reminders fire for that issue, and a real Certificate of Maintenance becomes available to generate.</div><span class="wo-flow-channel chan-system">Automatic</span></div></div>
     </div>
   </div>`;
 
@@ -687,7 +687,18 @@ async function renderWorkOrders() {
     const inProgress = orders.filter(o => o.status === 'In Progress').length;
     const completed = orders.filter(o => o.status === 'Completed').length;
 
-    let html = `<div class="summary-grid">
+    let html = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="testAssetId" value="TEST-001" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:120px">
+        <button onclick="runRealTest('OVERDUE')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test Overdue</button>
+        <button onclick="runRealTest('URGENT')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--amber);color:#fff;cursor:pointer">Test Urgent</button>
+        <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
+      </div>
+      <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
+    </div>
+    <div class="summary-grid">
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
@@ -735,6 +746,38 @@ async function updateWorkOrderStatus(recordId, status) {
     renderWorkOrders(); // refresh the summary counts
   } catch (err) {
     alert('Could not update work order: ' + err.message);
+  }
+}
+
+async function runRealTest(urgency) {
+  const assetId = document.getElementById('testAssetId').value.trim();
+  const resultBox = document.getElementById('testResult');
+  if (!assetId) { alert('Enter a test Asset ID first.'); return; }
+
+  resultBox.style.display = 'block';
+  resultBox.style.color = 'var(--muted)';
+  resultBox.textContent = `Running real ${urgency} test on ${assetId}…`;
+
+  try {
+    const resp = await fetch('/api/run-real-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId, urgency }),
+    });
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    const data = await resp.json();
+
+    if (resp.ok && data.success) {
+      resultBox.style.color = 'var(--green)';
+      resultBox.innerHTML = `✓ Due date set to ${data.dueDateSet} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
+      renderWorkOrders(); // refresh so the new/updated work order shows immediately
+    } else {
+      resultBox.style.color = 'var(--red)';
+      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
+    }
+  } catch (err) {
+    resultBox.style.color = 'var(--red)';
+    resultBox.textContent = '✗ Network error: ' + err.message;
   }
 }
 

@@ -14,13 +14,11 @@
   h1 { font-size:17px; color:#1A3566; }
   .sub { font-size:12.5px; color:#6B7280; margin-top:2px; margin-bottom:8px; }
   label { font-size:12px; font-weight:600; color:#1A3566; display:block; margin-bottom:6px; margin-top:16px; }
-  input, textarea { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; font-family:inherit; }
+  input, textarea, select { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; font-family:inherit; }
   textarea { resize:vertical; min-height:80px; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   button { width:100%; margin-top:22px; padding:14px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.6; cursor:wait; }
-  .asset-confirm { margin-top:6px; padding:10px 12px; border-radius:8px; font-size:12.5px; display:none; }
-  .asset-confirm.found { background:#E8F8EF; color:#065F46; display:block; }
-  .asset-confirm.notfound { background:#FDE8E6; color:#991B1B; display:block; }
   .result { margin-top:18px; padding:14px; border-radius:10px; font-size:13.5px; line-height:1.6; display:none; }
   .result.show { display:block; }
   .result.success { background:#E8F8EF; color:#065F46; }
@@ -36,20 +34,27 @@
         <h1>Report a Breakdown</h1>
       </div>
     </div>
-    <div class="sub">No login needed — the technical team is notified the moment you submit.</div>
+    <div class="sub">No login needed — the maintenance team is notified the moment you submit.</div>
 
     <form id="reportForm">
-      <label for="assetId">Asset ID</label>
-      <input id="assetId" type="text" placeholder="e.g. FP-002 — check the tag on the equipment" required>
-      <div id="assetConfirm" class="asset-confirm"></div>
-
-      <label for="reporterName">Your Name</label>
+      <label for="reporterName">Your Name *</label>
       <input id="reporterName" type="text" required>
 
-      <label for="reporterRole">Your Role / Department (optional)</label>
+      <label for="reporterRole">Your Role / Department</label>
       <input id="reporterRole" type="text" placeholder="e.g. Ward Nurse, Procurement">
 
-      <label for="description">What's wrong?</label>
+      <div class="row2">
+        <div>
+          <label for="floor">Floor *</label>
+          <input id="floor" type="text" placeholder="e.g. Level 3" required>
+        </div>
+        <div>
+          <label for="roomZone">Room / Zone</label>
+          <input id="roomZone" type="text" placeholder="e.g. Ward B, Room 12">
+        </div>
+      </div>
+
+      <label for="description">What's wrong? *</label>
       <textarea id="description" placeholder="Describe what you're seeing — noise, leak, not working, etc." required></textarea>
 
       <button type="submit" id="submitBtn">Submit Report</button>
@@ -61,49 +66,15 @@
   </div>
 
 <script>
-// If a QR code or link included ?asset=FP-002, pre-fill and lock it in
-const params = new URLSearchParams(window.location.search);
-const prefilledAsset = params.get('asset');
-if (prefilledAsset) {
-  document.getElementById('assetId').value = prefilledAsset;
-  checkAsset(prefilledAsset);
-}
-
-let assetConfirmed = false;
-
-document.getElementById('assetId').addEventListener('blur', (e) => {
-  const val = e.target.value.trim();
-  if (val) checkAsset(val);
-});
-
-async function checkAsset(assetId) {
-  const confirmBox = document.getElementById('assetConfirm');
-  confirmBox.className = 'asset-confirm';
-  try {
-    const resp = await fetch('/api/report-issue?assetId=' + encodeURIComponent(assetId));
-    const data = await resp.json();
-    if (resp.ok) {
-      confirmBox.textContent = `✓ ${data.name} — ${data.location}`;
-      confirmBox.className = 'asset-confirm found';
-      assetConfirmed = true;
-    } else {
-      confirmBox.textContent = '✗ ' + (data.error || 'Asset not found — check the ID and try again');
-      confirmBox.className = 'asset-confirm notfound';
-      assetConfirmed = false;
-    }
-  } catch (err) {
-    assetConfirmed = false;
-  }
-}
-
 document.getElementById('reportForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
   const result = document.getElementById('result');
 
-  const assetId = document.getElementById('assetId').value.trim();
   const reporterName = document.getElementById('reporterName').value.trim();
   const reporterRole = document.getElementById('reporterRole').value.trim();
+  const floor = document.getElementById('floor').value.trim();
+  const roomZone = document.getElementById('roomZone').value.trim();
   const description = document.getElementById('description').value.trim();
 
   btn.disabled = true;
@@ -114,15 +85,14 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/report-issue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assetId, reporterName, reporterRole, description }),
+      body: JSON.stringify({ reporterName, reporterRole, floor, roomZone, description }),
     });
     const data = await resp.json();
 
     if (resp.ok && data.success) {
       result.className = 'result success show';
-      result.textContent = data.message || 'Report submitted. The technical team has been notified.';
+      result.textContent = data.message || 'Report submitted. The maintenance team has been notified.';
       document.getElementById('reportForm').reset();
-      document.getElementById('assetConfirm').className = 'asset-confirm';
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';
