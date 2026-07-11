@@ -1,100 +1,53 @@
 // api/report-issue.js
 //
 // Lets non-technical staff (ward staff, procurement, anyone) report a
-// broken asset directly — no login required, since the whole point is
-// that people outside the technical team need to use this easily.
-// Accountability comes from capturing who reported it, not from
-// gatekeeping who's allowed to report.
+// breakdown directly — no login required, no Asset ID needed. Most
+// staff won't know an asset's ID, so this captures WHERE the problem
+// is (floor + room/zone) and WHAT'S wrong instead, alongside who's
+// reporting it (for accountability).
 //
-// This creates a real Work Order (Status: Open, Urgency: REPORTED),
-// marks the asset "Needs Attention", and sends the same email/SMS
+// This creates a real Work Order (Status: Open, Urgency: REPORTED)
+// not tied to a specific asset record, and sends the same email/SMS
 // alert as an automated detection — so the engineer and technician
 // hear about it exactly the same way they would a system-generated
-// alert, just with the reporter's name attached.
+// alert, with the reporter's name and exact location attached.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 
 export default async function handler(req, res) {
-  if (req.method === "GET") {
-    // Minimal public lookup — just enough to confirm "is this the
-    // right asset" before submitting, without exposing the full
-    // register to someone who isn't logged in.
-    const assetId = req.query.assetId;
-    if (!assetId) return res.status(400).json({ error: "assetId required" });
-    try {
-      const asset = await findAsset(assetId);
-      if (!asset) return res.status(404).json({ error: "Asset not found" });
-      const f = asset.fields;
-      return res.status(200).json({ id: f["Asset ID"], name: f["Name"], location: f["Location"] });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  }
-
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { assetId, reporterName, reporterRole, description } = req.body || {};
+  const { reporterName, reporterRole, floor, roomZone, description } = req.body || {};
 
-  if (!assetId || !reporterName || !description) {
-    return res.status(400).json({ error: "Asset, your name, and a description of the issue are all required" });
+  if (!reporterName || !floor || !description) {
+    return res.status(400).json({ error: "Your name, the floor, and a description are required" });
   }
 
   try {
-    const asset = await findAsset(assetId);
-    if (!asset) {
-      return res.status(404).json({ error: "Asset not found. Check the Asset ID and try again." });
-    }
+    const location = roomZone ? `${floor} — ${roomZone}` : floor;
+    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
 
-    const f = asset.fields;
-    const message = `REPORTED ISSUE — ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
+    const woId = await createReportedWorkOrder(reporterName, reporterRole, floor, roomZone, description);
 
     await Promise.all([
-      markNeedsAttention(asset.id),
-      createReportedWorkOrder(f, reporterName, reporterRole, description),
       sendEmail(message),
       sendSms(message),
     ]);
 
-    return res.status(200).json({ success: true, message: "Report submitted. The technical team has been notified." });
+    return res.status(200).json({ success: true, message: "Report submitted. The technical team has been notified.", woId });
   } catch (err) {
     console.error("report-issue error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
 
-async function findAsset(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) throw new Error(`Airtable lookup failed: ${resp.status}`);
-  const data = await resp.json();
-  return data.records && data.records.length > 0 ? data.records[0] : null;
-}
-
-async function markNeedsAttention(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Status": "Needs Attention" } }),
-  });
-}
-
-async function createReportedWorkOrder(f, reporterName, reporterRole, description) {
+async function createReportedWorkOrder(reporterName, reporterRole, floor, roomZone, description) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
+  const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
@@ -105,18 +58,24 @@ async function createReportedWorkOrder(f, reporterName, reporterRole, descriptio
     body: JSON.stringify({
       fields: {
         "WO ID": woId,
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Asset ID": "", // not tied to a specific asset — staff won't know this
+        "Asset Name": "Staff-Reported Issue (no specific asset)",
+        "System": "",
+        "Location": location,
         "Status": "Open",
         "Urgency": "REPORTED",
         "Created": new Date().toISOString(),
-        "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: ${description}`,
+        "Last Reminder Sent": new Date().toISOString().split("T")[0],
+        "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
       },
     }),
   });
-  if (!resp.ok) console.error("Work order creation failed:", await resp.text());
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error("Work order creation failed:", errText);
+    throw new Error("Could not create the work order — please try again or contact the technical team directly.");
+  }
+  return woId;
 }
 
 async function sendEmail(message) {

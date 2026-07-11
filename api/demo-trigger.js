@@ -1,17 +1,18 @@
-// api/webhook-trigger.js
+// api/demo-trigger.js
 //
-// This is the "live connection" — Airtable calls THIS endpoint the
-// instant a record is edited (via an Airtable Automation you configure,
-// see README). No waiting for the daily cron.
+// Public demo tool (protected by DEMO_TRIGGER_KEY, not a full login —
+// this needs to work live in front of a prospect without anyone
+// needing an account). You provide a real Asset ID and any date, and
+// this:
+//   1. Sets that asset's REAL "Next Service Due" to the date you give
+//   2. Runs the exact same production logic as the live system
+//      (webhook-trigger.js / check-maintenance.js) — same 7-day
+//      initial window, same 5-day reminder cadence, same dedup rules
 //
-// Follows the SAME cadence rules as the daily cron (check-maintenance.js):
-//   - No open Work Order yet: alert fires if within 7 days of due date
-//   - Work Order already open: only alerts again if 5+ days have
-//     passed since the last reminder — editing a date twice in one
-//     day won't spam a duplicate alert.
-//
-// This does NOT replace the daily cron — that stays as a safety net
-// in case a webhook call ever fails to fire.
+// This is not a simplified demo shortcut — what a prospect sees here
+// is genuinely how the real system behaves, because it's the same
+// code path, just triggered manually with a key instead of Airtable's
+// automation or the daily cron.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
@@ -20,41 +21,58 @@ const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
 
 export default async function handler(req, res) {
-  if (req.query.secret !== process.env.WEBHOOK_SECRET) {
-    return res.status(401).json({ error: "Unauthorized" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const recordId = req.body?.recordId || req.query.recordId;
-  const assetId = req.query.assetId;
+  const { key, assetId, date } = req.body || {};
 
-  if (!recordId && !assetId) {
-    return res.status(400).json({ error: "Missing recordId or assetId" });
+  if (key !== process.env.DEMO_TRIGGER_KEY) {
+    return res.status(401).json({ error: "Incorrect demo key" });
+  }
+  if (!assetId || !date) {
+    return res.status(400).json({ error: "Asset ID and date are both required" });
   }
 
   try {
-    const record = recordId ? await fetchRecord(recordId) : await fetchRecordByAssetId(assetId);
-    if (!record) return res.status(404).json({ error: "Asset not found" });
+    const record = await fetchRecordByAssetId(assetId);
+    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
-    const f = record.fields;
-    const dueDateRaw = f["Next Service Due"];
-    if (!dueDateRaw) {
-      return res.status(200).json({ triggered: false, reason: "No due date set" });
-    }
+    // Set the REAL due date — this is genuinely changing the asset's
+    // schedule, not simulating it. That's intentional: it makes the
+    // demo real, not staged.
+    await setRealDueDate(record.id, date);
+    const updated = await fetchRecordByAssetId(assetId);
+    const f = updated.fields;
 
-    const daysUntil = daysBetween(new Date(), new Date(dueDateRaw));
+    const daysUntil = daysBetween(new Date(), new Date(date));
     const existingWO = await findOpenWorkOrder(f["Asset ID"] || "");
 
     if (!existingWO) {
       if (daysUntil > ALERT_WINDOW_DAYS) {
-        return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
+        return res.status(200).json({
+          triggered: false,
+          reason: `That date is ${daysUntil} days out — outside the 7-day alert window, so no notification fires yet. Try a closer date to see it trigger.`,
+          daysUntil,
+        });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${date}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
-      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
-      const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
+      const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+      const [logResult, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
 
-      return res.status(200).json({ triggered: true, type: "initial", urgency, asset: f["Asset ID"], message, workOrder: woId });
+      return res.status(200).json({
+        triggered: true,
+        type: "initial",
+        urgency,
+        daysUntil,
+        message,
+        email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
+        sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
+        alertLogWritten: logResult,
+        workOrder: woId,
+      });
     } else {
       const lastReminder = existingWO.fields["Last Reminder Sent"];
       const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
@@ -62,33 +80,31 @@ export default async function handler(req, res) {
       if (daysSinceReminder < REMINDER_INTERVAL_DAYS) {
         return res.status(200).json({
           triggered: false,
-          reason: `Reminder already sent ${daysSinceReminder} day(s) ago — next one in ${REMINDER_INTERVAL_DAYS - daysSinceReminder} day(s)`,
+          reason: `This asset already has an open Work Order (${existingWO.fields["WO ID"]}), last reminded ${daysSinceReminder} day(s) ago. Next reminder in ${REMINDER_INTERVAL_DAYS - daysSinceReminder} day(s) — this is the real reminder cadence working as intended.`,
           existingWorkOrder: existingWO.fields["WO ID"],
         });
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateRaw}.`;
+      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${date}.`;
 
-      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+      const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
 
-      return res.status(200).json({ triggered: true, type: "reminder", urgency, asset: f["Asset ID"], message, workOrder: existingWO.fields["WO ID"] });
+      return res.status(200).json({
+        triggered: true,
+        type: "reminder",
+        urgency,
+        message,
+        email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
+        sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
+        workOrder: existingWO.fields["WO ID"],
+      });
     }
   } catch (err) {
-    console.error("webhook-trigger error:", err);
+    console.error("demo-trigger error:", err);
     return res.status(500).json({ error: err.message });
   }
-}
-
-async function fetchRecord(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  return resp.json();
 }
 
 async function fetchRecordByAssetId(assetId) {
@@ -104,10 +120,23 @@ async function fetchRecordByAssetId(assetId) {
   return data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
+async function setRealDueDate(recordId, dueDateStr) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: { "Next Service Due": dueDateStr } }),
+  });
+}
+
 async function logAlert(f, urgency, message) {
   const base = process.env.AIRTABLE_BASE_ID;
   const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
+  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
@@ -121,18 +150,19 @@ async function logAlert(f, urgency, message) {
         "System": f["System"] || "",
         "Location": f["Location"] || "",
         "Urgency": urgency,
-        "Channel": "Email + SMS (instant webhook)",
+        "Channel": "Email + SMS (public demo trigger)",
         "Message": message,
       },
     }),
   });
+  if (!resp.ok) return `FAILED: ${await resp.text()}`;
+  return true;
 }
 
 async function createWorkOrder(f, urgency) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
-
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
     headers: {
@@ -149,15 +179,12 @@ async function createWorkOrder(f, urgency) {
         "Status": "Open",
         "Urgency": urgency,
         "Created": new Date().toISOString(),
-        "Last Reminder Sent": todayString(),
+        "Last Reminder Sent": new Date().toISOString().split("T")[0],
         "Notes": "",
       },
     }),
   });
-  if (!resp.ok) {
-    console.error("Work order creation failed:", await resp.text());
-    return null;
-  }
+  if (!resp.ok) return null;
   return woId;
 }
 
@@ -170,15 +197,14 @@ async function updateReminderTimestamp(recordId) {
       Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ fields: { "Last Reminder Sent": todayString() } }),
+    body: JSON.stringify({ fields: { "Last Reminder Sent": new Date().toISOString().split("T")[0] } }),
   });
 }
 
 async function sendEmail(f, urgency, message) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
-  if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
-
-  const resp = await fetch("https://api.resend.com/emails", {
+  if (toList.length === 0) return { ok: false, text: async () => "No recipients configured" };
+  return fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -188,19 +214,17 @@ async function sendEmail(f, urgency, message) {
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.</p>`,
-      text: `${message}\n\nSent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.`,
+      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
+      text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
     }),
   });
-  if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
-
+  if (phoneList.length === 0) return { ok: false, text: async () => "No recipients configured" };
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  const resp = await fetch("https://apisms.beem.africa/v1/send", {
+  return fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -214,15 +238,10 @@ async function sendSms(message) {
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
 }
 
 function daysBetween(from, to) {
   const a = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   const b = new Date(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((b - a) / 86400000);
-}
-
-function todayString() {
-  return new Date().toISOString().split("T")[0];
 }

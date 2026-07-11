@@ -2,20 +2,24 @@
 //
 // GVC Facility Asset Manager — Automated Maintenance Alert Engine
 // ------------------------------------------------------------------
-// Runs daily (via Vercel Cron, see vercel.json). For every asset in the
-// Airtable base whose "Next Service Due" date falls within the alert
-// window, this sends:
-//   1. An email via Resend
-//   2. An SMS via Beem Africa
-// and stamps the record so it isn't re-alerted on the same day.
+// Runs daily (via Vercel Cron, see vercel.json).
+//
+// Notification cadence:
+//   - An asset with no open Work Order yet: gets its FIRST alert once
+//     it's within 7 days of its due date (or already overdue).
+//   - Once a Work Order is open: a REMINDER fires every 5 days until
+//     someone marks it Completed — not daily. This keeps the alerts
+//     meaningful instead of spamming the same unresolved issue.
 //
 // Handles ALL records in the base, however many there are — Airtable
 // caps each request at 100, so this pages through with the offset
 // token until everything has been checked.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+import { findOpenWorkOrder } from "../lib/workorders.js";
 
-const ALERT_WINDOW_DAYS = 14; // start alerting this many days before due date
+const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
+const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
 
 export default async function handler(req, res) {
   // ---- Protect this endpoint ----
@@ -34,30 +38,43 @@ export default async function handler(req, res) {
       const dueDateRaw = f["Next Service Due"];
       if (!dueDateRaw) continue;
 
+      const assetId = f["Asset ID"] || "";
       const daysUntil = daysBetween(new Date(), new Date(dueDateRaw));
-      const alreadyAlertedToday = f["Last Alert Sent"] === todayString();
+      const existingWO = await findOpenWorkOrder(assetId);
 
-      if (daysUntil <= ALERT_WINDOW_DAYS && !alreadyAlertedToday) {
-        const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-        const message = buildMessage(f, daysUntil, urgency);
+      if (!existingWO) {
+        // No open issue yet for this asset — check if it's time for
+        // the FIRST alert (within the 7-day window, or overdue).
+        if (daysUntil <= ALERT_WINDOW_DAYS) {
+          const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
+          const message = buildMessage(f, daysUntil, urgency, null);
 
-        await Promise.all([
-          sendEmail(f, urgency, message),
-          sendSms(message),
-        ]);
+          await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+          const [logResult, woId] = await Promise.all([
+            logAlert(f, urgency, message, "Initial"),
+            createWorkOrder(f, urgency),
+          ]);
 
-        const [, logResult, woResult] = await Promise.all([
-          markAlerted(record.id),
-          logAlert(f, urgency, message),
-          createWorkOrder(f, urgency),
-        ]);
-        results.push({
-          asset: f["Asset ID"],
-          urgency,
-          alerted: true,
-          alertLogWritten: logResult, // true/false — no longer silent if this fails
-          workOrderCreated: woResult,
-        });
+          results.push({ asset: assetId, urgency, type: "initial", alertLogWritten: logResult, workOrder: woId });
+        }
+      } else {
+        // An issue is already open for this asset — only send a
+        // REMINDER if 5+ days have passed since the last one.
+        const lastReminder = existingWO.fields["Last Reminder Sent"];
+        const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
+
+        if (daysSinceReminder >= REMINDER_INTERVAL_DAYS) {
+          const urgency = existingWO.fields["Urgency"] || "OVERDUE";
+          const message = buildMessage(f, daysUntil, urgency, existingWO.fields["WO ID"]);
+
+          await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+          const [logResult] = await Promise.all([
+            logAlert(f, urgency, message, "Reminder"),
+            updateReminderTimestamp(existingWO.id),
+          ]);
+
+          results.push({ asset: assetId, urgency, type: "reminder", woId: existingWO.fields["WO ID"], alertLogWritten: logResult });
+        }
       }
     }
 
@@ -66,13 +83,13 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, checked: records.length, alerted: results.length, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
-    await sendHeartbeat(null, null, err.message); // let you know it broke, not just silence
+    await sendHeartbeat(null, null, err.message);
     return res.status(500).json({ error: err.message });
   }
 }
 
 // ---------------------------------------------------------------------
-// Airtable — full pagination, same logic as get-assets.js
+// Airtable — full pagination
 // ---------------------------------------------------------------------
 
 async function fetchAllRecords() {
@@ -99,31 +116,11 @@ async function fetchAllRecords() {
   return allRecords;
 }
 
-async function markAlerted(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = `https://api.airtable.com/v0/${base}/${table}/${recordId}`;
-
-  await fetch(url, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Alert Sent": todayString() } }),
-  });
-}
-
-// Writes a permanent row to the "Alert Log" table — this is what makes
-// the Monthly Report real. Unlike "Last Alert Sent" (which overwrites),
-// this keeps a full history of every alert ever sent, so a 30-day
-// summary can actually be generated from real records.
-async function logAlert(f, urgency, message) {
+async function logAlert(f, urgency, message, alertType) {
   const base = process.env.AIRTABLE_BASE_ID;
   const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const url = `https://api.airtable.com/v0/${base}/${logTable}`;
 
-  const resp = await fetch(url, {
+  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
@@ -136,7 +133,7 @@ async function logAlert(f, urgency, message) {
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
         "Location": f["Location"] || "",
-        "Urgency": urgency,
+        "Urgency": `${alertType}: ${urgency}`,
         "Channel": "Email + SMS",
         "Message": message,
       },
@@ -145,23 +142,20 @@ async function logAlert(f, urgency, message) {
   if (!resp.ok) {
     const errorText = await resp.text();
     console.error("Alert log write failed:", errorText);
-    return `FAILED: ${errorText}`; // surfaced in the API response now, not hidden
+    return `FAILED: ${errorText}`;
   }
   return true;
 }
 
-// Creates a real, trackable Work Order — not just a log entry. This is
-// what the engineer/technician actually work from: a record with a
-// status that moves from Open -> In Progress -> Completed, not a
-// message that was sent once and forgotten.
+// Creates a real, trackable Work Order with the reminder-tracking field
+// already set — this is the anchor the 5-day reminder loop checks
+// against going forward.
 async function createWorkOrder(f, urgency) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  const url = `https://api.airtable.com/v0/${base}/${woTable}`;
-
   const woId = `WO-${Date.now()}`;
 
-  const resp = await fetch(url, {
+  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
@@ -177,6 +171,7 @@ async function createWorkOrder(f, urgency) {
         "Status": "Open",
         "Urgency": urgency,
         "Created": new Date().toISOString(),
+        "Last Reminder Sent": todayString(),
         "Notes": "",
       },
     }),
@@ -186,7 +181,22 @@ async function createWorkOrder(f, urgency) {
     console.error("Work order creation failed:", errorText);
     return `FAILED: ${errorText}`;
   }
-  return true;
+  return woId;
+}
+
+// Updates an EXISTING open Work Order's reminder timestamp — this is
+// what drives the 5-day loop, without creating a duplicate record.
+async function updateReminderTimestamp(recordId) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: { "Last Reminder Sent": todayString() } }),
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -245,13 +255,14 @@ async function sendSms(message) {
 // Helpers
 // ---------------------------------------------------------------------
 
-function buildMessage(f, daysUntil, urgency) {
+function buildMessage(f, daysUntil, urgency, existingWoId) {
   const name = f["Name"] || "Asset";
   const assetId = f["Asset ID"] || "";
   const location = f["Location"] || "";
   const due = f["Next Service Due"] || "";
   const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
-  return `[${urgency}] ${name} (${assetId}) at ${location} — service due ${due}. ${timing}.`;
+  const prefix = existingWoId ? `[REMINDER — ${existingWoId} still open] ` : `[${urgency}] `;
+  return `${prefix}${name} (${assetId}) at ${location} — service due ${due}. ${timing}.`;
 }
 
 function daysBetween(from, to) {
@@ -262,13 +273,12 @@ function daysBetween(from, to) {
 
 // ---------------------------------------------------------------------
 // Heartbeat — a daily proof-of-life email to YOU, separate from any
-// client-facing alert. If this stops arriving, something broke — you
-// find out before a client does, instead of after.
+// client-facing alert.
 // ---------------------------------------------------------------------
 
 async function sendHeartbeat(checkedCount, results, errorMessage) {
   const to = process.env.HEARTBEAT_EMAIL || process.env.ALERT_TO_EMAIL;
-  if (!to) return; // no address configured, skip silently rather than fail the whole run
+  if (!to) return;
 
   const isFailure = !!errorMessage;
   const subject = isFailure
@@ -277,7 +287,7 @@ async function sendHeartbeat(checkedCount, results, errorMessage) {
 
   const body = isFailure
     ? `The daily maintenance check FAILED to run today.\n\nError: ${errorMessage}\n\nThis needs attention — client alerts may not have been sent.`
-    : `Daily maintenance check ran successfully.\n\nAssets checked: ${checkedCount}\nAlerts sent: ${results.length}\n${results.length ? "\n" + results.map(r => `- ${r.asset}: ${r.urgency}`).join("\n") : ""}`;
+    : `Daily maintenance check ran successfully.\n\nAssets checked: ${checkedCount}\nAlerts sent: ${results.length}\n${results.length ? "\n" + results.map(r => `- ${r.asset}: ${r.urgency} (${r.type})`).join("\n") : ""}`;
 
   try {
     await fetch("https://api.resend.com/emails", {
