@@ -1,10 +1,15 @@
 // api/login.js
 //
-// Checks the submitted username/password against the credentials set
-// in this deployment's environment variables. On success, sets a
-// signed, HttpOnly session cookie — the browser can't read or tamper
-// with it via JavaScript, and the server verifies its signature on
-// every protected request afterward.
+// Checks the submitted username/password against TWO fixed pairs set
+// in environment variables — enough for today's testing (e.g. one for
+// the engineer, one for a technician), without needing a real user
+// database yet. On success, sets a signed, HttpOnly session cookie.
+//
+// This is intentionally simple for now. When you're ready for real
+// clients to manage their own team (add/remove people without editing
+// environment variables), that's a genuine upgrade — a real Users
+// table with proper password hashing — worth building deliberately
+// when it's actually needed, not before.
 
 import { createSessionToken } from "../lib/auth.js";
 
@@ -19,22 +24,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Username and password required" });
   }
 
-  const validUsername = process.env.ENGINEER_USERNAME;
-  const validPassword = process.env.ENGINEER_PASSWORD;
+  const validPairs = [
+    { u: process.env.ENGINEER_USERNAME, p: process.env.ENGINEER_PASSWORD },
+    { u: process.env.TECHNICIAN_USERNAME, p: process.env.TECHNICIAN_PASSWORD },
+  ].filter(pair => pair.u && pair.p); // ignore any pair that isn't actually configured
 
-  if (!validUsername || !validPassword) {
-    return res.status(500).json({ error: "Login is not configured for this deployment yet" });
-  }
+  const matched = validPairs.find(pair => pair.u === username && pair.p === password);
 
-  if (username !== validUsername || password !== validPassword) {
+  if (!matched) {
     return res.status(401).json({ error: "Incorrect username or password" });
   }
 
   const token = createSessionToken(username);
-
   res.setHeader("Set-Cookie", [
     `gvc_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 60 * 60}`
   ]);
-
   return res.status(200).json({ success: true });
 }
