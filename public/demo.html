@@ -48,16 +48,16 @@
 
     <hr style="border:none;border-top:1px solid #E2E6ED;margin:26px 0;">
 
-    <h1 style="font-size:15px;">Trigger a Real Alert on Any Asset</h1>
-    <div class="sub" style="margin-bottom:16px;">Enter a real Asset ID and any date — this sets that asset's actual due date and runs the real system logic (same 7-day / 5-day cadence as production). Uses the same demo key above.</div>
+    <h1 style="font-size:15px;">Test a Real Alert on Any Asset</h1>
+    <div class="sub" style="margin-bottom:16px;">Pick a real Asset ID — its actual due date in Airtable is never changed. The date below simulates "today" so you can see what the real system would do on that day. Uses the same demo key above.</div>
 
     <label for="rtAssetId">Asset ID</label>
     <input id="rtAssetId" type="text" placeholder="e.g. FP-002">
 
-    <label for="rtDate">Due Date</label>
+    <label for="rtDate">Test Date (simulates "today")</label>
     <input id="rtDate" type="date">
 
-    <button id="rtBtn" onclick="triggerRealAlert()">Set Date & Trigger Real Check</button>
+    <button id="rtBtn" onclick="triggerRealAlert()">Run Real Check</button>
 
     <div id="rtResult" class="result"></div>
 
@@ -112,7 +112,7 @@ async function triggerDemo() {
 async function triggerRealAlert() {
   const key = document.getElementById('key').value.trim();
   const assetId = document.getElementById('rtAssetId').value.trim();
-  const date = document.getElementById('rtDate').value;
+  const testDate = document.getElementById('rtDate').value;
   const btn = document.getElementById('rtBtn');
   const result = document.getElementById('rtResult');
 
@@ -121,34 +121,35 @@ async function triggerRealAlert() {
     result.innerHTML = 'Enter the demo access key above first.';
     return;
   }
-  if (!assetId || !date) {
+  if (!assetId || !testDate) {
     result.className = 'result error show';
-    result.innerHTML = 'Enter both an Asset ID and a date.';
+    result.innerHTML = 'Enter both an Asset ID and a test date.';
     return;
   }
 
   btn.disabled = true;
   btn.textContent = 'Running…';
   result.className = 'result show';
-  result.innerHTML = 'Setting date and running the real check…';
+  result.innerHTML = 'Checking real due date against test date…';
 
   try {
     const resp = await fetch('/api/demo-trigger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, assetId, date }),
+      body: JSON.stringify({ key, assetId, testDate }),
     });
     const data = await resp.json();
 
     if (resp.ok && data.triggered) {
       result.className = 'result success show';
       result.innerHTML = `
+        <div class="row"><span>Real Due Date</span><strong>${data.realDueDate}</strong></div>
         <div class="row"><span>Type</span><strong>${data.type === 'initial' ? 'New Alert' : 'Reminder'}</strong></div>
         <div class="row"><span>Urgency</span><strong>${data.urgency}</strong></div>
         <div class="row"><span>Email</span><strong>${data.email}</strong></div>
         <div class="row"><span>SMS</span><strong>${data.sms}</strong></div>
         <div class="row"><span>Work Order</span><strong>${data.workOrder}</strong></div>
-        <div style="margin-top:8px;">Check your inbox and phone now.</div>
+        <div style="margin-top:8px;">Check your inbox and phone now. The asset's real due date was not changed.</div>
       `;
     } else if (resp.ok && !data.triggered) {
       result.className = 'result error show';
@@ -162,7 +163,7 @@ async function triggerRealAlert() {
     result.innerHTML = 'Network error: ' + err.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Set Date & Trigger Real Check';
+    btn.textContent = 'Run Real Check';
   }
 }
 </script>
