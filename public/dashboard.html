@@ -524,7 +524,7 @@ function showDetail(idx) {
   <div style="display:flex;gap:8px;align-items:center"><button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button><button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
   <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span></div></div>
   <div class="detail-grid">`;
-  [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService]].forEach(([l,v])=>{
+  [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService],["Added By",a.addedBy||"— (existing at pilot start)"]].forEach(([l,v])=>{
     html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
   });
   html += `</div>`;
@@ -708,12 +708,19 @@ async function renderWorkOrders() {
     if (orders.length === 0) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
     } else {
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="selectAllWO" onchange="toggleAllWorkOrders(this.checked)"> Select all open/in-progress</label>
+        <button id="bulkCloseBtn" onclick="bulkCloseWorkOrders()" disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer;opacity:0.5">Close Selected (0)</button>
+      </div>`;
       html += `<div class="asset-list">`;
       orders.forEach(o => {
+        const closable = o.status !== 'Completed';
         html += `<div class="asset-row" style="cursor:default">
+          ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span></div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
+            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
@@ -746,6 +753,49 @@ async function updateWorkOrderStatus(recordId, status) {
     renderWorkOrders(); // refresh the summary counts
   } catch (err) {
     alert('Could not update work order: ' + err.message);
+  }
+}
+
+function toggleAllWorkOrders(checked) {
+  document.querySelectorAll('.wo-checkbox').forEach(cb => cb.checked = checked);
+  updateBulkCloseButton();
+}
+
+function updateBulkCloseButton() {
+  const checked = document.querySelectorAll('.wo-checkbox:checked').length;
+  const btn = document.getElementById('bulkCloseBtn');
+  if (!btn) return;
+  btn.textContent = `Close Selected (${checked})`;
+  btn.disabled = checked === 0;
+  btn.style.opacity = checked === 0 ? '0.5' : '1';
+}
+
+// Closes every checked work order in ONE request, then refreshes the
+// tab exactly once — not once per item, which is what made closing
+// several in a row slow and annoying before.
+async function bulkCloseWorkOrders() {
+  const ids = Array.from(document.querySelectorAll('.wo-checkbox:checked')).map(cb => cb.dataset.id);
+  if (ids.length === 0) return;
+
+  const btn = document.getElementById('bulkCloseBtn');
+  btn.disabled = true;
+  btn.textContent = `Closing ${ids.length}…`;
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordIds: ids, status: 'Completed' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Bulk close failed');
+    if (data.failed > 0) {
+      alert(`${data.updated} closed successfully, ${data.failed} failed. Check the list for what's still open.`);
+    }
+    renderWorkOrders(); // single refresh, after everything is done
+  } catch (err) {
+    alert('Could not close selected work orders: ' + err.message);
+    renderWorkOrders();
   }
 }
 
