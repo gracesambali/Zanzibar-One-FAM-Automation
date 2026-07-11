@@ -21,15 +21,15 @@ export default async function handler(req, res) {
   setSessionCookie(res, session.u);
 
   if (req.method === "POST") {
-    return handleAddAsset(req, res);
+    return handleAddAsset(req, res, session.u);
   }
   if (req.method === "PATCH") {
-    return handleDecommission(req, res);
+    return handleDecommission(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
 }
 
-async function handleAddAsset(req, res) {
+async function handleAddAsset(req, res, addedBy) {
   const a = req.body || {};
   if (!a.id || !a.name) {
     return res.status(400).json({ error: "Asset ID and Name are required" });
@@ -67,6 +67,9 @@ async function handleAddAsset(req, res) {
           "Status": a.status || "Operational",
           "Criticality": a.criticality || "Medium",
           "Active": true,
+          // Pulled from the verified session — whoever added this
+          // asset cannot claim it was someone else.
+          "Added By": addedBy,
         },
       }),
     });
@@ -79,7 +82,7 @@ async function handleAddAsset(req, res) {
   }
 }
 
-async function handleDecommission(req, res) {
+async function handleDecommission(req, res, decommissionedBy) {
   const { recordId, reason } = req.body || {};
   if (!recordId) {
     return res.status(400).json({ error: "recordId required" });
@@ -98,7 +101,8 @@ async function handleDecommission(req, res) {
       body: JSON.stringify({
         fields: {
           "Active": false,
-          "Note": reason ? `Decommissioned: ${reason}` : "Decommissioned",
+          "Decommissioned By": decommissionedBy,
+          "Note": reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
         },
       }),
     });

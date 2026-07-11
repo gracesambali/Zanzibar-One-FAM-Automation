@@ -77,5 +77,7 @@ function normalizeRecord(record) {
     lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
     note: f["Note"] || undefined,
     active: f["Active"] !== false, // defaults to true for existing assets with no Active field set
+    addedBy: f["Added By"] || "",
+    decommissionedBy: f["Decommissioned By"] || "",
   };
 }
