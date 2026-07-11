@@ -5,21 +5,35 @@
 // real asset from Airtable (if you pass ?asset=ASSET_ID), or a generic
 // demo message if you don't. Built for live pitches: click, and a real
 // message lands on a real phone in seconds.
+//
+// The &urgency= parameter simulates OVERDUE, URGENT, or UPCOMING for
+// a real asset WITHOUT touching its actual "Next Service Due" date —
+// this is the safe way to test all three alert types on real quarterly
+// or annual maintenance schedules without corrupting them.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 
 // Usage:
-//   /api/test-alert?key=YOUR_DEMO_KEY                → generic demo message
-//   /api/test-alert?key=YOUR_DEMO_KEY&asset=FP-002    → real data for that asset
+//   /api/test-alert?key=YOUR_KEY                                    → generic demo message
+//   /api/test-alert?key=YOUR_KEY&asset=FP-002                        → real data, real due date
+//   /api/test-alert?key=YOUR_KEY&asset=FP-002&urgency=OVERDUE        → real asset, FAKED overdue
+//   /api/test-alert?key=YOUR_KEY&asset=FP-002&urgency=URGENT         → real asset, FAKED urgent
+//   /api/test-alert?key=YOUR_KEY&asset=FP-002&urgency=UPCOMING       → real asset, FAKED upcoming
+
+const FAKE_DAYS = { OVERDUE: -3, URGENT: 2, UPCOMING: 10 };
 
 export default async function handler(req, res) {
   if (req.query.key !== process.env.DEMO_TRIGGER_KEY) {
     return res.status(401).json({ error: "Unauthorized. Add ?key=YOUR_DEMO_KEY" });
   }
 
+  const forcedUrgency = req.query.urgency && FAKE_DAYS.hasOwnProperty(req.query.urgency)
+    ? req.query.urgency
+    : null;
+
   try {
     const message = req.query.asset
-      ? await buildRealMessage(req.query.asset)
+      ? await buildRealMessage(req.query.asset, forcedUrgency)
       : `Fire Pump FP-002 at Basement 1 — service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 
     if (!message) {
@@ -29,12 +43,14 @@ export default async function handler(req, res) {
     const [emailResp, smsResp] = await Promise.all([sendEmail(message), sendSms(message)]);
 
     // Log this to the same history table as real automated alerts —
-    // a demo trigger is still a real message actually sent.
-    await logDemoAlert(message, req.query.asset || null);
+    // a demo trigger is still a real message actually sent. Tagged
+    // TEST so it's easy to tell apart from real alerts later.
+    await logDemoAlert(message, req.query.asset || null, forcedUrgency);
 
     return res.status(200).json({
       success: true,
       message,
+      simulatedUrgency: forcedUrgency || "(real due date used)",
       email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
       sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
     });
@@ -43,7 +59,7 @@ export default async function handler(req, res) {
   }
 }
 
-async function buildRealMessage(assetId) {
+async function buildRealMessage(assetId, forcedUrgency) {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
   const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
@@ -57,10 +73,23 @@ async function buildRealMessage(assetId) {
   if (!data.records || data.records.length === 0) return null;
 
   const f = data.records[0].fields;
+
+  if (forcedUrgency) {
+    // Build a fully real message using the asset's real name/location,
+    // but a SIMULATED urgency and day count — the actual "Next Service
+    // Due" field in Airtable is never read for this, so the real
+    // quarterly/annual schedule stays completely untouched.
+    const days = FAKE_DAYS[forcedUrgency];
+    const timing = days < 0 ? `${Math.abs(days)} days overdue` : `${days} days remaining`;
+    const fakeDate = new Date();
+    fakeDate.setDate(fakeDate.getDate() + days);
+    return `[TEST] [${forcedUrgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert — the real maintenance schedule for this asset has not been changed.`;
+  }
+
   return `${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${f["Next Service Due"]}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 }
 
-async function logDemoAlert(message, assetId) {
+async function logDemoAlert(message, assetId, forcedUrgency) {
   const base = process.env.AIRTABLE_BASE_ID;
   const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
   const url = `https://api.airtable.com/v0/${base}/${logTable}`;
@@ -78,7 +107,7 @@ async function logDemoAlert(message, assetId) {
         "Asset Name": assetId ? assetId : "Demo Trigger",
         "System": "",
         "Location": "",
-        "Urgency": "DEMO",
+        "Urgency": forcedUrgency ? `TEST-${forcedUrgency}` : "DEMO",
         "Channel": "Email + SMS",
         "Message": message,
       },

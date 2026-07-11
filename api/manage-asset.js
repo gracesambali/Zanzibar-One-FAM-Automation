@@ -11,13 +11,14 @@
 //
 // Both require a real login — this modifies the client's actual data.
 
-import { getSession } from "../lib/auth.js";
+import { getSession, setSessionCookie } from "../lib/auth.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
+  setSessionCookie(res, session.u);
 
   if (req.method === "POST") {
     return handleAddAsset(req, res);

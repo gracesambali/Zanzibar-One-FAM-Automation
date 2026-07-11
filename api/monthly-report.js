@@ -5,14 +5,14 @@
 // If the log is empty (brand new deployment, nothing sent yet), this
 // honestly returns zero counts rather than fabricating history.
 
-import { getSession } from "../lib/auth.js";
+import { getSession, setSessionCookie } from "../lib/auth.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-
+  setSessionCookie(res, session.u);
   try {
     const records = await fetchAllLogRecords();
     const cutoff = new Date();

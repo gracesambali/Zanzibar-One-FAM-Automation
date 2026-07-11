@@ -11,7 +11,7 @@
 // table with proper password hashing — worth building deliberately
 // when it's actually needed, not before.
 
-import { createSessionToken } from "../lib/auth.js";
+import { setSessionCookie } from "../lib/auth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -35,9 +35,6 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Incorrect username or password" });
   }
 
-  const token = createSessionToken(username);
-  res.setHeader("Set-Cookie", [
-    `gvc_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 60 * 60}`
-  ]);
+  setSessionCookie(res, username);
   return res.status(200).json({ success: true });
 }

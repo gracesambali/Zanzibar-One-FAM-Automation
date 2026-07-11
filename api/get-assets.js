@@ -5,13 +5,14 @@
 // offset token until every record is retrieved, however many there are).
 // Returns them in the exact shape the dashboard's JavaScript expects.
 
-import { getSession } from "../lib/auth.js";
+import { getSession, setSessionCookie } from "../lib/auth.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
+  setSessionCookie(res, session.u); // sliding window — this counts as activity
 
   try {
     const allAssets = await fetchAllRecords();
