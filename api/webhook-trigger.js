@@ -20,13 +20,17 @@ export default async function handler(req, res) {
   }
 
   const recordId = req.body?.recordId || req.query.recordId;
-  if (!recordId) {
-    return res.status(400).json({ error: "Missing recordId" });
+  const assetId = req.query.assetId; // manual testing: use the readable Asset ID instead
+
+  if (!recordId && !assetId) {
+    return res.status(400).json({ error: "Missing recordId or assetId" });
   }
 
   try {
-    const record = await fetchRecord(recordId);
-    if (!record) return res.status(404).json({ error: "Record not found" });
+    const record = recordId
+      ? await fetchRecord(recordId)
+      : await fetchRecordByAssetId(assetId);
+    if (!record) return res.status(404).json({ error: "Asset not found" });
 
     const f = record.fields;
     const dueDateRaw = f["Next Service Due"];
@@ -52,7 +56,7 @@ export default async function handler(req, res) {
     await Promise.all([
       sendEmail(f, urgency, message),
       sendSms(message),
-      markAlerted(recordId),
+      markAlerted(record.id),
       logAlert(f, urgency, message),
       createWorkOrder(f, urgency),
     ]);
@@ -74,6 +78,24 @@ async function fetchRecord(recordId) {
   return resp.json();
 }
 
+// Manual-testing path: look up a single asset by its human-readable
+// Asset ID (e.g. "TEST-001") instead of Airtable's internal record ID.
+// This is what lets you test ONE real asset's real due-date logic by
+// just visiting a URL, without needing to know its internal record ID
+// and without sweeping every asset the way check-maintenance.js does.
+async function fetchRecordByAssetId(assetId) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.records && data.records.length > 0 ? data.records[0] : null;
+}
 async function markAlerted(recordId) {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");

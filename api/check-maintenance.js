@@ -46,12 +46,18 @@ export default async function handler(req, res) {
           sendSms(message),
         ]);
 
-        await Promise.all([
+        const [, logResult, woResult] = await Promise.all([
           markAlerted(record.id),
           logAlert(f, urgency, message),
           createWorkOrder(f, urgency),
         ]);
-        results.push({ asset: f["Asset ID"], urgency, alerted: true });
+        results.push({
+          asset: f["Asset ID"],
+          urgency,
+          alerted: true,
+          alertLogWritten: logResult, // true/false — no longer silent if this fails
+          workOrderCreated: woResult,
+        });
       }
     }
 
@@ -136,7 +142,12 @@ async function logAlert(f, urgency, message) {
       },
     }),
   });
-  if (!resp.ok) console.error("Alert log write failed:", await resp.text());
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    console.error("Alert log write failed:", errorText);
+    return `FAILED: ${errorText}`; // surfaced in the API response now, not hidden
+  }
+  return true;
 }
 
 // Creates a real, trackable Work Order — not just a log entry. This is
@@ -170,7 +181,12 @@ async function createWorkOrder(f, urgency) {
       },
     }),
   });
-  if (!resp.ok) console.error("Work order creation failed:", await resp.text());
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    console.error("Work order creation failed:", errorText);
+    return `FAILED: ${errorText}`;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------
