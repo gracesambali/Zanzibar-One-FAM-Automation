@@ -749,10 +749,14 @@ async function updateWorkOrderStatus(recordId, status) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recordId, status }),
     });
-    if (!resp.ok) throw new Error('Update failed');
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
+      throw new Error(errorDetail);
+    }
     renderWorkOrders(); // refresh the summary counts
   } catch (err) {
-    alert('Could not update work order: ' + err.message);
+    alert('Could not update work order:\n\n' + err.message);
   }
 }
 
@@ -790,7 +794,8 @@ async function bulkCloseWorkOrders() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Bulk close failed');
     if (data.failed > 0) {
-      alert(`${data.updated} closed successfully, ${data.failed} failed. Check the list for what's still open.`);
+      const errorDetail = data.errors && data.errors.length ? '\n\nReal error from Airtable:\n' + data.errors[0] : '';
+      alert(`${data.updated} closed successfully, ${data.failed} failed.${errorDetail}`);
     }
     renderWorkOrders(); // single refresh, after everything is done
   } catch (err) {
