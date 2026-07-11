@@ -467,7 +467,6 @@ function getFilteredAssets() {
 
 function renderAssets() {
   const systems = ["All", ...systemDefs.map(s=>s.name)];
-  const filtered = getFilteredAssets();
   const total = assets.length, crit = assets.filter(a=>a.criticality==="Critical").length;
   const attn = assets.filter(a=>a.status==="Needs Attention").length;
   const sched = assets.filter(a=>a.status==="Scheduled Maintenance").length;
@@ -480,8 +479,13 @@ function renderAssets() {
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Needs Attention</div></div>
   </div>`;
 
+  // Search input uses renderAssetResults() ONLY — never renderAssets() —
+  // so typing never rebuilds this input itself. Rebuilding it mid-type
+  // is what caused the "type one letter, lose focus" bug: the browser
+  // can't keep a cursor position in a DOM node that just got destroyed
+  // and recreated.
   html += `<div class="filter-row">
-    <input type="text" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssets()">
+    <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
     <select class="filter-select" onchange="currentLevelFilter=this.value;renderAssets()">
       <option value="All">All Levels</option>
       ${levelDefs.map(l=>`<option value="${l.id}"${currentLevelFilter===l.id?' selected':''}>${l.label}</option>`).join('')}
@@ -498,8 +502,23 @@ function renderAssets() {
   systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
   html += `</div>`;
 
-  html += `<div class="result-count">Showing ${filtered.length} of ${total} assets</div>`;
+  html += `<div id="assetResultsContainer"></div>`;
 
+  document.getElementById('view-assets').innerHTML = html;
+  renderAssetResults(); // populate the results container on initial/full render
+}
+
+// Renders ONLY the result count + asset list — called on every
+// keystroke in search, and by renderAssets() itself after a full
+// rebuild. Never touches the search input, dropdowns, or filter chips,
+// so it can run continuously while someone is typing without breaking
+// focus.
+function renderAssetResults() {
+  const filtered = getFilteredAssets();
+  const container = document.getElementById('assetResultsContainer');
+  if (!container) return;
+
+  let html = `<div class="result-count">Showing ${filtered.length} of ${assets.length} assets</div>`;
   html += `<div class="asset-list">`;
   filtered.forEach((a) => {
     const idx = assets.indexOf(a);
@@ -511,7 +530,7 @@ function renderAssets() {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
   });
   html += `</div>`;
-  document.getElementById('view-assets').innerHTML = html;
+  container.innerHTML = html;
 }
 
 function showDetail(idx) {
