@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GVC Facility Asset Manager</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px; }
+  .card { background:#fff; border-radius:16px; max-width:420px; width:100%; padding:36px 32px; box-shadow:0 4px 24px rgba(0,0,0,.08); text-align:center; }
+  .logo { width:64px; height:64px; border-radius:50%; overflow:hidden; margin:0 auto 14px; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  h1 { font-size:19px; color:#1A3566; margin-bottom:4px; }
+  .sub { font-size:13px; color:#6B7280; margin-bottom:28px; }
+  .option { display:block; width:100%; padding:16px 18px; margin-bottom:12px; border-radius:12px; text-decoration:none; text-align:left; transition:transform .15s; border:1px solid #E2E6ED; }
+  .option:hover { transform:scale(1.02); }
+  .option-title { font-size:14.5px; font-weight:700; margin-bottom:2px; }
+  .option-desc { font-size:12px; }
+  .opt-report { background:#1A3566; }
+  .opt-report .option-title, .opt-report .option-desc { color:#fff; }
+  .opt-report .option-desc { color:rgba(255,255,255,.75); }
+  .opt-login { background:#fff; }
+  .opt-login .option-title { color:#1A3566; }
+  .opt-login .option-desc { color:#6B7280; }
+  .opt-demo { background:#fff; }
+  .opt-demo .option-title { color:#1A3566; }
+  .opt-demo .option-desc { color:#6B7280; }
+  .footer { text-align:center; font-size:11px; color:#9CA3AF; margin-top:20px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo"><img src="/logo.png" alt="GVC"></div>
+    <h1>Facility Asset Manager</h1>
+    <div class="sub">Gracing Ventures</div>
+
+    <a href="/report.html" class="option opt-report">
+      <div class="option-title">🛠 Report a Breakdown</div>
+      <div class="option-desc">No login needed — for any staff member</div>
+    </a>
+
+    <a href="/login.html" class="option opt-login">
+      <div class="option-title">🔐 Staff & Engineer Login</div>
+      <div class="option-desc">View the full asset register and work orders</div>
+    </a>
+
+    <a href="/demo.html" class="option opt-demo">
+      <div class="option-title">▶ Live Demo</div>
+      <div class="option-desc">See a real alert triggered live</div>
+    </a>
+
+    <div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
+  </div>
+</body>
+</html>

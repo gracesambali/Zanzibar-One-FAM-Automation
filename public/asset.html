@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asset Info — GVC Facility Asset Manager</title>
+<style>
+  :root { --navy:#1A3566; --muted:#6b7280; --border:#e5e7eb; --green:#16a34a; --amber:#d97706; --red:#dc2626; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f7f8fa; margin:0; padding:24px 16px; color:#111827; }
+  .card { max-width: 480px; margin: 0 auto; background:#fff; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .header { background: var(--navy); color:#fff; padding:20px 22px; }
+  .header .id { font-family: monospace; font-size:12px; opacity:0.8; }
+  .header .name { font-size:20px; font-weight:700; margin-top:4px; }
+  .body { padding: 18px 22px; }
+  .row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .label { color:var(--muted); }
+  .value { font-weight:600; text-align:right; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600; }
+  .badge-good { background:#dcfce7; color:var(--green); }
+  .badge-fair { background:#fef3c7; color:var(--amber); }
+  .badge-poor, .badge-critical { background:#fee2e2; color:var(--red); }
+  .footer { padding: 14px 22px; text-align:center; font-size:11px; color:var(--muted); border-top:1px solid var(--border); }
+  .loading, .error { text-align:center; padding: 40px 20px; color:var(--muted); }
+  .report-link { display:block; text-align:center; margin: 16px 22px 20px; padding:10px; background:var(--navy); color:#fff; text-decoration:none; border-radius:8px; font-size:13px; font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="loading">Loading asset info…</div>
+  </div>
+
+  <script>
+    function conditionBadgeClass(c) {
+      const k = (c || "").toLowerCase();
+      if (k === "good") return "badge-good";
+      if (k === "fair") return "badge-fair";
+      if (k === "poor") return "badge-poor";
+      if (k === "critical") return "badge-critical";
+      return "badge-fair";
+    }
+
+    async function load() {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get("id");
+      const card = document.getElementById("card");
+      if (!id) {
+        card.innerHTML = '<div class="error">No asset ID provided.</div>';
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/get-assets?public=true&id=${encodeURIComponent(id)}`);
+        const data = await resp.json();
+        if (!resp.ok) {
+          card.innerHTML = `<div class="error">${data.error || "Asset not found."}</div>`;
+          return;
+        }
+        card.innerHTML = `
+          <div class="header">
+            <div class="id">${data.id}</div>
+            <div class="name">${data.name}</div>
+          </div>
+          <div class="body">
+            <div class="row"><span class="label">Status</span><span class="value">${data.status}</span></div>
+            <div class="row"><span class="label">Condition</span><span class="value"><span class="badge ${conditionBadgeClass(data.condition)}">${data.condition}</span></span></div>
+            <div class="row"><span class="label">Category</span><span class="value">${data.category || data.klass || "—"}</span></div>
+            <div class="row"><span class="label">Location</span><span class="value">${[data.building, data.floor ? "Floor " + data.floor : "", data.room].filter(Boolean).join(" · ") || data.location || "—"}</span></div>
+            <div class="row"><span class="label">Manufacturer / Model</span><span class="value">${[data.manufacturer, data.model].filter(Boolean).join(" / ") || "—"}</span></div>
+            <div class="row"><span class="label">Last Service</span><span class="value">${data.lastService || "—"}</span></div>
+            <div class="row"><span class="label">Next Service Due</span><span class="value">${data.nextService || "—"}</span></div>
+          </div>
+          <a class="report-link" href="/report.html">🛠 Report an issue with this asset</a>
+          <div class="footer">Gracing Ventures · Facility Asset Management</div>
+        `;
+      } catch (e) {
+        card.innerHTML = '<div class="error">Could not load asset info. Check your connection and try again.</div>';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
