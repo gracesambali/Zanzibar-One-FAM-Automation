@@ -277,6 +277,22 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 let assets = []; // populated live from Airtable via /api/get-assets
+let currentUserRole = "engineer";
+let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
+let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
+let dashboardWorkOrders = []; // populated live from /api/work-orders alongside assets
+
+// Mirrors lib/roles.js — used only to toggle UI elements (cost fields,
+// Add/Decommission buttons etc). The API is the real enforcement; this
+// just avoids showing controls a role isn't allowed to use.
+const ROLE_PERMISSIONS = {
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false },
+  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true },
+  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true },
+};
 
 const levelDefs = [
   { id:"B2", label:"Basement 2 — Plant & Parking", count:5 },
@@ -321,7 +337,7 @@ function critBadge(c) { return c==="Critical"?"badge-crit":c==="High"?"badge-hig
 function statusBg(s) { return s==="Operational"?"var(--green-bg)":s==="Scheduled Maintenance"?"var(--amber-bg)":"var(--red-bg)"; }
 function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
 function fmt(n) { return n.toLocaleString(); }
-function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date('2026-07-08')) / 86400000); }
+function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date()) / 86400000); }
 
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
@@ -352,6 +368,7 @@ function drawDonut(canvas, segments, size) {
 }
 
 function renderDashboard() {
+  const windowDays = parseInt(currentDashboardWindow || 30);
   const total = assets.length;
   const operational = assets.filter(a=>a.status==="Operational").length;
   const schedMaint = assets.filter(a=>a.status==="Scheduled Maintenance").length;
@@ -359,9 +376,15 @@ function renderDashboard() {
   const opPct = Math.round((operational/total)*100);
   const attnPct = Math.round((needsAttn/total)*100);
   const criticalAlerts = assets.filter(a=>a.criticality==="Critical" && a.status!=="Operational").length;
-  const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=30; }).length;
+  const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
 
   let html = '';
+
+  // Dashboard timeframe selector
+  html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
+    ${[3,7,14,21,30,90,180,365].map(d => `<button onclick="currentDashboardWindow=${d};renderDashboard()" style="padding:4px 10px;font-size:11px;font-weight:${windowDays===d?'700':'400'};border:1px solid ${windowDays===d?'var(--navy)':'var(--border)'};border-radius:6px;background:${windowDays===d?'var(--navy)':'#fff'};color:${windowDays===d?'#fff':'var(--text)'};cursor:pointer">${d <= 30 ? d+'d' : d <= 180 ? Math.round(d/30)+'mo' : '1yr'}</button>`).join('')}
+  </div>`;
 
   // KPI row — Total Asset Value removed per brief
   html += `<div class="dash-kpi-grid">
@@ -369,7 +392,7 @@ function renderDashboard() {
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Operational · ${opPct}%</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Needs Attention · ${attnPct}%</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--red-bg);color:var(--red)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div><div class="dash-kpi-val" style="color:var(--red)">${criticalAlerts}</div><div class="dash-kpi-label">Critical Alerts · High priority</div></div></div>
-    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next 30 Days</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next ${windowDays} Days</div></div></div>
   </div>`;
 
   // Row 1: Asset Health + Maintenance Overview
@@ -378,8 +401,20 @@ function renderDashboard() {
   html += `<div class="dash-panel"><div class="dash-panel-title">Asset Health Overview</div><div class="donut-wrap"><canvas id="health-donut" width="140" height="140"></canvas><div style="display:flex;flex-direction:column;gap:2px"><div class="donut-legend"><span class="donut-dot" style="background:var(--green)"></span>Operational <strong>${operational}</strong> (${opPct}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--amber)"></span>Scheduled Maintenance <strong>${schedMaint}</strong> (${Math.round(schedMaint/total*100)}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--red)"></span>Needs Attention <strong>${needsAttn}</strong> (${attnPct}%)</div></div></div></div>`;
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Overview</div><div style="display:flex;flex-direction:column;gap:4px">`;
-  const maintData = [{m:'Jan',p:8,c:7,o:1},{m:'Feb',p:9,c:8,o:1},{m:'Mar',p:10,c:9,o:1},{m:'Apr',p:7,c:6,o:1},{m:'May',p:11,c:9,o:2},{m:'Jun',p:12,c:10,o:2}];
-  const maxM = 14;
+  // Live data from work orders — group by month
+  const now = new Date();
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const maintData = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const mKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const monthWOs = dashboardWorkOrders.filter(w => (w.created||'').startsWith(mKey));
+    const planned = monthWOs.length;
+    const completed = monthWOs.filter(w => w.status === 'Completed').length;
+    const overdue = monthWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+    maintData.push({ m: monthNames[d.getMonth()], p: planned, c: completed, o: overdue });
+  }
+  const maxM = Math.max(1, ...maintData.map(d => Math.max(d.p, d.c, d.o)));
   maintData.forEach(d => {
     html += `<div class="bar-chart-row"><div class="bar-chart-label">${d.m}</div><div class="bar-group"><div class="bar-planned" style="width:${(d.p/maxM)*100}%"></div><div class="bar-completed" style="width:${(d.c/maxM)*100}%"></div><div class="bar-overdue" style="width:${(d.o/maxM)*100}%"></div></div></div>`;
   });
@@ -398,12 +433,23 @@ function renderDashboard() {
   });
   html += `</div>`;
 
-  // Recent Alerts — tied to real assets
-  html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>
-    <div class="alert-item"><div class="alert-icon" style="background:var(--red-bg);color:var(--red)">⚠</div><div><div style="font-size:13px;font-weight:600">Fire Pumps FP-001 / FP-002 — Test Overdue</div><div style="font-size:11px;color:var(--muted)">Basement 1 — Plant Room</div></div><div class="alert-time">Needs Attention</div></div>
-    <div class="alert-item"><div class="alert-icon" style="background:var(--amber-bg);color:var(--amber)">⚠</div><div><div style="font-size:13px;font-weight:600">Chiller CH-002 — Elevated Vibration</div><div style="font-size:11px;color:var(--muted)">Basement 2 — Plant Room</div></div><div class="alert-time">Scheduled</div></div>
-    <div class="alert-item"><div class="alert-icon" style="background:var(--amber-bg);color:var(--amber)">⚠</div><div><div style="font-size:13px;font-weight:600">Sump Pump SP-001 — Float Switch Intermittent</div><div style="font-size:11px;color:var(--muted)">Basement 2 — Sump Pit</div></div><div class="alert-time">Scheduled</div></div>
-    <a class="view-link" href="#" onclick="switchTab('assets');return false;">View asset register →</a>
+  // Recent Alerts — live from work orders, most recent first
+  html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>`;
+  const recentAlerts = dashboardWorkOrders
+    .filter(w => w.status !== 'Completed')
+    .sort((a, b) => new Date(b.created) - new Date(a.created))
+    .slice(0, 5);
+  if (recentAlerts.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">No active alerts — all clear.</div>`;
+  } else {
+    recentAlerts.forEach(w => {
+      const isOverdue = w.urgency === 'OVERDUE';
+      const bgColor = isOverdue ? 'var(--red-bg)' : 'var(--amber-bg)';
+      const fgColor = isOverdue ? 'var(--red)' : 'var(--amber)';
+      html += `<div class="alert-item"><div class="alert-icon" style="background:${bgColor};color:${fgColor}">⚠</div><div><div style="font-size:13px;font-weight:600">${w.assetName || w.assetId} — ${w.urgency}</div><div style="font-size:11px;color:var(--muted)">${w.location || "—"} · ${w.woId}</div></div><div class="alert-time">${w.status}</div></div>`;
+    });
+  }
+  html += `<a class="view-link" href="#" onclick="switchTab('workorders');return false;">View all work orders →</a>
   </div>`;
 
   html += `</div>`;
@@ -411,18 +457,39 @@ function renderDashboard() {
   // Row 3: Work Orders + Planned Maintenance + Documents (3 cols now, lifecycle forecast removed)
   html += `<div class="dash-grid-4">`;
 
-  html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
-    <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">8</div><div class="wo-box-label">Open</div></div>
-    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">3</div><div class="wo-box-label">In Progress</div></div>
-    <div class="wo-box" style="background:var(--red-bg)"><div class="wo-box-val" style="color:var(--red)">2</div><div class="wo-box-label">Overdue</div></div>
-    <div class="wo-box" style="background:var(--green-bg)"><div class="wo-box-val" style="color:var(--green)">46</div><div class="wo-box-label">Completed YTD</div></div>
-  </div><a class="view-link" href="#" onclick="switchTab('maintenance');return false;">View maintenance schedule →</a></div>`;
+  // Work Orders Summary — live from dashboardWorkOrders
+  const woOpen = dashboardWorkOrders.filter(w => w.status === 'Open').length;
+  const woInProgress = dashboardWorkOrders.filter(w => w.status === 'In Progress').length;
+  const woOverdue = dashboardWorkOrders.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+  const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
+  const woCompletedYTD = dashboardWorkOrders.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
 
-  html += `<div class="dash-panel"><div class="dash-panel-title">Planned Maintenance (Next 7 Days)</div>
-    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Cooling Tower CT-1 Inspection</div><div style="font-size:11px;color:var(--muted)">Rooftop Level 15</div></div><div style="font-size:12px;color:var(--muted)">Jul 12</div></div>
-    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Parking Barrier Service — B1</div><div style="font-size:11px;color:var(--muted)">Basement 1</div></div><div style="font-size:12px;color:var(--muted)">Jul 13</div></div>
-    <div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 Fire Detection Loop Test — L4</div><div style="font-size:11px;color:var(--muted)">Level 4 Office</div></div><div style="font-size:12px;color:var(--muted)">Jul 15</div></div>
-  </div>`;
+  html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
+    <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">${woOpen}</div><div class="wo-box-label">Open</div></div>
+    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">${woInProgress}</div><div class="wo-box-label">In Progress</div></div>
+    <div class="wo-box" style="background:var(--red-bg)"><div class="wo-box-val" style="color:var(--red)">${woOverdue}</div><div class="wo-box-label">Overdue</div></div>
+    <div class="wo-box" style="background:var(--green-bg)"><div class="wo-box-val" style="color:var(--green)">${woCompletedYTD}</div><div class="wo-box-label">Completed YTD</div></div>
+  </div><a class="view-link" href="#" onclick="switchTab('workorders');return false;">View all work orders →</a></div>`;
+
+  // Planned Maintenance — live from assets, filtered by dashboard window
+  html += `<div class="dash-panel"><div class="dash-panel-title">Planned Maintenance (Next ${windowDays <= 30 ? windowDays + ' Days' : windowDays <= 180 ? Math.round(windowDays/30) + ' Months' : '1 Year'})</div>`;
+  const upcoming = assets
+    .filter(a => {
+      const d = daysUntil(a.nextService);
+      return d >= 0 && d <= windowDays;
+    })
+    .sort((a, b) => new Date(a.nextService) - new Date(b.nextService))
+    .slice(0, 6);
+  if (upcoming.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">No maintenance due within this window.</div>`;
+  } else {
+    upcoming.forEach(a => {
+      const dueDate = new Date(a.nextService);
+      const dateLabel = dueDate.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${a.location || a.floor || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
+    });
+  }
+  html += `</div>`;
 
   // Documents — Asset Register (real xlsx export, bold header, correct
   // unicode), Maintenance Plan (windowed by days, real printable PDF),
@@ -438,7 +505,13 @@ function renderDashboard() {
         <button onclick="printMaintenancePlan(30)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">30 days</button>
       </div>
     </div>
-    <div class="doc-item" style="cursor:pointer" onclick="generateMonthlyReport()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Generate</span></div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="generateMonthlyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
+        <button onclick="exportMonthlyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
+        <button onclick="exportMonthlyReportXLSX()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ XLSX</button>
+      </div>
+    </div>
   </div>`;
 
   html += `</div>`;
@@ -535,15 +608,55 @@ function renderAssetResults() {
 
 function showDetail(idx) {
   const a = assets[idx];
-  const age = 2026 - parseInt(a.installDate.split("-")[0]);
+  const age = a.installDate ? (new Date().getFullYear()) - parseInt(a.installDate.split("-")[0]) : 0;
   const pct = Math.min((age/a.lifespan)*100, 100);
-  const eol = parseInt(a.installDate.split("-")[0]) + a.lifespan;
+  const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
+  const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
+  const canSeeCost = currentUserPermissions && currentUserPermissions.viewCostAndDepreciation;
+  const condClass = (a.condition||"").toLowerCase() === "good" ? "badge-good" : (a.condition||"").toLowerCase() === "fair" ? "badge-warning" : "badge-overdue";
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
+
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system} · ${a.klass}</div></div>
-  <div style="display:flex;gap:8px;align-items:center"><button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button><button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button><span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
-  <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span></div></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
+    ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
+    ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
+    <span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+    <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span>
+  </div></div>
+  <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
+    <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Classification</div>
+      <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility || "—"} → ${a.category || "—"} → ${a.klass || "—"}</div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Condition</div>
+      <span class="badge ${condClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.condition || "Not Assessed"}</span>
+    </div>
+  </div>
   <div class="detail-grid">`;
-  [["Level",levelDefs.find(l=>l.id===a.level).label],["Location",a.location],["Manufacturer",a.manufacturer],["Model",a.model],["Install Date",a.installDate],["Expected Lifespan",a.lifespan+" years"],["Asset Age",age+" years"],["Last Service",a.lastService],["Next Service Due",a.nextService],["Added By",a.addedBy||"— (existing at pilot start)"]].forEach(([l,v])=>{
+
+  const fields = [
+    ["Building", a.building || "—"],
+    ["Floor", a.floor || a.level || "—"],
+    ["Room/Zone", a.room || "—"],
+    ["Location", a.location || "—"],
+    ["Region", a.region || "—"],
+    ["District", a.district || "—"],
+    ["Manufacturer", a.manufacturer],
+    ["Model", a.model],
+    ["Install Date", a.installDate],
+    ["Expected Lifespan", a.lifespan+" years"],
+    ["Asset Age", age+" years"],
+    ["Last Service", a.lastService || "—"],
+    ["Next Service Due", a.nextService || "—"],
+    ["Added By", a.addedBy || "— (existing at pilot start)"],
+  ];
+  if (canSeeCost && a.acquisitionCost) {
+    fields.push(["Acquisition Cost", "Tshs " + Number(a.acquisitionCost).toLocaleString()]);
+    fields.push(["Current Value", a.currentValue !== null ? "Tshs " + Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+  }
+  fields.forEach(([l,v])=>{
     html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
   });
   html += `</div>`;
@@ -552,6 +665,67 @@ function showDetail(idx) {
   }
   html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div></div>`;
   document.getElementById('view-assets').innerHTML = html;
+}
+
+// --- Relocation form + API call ---
+function openRelocateForm(recordId, assetName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'relocateOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:28px">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Relocate Asset</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Moving <strong>${assetName}</strong> to a new location. The old location will be logged for history.</div>
+      <div id="relocateError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor</label>
+      <input id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Room/Zone</label>
+      <input id="rel_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reason for relocation</label>
+      <input id="rel_reason" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('relocateOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="rel_submit" onclick="submitRelocation('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--amber);color:#fff;font-weight:600;cursor:pointer">Relocate</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function submitRelocation(recordId) {
+  const floor = document.getElementById('rel_floor').value.trim();
+  const room = document.getElementById('rel_room').value.trim();
+  const reason = document.getElementById('rel_reason').value.trim();
+  const errorBox = document.getElementById('relocateError');
+  const btn = document.getElementById('rel_submit');
+
+  if (!floor && !room) {
+    errorBox.textContent = 'Enter at least a new floor or room/zone.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Relocating…';
+  errorBox.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/relocate-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, newFloor: floor, newRoom: room, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to relocate');
+    document.getElementById('relocateOverlay').remove();
+    loadAssetsAndInit();
+    alert('Asset relocated successfully.');
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Relocate';
+  }
 }
 
 function renderSystems() {
@@ -1054,6 +1228,37 @@ async function generateMonthlyReport() {
   }
 }
 
+async function exportMonthlyReportCSV() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const header = 'Date/Time,Asset ID,Asset Name,System,Urgency,Channel';
+    const rows = data.events.map(e => `"${new Date(e.timestamp).toLocaleString()}","${e.assetId}","${e.assetName}","${e.system}","${e.urgency}","${e.channel}"`).join('\n');
+    const blob = new Blob([header + '\n' + rows], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `monthly-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
+async function exportMonthlyReportXLSX() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const rows = [['Date/Time','Asset ID','Asset Name','System','Urgency','Channel']];
+    data.events.forEach(e => rows.push([new Date(e.timestamp).toLocaleString(), e.assetId, e.assetName, e.system, e.urgency, e.channel]));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Monthly Report');
+    XLSX.writeFile(wb, `monthly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
 function openAddAssetForm() {
   const overlay = document.createElement('div');
   overlay.id = 'addAssetOverlay';
@@ -1063,31 +1268,124 @@ function openAddAssetForm() {
       <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Add New Asset</h3>
       <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Onboarding a replacement? Decommission the old unit first from its detail view, then add the new one here.</div>
       <div id="addAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset ID *</label>
-      <input id="na_id" placeholder="e.g. FCU-081" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the classification below — you never type it.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature *</label>
+      <select id="na_nature" onchange="onNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Tangible">Tangible</option>
+        <option value="Intangible">Intangible</option>
+      </select>
+
+      <div id="na_mobilityWrap">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Mobility *</label>
+        <select id="na_mobility" onchange="onMobilityChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+          <option value="Movable">Movable</option>
+          <option value="Immovable">Immovable</option>
+        </select>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Class *</label>
+      <select id="na_klass" onchange="onClassChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+      <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
-      <input id="na_name" placeholder="e.g. Fan Coil Unit" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
       <select id="na_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
       </select>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location</label>
-      <input id="na_location" placeholder="e.g. Level 4 — Ward Corridor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Region</label><input id="na_region" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">District</label><input id="na_district" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor</label><input id="na_level" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="na_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location (free text)</label>
+      <input id="na_location" placeholder="e.g. East Riser Room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
       <input id="na_manufacturer" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
       <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Condition</label>
+      <select id="na_condition" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option>Good</option><option>Fair</option><option>Poor</option><option>Critical</option>
+      </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
-      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
       </select>
-      <div style="display:flex;gap:8px">
+
+      <div id="na_financeFields" style="display:${(currentUserPermissions && currentUserPermissions.viewCostAndDepreciation) ? 'block' : 'none'}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (Tshs)</label><input id="na_cost" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label><input id="na_lifespan" type="number" value="15" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:6px">
         <button onclick="closeAddAssetForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
         <button id="na_submit" onclick="submitNewAsset()" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Add Asset</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
+  onNatureChange();
+}
+
+// --- Classification hierarchy (mirrors lib/hierarchy.js) ---
+const ASSET_HIERARCHY = {
+  Tangible: {
+    Movable: ["Furniture", "Equipment", "Computer Hardware", "Plant & Machinery", "Transport Assets", "Biological Assets", "Valuable Documents", "Library Books"],
+    Immovable: ["Land", "Buildings", "Infrastructure", "Heritage", "Minerals & Other Resources"],
+  },
+  Intangible: ["Computer Software", "Trademarks", "Licenses", "Patent Rights", "Right to Use", "Other"],
+};
+const ASSET_CLASSES = {
+  "Pump": { category: "Equipment", prefix: "PUMP" }, "UPS": { category: "Equipment", prefix: "UPS" },
+  "Generator": { category: "Equipment", prefix: "GEN" }, "Air Conditioning Unit": { category: "Equipment", prefix: "AC" },
+  "CCTV Camera": { category: "Equipment", prefix: "CCTV" }, "Access Control Panel": { category: "Equipment", prefix: "ACP" },
+  "Fire Panel": { category: "Equipment", prefix: "FP" }, "Smoke Detector": { category: "Equipment", prefix: "SD" },
+  "Lift / Elevator": { category: "Plant & Machinery", prefix: "LFT" }, "Escalator": { category: "Plant & Machinery", prefix: "ESC" },
+  "Boiler": { category: "Plant & Machinery", prefix: "BLR" }, "Compressor": { category: "Plant & Machinery", prefix: "CMP" },
+  "Desktop Computer": { category: "Computer Hardware", prefix: "PC" }, "Laptop": { category: "Computer Hardware", prefix: "LTP" },
+  "Server": { category: "Computer Hardware", prefix: "SRV" }, "Network Equipment": { category: "Computer Hardware", prefix: "NET" },
+  "Printer": { category: "Computer Hardware", prefix: "PRN" },
+  "Desk": { category: "Furniture", prefix: "DSK" }, "Chair": { category: "Furniture", prefix: "CHR" }, "Cabinet": { category: "Furniture", prefix: "CAB" },
+  "Motor Vehicle": { category: "Transport Assets", prefix: "MV" }, "Motor Cycle": { category: "Transport Assets", prefix: "MC" },
+  "Building": { category: "Buildings", prefix: "BLD" }, "Land Parcel": { category: "Land", prefix: "LND" }, "Road / Infrastructure": { category: "Infrastructure", prefix: "INF" },
+  "Software License": { category: "Computer Software", prefix: "SW" }, "Trademark": { category: "Trademarks", prefix: "TM" }, "Business License": { category: "Licenses", prefix: "LIC" },
+};
+
+function onNatureChange() {
+  const nature = document.getElementById('na_nature').value;
+  document.getElementById('na_mobilityWrap').style.display = nature === 'Tangible' ? 'block' : 'none';
+  onMobilityChange();
+}
+function onMobilityChange() {
+  const nature = document.getElementById('na_nature').value;
+  const mobility = document.getElementById('na_mobility').value;
+  const classSelect = document.getElementById('na_klass');
+  let classNames;
+  if (nature === 'Intangible') {
+    classNames = ASSET_HIERARCHY.Intangible;
+  } else {
+    classNames = ASSET_HIERARCHY.Tangible[mobility];
+  }
+  // Show only Classes (from ASSET_CLASSES) whose category is in this branch's category list
+  const matching = Object.keys(ASSET_CLASSES).filter(c => classNames.includes(ASSET_CLASSES[c].category));
+  classSelect.innerHTML = matching.map(c => `<option value="${c}">${c}</option>`).join('') || classNames.map(c => `<option value="${c}">${c} (general)</option>`).join('');
+  onClassChange();
+}
+function onClassChange() {
+  const klass = document.getElementById('na_klass').value;
+  const info = ASSET_CLASSES[klass];
+  document.getElementById('na_prefixHint').textContent = info ? `ID will be auto-generated as ${info.prefix}-0XX` : '';
 }
 
 function closeAddAssetForm() {
@@ -1096,13 +1394,15 @@ function closeAddAssetForm() {
 }
 
 async function submitNewAsset() {
-  const id = document.getElementById('na_id').value.trim();
   const name = document.getElementById('na_name').value.trim();
+  const nature = document.getElementById('na_nature').value;
+  const mobility = nature === 'Tangible' ? document.getElementById('na_mobility').value : '';
+  const klass = document.getElementById('na_klass').value;
   const errorBox = document.getElementById('addAssetError');
   const btn = document.getElementById('na_submit');
 
-  if (!id || !name) {
-    errorBox.textContent = 'Asset ID and Name are required.';
+  if (!name || !klass) {
+    errorBox.textContent = 'Name and Class are required.';
     errorBox.style.display = 'block';
     return;
   }
@@ -1111,33 +1411,36 @@ async function submitNewAsset() {
   btn.textContent = 'Adding…';
   errorBox.style.display = 'none';
 
+  const costField = document.getElementById('na_cost');
+  const lifespanField = document.getElementById('na_lifespan');
+
   try {
     const resp = await fetch('/api/manage-asset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id, name,
+        name, nature, mobility, klass,
         system: document.getElementById('na_system').value,
+        region: document.getElementById('na_region').value.trim(),
+        district: document.getElementById('na_district').value.trim(),
+        level: document.getElementById('na_level').value.trim(),
+        room: document.getElementById('na_room').value.trim(),
         location: document.getElementById('na_location').value.trim(),
         manufacturer: document.getElementById('na_manufacturer').value.trim(),
         model: document.getElementById('na_model').value.trim(),
+        condition: document.getElementById('na_condition').value,
         criticality: document.getElementById('na_criticality').value,
+        acquisitionCost: costField ? costField.value : undefined,
+        lifespan: lifespanField ? lifespanField.value : undefined,
       }),
     });
     const data = await resp.json();
 
-    if (resp.status === 409) {
-      // Duplicate Asset ID — this is the real enforcement in action
-      errorBox.textContent = data.error;
-      errorBox.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = 'Add Asset';
-      return;
-    }
     if (!resp.ok) throw new Error(data.error || 'Failed to add asset');
 
     closeAddAssetForm();
     loadAssetsAndInit(); // refresh live data so the new asset appears immediately
+    alert(`Asset added — ID auto-generated as ${data.assetId}`);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -1168,14 +1471,28 @@ async function decommissionAsset(recordId, assetName) {
 async function loadAssetsAndInit() {
   const loadingEl = document.getElementById('loading-screen');
   try {
-    const resp = await fetch('/api/get-assets');
-    if (resp.status === 401) {
+    const [assetsResp, woResp] = await Promise.all([
+      fetch('/api/get-assets'),
+      fetch('/api/work-orders'),
+    ]);
+    if (assetsResp.status === 401) {
       window.location.href = '/login.html';
       return;
     }
-    if (!resp.ok) throw new Error('Failed to load asset data (' + resp.status + ')');
-    const data = await resp.json();
+    if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
+    const data = await assetsResp.json();
     assets = data.assets || [];
+    currentUserRole = data.role || "engineer";
+    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.engineer;
+
+    // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
+    if (woResp.ok) {
+      const woData = await woResp.json();
+      dashboardWorkOrders = woData.workOrders || [];
+    } else {
+      dashboardWorkOrders = [];
+    }
+
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.content').style.display = 'block';
     renderDashboard();
