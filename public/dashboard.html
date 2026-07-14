@@ -265,6 +265,9 @@ button { font-family: inherit; cursor: pointer; }
 const CLIENT_CONFIG = {
   clientName: "Sali International Hospital",
   buildingLabel: "[Floor/Zone — confirm after site survey]", // fill in once the pilot floor/zone is agreed (Field 1 of the scope PDF)
+  region: "Zanzibar",           // project-level — one project = one region, set once here, not per-asset
+  district: "Zanzibar Urban",   // project-level — same reasoning as region
+  building: "[Building name]",  // project-level — the facility/building name for this deployment
   accentColor: "#1A3566",
   pageTitle: "GVC Facility Asset Manager"
 };
@@ -273,7 +276,7 @@ const CLIENT_CONFIG = {
 document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
 document.addEventListener('DOMContentLoaded', () => {
   const sub = document.getElementById('header-subtitle');
-  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · MEP Systems`;
+  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.building} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
 });
 
 let assets = []; // populated live from Airtable via /api/get-assets
@@ -331,15 +334,14 @@ let currentSystemFilter = "All";
 let currentNatureFilter = "All";
 let currentMobilityFilter = "All";
 let currentCategoryFilter = "All";
-let currentClassFilter = "All";
 let currentFloorFilter = "All";
 let currentLevelFilter = "All";
 let currentStatusFilter = "All";
 let currentSearch = "";
 
-function statusBadge(s) { return s==="Operational"?"badge-good":s==="Scheduled Maintenance"?"badge-warning":"badge-overdue"; }
-function critBadge(c) { return c==="Critical"?"badge-crit":c==="High"?"badge-high":"badge-medium"; }
-function statusBg(s) { return s==="Operational"?"var(--green-bg)":s==="Scheduled Maintenance"?"var(--amber-bg)":"var(--red-bg)"; }
+function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
+function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
+function statusBg(s) { return s==="Good"?"var(--green-bg)":s==="Poor"?"var(--amber-bg)":"var(--red-bg)"; }
 function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
 function fmt(n) { return n.toLocaleString(); }
 function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date()) / 86400000); }
@@ -375,12 +377,12 @@ function drawDonut(canvas, segments, size) {
 function renderDashboard() {
   const windowDays = parseInt(currentDashboardWindow || 30);
   const total = assets.length;
-  const operational = assets.filter(a=>a.status==="Operational").length;
-  const schedMaint = assets.filter(a=>a.status==="Scheduled Maintenance").length;
-  const needsAttn = assets.filter(a=>a.status==="Needs Attention").length;
+  const operational = assets.filter(a=>a.status==="Good").length;
+  const schedMaint = assets.filter(a=>a.status==="Poor").length;
+  const needsAttn = assets.filter(a=>a.status==="Critical").length;
   const opPct = Math.round((operational/total)*100);
   const attnPct = Math.round((needsAttn/total)*100);
-  const criticalAlerts = assets.filter(a=>a.criticality==="Critical" && a.status!=="Operational").length;
+  const criticalAlerts = assets.filter(a=>a.criticality==="High" && a.status!=="Operational").length;
   const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
 
   let html = '';
@@ -394,8 +396,8 @@ function renderDashboard() {
   // KPI row — Total Asset Value removed per brief
   html += `<div class="dash-kpi-grid">
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--navy-pale);color:var(--navy)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg></div><div><div class="dash-kpi-val" style="color:var(--navy)">${fmt(total)}</div><div class="dash-kpi-label">Total Assets · All 17 levels</div></div></div>
-    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Operational · ${opPct}%</div></div></div>
-    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Needs Attention · ${attnPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Good · ${opPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Critical · ${attnPct}%</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--red-bg);color:var(--red)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div><div class="dash-kpi-val" style="color:var(--red)">${criticalAlerts}</div><div class="dash-kpi-label">Critical Alerts · High priority</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next ${windowDays} Days</div></div></div>
   </div>`;
@@ -491,7 +493,7 @@ function renderDashboard() {
     upcoming.forEach(a => {
       const dueDate = new Date(a.nextService);
       const dateLabel = dueDate.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${a.location || a.floor || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
+      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${a.room || a.floor || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
     });
   }
   html += `</div>`;
@@ -532,16 +534,15 @@ function renderDashboard() {
 function getFilteredAssets() {
   return assets.filter(a => {
     if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
-    if(currentLevelFilter!=="All" && a.level!==currentLevelFilter) return false;
+    if(currentLevelFilter!=="All" && a.floor!==currentLevelFilter) return false;
     if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
     if(currentNatureFilter!=="All" && a.nature!==currentNatureFilter) return false;
     if(currentMobilityFilter!=="All" && a.mobility!==currentMobilityFilter) return false;
     if(currentCategoryFilter!=="All" && a.category!==currentCategoryFilter) return false;
-    if(currentClassFilter!=="All" && a.klass!==currentClassFilter) return false;
-    if(currentFloorFilter!=="All" && (a.floor||a.level)!==currentFloorFilter) return false;
+    if(currentFloorFilter!=="All" && (a.floor||a.floor)!==currentFloorFilter) return false;
     if(currentSearch) {
       const q = currentSearch.toLowerCase();
-      const hay = (a.id+" "+a.name+" "+a.location+" "+a.manufacturer+" "+a.model+" "+a.klass+" "+(a.nature||"")+" "+(a.category||"")+" "+(a.building||"")+" "+(a.room||"")).toLowerCase();
+      const hay = (a.id+" "+a.name+" "+a.room+" "+a.manufacturer+" "+a.model+" "+a.category+" "+(a.nature||"")+" "+(a.category||"")+" "+(a.building||"")+" "+(a.room||"")).toLowerCase();
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -550,16 +551,16 @@ function getFilteredAssets() {
 
 function renderAssets() {
   const systems = ["All", ...systemDefs.map(s=>s.name)];
-  const total = assets.length, crit = assets.filter(a=>a.criticality==="Critical").length;
-  const attn = assets.filter(a=>a.status==="Needs Attention").length;
-  const sched = assets.filter(a=>a.status==="Scheduled Maintenance").length;
+  const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
+  const attn = assets.filter(a=>a.status==="Critical").length;
+  const sched = assets.filter(a=>a.status==="Poor").length;
 
   let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button></div>`;
   html += `<div class="summary-grid">
     <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
-    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Scheduled Maintenance</div></div>
-    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Needs Attention</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Poor</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Critical</div></div>
   </div>`;
 
   // Search input uses renderAssetResults() ONLY — never renderAssets() —
@@ -571,46 +572,43 @@ function renderAssets() {
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
     <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
       <option value="All">All Status</option>
-      <option value="Operational"${currentStatusFilter==='Operational'?' selected':''}>Operational</option>
-      <option value="Scheduled Maintenance"${currentStatusFilter==='Scheduled Maintenance'?' selected':''}>Scheduled Maintenance</option>
-      <option value="Needs Attention"${currentStatusFilter==='Needs Attention'?' selected':''}>Needs Attention</option>
+      <option value="Good"${currentStatusFilter==='Operational'?' selected':''}>Good</option>
+      <option value="Poor"${currentStatusFilter==='Scheduled Maintenance'?' selected':''}>Poor</option>
+      <option value="Critical"${currentStatusFilter==='Needs Attention'?' selected':''}>Critical</option>
     </select>
   </div>`;
 
-  // Hierarchy filter row — cascading dropdowns matching page 10 of the guideline
+  // Hierarchy filter row — cascading dropdowns matching page 10 of the guideline.
+  // Hidden entirely if no assets have classification data yet (e.g. before backfill import).
   const uniqueNatures = [...new Set(assets.map(a=>a.nature).filter(Boolean))];
-  const filteredByNature = currentNatureFilter==="All" ? assets : assets.filter(a=>a.nature===currentNatureFilter);
-  const uniqueMobilities = [...new Set(filteredByNature.map(a=>a.mobility).filter(Boolean))];
-  const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
-  const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
-  const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
-  const uniqueClasses = [...new Set(filteredByCat.map(a=>a.klass).filter(Boolean))];
-  const filteredByClass = currentClassFilter==="All" ? filteredByCat : filteredByCat.filter(a=>a.klass===currentClassFilter);
-  const uniqueFloors = [...new Set(filteredByClass.map(a=>a.floor||a.level).filter(Boolean))].sort();
+  if (uniqueNatures.length > 0) {
+    const filteredByNature = currentNatureFilter==="All" ? assets : assets.filter(a=>a.nature===currentNatureFilter);
+    const uniqueMobilities = [...new Set(filteredByNature.map(a=>a.mobility).filter(Boolean))];
+    const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
+    const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
+    const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
+    const uniqueFloors = [...new Set(filteredByCat.map(a=>a.floor).filter(Boolean))].sort();
 
-  html += `<div class="filter-row" style="gap:6px">
-    <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentClassFilter='All';currentFloorFilter='All';renderAssets()">
-      <option value="All">All Types</option>
-      ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
-    </select>
-    ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentClassFilter='All';currentFloorFilter='All';renderAssets()">
-      <option value="All">All Mobility</option>
-      ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
-    </select>` : ''}
-    <select class="filter-select" onchange="currentCategoryFilter=this.value;currentClassFilter='All';currentFloorFilter='All';renderAssets()">
-      <option value="All">All Categories</option>
-      ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
-    </select>
-    <select class="filter-select" onchange="currentClassFilter=this.value;currentFloorFilter='All';renderAssets()">
-      <option value="All">All Classes</option>
-      ${uniqueClasses.map(c=>`<option value="${c}"${currentClassFilter===c?' selected':''}>${c}</option>`).join('')}
-    </select>
-    <select class="filter-select" onchange="currentFloorFilter=this.value;renderAssets()">
-      <option value="All">All Floors</option>
-      ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${f}</option>`).join('')}
-    </select>
-    ${(currentNatureFilter!=='All'||currentCategoryFilter!=='All'||currentClassFilter!=='All'||currentFloorFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentClassFilter='All';currentFloorFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
-  </div>`;
+    html += `<div class="filter-row" style="gap:6px">
+      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentFloorFilter='All';renderAssets()">
+        <option value="All">All Types</option>
+        ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
+      </select>
+      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentFloorFilter='All';renderAssets()">
+        <option value="All">All Mobility</option>
+        ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
+      </select>` : ''}
+      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentFloorFilter='All';renderAssets()">
+        <option value="All">All Categories</option>
+        ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentFloorFilter=this.value;renderAssets()">
+        <option value="All">All Floors</option>
+        ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${f}</option>`).join('')}
+      </select>
+      ${(currentNatureFilter!=='All'||currentCategoryFilter!=='All'||currentFloorFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentFloorFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
+    </div>`;
+  }
 
   html += `<div class="filters">`;
   systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
@@ -638,8 +636,8 @@ function renderAssetResults() {
     const idx = assets.indexOf(a);
     html += `<button class="asset-row" onclick="showDetail(${idx})">
       <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
-      <div class="asset-meta">${a.location} · ${a.manufacturer} ${a.model}</div>
-      <span class="asset-class">${a.klass}</span></div>
+      <div class="asset-meta">${a.room} · ${a.manufacturer} ${a.model}</div>
+      <span class="asset-class">${a.category}</span></div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0"><span class="badge ${statusBadge(a.status)}">${a.status}</span><span class="badge ${critBadge(a.criticality)}">${a.criticality}</span>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
   });
@@ -654,36 +652,33 @@ function showDetail(idx) {
   const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
   const canSeeCost = currentUserPermissions && currentUserPermissions.viewCostAndDepreciation;
-  const condClass = (a.condition||"").toLowerCase() === "good" ? "badge-good" : (a.condition||"").toLowerCase() === "fair" ? "badge-warning" : "badge-overdue";
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
+  const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
 
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
-  <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system} · ${a.klass}</div></div>
+  <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button onclick="exportSingleAssetXLSX('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
+    ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
     ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
-    <span class="badge ${statusBadge(a.status)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+    <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
     <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span>
   </div></div>
   <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
     <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
     <div style="flex:1;min-width:200px">
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Classification</div>
-      <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility || "—"} → ${a.category || "—"} → ${a.klass || "—"}</div>
-      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Condition</div>
-      <span class="badge ${condClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.condition || "Not Assessed"}</span>
+      <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility ? a.mobility + " → " : ""}${a.category || "—"}</div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Status</div>
+      <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status || "Good"}</span>
     </div>
   </div>
   <div class="detail-grid">`;
 
   const fields = [
-    ["Building", a.building || "—"],
-    ["Floor", a.floor || a.level || "—"],
+    ["Floor/Level", a.floor || "—"],
     ["Room/Zone", a.room || "—"],
-    ["Location", a.location || "—"],
-    ["Region", a.region || "—"],
-    ["District", a.district || "—"],
+    ["System", a.system || "—"],
     ["Manufacturer", a.manufacturer],
     ["Model", a.model],
     ["Install Date", a.installDate],
@@ -694,8 +689,9 @@ function showDetail(idx) {
     ["Added By", a.addedBy || "— (existing at pilot start)"],
   ];
   if (canSeeCost && a.acquisitionCost) {
-    fields.push(["Acquisition Cost", "Tshs " + Number(a.acquisitionCost).toLocaleString()]);
-    fields.push(["Current Value", a.currentValue !== null ? "Tshs " + Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+    fields.push(["Acquisition Cost (TZS)", Number(a.acquisitionCost).toLocaleString()]);
+    fields.push(["Current Value (TZS)", a.currentValue !== null ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+    if (a.annualDepreciation) fields.push(["Annual Depreciation", Number(a.annualDepreciation).toLocaleString() + " /yr"]);
   }
   fields.forEach(([l,v])=>{
     html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
@@ -704,11 +700,162 @@ function showDetail(idx) {
   if(a.note) {
     html += `<div class="detail-alert" style="background:${statusBg(a.status)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span><strong>Note:</strong> ${a.note}</span></div>`;
   }
-  html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div></div>`;
+  html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
+
+  // Per-asset download options
+  html += `<div style="display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--border)">
+    <span style="font-size:11px;color:var(--muted);align-self:center">Download this asset:</span>
+    <button onclick="exportSingleAssetFormat('${a.id}','xlsx')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">XLSX</button>
+    <button onclick="exportSingleAssetFormat('${a.id}','csv')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
+    <button onclick="exportSingleAssetFormat('${a.id}','pdf')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
+    <a href="${qrUrl}" download="${a.id}-qr.png" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;text-decoration:none">↓ QR Code</a>
+  </div>`;
+
+  // Audit trail — edit history
+  html += `<div id="editLogSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Edit History</div>
+    <div id="editLogEntries" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
+
+  html += `</div>`; // close detail-panel
   document.getElementById('view-assets').innerHTML = html;
+
+  // Load edit log
+  fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(a.id))
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('editLogEntries');
+      if (!data.entries || data.entries.length === 0) {
+        el.textContent = 'No edits recorded yet.';
+        return;
+      }
+      el.innerHTML = data.entries.map(e => {
+        const dt = new Date(e.timestamp);
+        const dateStr = dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) + ', ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+        return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${e.field}</strong> changed from "${e.oldValue}" to "${e.newValue}" — by <strong>${e.editedBy}</strong> at ${dateStr}</div>`;
+      }).join('');
+    })
+    .catch(() => {
+      const el = document.getElementById('editLogEntries');
+      if (el) el.textContent = 'Could not load edit history.';
+    });
 }
 
 // --- Relocation form + API call ---
+// --- Edit Asset form ---
+function openEditForm(idx) {
+  const a = assets[idx];
+  const canSeeCost = currentUserPermissions && currentUserPermissions.viewCostAndDepreciation;
+  const overlay = document.createElement('div');
+  overlay.id = 'editAssetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px;max-height:90vh;overflow-y:auto">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Edit ${a.name}</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">${a.id} — any change is recorded with your name and the time.</div>
+      <div id="editAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name</label>
+      <input id="ea_name" value="${a.name.replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
+      <select id="ea_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${systemDefs.map(s=>`<option value="${s.name}"${a.system===s.name?' selected':''}>${s.name}</option>`).join('')}
+      </select>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${a.floor||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${a.room||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
+      <input id="ea_manufacturer" value="${(a.manufacturer||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
+      <input id="ea_model" value="${(a.model||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
+          <select id="ea_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option${a.status==='Good'?' selected':''}>Good</option><option${a.status==='Poor'?' selected':''}>Poor</option><option${a.status==='Critical'?' selected':''}>Critical</option>
+          </select>
+        </div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+          <select id="ea_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option value="Low"${a.criticality==='Low'?' selected':''}>Low</option><option value="Medium"${a.criticality==='Medium'?' selected':''}>Medium</option><option value="High"${a.criticality==='High'?' selected':''}>High</option>
+          </select>
+        </div>
+      </div>
+
+      ${canSeeCost ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label><input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Residual Value (TZS)</label><input id="ea_residual" type="number" value="${a.residualValue||0}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label>
+      <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      ` : ''}
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note</label>
+      <textarea id="ea_note" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px">${(a.note||'').replace(/</g,'&lt;')}</textarea>
+
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function closeEditForm() {
+  const overlay = document.getElementById('editAssetOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function submitAssetEdit(recordId) {
+  const errorBox = document.getElementById('editAssetError');
+  const btn = document.getElementById('ea_submit');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  errorBox.style.display = 'none';
+
+  const changes = {
+    "Name": document.getElementById('ea_name').value.trim(),
+    "System": document.getElementById('ea_system').value,
+    "Floor/Level": document.getElementById('ea_floor').value.trim(),
+    "Room/Zone": document.getElementById('ea_room').value.trim(),
+    "Manufacturer": document.getElementById('ea_manufacturer').value.trim(),
+    "Model": document.getElementById('ea_model').value.trim(),
+    "Status": document.getElementById('ea_status').value,
+    "Criticality": document.getElementById('ea_criticality').value,
+    "Note": document.getElementById('ea_note').value.trim(),
+  };
+  const costField = document.getElementById('ea_cost');
+  if (costField) {
+    changes["Acquisition Cost (TZS)"] = costField.value;
+    changes["Residual Value (TZS)"] = document.getElementById('ea_residual').value;
+    changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
+  }
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'edit', recordId, changes }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to save changes');
+    closeEditForm();
+    await loadAssetsAndInit();
+    alert(data.changesApplied ? `Saved ${data.changesApplied} change(s).` : 'No changes detected.');
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
+}
+
 function openRelocateForm(recordId, assetName) {
   const overlay = document.createElement('div');
   overlay.id = 'relocateOverlay';
@@ -718,8 +865,17 @@ function openRelocateForm(recordId, assetName) {
       <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Relocate Asset</h3>
       <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Moving <strong>${assetName}</strong> to a new location. The old location will be logged for history.</div>
       <div id="relocateError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor</label>
-      <input id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor/Level</label>
+      <select id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— No change —</option>
+        <option value="GF">Ground Floor (GF)</option>
+        <option value="B1">Basement 1 (B1)</option>
+        <option value="B2">Basement 2 (B2)</option>
+        <option value="B3">Basement 3 (B3)</option>
+        <option value="M">Mezzanine (M)</option>
+        ${Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="F${n}">Floor ${n} (F${n})</option>`).join('')}
+        <option value="RF">Rooftop (RF)</option>
+      </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Room/Zone</label>
       <input id="rel_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reason for relocation</label>
@@ -773,7 +929,7 @@ function renderSystems() {
   let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
   systemDefs.forEach(s => {
     const cnt = assets.filter(a=>a.system===s.name).length;
-    const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="Critical").length;
+    const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="High").length;
     html += `<div class="sys-card"><div class="sys-card-head"><div class="sys-card-name">${s.name}</div><div class="sys-card-count">${cnt} asset${cnt!==1?'s':''}${critCnt>0?' · '+critCnt+' critical':''}</div></div><div class="sys-card-desc">${s.desc}</div></div>`;
   });
   document.getElementById('view-systems').innerHTML = html;
@@ -839,7 +995,7 @@ function renderLevelView() {
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Floor-by-Floor Asset Summary</div>`;
   [...levelDefs].reverse().forEach(l => {
-    const lvlAssets = assets.filter(a=>a.level===l.id);
+    const lvlAssets = assets.filter(a=>a.floor===l.id);
     const bySys = {};
     lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
     const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
@@ -1139,7 +1295,7 @@ function generateCertificate(recordId) {
 // single-asset download button.
 function exportAssetsXLSX(assetList, filenameSuffix) {
   const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
-  const rows = assetList.map(a => [a.id, a.name, a.system, a.klass, a.level, a.location, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, a.floor, a.room, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
@@ -1166,9 +1322,57 @@ function exportAssetRegisterCSV() {
 }
 
 function exportSingleAssetXLSX(assetId) {
+  exportSingleAssetFormat(assetId, 'xlsx');
+}
+
+function exportSingleAssetFormat(assetId, format) {
   const asset = assets.find(a => a.id === assetId);
   if (!asset) { alert("Asset not found."); return; }
-  exportAssetsXLSX([asset], `Asset_${assetId}`);
+
+  if (format === 'xlsx') {
+    exportAssetsXLSX([asset], `Asset_${assetId}`);
+    return;
+  }
+
+  if (format === 'csv') {
+    const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Criticality','Last Service','Next Service Due'];
+    const row = [asset.id, asset.name, asset.system, asset.category, asset.floor, asset.room, asset.manufacturer, asset.model, asset.installDate, asset.status, asset.criticality, asset.lastService, asset.nextService];
+    const csv = headers.join(',') + '\n' + row.map(v => `"${v||''}"`).join(',');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${assetId}.csv`;
+    a.click();
+    return;
+  }
+
+  if (format === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(`
+      <html><head><title>${asset.id} — ${asset.name}</title>
+      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1A1A2E}h1{color:#1A3566;font-size:20px}
+      table{width:100%;border-collapse:collapse;margin-top:16px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
+      td:first-child{font-weight:600;color:#6B7280;width:200px}</style></head><body>
+      <h1>${asset.name} (${asset.id})</h1>
+      <table>
+        <tr><td>System</td><td>${asset.system||'—'}</td></tr>
+        <tr><td>Category</td><td>${asset.category||'—'}</td></tr>
+        <tr><td>Floor/Level</td><td>${asset.floor||'—'}</td></tr>
+        <tr><td>Room/Zone</td><td>${asset.room||'—'}</td></tr>
+        <tr><td>Manufacturer</td><td>${asset.manufacturer||'—'}</td></tr>
+        <tr><td>Model</td><td>${asset.model||'—'}</td></tr>
+        <tr><td>Install Date</td><td>${asset.installDate||'—'}</td></tr>
+        <tr><td>Status</td><td>${asset.status||'—'}</td></tr>
+        <tr><td>Criticality</td><td>${asset.criticality||'—'}</td></tr>
+        <tr><td>Last Service</td><td>${asset.lastService||'—'}</td></tr>
+        <tr><td>Next Service Due</td><td>${asset.nextService||'—'}</td></tr>
+      </table>
+      <script>window.print()</script>
+      </body></html>
+    `);
+    win.document.close();
+    return;
+  }
 }
 
 
@@ -1183,7 +1387,7 @@ function printMaintenancePlan(windowDays) {
 
   const win = window.open('', '_blank');
   const rows = filtered
-    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${a.location}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
+    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${a.room}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
     .join('');
 
   win.document.write(`
@@ -1310,7 +1514,7 @@ function openAddAssetForm() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Onboarding a replacement? Decommission the old unit first from its detail view, then add the new one here.</div>
       <div id="addAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
 
-      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the classification below — you never type it.</div>
+      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the category below — you never type it.</div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature *</label>
       <select id="na_nature" onchange="onNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -1326,8 +1530,12 @@ function openAddAssetForm() {
         </select>
       </div>
 
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Class *</label>
-      <select id="na_klass" onchange="onClassChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category *</label>
+      <select id="na_category" onchange="onCategoryChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+      <div id="na_othersWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Specify Category *</label>
+        <input id="na_othersText" placeholder="e.g. Signage" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      </div>
       <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
@@ -1338,33 +1546,37 @@ function openAddAssetForm() {
       </select>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Region</label><input id="na_region" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">District</label><input id="na_district" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor</label><input id="na_level" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label>
+          <select id="na_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option value="GF">Ground Floor (GF)</option>
+            <option value="B1">Basement 1 (B1)</option>
+            <option value="B2">Basement 2 (B2)</option>
+            <option value="B3">Basement 3 (B3)</option>
+            <option value="M">Mezzanine (M)</option>
+            ${Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="F${n}">Floor ${n} (F${n})</option>`).join('')}
+            <option value="RF">Rooftop (RF)</option>
+          </select>
+        </div>
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="na_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
       </div>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location (free text)</label>
-      <input id="na_location" placeholder="e.g. East Riser Room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
       <input id="na_manufacturer" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
       <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Condition</label>
-      <select id="na_condition" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option>Good</option><option>Fair</option><option>Poor</option><option>Critical</option>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
+      <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option>Good</option><option>Poor</option><option>Critical</option>
       </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
       <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+        <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
       </select>
 
       <div id="na_financeFields" style="display:${(currentUserPermissions && currentUserPermissions.viewCostAndDepreciation) ? 'block' : 'none'}">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (Tshs)</label><input id="na_cost" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label><input id="na_cost" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
           <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label><input id="na_lifespan" type="number" value="15" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
         </div>
       </div>
@@ -1379,28 +1591,19 @@ function openAddAssetForm() {
   onNatureChange();
 }
 
-// --- Classification hierarchy (mirrors lib/hierarchy.js) ---
+// --- Classification hierarchy — exact match to page 10 of the guideline, each branch ends with "Others" ---
 const ASSET_HIERARCHY = {
   Tangible: {
-    Movable: ["Furniture", "Equipment", "Computer Hardware", "Plant & Machinery", "Transport Assets", "Biological Assets", "Valuable Documents", "Library Books"],
-    Immovable: ["Land", "Buildings", "Infrastructure", "Heritage", "Minerals & Other Resources"],
+    Movable: ["Furniture", "Equipment", "Computer Hardware", "Plant & Machinery", "Transport Assets", "Biological Assets", "Valuable Documents", "Library Books", "Others"],
+    Immovable: ["Land", "Buildings", "Infrastructure", "Heritage", "Minerals & Other Resources", "Others"],
   },
-  Intangible: ["Computer Software", "Trademarks", "Licenses", "Patent Rights", "Right to Use", "Other"],
+  Intangible: ["Computer Software", "Trademarks", "Licenses", "Patent Rights", "Right to Use", "Others"],
 };
-const ASSET_CLASSES = {
-  "Pump": { category: "Equipment", prefix: "PUMP" }, "UPS": { category: "Equipment", prefix: "UPS" },
-  "Generator": { category: "Equipment", prefix: "GEN" }, "Air Conditioning Unit": { category: "Equipment", prefix: "AC" },
-  "CCTV Camera": { category: "Equipment", prefix: "CCTV" }, "Access Control Panel": { category: "Equipment", prefix: "ACP" },
-  "Fire Panel": { category: "Equipment", prefix: "FP" }, "Smoke Detector": { category: "Equipment", prefix: "SD" },
-  "Lift / Elevator": { category: "Plant & Machinery", prefix: "LFT" }, "Escalator": { category: "Plant & Machinery", prefix: "ESC" },
-  "Boiler": { category: "Plant & Machinery", prefix: "BLR" }, "Compressor": { category: "Plant & Machinery", prefix: "CMP" },
-  "Desktop Computer": { category: "Computer Hardware", prefix: "PC" }, "Laptop": { category: "Computer Hardware", prefix: "LTP" },
-  "Server": { category: "Computer Hardware", prefix: "SRV" }, "Network Equipment": { category: "Computer Hardware", prefix: "NET" },
-  "Printer": { category: "Computer Hardware", prefix: "PRN" },
-  "Desk": { category: "Furniture", prefix: "DSK" }, "Chair": { category: "Furniture", prefix: "CHR" }, "Cabinet": { category: "Furniture", prefix: "CAB" },
-  "Motor Vehicle": { category: "Transport Assets", prefix: "MV" }, "Motor Cycle": { category: "Transport Assets", prefix: "MC" },
-  "Building": { category: "Buildings", prefix: "BLD" }, "Land Parcel": { category: "Land", prefix: "LND" }, "Road / Infrastructure": { category: "Infrastructure", prefix: "INF" },
-  "Software License": { category: "Computer Software", prefix: "SW" }, "Trademark": { category: "Trademarks", prefix: "TM" }, "Business License": { category: "Licenses", prefix: "LIC" },
+const CATEGORY_PREFIXES = {
+  "Furniture": "FURN", "Equipment": "EQP", "Computer Hardware": "PC", "Plant & Machinery": "PLT",
+  "Transport Assets": "VEH", "Biological Assets": "BIO", "Valuable Documents": "DOC", "Library Books": "LIB",
+  "Land": "LND", "Buildings": "BLD", "Infrastructure": "INF", "Heritage": "HER", "Minerals & Other Resources": "MIN",
+  "Computer Software": "SW", "Trademarks": "TM", "Licenses": "LIC", "Patent Rights": "PAT", "Right to Use": "RTU",
 };
 
 function onNatureChange() {
@@ -1411,22 +1614,17 @@ function onNatureChange() {
 function onMobilityChange() {
   const nature = document.getElementById('na_nature').value;
   const mobility = document.getElementById('na_mobility').value;
-  const classSelect = document.getElementById('na_klass');
-  let classNames;
-  if (nature === 'Intangible') {
-    classNames = ASSET_HIERARCHY.Intangible;
-  } else {
-    classNames = ASSET_HIERARCHY.Tangible[mobility];
-  }
-  // Show only Classes (from ASSET_CLASSES) whose category is in this branch's category list
-  const matching = Object.keys(ASSET_CLASSES).filter(c => classNames.includes(ASSET_CLASSES[c].category));
-  classSelect.innerHTML = matching.map(c => `<option value="${c}">${c}</option>`).join('') || classNames.map(c => `<option value="${c}">${c} (general)</option>`).join('');
-  onClassChange();
+  const categorySelect = document.getElementById('na_category');
+  const categories = nature === 'Intangible' ? ASSET_HIERARCHY.Intangible : ASSET_HIERARCHY.Tangible[mobility];
+  categorySelect.innerHTML = categories.map(c => `<option value="${c}">${c}</option>`).join('');
+  onCategoryChange();
 }
-function onClassChange() {
-  const klass = document.getElementById('na_klass').value;
-  const info = ASSET_CLASSES[klass];
-  document.getElementById('na_prefixHint').textContent = info ? `ID will be auto-generated as ${info.prefix}-0XX` : '';
+function onCategoryChange() {
+  const category = document.getElementById('na_category').value;
+  const othersWrap = document.getElementById('na_othersWrap');
+  othersWrap.style.display = category === 'Others' ? 'block' : 'none';
+  const prefix = CATEGORY_PREFIXES[category] || 'AST';
+  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${prefix}-0XX`;
 }
 
 function closeAddAssetForm() {
@@ -1438,12 +1636,24 @@ async function submitNewAsset() {
   const name = document.getElementById('na_name').value.trim();
   const nature = document.getElementById('na_nature').value;
   const mobility = nature === 'Tangible' ? document.getElementById('na_mobility').value : '';
-  const klass = document.getElementById('na_klass').value;
+  let category = document.getElementById('na_category').value;
   const errorBox = document.getElementById('addAssetError');
   const btn = document.getElementById('na_submit');
 
-  if (!name || !klass) {
-    errorBox.textContent = 'Name and Class are required.';
+  let customPrefix = null;
+  if (category === 'Others') {
+    const othersText = document.getElementById('na_othersText').value.trim();
+    if (!othersText) {
+      errorBox.textContent = 'Please specify the category for "Others".';
+      errorBox.style.display = 'block';
+      return;
+    }
+    category = othersText;
+    customPrefix = othersText.substring(0,4).toUpperCase().replace(/[^A-Z]/g,'') || 'AST';
+  }
+
+  if (!name || !category) {
+    errorBox.textContent = 'Name and Category are required.';
     errorBox.style.display = 'block';
     return;
   }
@@ -1460,16 +1670,13 @@ async function submitNewAsset() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name, nature, mobility, klass,
+        name, nature, mobility, category, customPrefix,
         system: document.getElementById('na_system').value,
-        region: document.getElementById('na_region').value.trim(),
-        district: document.getElementById('na_district').value.trim(),
-        level: document.getElementById('na_level').value.trim(),
+        floor: document.getElementById('na_floor').value,
         room: document.getElementById('na_room').value.trim(),
-        location: document.getElementById('na_location').value.trim(),
         manufacturer: document.getElementById('na_manufacturer').value.trim(),
         model: document.getElementById('na_model').value.trim(),
-        condition: document.getElementById('na_condition').value,
+        status: document.getElementById('na_status').value,
         criticality: document.getElementById('na_criticality').value,
         acquisitionCost: costField ? costField.value : undefined,
         lifespan: lifespanField ? lifespanField.value : undefined,
