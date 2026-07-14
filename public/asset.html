@@ -50,7 +50,7 @@
         return;
       }
       try {
-        const resp = await fetch(`/api/asset-quickview?id=${encodeURIComponent(id)}`);
+        const resp = await fetch(`/api/get-assets?public=true&id=${encodeURIComponent(id)}`);
         const data = await resp.json();
         if (!resp.ok) {
           card.innerHTML = `<div class="error">${data.error || "Asset not found."}</div>`;
