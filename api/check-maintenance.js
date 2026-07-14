@@ -17,6 +17,7 @@
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
+import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
@@ -33,6 +34,11 @@ export default async function handler(req, res) {
     const records = await fetchAllRecords();
     const results = [];
 
+    // --- Collect all actionable items first, then send ONE digest ---
+    // Grace confirmed: daily check = single bulk notification, not per-asset spam.
+    // Breakdowns reported via /report.html still send immediately (that's in report-issue.js).
+    const digestItems = [];
+
     for (const record of records) {
       const f = record.fields;
       const dueDateRaw = f["Next Service Due"];
@@ -43,39 +49,42 @@ export default async function handler(req, res) {
       const existingWO = await findOpenWorkOrder(assetId);
 
       if (!existingWO) {
-        // No open issue yet for this asset — check if it's time for
-        // the FIRST alert (within the 7-day window, or overdue).
         if (daysUntil <= ALERT_WINDOW_DAYS) {
           const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
           const message = buildMessage(f, daysUntil, urgency, null);
 
-          await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
           const [logResult, woId] = await Promise.all([
             logAlert(f, urgency, message, "Initial"),
             createWorkOrder(f, urgency),
           ]);
 
+          digestItems.push({ f, assetId, urgency, daysUntil, type: "initial", woId, message });
           results.push({ asset: assetId, urgency, type: "initial", alertLogWritten: logResult, workOrder: woId });
         }
       } else {
-        // An issue is already open for this asset — only send a
-        // REMINDER if 5+ days have passed since the last one.
         const lastReminder = existingWO.fields["Last Reminder Sent"];
         const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
 
         if (daysSinceReminder >= REMINDER_INTERVAL_DAYS) {
           const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-          const message = buildMessage(f, daysUntil, urgency, existingWO.fields["WO ID"]);
+          const woIdStr = existingWO.fields["WO ID"];
+          const message = buildMessage(f, daysUntil, urgency, woIdStr);
 
-          await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
           const [logResult] = await Promise.all([
             logAlert(f, urgency, message, "Reminder"),
             updateReminderTimestamp(existingWO.id),
           ]);
 
-          results.push({ asset: assetId, urgency, type: "reminder", woId: existingWO.fields["WO ID"], alertLogWritten: logResult });
+          digestItems.push({ f, assetId, urgency, daysUntil, type: "reminder", woId: woIdStr, message });
+          results.push({ asset: assetId, urgency, type: "reminder", woId: woIdStr, alertLogWritten: logResult });
         }
       }
+    }
+
+    // Send ONE combined email + ONE combined SMS for all items today
+    if (digestItems.length > 0) {
+      await sendDigestEmail(digestItems);
+      await sendDigestSms(digestItems);
     }
 
     await sendHeartbeat(records.length, results);
@@ -203,9 +212,56 @@ async function updateReminderTimestamp(recordId) {
 // Resend (email)
 // ---------------------------------------------------------------------
 
-async function sendEmail(f, urgency, message) {
+// Sends ONE email containing all items for today — not per-asset.
+async function sendDigestEmail(items) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const overdueCount = items.filter(i => i.urgency === "OVERDUE").length;
+  const urgentCount = items.filter(i => i.urgency === "URGENT").length;
+  const upcomingCount = items.filter(i => i.urgency === "UPCOMING").length;
+  const reminderCount = items.filter(i => i.type === "reminder").length;
+
+  const itemRows = items.map(i => {
+    const color = i.urgency === "OVERDUE" ? "#dc2626" : i.urgency === "URGENT" ? "#d97706" : "#1A3566";
+    const timing = i.daysUntil < 0 ? `${Math.abs(i.daysUntil)} days overdue` : `${i.daysUntil} days remaining`;
+    const woLabel = i.woId ? ` · ${i.woId}` : "";
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${i.assetId}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Name"] || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Location"] || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${i.urgency}</span>${i.type === "reminder" ? " (reminder)" : ""}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${timing}${woLabel}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;color:#111827">
+    <div style="background:#1A3566;color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
+      <div style="font-size:18px;font-weight:700">Daily Maintenance Digest</div>
+      <div style="font-size:12px;opacity:0.85;margin-top:4px">${new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · ${items.length} item${items.length!==1?"s":""} requiring attention</div>
+    </div>
+    <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
+      <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Team,</p>
+      <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${urgentCount ? `, ${urgentCount} urgent` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <thead><tr style="background:#f7f8fa">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">ID</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Name</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Location</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Status</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Timing</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${fromName}</p>
+    </div>
+    <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:14px">Sent automatically by ${fromName}</div>
+  </div>`;
+
+  const subject = `${fromName} — Daily Digest: ${items.length} item${items.length!==1?"s":""} (${overdueCount ? overdueCount+" overdue" : "none overdue"})`;
+  const plaintext = items.map(i => i.message).join("\n");
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -214,23 +270,32 @@ async function sendEmail(f, urgency, message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent automatically by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}</p>`,
-      text: `${message}\n\nSent automatically by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}`,
+      subject,
+      html,
+      text: plaintext + `\n\nSent automatically by ${fromName}`,
     }),
   });
-  if (!resp.ok) console.error("Resend error:", await resp.text());
+  if (!resp.ok) console.error("Digest email error:", await resp.text());
 }
 
-// ---------------------------------------------------------------------
-// Beem Africa (SMS)
-// ---------------------------------------------------------------------
-
-async function sendSms(message) {
+// Sends ONE combined SMS listing all items — keeps within 160 chars if possible,
+// but expands for larger counts since a summary is more useful than truncation.
+async function sendDigestSms(items) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
+
+  const overdueCount = items.filter(i => i.urgency === "OVERDUE").length;
+  const urgentCount = items.filter(i => i.urgency === "URGENT").length;
+  let smsText = `FAM Daily: ${items.length} item${items.length!==1?"s":""}`;
+  if (overdueCount) smsText += `, ${overdueCount} overdue`;
+  if (urgentCount) smsText += `, ${urgentCount} urgent`;
+  // Add first 2-3 asset IDs for quick reference
+  const topIds = items.slice(0, 3).map(i => i.assetId).join(", ");
+  smsText += `. Top: ${topIds}`;
+  if (items.length > 3) smsText += ` +${items.length - 3} more`;
+  smsText += ". Check dashboard.";
 
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
 
@@ -244,11 +309,11 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: smsText.slice(0, 320),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
+  if (!resp.ok) console.error("Digest SMS error:", await resp.text());
 }
 
 // ---------------------------------------------------------------------

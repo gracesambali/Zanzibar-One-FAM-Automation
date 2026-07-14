@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u);
+  setSessionCookie(res, session.u, session.r);
   try {
     const records = await fetchAllLogRecords();
     const cutoff = new Date();

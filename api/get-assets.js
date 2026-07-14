@@ -6,13 +6,15 @@
 // Returns them in the exact shape the dashboard's JavaScript expects.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { can } from "../lib/roles.js";
+import { calculateCurrentValue } from "../lib/depreciation.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u); // sliding window — this counts as activity
+  setSessionCookie(res, session.u, session.r); // sliding window — this counts as activity
 
   try {
     const allAssets = await fetchAllRecords();
@@ -21,8 +23,18 @@ export default async function handler(req, res) {
     // intact for past work orders and certificates. Pass
     // ?includeInactive=true to see everything.
     const showInactive = req.query.includeInactive === "true";
-    const assets = showInactive ? allAssets : allAssets.filter(a => a.active);
-    return res.status(200).json({ assets, count: assets.length });
+    let assets = showInactive ? allAssets : allAssets.filter(a => a.active);
+
+    // Cost/depreciation data only goes to roles cleared to see it
+    // (Business Owner, System Admin) — confirmed as sensitive during
+    // planning. Every other role gets the record with those fields
+    // stripped entirely, not just hidden client-side.
+    const role = session.r || "engineer";
+    if (!can(role, "viewCostAndDepreciation")) {
+      assets = assets.map(({ acquisitionCost, residualValue, currentValue, ...rest }) => rest);
+    }
+
+    return res.status(200).json({ assets, count: assets.length, role });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });
@@ -59,6 +71,14 @@ async function fetchAllRecords() {
 // criticality, lastService, nextService, lifespan, note).
 function normalizeRecord(record) {
   const f = record.fields;
+
+  const depreciation = calculateCurrentValue({
+    acquisitionCost: f["Acquisition Cost"],
+    residualValue: f["Residual Value"],
+    economicLifeYears: Number(f["Expected Lifespan (Years)"]) || 15,
+    acquisitionDate: f["Install Date"],
+  });
+
   return {
     recordId: record.id,
     id: f["Asset ID"] || "",
@@ -79,5 +99,31 @@ function normalizeRecord(record) {
     active: f["Active"] !== false, // defaults to true for existing assets with no Active field set
     addedBy: f["Added By"] || "",
     decommissionedBy: f["Decommissioned By"] || "",
+
+    // Classification hierarchy (page 10 of the guideline)
+    nature: f["Asset Nature"] || "",       // Tangible / Intangible
+    mobility: f["Mobility"] || "",         // Movable / Immovable
+    category: f["Asset Category"] || "",   // e.g. Equipment, Plant & Machinery
+
+    // Location drill-down
+    region: f["Region"] || "",
+    district: f["District"] || "",
+    building: f["Building"] || "",
+    floor: f["Level"] || "",
+    room: f["Room/Zone"] || "",
+
+    // Health / condition
+    condition: f["Condition"] || "Not Assessed", // Good / Fair / Poor / Critical
+
+    // QR code target — the deep link this asset's sticker will encode
+    qrTarget: f["Asset ID"] || "",
+
+    // Cost & depreciation (stripped out upstream for non-finance roles)
+    acquisitionCost: f["Acquisition Cost"] || null,
+    residualValue: f["Residual Value"] || null,
+    currentValue: depreciation.currentValue,
+    fullyDepreciated: depreciation.fullyDepreciated,
+
+    maintenanceIntervalDays: Number(f["Maintenance Interval (Days)"]) || 90,
   };
 }

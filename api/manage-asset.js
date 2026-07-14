@@ -12,13 +12,14 @@
 // Both require a real login — this modifies the client's actual data.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { getClassInfo } from "../lib/hierarchy.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u);
+  setSessionCookie(res, session.u, session.r);
 
   if (req.method === "POST") {
     return handleAddAsset(req, res, session.u);
@@ -31,17 +32,18 @@ export default async function handler(req, res) {
 
 async function handleAddAsset(req, res, addedBy) {
   const a = req.body || {};
-  if (!a.id || !a.name) {
-    return res.status(400).json({ error: "Asset ID and Name are required" });
+
+  if (!a.name || !a.nature || !a.klass) {
+    return res.status(400).json({ error: "Name, Asset Nature, and Class are required" });
+  }
+
+  const classInfo = getClassInfo(a.klass);
+  if (!classInfo) {
+    return res.status(400).json({ error: `Unknown Class "${a.klass}" — add it to lib/hierarchy.js first.` });
   }
 
   try {
-    const existing = await findByAssetId(a.id);
-    if (existing) {
-      return res.status(409).json({
-        error: `Asset ID "${a.id}" already exists (${existing.fields["Name"]}). Choose a different ID.`,
-      });
-    }
+    const assetId = await generateNextAssetId(classInfo.prefix);
 
     const base = process.env.AIRTABLE_BASE_ID;
     const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
@@ -54,32 +56,65 @@ async function handleAddAsset(req, res, addedBy) {
       },
       body: JSON.stringify({
         fields: {
-          "Asset ID": a.id,
+          "Asset ID": assetId,
           "Name": a.name,
           "System": a.system || "",
           "Class": a.klass || "",
+          "Asset Nature": a.nature || "Tangible",
+          "Mobility": a.mobility || "",
+          "Asset Category": classInfo.category || a.category || "",
+          "Region": a.region || "",
+          "District": a.district || "",
+          "Building": a.building || "",
           "Level": a.level || "",
+          "Room/Zone": a.room || "",
           "Location": a.location || "",
           "Manufacturer": a.manufacturer || "",
           "Model": a.model || "",
           "Install Date": a.installDate || new Date().toISOString().split("T")[0],
           "Expected Lifespan (Years)": Number(a.lifespan) || 15,
+          "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
+          "Acquisition Cost": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
+          "Residual Value": a.residualValue !== undefined ? Number(a.residualValue) : 0,
+          "Condition": a.condition || "Good",
           "Status": a.status || "Operational",
           "Criticality": a.criticality || "Medium",
           "Active": true,
-          // Pulled from the verified session — whoever added this
-          // asset cannot claim it was someone else.
           "Added By": addedBy,
         },
       }),
     });
 
     if (!resp.ok) throw new Error(`Airtable create failed: ${resp.status} ${await resp.text()}`);
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ success: true, assetId });
   } catch (err) {
     console.error("manage-asset POST error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+async function generateNextAssetId(prefix) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  url.searchParams.set("filterByFormula", `FIND("${prefix}-", {Asset ID}) = 1`);
+  url.searchParams.set("fields[]", "Asset ID");
+
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!resp.ok) throw new Error(`Airtable lookup failed: ${resp.status}`);
+  const data = await resp.json();
+
+  let maxSeq = 0;
+  for (const record of data.records || []) {
+    const id = record.fields["Asset ID"] || "";
+    const match = id.match(new RegExp(`^${prefix}-(\\d+)$`));
+    if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
+  }
+
+  const next = maxSeq + 1;
+  return `${prefix}-${String(next).padStart(3, "0")}`;
 }
 
 async function handleDecommission(req, res, decommissionedBy) {

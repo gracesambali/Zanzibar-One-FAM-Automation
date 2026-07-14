@@ -21,7 +21,7 @@ const FAKE_DAYS = { OVERDUE: -3, URGENT: 2, UPCOMING: 10 };
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in" });
-  setSessionCookie(res, session.u);
+  setSessionCookie(res, session.u, session.r);
 
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
