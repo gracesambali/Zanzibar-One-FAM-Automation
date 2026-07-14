@@ -100,34 +100,73 @@ columns:
 | Status | Single select — options: Open, In Progress, Completed |
 | Urgency | Single line text |
 | Created | Single line text |
+| Last Reminder Sent | Single line text |
 | Completed Date | Single line text |
+| Closed By | Single line text |
 | Notes | Long text |
 
 Leave it empty — every real alert automatically creates a new Work
-Order here with Status "Open." This is what the engineer sees and
-updates from the **Work Orders** tab in the dashboard — not just a
-notification that was sent once, but an actual task with a status
-that moves as work happens. When a work order is marked "Completed,"
-the real completion date is captured automatically — this is what
-makes the maintenance certificate accurate (see Step 1e).
+Order here with Status "Open."
+
+**Accountability:** when a Work Order is marked "Completed" — whether
+one at a time or several at once using the bulk "Close Selected"
+button — "Closed By" is filled in automatically with the username of
+whoever is logged in at that moment. This is pulled from the real,
+verified login session, not typed into a form, so it can't be
+misattributed to someone else.
+
+**Notification cadence (this is the real, live behavior now):**
+- An asset with no open Work Order gets its **first alert within 7
+  days** of its due date (or immediately if already overdue).
+- Once a Work Order is open, a **reminder repeats every 5 days** —
+  referencing the same Work Order, not creating a new one each time —
+  until someone marks it "Completed."
+- Marking a Work Order "Completed" stops the reminders and captures
+  the real completion date automatically, which is what makes the
+  maintenance certificate accurate (see Step 1e).
 
 Same as before: make sure your Airtable token has access to this
 table too if you scoped it narrowly.
 
-## Step 1d — Add the "Active" field to Components (enables decommissioning)
+## Step 1d — Add accountability fields to Components (decommissioning + who added what)
 
-Back in your `Components` table, add one more column:
+Back in your `Components` table, add three more columns:
 
 | Column name | Type |
 |---|---|
 | Active | Checkbox |
+| Added By | Single line text |
+| Decommissioned By | Single line text |
 
-Leave every existing asset unchecked/blank — the system treats a
-missing value as Active by default, so this won't hide anything you
-already have. Going forward, decommissioning an asset (from its detail
-view in the dashboard) sets this to unchecked, which removes it from
-the live register without deleting its history — past work orders and
+Leave every existing asset's `Active` unchecked/blank — the system
+treats a missing value as Active by default, so this won't hide
+anything you already have. `Added By` and `Decommissioned By` fill in
+automatically, pulled from the real login session — same rule as
+Work Orders, never something typed into a form.
+
+Going forward, decommissioning an asset (from its detail view in the
+dashboard) sets `Active` to unchecked, which removes it from the live
+register without deleting its history — past work orders and
 certificates tied to it stay valid and referenceable.
+
+## Page structure — what's public, what needs login, and what to QR-code
+
+- **`/` (homepage)** — a simple landing page with three clear options:
+  Report a Breakdown, Staff & Engineer Login, and Live Demo. This is
+  what someone sees if they just visit the bare domain with no
+  specific link.
+- **`/report.html`** — the actual **Report a Breakdown** form. No
+  login, works for anyone. Asks for the reporter's name, role, floor,
+  and room/zone — no Asset ID needed, since most staff won't know one.
+  **This is the URL to turn into a QR code** — pointing directly here
+  (not the homepage) means one less tap for someone scanning it at a
+  piece of equipment.
+- **`/dashboard.html`** — the real system. Requires login.
+- **`/login.html`** — sign-in page.
+- **`/demo.html`** — the pitch-demo page (the "Send Live Test Alert"
+  button, plus the real Asset ID + date trigger). Kept for your own
+  sales meetings — not meant for general staff use, so don't QR-code
+  this one.
 
 ## Step 1e — What's new: Add/Decommission Assets, Staff Reporting, Certificates
 
@@ -143,17 +182,17 @@ soft-deletes it — it disappears from the active register, but the
 record itself isn't destroyed. This matters because its maintenance
 history and any certificates generated for it stay valid.
 
-**Staff breakdown reporting** — a separate, no-login page at
-`/report.html`, meant for people outside the technical team (ward
-staff, procurement, anyone). They enter the Asset ID (or arrive via a
-link with `?asset=FP-002` already filled in — useful later if you add
-QR codes to equipment), their name, and what's wrong. This creates a
-real Work Order and sends the same email/SMS alert as an automated
-detection, with the reporter's name attached for accountability.
-Because it's meant to be usable by literally anyone in the building,
-this page intentionally does **not** require the engineer's login —
-accountability comes from capturing who reported it, not from
-restricting who's allowed to.
+**Staff breakdown reporting** — the homepage (`/`), meant for people
+outside the technical team (ward staff, procurement, anyone). No
+Asset ID required — they enter their name, role, floor, and
+room/zone, plus a description of what's wrong. This creates a real
+Work Order and sends the same email/SMS alert as an automated
+detection, with the reporter's name and exact location attached for
+accountability. Because it's meant to be usable by literally anyone
+in the building, this page intentionally does **not** require the
+engineer's login — accountability comes from capturing who reported
+it, not from restricting who's allowed to. This is the URL to
+QR-code and post around the building.
 
 **Certificates of Maintenance** — once a Work Order is marked
 "Completed" in the Work Orders tab, a "📄 Certificate" button appears
@@ -299,3 +338,137 @@ one source of truth now, not three separate copies.
 - **Resend**: free tier covers a low volume of alert emails
 - **Beem Africa**: pay-as-you-go SMS credit — the only genuinely
   per-use cost, roughly a few cents per SMS sent
+
+---
+
+## What Changed — Guideline Alignment Update (July 2026)
+
+This update aligns the system with the Tanzania Public Assets
+Management Guideline 2019 and incorporates feedback from hospital
+and mall client visits. Major changes below.
+
+### Airtable: New columns in Components table
+
+Add these columns to your existing `Components` table:
+
+| Column name | Type |
+|---|---|
+| Asset Nature | Single select — options: Tangible, Intangible |
+| Mobility | Single select — options: Movable, Immovable |
+| Asset Category | Single select — options: Furniture, Equipment, Computer Hardware, Plant & Machinery, Transport Assets, Biological Assets, Valuable Documents, Library Books, Land, Buildings, Infrastructure, Heritage, Minerals & Other Resources, Computer Software, Trademarks, Licenses, Patent Rights, Right to Use, Other |
+| Region | Single line text |
+| District | Single line text |
+| Building | Single line text |
+| Room/Zone | Single line text |
+| Condition | Single select — options: Good, Fair, Poor, Critical |
+| Acquisition Cost | Number (currency) |
+| Residual Value | Number (currency) — default 0 |
+| Maintenance Interval (Days) | Number — default 90 |
+
+**Existing columns that stay exactly as-is:** Asset ID, Name, System,
+Class, Level, Location, Manufacturer, Model, Install Date, Expected
+Lifespan (Years), Status, Criticality, Last Service, Next Service Due,
+Note, Last Alert Sent, Active, Added By, Decommissioned By.
+
+### Airtable: New table — Relocation Log
+
+In the same base, add a new table named `Relocation Log`:
+
+| Column name | Type |
+|---|---|
+| Asset ID | Single line text |
+| Asset Name | Single line text |
+| Old Floor | Single line text |
+| Old Room/Zone | Single line text |
+| Old Building | Single line text |
+| New Floor | Single line text |
+| New Room/Zone | Single line text |
+| New Building | Single line text |
+| Relocated By | Single line text |
+| Date | Single line text |
+| Reason | Long text |
+
+Make sure your Airtable API token has access to this table.
+
+### Vercel: New environment variables
+
+**New login pairs (all optional — set only the roles you need):**
+- `STOCK_KEEPER_USERNAME` / `STOCK_KEEPER_PASSWORD`
+- `OFFICE_ADMIN_USERNAME` / `OFFICE_ADMIN_PASSWORD`
+- `BUSINESS_OWNER_USERNAME` / `BUSINESS_OWNER_PASSWORD`
+- `SYSTEM_ADMIN_USERNAME` / `SYSTEM_ADMIN_PASSWORD`
+
+**New tables/integration:**
+- `AIRTABLE_RELOCATION_LOG_TABLE` = `Relocation Log`
+- `PUBLIC_SITE_URL` = your Vercel deployment URL (for QR code links)
+- `API_INTEGRATION_KEY` = random string for ERP/SAP access
+- `API_INTEGRATION_ROLE` = which role the API key acts as
+
+### New features in this update
+
+1. **Classification hierarchy** — cascading dropdowns (Nature →
+   Mobility → Category → Class), matching page 10 of the guideline
+   exactly. Asset IDs are now auto-generated (e.g. PUMP-003) from
+   the Class prefix — no manual naming.
+
+2. **Live depreciation** — straight-line method per guideline Section
+   21 and Annex 3. Acquisition Cost + Economic Life = real-time
+   Current Value. Only visible to Business Owner and System Admin
+   roles — stripped server-side for everyone else.
+
+3. **Condition tracking** — Good / Fair / Poor / Critical per asset.
+
+4. **QR code generation** — auto-generated per asset, visible in the
+   detail view. Encodes a link to a public quick-view page (no login
+   needed to scan). Print stickers from these for physical tagging.
+
+5. **Asset relocation** — Relocate button in the detail view. Updates
+   the asset's location fields and logs the move (old → new, who, when)
+   to the Relocation Log table.
+
+6. **6-role access control** — Technician, Engineer, Stock Keeper,
+   Office Admin, Business Owner, System Admin. Each has a defined
+   permission matrix (see lib/roles.js). Cost/depreciation data is
+   server-side gated, not just hidden in UI.
+
+7. **Bulk daily digest** — daily check now sends ONE combined email +
+   SMS listing all items, not per-asset spam. Breakdowns reported
+   via /report.html still send immediately.
+
+8. **Branded email template** — personalized "Dear Team" format with
+   urgency-colored headers, asset table, proper sign-off.
+
+9. **Dashboard timeframe selector** — 3d / 7d / 14d / 21d / 30d /
+   3mo / 6mo / 1yr views.
+
+10. **Multi-format report downloads** — Monthly Report now available
+    as PDF, CSV, or XLSX (previously PDF only).
+
+11. **Maintenance report with filters** — new endpoint
+    `/api/maintenance-report` supports status + date-range + per-asset
+    filtering for the "what happened this week" report.
+
+12. **Maintenance checklists (structure)** — per-class checklist
+    framework in lib/checklists.js. Content intentionally empty
+    until real ISO standards are sourced per class.
+
+13. **Bug fix** — closing a Work Order now advances the linked asset's
+    Next Service Due date, preventing false repeat alerts.
+
+14. **ERP/SAP integration guide** — see ERP-INTEGRATION-GUIDE.md for
+    a practical walkthrough Grace can follow herself.
+
+### New files added
+
+- `lib/hierarchy.js` — classification tree + class prefixes
+- `lib/depreciation.js` — straight-line depreciation calculator
+- `lib/roles.js` — role permission matrix
+- `lib/qrcode.js` — QR code URL builder
+- `lib/checklists.js` — per-class checklist structure (content TBD)
+- `lib/emailTemplate.js` — branded HTML email template
+- `api/asset-quickview.js` — public, no-login single-asset lookup
+- `api/relocate-asset.js` — asset relocation + logging
+- `api/maintenance-report.js` — filtered maintenance report endpoint
+- `api/checklist.js` — checklist API endpoint
+- `public/asset.html` — QR code quick-view page
+- `ERP-INTEGRATION-GUIDE.md` — integration guide for clients
