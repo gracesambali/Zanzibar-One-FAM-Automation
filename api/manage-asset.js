@@ -12,7 +12,6 @@
 // Both require a real login — this modifies the client's actual data.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
-import { getClassInfo } from "../lib/hierarchy.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -25,6 +24,8 @@ export default async function handler(req, res) {
     return handleAddAsset(req, res, session.u);
   }
   if (req.method === "PATCH") {
+    const action = (req.body && req.body.action) || "decommission";
+    if (action === "edit") return handleEditAsset(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -36,17 +37,14 @@ export default async function handler(req, res) {
 async function handleAddAsset(req, res, addedBy) {
   const a = req.body || {};
 
-  if (!a.name || !a.nature || !a.klass) {
-    return res.status(400).json({ error: "Name, Asset Nature, and Class are required" });
-  }
-
-  const classInfo = getClassInfo(a.klass);
-  if (!classInfo) {
-    return res.status(400).json({ error: `Unknown Class "${a.klass}" — add it to lib/hierarchy.js first.` });
+  if (!a.name || !a.nature || !a.category) {
+    return res.status(400).json({ error: "Name, Asset Nature, and Asset Category are required" });
   }
 
   try {
-    const assetId = await generateNextAssetId(classInfo.prefix);
+    // Auto-generate ID from category prefix (or custom prefix for "Others")
+    const prefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
+    const assetId = await generateNextAssetId(prefix);
 
     const base = process.env.AIRTABLE_BASE_ID;
     const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
@@ -62,16 +60,11 @@ async function handleAddAsset(req, res, addedBy) {
           "Asset ID": assetId,
           "Name": a.name,
           "System": a.system || "",
-          "Class": a.klass || "",
           "Asset Nature": a.nature || "Tangible",
           "Mobility": a.mobility || "",
-          "Asset Category": classInfo.category || a.category || "",
-          "Region": a.region || "",
-          "District": a.district || "",
-          "Building": a.building || "",
-          "Floor/Level": a.level || "",
+          "Asset Category": a.category || "",
+          "Floor/Level": a.floor || "",
           "Room/Zone": a.room || "",
-          "Room/Zone": a.location || "",
           "Manufacturer": a.manufacturer || "",
           "Model": a.model || "",
           "Install Date": a.installDate || new Date().toISOString().split("T")[0],
@@ -79,9 +72,8 @@ async function handleAddAsset(req, res, addedBy) {
           "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
           "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
           "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
-          "Condition": a.condition || "Good",
-          "Status": a.status || "Operational",
-          "Criticality": a.criticality || "Medium",
+          "Status": a.status || "Good",          // Good / Poor / Critical
+          "Criticality": a.criticality || "Medium", // High / Medium / Low
           "Active": true,
           "Added By": addedBy,
         },
@@ -94,6 +86,20 @@ async function handleAddAsset(req, res, addedBy) {
     console.error("manage-asset POST error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+// Category → ID prefix mapping (replaces the old Class-based system)
+function getCategoryPrefix(category) {
+  const map = {
+    "Furniture": "FURN", "Equipment": "EQP", "Computer Hardware": "PC",
+    "Plant & Machinery": "PLT", "Transport Assets": "VEH", "Biological Assets": "BIO",
+    "Valuable Documents": "DOC", "Library Books": "LIB",
+    "Land": "LND", "Buildings": "BLD", "Infrastructure": "INF",
+    "Heritage": "HER", "Minerals & Other Resources": "MIN",
+    "Computer Software": "SW", "Trademarks": "TM", "Licenses": "LIC",
+    "Patent Rights": "PAT", "Right to Use": "RTU",
+  };
+  return map[category] || "AST";
 }
 
 async function generateNextAssetId(prefix) {
@@ -216,6 +222,84 @@ async function handleRelocate(req, res, relocatedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("relocate-asset error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Editable fields — only these can be changed via the edit form.
+const EDITABLE_FIELDS = [
+  "Name", "System", "Asset Nature", "Mobility", "Asset Category",
+  "Floor/Level", "Room/Zone", "Manufacturer", "Model", "Install Date",
+  "Expected Lifespan (Years)", "Maintenance Interval (Days)",
+  "Acquisition Cost (TZS)", "Residual Value (TZS)",
+  "Status", "Criticality", "Note",
+];
+
+async function handleEditAsset(req, res, editedBy) {
+  const { recordId, changes } = req.body || {};
+  if (!recordId || !changes || typeof changes !== "object") {
+    return res.status(400).json({ error: "recordId and changes object required" });
+  }
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+  try {
+    // Read current values first (for the audit log)
+    const readResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!readResp.ok) throw new Error("Could not read asset: " + readResp.status);
+    const current = await readResp.json();
+    const assetId = current.fields["Asset ID"] || "";
+
+    // Filter to only allowed fields and build the update + audit entries
+    const updateFields = {};
+    const auditEntries = [];
+    for (const [field, newValue] of Object.entries(changes)) {
+      if (!EDITABLE_FIELDS.includes(field)) continue;
+      const oldValue = current.fields[field];
+      if (String(oldValue || "") !== String(newValue || "")) {
+        updateFields[field] = newValue;
+        auditEntries.push({ field, oldValue: oldValue || "", newValue: newValue || "" });
+      }
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(200).json({ success: true, message: "No changes detected" });
+    }
+
+    // Update the asset
+    const updateResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: updateFields }),
+    });
+    if (!updateResp.ok) throw new Error("Failed to update: " + updateResp.status);
+
+    // Write audit log entries
+    const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
+    const timestamp = new Date().toISOString();
+    for (const entry of auditEntries) {
+      await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fields: {
+            "Asset ID": assetId,
+            "Field Changed": entry.field,
+            "Old Value": String(entry.oldValue),
+            "New Value": String(entry.newValue),
+            "Edited By": editedBy,
+            "Timestamp": timestamp,
+          },
+        }),
+      }).catch(e => console.error("Edit log write failed (non-fatal):", e));
+    }
+
+    return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId });
+  } catch (err) {
+    console.error("edit-asset error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

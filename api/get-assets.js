@@ -19,7 +19,12 @@ export default async function handler(req, res) {
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u, session.r); // sliding window — this counts as activity
+  setSessionCookie(res, session.u, session.r);
+
+  // Edit log for a specific asset (audit trail)
+  if (req.query.editlog && req.query.id) {
+    return handleEditLog(req, res);
+  }
 
   try {
     const allAssets = await fetchAllRecords();
@@ -89,44 +94,34 @@ function normalizeRecord(record) {
     id: f["Asset ID"] || "",
     name: f["Name"] || "",
     system: f["System"] || "",
-    klass: f["Class"] || "",
-    level: f["Floor/Level"] || "",
-    location: f["Room/Zone"] || "",
+    floor: f["Floor/Level"] || "",
+    room: f["Room/Zone"] || "",
     manufacturer: f["Manufacturer"] || "",
     model: f["Model"] || "",
     installDate: f["Install Date"] || "",
-    status: f["Status"] || "Operational",
-    criticality: f["Criticality"] || "Medium",
+    status: f["Status"] || "Good",           // Good / Poor / Critical (merged with old Condition)
+    criticality: f["Criticality"] || "Medium", // High / Medium / Low
     lastService: f["Last Service"] || "",
     nextService: f["Next Service Due"] || "",
     lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
     note: f["Note"] || undefined,
-    active: f["Active"] !== false, // defaults to true for existing assets with no Active field set
+    active: f["Active"] !== false,
     addedBy: f["Added By"] || "",
     decommissionedBy: f["Decommissioned By"] || "",
 
     // Classification hierarchy (page 10 of the guideline)
-    nature: f["Asset Nature"] || "",       // Tangible / Intangible
-    mobility: f["Mobility"] || "",         // Movable / Immovable
-    category: f["Asset Category"] || "",   // e.g. Equipment, Plant & Machinery
+    nature: f["Asset Nature"] || "",
+    mobility: f["Mobility"] || "",
+    category: f["Asset Category"] || "",
 
-    // Location drill-down
-    region: f["Region"] || "",
-    district: f["District"] || "",
-    building: f["Building"] || "",
-    floor: f["Floor/Level"] || "",
-    room: f["Room/Zone"] || "",
-
-    // Health / condition
-    condition: f["Condition"] || "Not Assessed", // Good / Fair / Poor / Critical
-
-    // QR code target — the deep link this asset's sticker will encode
+    // QR code target
     qrTarget: f["Asset ID"] || "",
 
     // Cost & depreciation (stripped out upstream for non-finance roles)
     acquisitionCost: f["Acquisition Cost (TZS)"] || null,
     residualValue: f["Residual Value (TZS)"] || null,
     currentValue: depreciation.currentValue,
+    annualDepreciation: depreciation.annualDepreciation,
     fullyDepreciated: depreciation.fullyDepreciated,
 
     maintenanceIntervalDays: Number(f["Maintenance Interval (Days)"]) || 90,
@@ -153,13 +148,40 @@ async function handlePublicQuickview(req, res) {
     const f = record.fields;
     return res.status(200).json({
       id: f["Asset ID"] || "", name: f["Name"] || "", system: f["System"] || "",
-      klass: f["Class"] || "", category: f["Asset Category"] || "",
-      building: f["Building"] || "", floor: f["Floor/Level"] || "", room: f["Room/Zone"] || "",
-      location: f["Room/Zone"] || "", status: f["Status"] || "Operational",
-      condition: f["Condition"] || "Not Assessed", manufacturer: f["Manufacturer"] || "",
+      category: f["Asset Category"] || "",
+      floor: f["Floor/Level"] || "", room: f["Room/Zone"] || "",
+      status: f["Status"] || "Good",
+      manufacturer: f["Manufacturer"] || "",
       model: f["Model"] || "", lastService: f["Last Service"] || "",
       nextService: f["Next Service Due"] || "",
     });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleEditLog(req, res) {
+  const assetId = req.query.id;
+  const base = process.env.AIRTABLE_BASE_ID;
+  const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
+  try {
+    const url = new URL(`https://api.airtable.com/v0/${base}/${logTable}`);
+    url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+    url.searchParams.set("sort[0][field]", "Timestamp");
+    url.searchParams.set("sort[0][direction]", "desc");
+    const resp = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error("Failed to fetch edit log");
+    const data = await resp.json();
+    const entries = (data.records || []).map(r => ({
+      field: r.fields["Field Changed"] || "",
+      oldValue: r.fields["Old Value"] || "",
+      newValue: r.fields["New Value"] || "",
+      editedBy: r.fields["Edited By"] || "",
+      timestamp: r.fields["Timestamp"] || "",
+    }));
+    return res.status(200).json({ entries });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
