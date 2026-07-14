@@ -472,3 +472,79 @@ Make sure your Airtable API token has access to this table.
 - `api/checklist.js` — checklist API endpoint
 - `public/asset.html` — QR code quick-view page
 - `ERP-INTEGRATION-GUIDE.md` — integration guide for clients
+
+---
+
+## What Changed — Round 2 (Structural Simplification, July 2026)
+
+Based on real usage feedback after the first guideline-alignment pass.
+
+### Airtable: Components table — REMOVE these columns
+- `Class` — redundant with Asset Category + System, removed
+- `Condition` — merged into Status (see below)
+- `Region` — moved to project-level config (see below)
+- `District` — moved to project-level config
+- `Building` — moved to project-level config
+
+### Airtable: Components table — CHANGE these column options
+- `Status` — now the single field for asset health. Options: **Good, Poor, Critical** (replaces the old Operational/Scheduled Maintenance/Needs Attention AND the separate Condition field)
+- `Criticality` — now **High, Medium, Low** only (removed "Critical" as a 4th option — that concept now lives entirely in Status)
+
+### Airtable: new table — Edit Log
+For the new Edit button's audit trail:
+
+| Column | Type |
+|---|---|
+| Asset ID | Single line text |
+| Field Changed | Single line text |
+| Old Value | Single line text |
+| New Value | Single line text |
+| Edited By | Single line text |
+| Timestamp | Single line text |
+
+### Region / District / Building — now project-level, not per-asset
+These are set ONCE per deployment in `public/dashboard.html`, in the
+`CLIENT_CONFIG` object near the top of the file:
+
+```js
+const CLIENT_CONFIG = {
+  clientName: "Sali International Hospital",
+  region: "Zanzibar",
+  district: "Zanzibar Urban",
+  building: "Zanzibar One Tower",
+  ...
+};
+```
+
+This is because one deployment = one building = one region/district,
+always. No need to repeat it on every asset. Shows automatically in
+the header subtitle.
+
+### New features
+1. **Edit button** on every asset's detail view (Business Owner /
+   Engineer / System Admin roles) — edit ANY field, not just cost.
+   Every change is logged to Edit Log with who + when. No email
+   notification — just a visible audit trail at the bottom of the
+   asset's own detail page.
+2. **Multi-format per-asset download** — XLSX, CSV, and PDF buttons
+   on every individual asset's detail view (previously only bulk
+   register export existed).
+3. **Downloadable QR code** — the QR code on the detail view now has
+   a direct download link (saves as PNG, ready to print as a sticker).
+4. **Floor naming convention** — GF (Ground Floor), B1/B2/B3
+   (Basements), F1–F20 (Floors), M (Mezzanine), RF (Rooftop).
+   Replaces the old generic Level 1/2/3 system. Used consistently in
+   Add Asset, Relocate, and filter dropdowns.
+5. **"Others" option** on every classification branch (Movable,
+   Immovable, Intangible) — matches page 10 exactly, with a free-text
+   field to specify what the "Other" asset actually is.
+6. **Hierarchy filters now self-hide** when no classification data
+   exists yet (e.g. before the backfill import), instead of showing
+   empty dropdowns.
+7. **Removed the Class filter/field** — Category is now the deepest
+   classification level; System already covers the old Class role.
+
+### Files changed in this round
+- `api/get-assets.js` — field renames, removed Region/District/Building/Class/Condition, added editlog query
+- `api/manage-asset.js` — Add Asset simplified to Category-only (no Class), added Edit handler with audit logging
+- `public/dashboard.html` — Add Asset form, Edit form (new), detail view, filters, floor naming, CLIENT_CONFIG
