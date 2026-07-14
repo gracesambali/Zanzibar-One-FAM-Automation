@@ -47,7 +47,7 @@ export default async function handler(req, res) {
     const f = updated.fields;
     const daysUntil = FAKE_DAYS[urgency]; // exact, since we just set it
     const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
-    const message = `${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateStr}. ${timing}.`;
+    const message = `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateStr}. ${timing}.`;
 
     const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
     const logResult = await logAlert(f, urgency, message);
@@ -127,7 +127,7 @@ async function logAlert(f, urgency, message) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Urgency": urgency,
         "Channel": "Email + SMS (real-path test)",
         "Message": message,
@@ -158,7 +158,7 @@ async function createWorkOrder(f, urgency) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Status": "Open",
         "Urgency": urgency,
         "Created": new Date().toISOString(),

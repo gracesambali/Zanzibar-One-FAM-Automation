@@ -15,6 +15,12 @@ import { setSessionCookie } from "../lib/auth.js";
 import { ROLES } from "../lib/roles.js";
 
 export default async function handler(req, res) {
+  // DELETE (or any non-POST) from /api/login = logout
+  if (req.method === "DELETE" || (req.method === "POST" && req.body && req.body.action === "logout")) {
+    res.setHeader("Set-Cookie", ["gvc_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"]);
+    return res.status(200).json({ success: true });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }

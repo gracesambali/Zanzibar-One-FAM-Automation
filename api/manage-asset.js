@@ -27,6 +27,9 @@ export default async function handler(req, res) {
   if (req.method === "PATCH") {
     return handleDecommission(req, res, session.u);
   }
+  if (req.method === "PUT") {
+    return handleRelocate(req, res, session.u);
+  }
   return res.status(405).json({ error: "Method not allowed" });
 }
 
@@ -66,16 +69,16 @@ async function handleAddAsset(req, res, addedBy) {
           "Region": a.region || "",
           "District": a.district || "",
           "Building": a.building || "",
-          "Level": a.level || "",
+          "Floor/Level": a.level || "",
           "Room/Zone": a.room || "",
-          "Location": a.location || "",
+          "Room/Zone": a.location || "",
           "Manufacturer": a.manufacturer || "",
           "Model": a.model || "",
           "Install Date": a.installDate || new Date().toISOString().split("T")[0],
           "Expected Lifespan (Years)": Number(a.lifespan) || 15,
           "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
-          "Acquisition Cost": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
-          "Residual Value": a.residualValue !== undefined ? Number(a.residualValue) : 0,
+          "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
+          "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
           "Condition": a.condition || "Good",
           "Status": a.status || "Operational",
           "Criticality": a.criticality || "Medium",
@@ -162,4 +165,57 @@ async function findByAssetId(assetId) {
   if (!resp.ok) throw new Error(`Airtable lookup failed: ${resp.status}`);
   const data = await resp.json();
   return data.records && data.records.length > 0 ? data.records[0] : null;
+}
+
+async function handleRelocate(req, res, relocatedBy) {
+  const { recordId, newFloor, newRoom, newBuilding, reason } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+  if (!newFloor && !newRoom) return res.status(400).json({ error: "At least a new floor or room/zone is required" });
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+  try {
+    const readResp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!readResp.ok) throw new Error("Could not read asset: " + readResp.status);
+    const current = await readResp.json();
+    const oldFloor = current.fields["Floor/Level"] || "";
+    const oldRoom = current.fields["Room/Zone"] || "";
+    const oldBuilding = current.fields["Building"] || "";
+    const assetId = current.fields["Asset ID"] || "";
+    const assetName = current.fields["Name"] || "";
+
+    const updateFields = {};
+    if (newFloor) updateFields["Floor/Level"] = newFloor;
+    if (newRoom) updateFields["Room/Zone"] = newRoom;
+    if (newBuilding) updateFields["Building"] = newBuilding;
+
+    const updateResp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: updateFields }),
+    });
+    if (!updateResp.ok) throw new Error("Failed to update asset location: " + updateResp.status);
+
+    const logTable = encodeURIComponent(process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log");
+    await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          "Asset ID": assetId, "Asset Name": assetName,
+          "Old Floor": oldFloor, "Old Room/Zone": oldRoom, "Old Building": oldBuilding,
+          "New Floor": newFloor || oldFloor, "New Room/Zone": newRoom || oldRoom, "New Building": newBuilding || oldBuilding,
+          "Relocated By": relocatedBy, "Date": new Date().toISOString(), "Reason": reason || "",
+        },
+      }),
+    }).catch(e => console.error("Relocation log write failed (non-fatal):", e));
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("relocate-asset error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }

@@ -13,6 +13,7 @@
 // page reload between each one.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { getChecklist } from "../lib/checklists.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -20,6 +21,15 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Not logged in" });
   }
   setSessionCookie(res, session.u, session.r);
+
+  // Merged endpoints: ?report=true for maintenance report, ?checklist=CLASS for checklists
+  if (req.method === "GET" && req.query.report === "true") {
+    return handleMaintenanceReport(req, res);
+  }
+  if (req.method === "GET" && req.query.checklist) {
+    const cl = getChecklist(req.query.checklist);
+    return res.status(200).json({ class: req.query.checklist, ...cl });
+  }
 
   if (req.method === "GET") {
     try {
@@ -202,4 +212,32 @@ async function advanceAssetNextService(assetId) {
       },
     }),
   });
+}
+
+async function handleMaintenanceReport(req, res) {
+  const { status, from, to, asset } = req.query;
+  try {
+    const records = await fetchAllWorkOrders();
+    let filtered = records;
+    if (status) filtered = filtered.filter(r => (r.fields["Status"] || "") === status);
+    if (asset) filtered = filtered.filter(r => (r.fields["Asset ID"] || "") === asset);
+    if (from) { const d = new Date(from); filtered = filtered.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) >= d); }
+    if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) <= d); }
+    const workOrders = filtered.map(r => ({
+      woId: r.fields["WO ID"] || "", assetId: r.fields["Asset ID"] || "",
+      assetName: r.fields["Asset Name"] || "", system: r.fields["System"] || "",
+      location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
+      urgency: r.fields["Urgency"] || "", created: r.fields["Created"] || "",
+      completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
+      notes: r.fields["Notes"] || "",
+    })).sort((a, b) => new Date(b.created) - new Date(a.created));
+    const summary = {
+      total: workOrders.length, open: workOrders.filter(w => w.status === "Open").length,
+      inProgress: workOrders.filter(w => w.status === "In Progress").length,
+      completed: workOrders.filter(w => w.status === "Completed").length,
+    };
+    return res.status(200).json({ workOrders, summary });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 }

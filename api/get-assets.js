@@ -10,6 +10,11 @@ import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 
 export default async function handler(req, res) {
+  // Public quick-view mode (for QR code scanning — no login needed)
+  if (req.query.public === "true" && req.query.id) {
+    return handlePublicQuickview(req, res);
+  }
+
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
@@ -73,8 +78,8 @@ function normalizeRecord(record) {
   const f = record.fields;
 
   const depreciation = calculateCurrentValue({
-    acquisitionCost: f["Acquisition Cost"],
-    residualValue: f["Residual Value"],
+    acquisitionCost: f["Acquisition Cost (TZS)"],
+    residualValue: f["Residual Value (TZS)"],
     economicLifeYears: Number(f["Expected Lifespan (Years)"]) || 15,
     acquisitionDate: f["Install Date"],
   });
@@ -85,8 +90,8 @@ function normalizeRecord(record) {
     name: f["Name"] || "",
     system: f["System"] || "",
     klass: f["Class"] || "",
-    level: f["Level"] || "",
-    location: f["Location"] || "",
+    level: f["Floor/Level"] || "",
+    location: f["Room/Zone"] || "",
     manufacturer: f["Manufacturer"] || "",
     model: f["Model"] || "",
     installDate: f["Install Date"] || "",
@@ -109,7 +114,7 @@ function normalizeRecord(record) {
     region: f["Region"] || "",
     district: f["District"] || "",
     building: f["Building"] || "",
-    floor: f["Level"] || "",
+    floor: f["Floor/Level"] || "",
     room: f["Room/Zone"] || "",
 
     // Health / condition
@@ -119,11 +124,43 @@ function normalizeRecord(record) {
     qrTarget: f["Asset ID"] || "",
 
     // Cost & depreciation (stripped out upstream for non-finance roles)
-    acquisitionCost: f["Acquisition Cost"] || null,
-    residualValue: f["Residual Value"] || null,
+    acquisitionCost: f["Acquisition Cost (TZS)"] || null,
+    residualValue: f["Residual Value (TZS)"] || null,
     currentValue: depreciation.currentValue,
     fullyDepreciated: depreciation.fullyDepreciated,
 
     maintenanceIntervalDays: Number(f["Maintenance Interval (Days)"]) || 90,
   };
+}
+
+// Public, no-login single-asset lookup (QR code target).
+// Deliberately excludes cost/depreciation — same sensitivity rule.
+async function handlePublicQuickview(req, res) {
+  const assetId = req.query.id;
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+    url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+    url.searchParams.set("maxRecords", "1");
+    const resp = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status}`);
+    const data = await resp.json();
+    const record = data.records && data.records[0];
+    if (!record) return res.status(404).json({ error: "Asset not found" });
+    const f = record.fields;
+    return res.status(200).json({
+      id: f["Asset ID"] || "", name: f["Name"] || "", system: f["System"] || "",
+      klass: f["Class"] || "", category: f["Asset Category"] || "",
+      building: f["Building"] || "", floor: f["Floor/Level"] || "", room: f["Room/Zone"] || "",
+      location: f["Room/Zone"] || "", status: f["Status"] || "Operational",
+      condition: f["Condition"] || "Not Assessed", manufacturer: f["Manufacturer"] || "",
+      model: f["Model"] || "", lastService: f["Last Service"] || "",
+      nextService: f["Next Service Due"] || "",
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 }

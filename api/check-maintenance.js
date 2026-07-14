@@ -85,6 +85,12 @@ export default async function handler(req, res) {
     if (digestItems.length > 0) {
       await sendDigestEmail(digestItems);
       await sendDigestSms(digestItems);
+
+      // Update "Last Alert Sent" on each affected Component record —
+      // this was previously missing, causing the Airtable field to stay
+      // stale while emails were actually being delivered.
+      const now = new Date().toISOString();
+      await Promise.all(digestItems.map(item => updateComponentLastAlertSent(item.f, now)));
     }
 
     await sendHeartbeat(records.length, results);
@@ -141,7 +147,7 @@ async function logAlert(f, urgency, message, alertType) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Urgency": `${alertType}: ${urgency}`,
         "Channel": "Email + SMS",
         "Message": message,
@@ -176,7 +182,7 @@ async function createWorkOrder(f, urgency) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Status": "Open",
         "Urgency": urgency,
         "Created": new Date().toISOString(),
@@ -230,7 +236,7 @@ async function sendDigestEmail(items) {
     return `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${i.assetId}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Name"] || "—"}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Location"] || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Room/Zone"] || "—"}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${i.urgency}</span>${i.type === "reminder" ? " (reminder)" : ""}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${timing}${woLabel}</td>
     </tr>`;
@@ -323,7 +329,7 @@ async function sendDigestSms(items) {
 function buildMessage(f, daysUntil, urgency, existingWoId) {
   const name = f["Name"] || "Asset";
   const assetId = f["Asset ID"] || "";
-  const location = f["Location"] || "";
+  const location = f["Room/Zone"] || "";
   const due = f["Next Service Due"] || "";
   const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
   const prefix = existingWoId ? `[REMINDER — ${existingWoId} still open] ` : `[${urgency}] `;
@@ -375,4 +381,34 @@ async function sendHeartbeat(checkedCount, results, errorMessage) {
 
 function todayString() {
   return new Date().toISOString().split("T")[0];
+}
+
+// Updates the "Last Alert Sent" field on the Component record in Airtable.
+// This is what was missing — the Alert Log table was being written to, but
+// the Component's own field was never touched, so it showed stale dates.
+async function updateComponentLastAlertSent(f, timestamp) {
+  const assetId = f["Asset ID"];
+  if (!assetId) return;
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+  findUrl.searchParams.set("maxRecords", "1");
+  findUrl.searchParams.set("fields[]", "Asset ID");
+  try {
+    const findResp = await fetch(findUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!findResp.ok) return;
+    const findData = await findResp.json();
+    const record = findData.records && findData.records[0];
+    if (!record) return;
+    await fetch(`https://api.airtable.com/v0/${base}/${table}/${record.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Last Alert Sent": timestamp } }),
+    });
+  } catch (e) {
+    console.error("updateComponentLastAlertSent failed for", assetId, e);
+  }
 }

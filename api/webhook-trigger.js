@@ -49,7 +49,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Location"]} — service due ${dueDateRaw}.`;
+      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
@@ -119,7 +119,7 @@ async function logAlert(f, urgency, message) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Urgency": urgency,
         "Channel": "Email + SMS (instant webhook)",
         "Message": message,
@@ -145,7 +145,7 @@ async function createWorkOrder(f, urgency) {
         "Asset ID": f["Asset ID"] || "",
         "Asset Name": f["Name"] || "",
         "System": f["System"] || "",
-        "Location": f["Location"] || "",
+        "Location": f["Room/Zone"] || "",
         "Status": "Open",
         "Urgency": urgency,
         "Created": new Date().toISOString(),
