@@ -784,9 +784,9 @@ function showDetail(idx) {
     ["Maintenance Interval (Calculated)", formatInterval(calcMaintenanceInterval(a.lastService, a.nextService))],
     ["Added By", a.addedBy || "— (existing at pilot start)"],
   ];
-  if (canSeeCost && a.acquisitionCost) {
-    fields.push(["Acquisition Cost (TZS)", Number(a.acquisitionCost).toLocaleString()]);
-    fields.push(["Current Value (Calculated)", a.currentValue !== null ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+  if (canSeeCost) {
+    fields.push(["Acquisition Cost (TZS)", a.acquisitionCost ? Number(a.acquisitionCost).toLocaleString() : "Not set"]);
+    fields.push(["Current Value (Calculated)", a.currentValue !== null && a.currentValue !== undefined ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
     if (a.annualDepreciation) fields.push(["Annual Depreciation", Number(a.annualDepreciation).toLocaleString() + " /yr"]);
   }
   fields.forEach(([l,v])=>{
