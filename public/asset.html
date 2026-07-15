@@ -41,6 +41,19 @@
       return "badge-fair";
     }
 
+    function assetAge(installDate) {
+      if (!installDate) return "—";
+      const years = new Date().getFullYear() - parseInt(installDate.split("-")[0]);
+      return years >= 0 ? years + " years" : "—";
+    }
+
+    function maintenanceInterval(lastService, nextService) {
+      if (!lastService || !nextService) return "—";
+      const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
+      if (days <= 0) return "—";
+      return days >= 60 ? `${days}d (~${Math.round(days/30)}mo)` : `${days} days`;
+    }
+
     async function load() {
       const params = new URLSearchParams(window.location.search);
       const id = params.get("id");
@@ -63,12 +76,18 @@
           </div>
           <div class="body">
             <div class="row"><span class="label">Status</span><span class="value">${data.status}</span></div>
-            <div class="row"><span class="label">Condition</span><span class="value"><span class="badge ${conditionBadgeClass(data.condition)}">${data.condition}</span></span></div>
-            <div class="row"><span class="label">Category</span><span class="value">${data.category || data.klass || "—"}</span></div>
-            <div class="row"><span class="label">Location</span><span class="value">${[data.building, data.floor ? "Floor " + data.floor : "", data.room].filter(Boolean).join(" · ") || data.location || "—"}</span></div>
-            <div class="row"><span class="label">Manufacturer / Model</span><span class="value">${[data.manufacturer, data.model].filter(Boolean).join(" / ") || "—"}</span></div>
+            <div class="row"><span class="label">System</span><span class="value">${data.system || "—"}</span></div>
+            <div class="row"><span class="label">Category</span><span class="value">${data.category || "—"}</span></div>
+            <div class="row"><span class="label">Floor/Level</span><span class="value">${data.floor || "—"}</span></div>
+            <div class="row"><span class="label">Room/Zone</span><span class="value">${data.room || "—"}</span></div>
+            <div class="row"><span class="label">Manufacturer</span><span class="value">${data.manufacturer || "—"}</span></div>
+            <div class="row"><span class="label">Model</span><span class="value">${data.model || "—"}</span></div>
+            <div class="row"><span class="label">Install Date</span><span class="value">${data.installDate || "—"}</span></div>
+            <div class="row"><span class="label">Expected Lifespan</span><span class="value">${data.lifespan ? data.lifespan + " years" : "—"}</span></div>
+            <div class="row"><span class="label">Asset Age</span><span class="value">${assetAge(data.installDate)}</span></div>
             <div class="row"><span class="label">Last Service</span><span class="value">${data.lastService || "—"}</span></div>
             <div class="row"><span class="label">Next Service Due</span><span class="value">${data.nextService || "—"}</span></div>
+            <div class="row"><span class="label">Maintenance Interval</span><span class="value">${maintenanceInterval(data.lastService, data.nextService)}</span></div>
           </div>
           <a class="report-link" href="/report.html">🛠 Report an issue with this asset</a>
           <div class="footer">Gracing Ventures · Facility Asset Management</div>
