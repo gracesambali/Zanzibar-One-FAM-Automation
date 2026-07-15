@@ -284,18 +284,60 @@ let currentUserRole = "engineer";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
+// TEMPORARY (Grace, July 2026): showing cost/depreciation data to every role
+// for now, while access control is worked out per-client. Flip this to
+// `false` (and set the same flag in api/get-assets.js) to restore the
+// original rule — Business Owner and System Admin only.
+const TEMP_SHOW_COST_TO_ALL = true;
+
 // Legacy imported assets use "L1", "L14" etc. In this building, L1 is the
 // Ground Floor and L15 is the top floor (no separate rooftop level) — so
 // L1 -> GF, and everything above shifts down by one: L2 -> F1, L15 -> F14.
 // New assets (via Add Asset) already use the correct GF/B1-B3/M/F1-F20/RF
 // convention directly, so this only affects display of legacy "L" data —
 // the underlying Airtable value is untouched, safe to run every time.
+// Calculated from the asset's own Last Service and Next Service Due dates —
+// not a separately typed number, so it can never drift out of sync with
+// what's actually on record. Returns null if either date is missing.
+function calcMaintenanceInterval(lastService, nextService) {
+  if (!lastService || !nextService) return null;
+  const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
+  return days > 0 ? days : null;
+}
+function formatInterval(days) {
+  if (days === null || days === undefined) return '—';
+  if (days >= 60) return `${days}d (~${Math.round(days/30)}mo)`;
+  return `${days} days`;
+}
+
 function displayFloor(floor) {
   if (!floor) return '';
   const m = floor.match(/^L(\d+)$/i);
   if (!m) return floor; // already GF/B1/F3/M/RF etc — pass through unchanged
   const n = parseInt(m[1], 10);
   return n === 1 ? 'GF' : `F${n - 1}`;
+}
+
+// Some Room/Zone values are free text that embed the old floor naming
+// inside the description itself (e.g. "L14 Office Entry", "Level 8
+// Mechanical Room", "Rooftop Level 15") rather than using the clean
+// coded Floor field. This relabels those embedded references the same
+// way displayFloor() does, so the whole system reads consistently —
+// the underlying Airtable text is untouched, display only.
+function displayRoom(room) {
+  if (!room) return '';
+  let out = room;
+  // Spelled-out "Level N" -> "Ground Floor" or "Floor N-1"
+  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? 'Ground Floor' : `Floor ${n - 1}`;
+  });
+  // Compact "L14" style token -> "GF" or "F13"
+  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? 'GF' : `F${n - 1}`;
+  });
+  return out;
 }
 let dashboardWorkOrders = []; // populated live from /api/work-orders alongside assets
 
@@ -508,7 +550,7 @@ function renderDashboard() {
     upcoming.forEach(a => {
       const dueDate = new Date(a.nextService);
       const dateLabel = dueDate.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${a.room || a.floor || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
+      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${displayRoom(a.room) || displayFloor(a.floor) || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
     });
   }
   html += `</div>`;
@@ -640,7 +682,7 @@ function renderAssets() {
       </select>
       <select class="filter-select" onchange="currentRoomFilter=this.value;renderAssets()">
         <option value="All">All Rooms/Zones</option>
-        ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${r}</option>`).join('')}
+        ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${displayRoom(r)}</option>`).join('')}
       </select>
       ${(currentNatureFilter!=='All'||currentMobilityFilter!=='All'||currentCategoryFilter!=='All'||currentSystemFilter!=='All'||currentFloorFilter!=='All'||currentRoomFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
     </div>`;
@@ -667,15 +709,30 @@ function renderAssetResults() {
   const filtered = getFilteredAssets();
   const container = document.getElementById('assetResultsContainer');
   if (!container) return;
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
 
   let html = `<div class="result-count">Showing ${filtered.length} of ${assets.length} assets</div>`;
   html += `<div class="asset-list">`;
   filtered.forEach((a) => {
     const idx = assets.indexOf(a);
+    const interval = calcMaintenanceInterval(a.lastService, a.nextService);
+    const intervalBlock = `
+      <div style="text-align:right;flex-shrink:0;min-width:90px">
+        <div style="font-size:11px;color:var(--muted)">Interval</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${formatInterval(interval)}</div>
+      </div>`;
+    const valueBlock = canSeeCost ? `
+      <div style="text-align:right;flex-shrink:0;min-width:110px">
+        <div style="font-size:11px;color:var(--muted)">Current Value</div>
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? 'TZS ' + Number(a.currentValue).toLocaleString() : '—'}</div>
+        ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
+      </div>` : '';
     html += `<button class="asset-row" onclick="showDetail(${idx})">
       <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
-      <div class="asset-meta">${a.room} · ${a.manufacturer} ${a.model}</div>
+      <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
       <span class="asset-class">${a.category}</span></div>
+      ${valueBlock}
+      ${intervalBlock}
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0"><span class="badge ${statusBadge(a.status)}">${a.status}</span><span class="badge ${critBadge(a.criticality)}">${a.criticality}</span>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
   });
@@ -689,7 +746,7 @@ function showDetail(idx) {
   const pct = Math.min((age/a.lifespan)*100, 100);
   const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
-  const canSeeCost = currentUserPermissions && currentUserPermissions.viewCostAndDepreciation;
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
 
@@ -715,7 +772,7 @@ function showDetail(idx) {
 
   const fields = [
     ["Floor/Level", displayFloor(a.floor) || "—"],
-    ["Room/Zone", a.room || "—"],
+    ["Room/Zone", displayRoom(a.room) || "—"],
     ["System", a.system || "—"],
     ["Manufacturer", a.manufacturer],
     ["Model", a.model],
@@ -724,11 +781,12 @@ function showDetail(idx) {
     ["Asset Age", age+" years"],
     ["Last Service", a.lastService || "—"],
     ["Next Service Due", a.nextService || "—"],
+    ["Maintenance Interval (Calculated)", formatInterval(calcMaintenanceInterval(a.lastService, a.nextService))],
     ["Added By", a.addedBy || "— (existing at pilot start)"],
   ];
   if (canSeeCost && a.acquisitionCost) {
     fields.push(["Acquisition Cost (TZS)", Number(a.acquisitionCost).toLocaleString()]);
-    fields.push(["Current Value (TZS)", a.currentValue !== null ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+    fields.push(["Current Value (Calculated)", a.currentValue !== null ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
     if (a.annualDepreciation) fields.push(["Annual Depreciation", Number(a.annualDepreciation).toLocaleString() + " /yr"]);
   }
   fields.forEach(([l,v])=>{
@@ -783,7 +841,7 @@ function showDetail(idx) {
 // --- Edit Asset form ---
 function openEditForm(idx) {
   const a = assets[idx];
-  const canSeeCost = currentUserPermissions && currentUserPermissions.viewCostAndDepreciation;
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const overlay = document.createElement('div');
   overlay.id = 'editAssetOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
@@ -796,6 +854,24 @@ function openEditForm(idx) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name</label>
       <input id="ea_name" value="${a.name.replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature</label>
+      <select id="ea_nature" onchange="onEditNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Tangible"${a.nature==='Tangible'?' selected':''}>Tangible</option>
+        <option value="Intangible"${a.nature==='Intangible'?' selected':''}>Intangible</option>
+        <option value=""${!a.nature?' selected':''}>— Not classified —</option>
+      </select>
+
+      <div id="ea_mobilityWrap">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Mobility</label>
+        <select id="ea_mobility" onchange="onEditCategoryOptionsRefresh()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+          <option value="Movable"${a.mobility==='Movable'?' selected':''}>Movable</option>
+          <option value="Immovable"${a.mobility==='Immovable'?' selected':''}>Immovable</option>
+        </select>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
+      <select id="ea_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
       <select id="ea_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${systemDefs.map(s=>`<option value="${s.name}"${a.system===s.name?' selected':''}>${s.name}</option>`).join('')}
@@ -803,13 +879,16 @@ function openEditForm(idx) {
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${displayFloor(a.floor)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${a.room||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${displayRoom(a.room)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
       </div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
       <input id="ea_manufacturer" value="${(a.manufacturer||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
       <input id="ea_model" value="${(a.model||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Install / Acquisition Date</label>
+      <input id="ea_installdate" type="date" value="${a.installDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
@@ -825,10 +904,8 @@ function openEditForm(idx) {
       </div>
 
       ${canSeeCost ? `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label><input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Residual Value (TZS)</label><input id="ea_residual" type="number" value="${a.residualValue||0}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
-      </div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label>
+      <input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label>
       <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       ` : ''}
@@ -843,6 +920,27 @@ function openEditForm(idx) {
     </div>
   `;
   document.body.appendChild(overlay);
+  onEditNatureChange(true, a.category);
+}
+
+function onEditNatureChange(skipReset, preselectCategory) {
+  const nature = document.getElementById('ea_nature').value;
+  document.getElementById('ea_mobilityWrap').style.display = nature === 'Tangible' ? 'block' : 'none';
+  onEditCategoryOptionsRefresh(preselectCategory);
+}
+function onEditCategoryOptionsRefresh(preselectCategory) {
+  const nature = document.getElementById('ea_nature').value;
+  const mobility = document.getElementById('ea_mobility') ? document.getElementById('ea_mobility').value : 'Movable';
+  const categorySelect = document.getElementById('ea_category');
+  let categories;
+  if (nature === 'Intangible') categories = ASSET_HIERARCHY.Intangible;
+  else if (nature === 'Tangible') categories = ASSET_HIERARCHY.Tangible[mobility];
+  else categories = ['Furniture','Equipment','Computer Hardware','Plant & Machinery','Transport Assets','Biological Assets','Valuable Documents','Library Books','Land','Buildings','Infrastructure','Heritage','Minerals & Other Resources','Computer Software','Trademarks','Licenses','Patent Rights','Right to Use','Others'];
+  const current = preselectCategory !== undefined ? preselectCategory : categorySelect.value;
+  categorySelect.innerHTML = categories.map(c => `<option value="${c}"${c===current?' selected':''}>${c}</option>`).join('');
+  if (current && !categories.includes(current)) {
+    categorySelect.insertAdjacentHTML('afterbegin', `<option value="${current}" selected>${current} (current)</option>`);
+  }
 }
 
 function closeEditForm() {
@@ -859,11 +957,15 @@ async function submitAssetEdit(recordId) {
 
   const changes = {
     "Name": document.getElementById('ea_name').value.trim(),
+    "Asset Nature": document.getElementById('ea_nature').value,
+    "Mobility": document.getElementById('ea_nature').value === 'Tangible' ? document.getElementById('ea_mobility').value : '',
+    "Asset Category": document.getElementById('ea_category').value,
     "System": document.getElementById('ea_system').value,
     "Floor/Level": document.getElementById('ea_floor').value.trim(),
     "Room/Zone": document.getElementById('ea_room').value.trim(),
     "Manufacturer": document.getElementById('ea_manufacturer').value.trim(),
     "Model": document.getElementById('ea_model').value.trim(),
+    "Install Date": document.getElementById('ea_installdate').value,
     "Status": document.getElementById('ea_status').value,
     "Criticality": document.getElementById('ea_criticality').value,
     "Note": document.getElementById('ea_note').value.trim(),
@@ -871,7 +973,6 @@ async function submitAssetEdit(recordId) {
   const costField = document.getElementById('ea_cost');
   if (costField) {
     changes["Acquisition Cost (TZS)"] = costField.value;
-    changes["Residual Value (TZS)"] = document.getElementById('ea_residual').value;
     changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
   }
 
@@ -1333,7 +1434,7 @@ function generateCertificate(recordId) {
 // single-asset download button.
 function exportAssetsXLSX(assetList, filenameSuffix) {
   const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
-  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), a.room, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), displayRoom(a.room), a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
@@ -1447,7 +1548,7 @@ function printMaintenancePlan(windowDays) {
 
   const win = window.open('', '_blank');
   const rows = filtered
-    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${a.room}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
+    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${displayRoom(a.room)}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
     .join('');
 
   win.document.write(`
@@ -1634,7 +1735,7 @@ function openAddAssetForm() {
         <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
       </select>
 
-      <div id="na_financeFields" style="display:${(currentUserPermissions && currentUserPermissions.viewCostAndDepreciation) ? 'block' : 'none'}">
+      <div id="na_financeFields" style="display:${(TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation)) ? 'block' : 'none'}">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
           <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label><input id="na_cost" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
           <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label><input id="na_lifespan" type="number" value="15" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
