@@ -131,7 +131,11 @@ function normalizeRecord(record) {
 }
 
 // Public, no-login single-asset lookup (QR code target).
-// Deliberately excludes cost/depreciation — same sensitivity rule.
+// Deliberately excludes cost/depreciation, always — this is a separate,
+// permanent rule from the Asset Register's TEMP_SHOW_COST_TO_ALL setting.
+// A QR sticker is physically stuck on equipment where anyone can scan it,
+// so financial data never belongs here regardless of what's shown
+// internally in the dashboard.
 async function handlePublicQuickview(req, res) {
   const assetId = req.query.id;
   try {
@@ -148,14 +152,19 @@ async function handlePublicQuickview(req, res) {
     const record = data.records && data.records[0];
     if (!record) return res.status(404).json({ error: "Asset not found" });
     const f = record.fields;
+
     return res.status(200).json({
       id: f["Asset ID"] || "", name: f["Name"] || "", system: f["System"] || "",
       category: f["Asset Category"] || "",
       floor: f["Floor/Level"] || "", room: f["Room/Zone"] || "",
       status: f["Status"] || "Good",
       manufacturer: f["Manufacturer"] || "",
-      model: f["Model"] || "", lastService: f["Last Service"] || "",
+      model: f["Model"] || "",
+      installDate: f["Install Date"] || "",
+      lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
+      lastService: f["Last Service"] || "",
       nextService: f["Next Service Due"] || "",
+      // No acquisitionCost, currentValue, or residualValue — never sent here.
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
