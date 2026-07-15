@@ -283,6 +283,20 @@ let assets = []; // populated live from Airtable via /api/get-assets
 let currentUserRole = "engineer";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
+
+// Legacy imported assets use "L1", "L14" etc. In this building, L1 is the
+// Ground Floor and L15 is the top floor (no separate rooftop level) — so
+// L1 -> GF, and everything above shifts down by one: L2 -> F1, L15 -> F14.
+// New assets (via Add Asset) already use the correct GF/B1-B3/M/F1-F20/RF
+// convention directly, so this only affects display of legacy "L" data —
+// the underlying Airtable value is untouched, safe to run every time.
+function displayFloor(floor) {
+  if (!floor) return '';
+  const m = floor.match(/^L(\d+)$/i);
+  if (!m) return floor; // already GF/B1/F3/M/RF etc — pass through unchanged
+  const n = parseInt(m[1], 10);
+  return n === 1 ? 'GF' : `F${n - 1}`;
+}
 let dashboardWorkOrders = []; // populated live from /api/work-orders alongside assets
 
 // Mirrors lib/roles.js — used only to toggle UI elements (cost fields,
@@ -300,21 +314,21 @@ const ROLE_PERMISSIONS = {
 const levelDefs = [
   { id:"B2", label:"Basement 2 — Plant & Parking", count:5 },
   { id:"B1", label:"Basement 1 — Plant, Substation & Parking", count:9 },
-  { id:"L1", label:"Level 1 — Ground Floor / Lobby & Retail", count:10 },
-  { id:"L2", label:"Level 2 — Retail", count:4 },
-  { id:"L3", label:"Level 3 — Retail", count:4 },
-  { id:"L4", label:"Level 4 — Office", count:4 },
-  { id:"L5", label:"Level 5 — Office", count:4 },
-  { id:"L6", label:"Level 6 — Office", count:4 },
-  { id:"L7", label:"Level 7 — Office", count:4 },
-  { id:"L8", label:"Level 8 — Mechanical Floor", count:3 },
-  { id:"L9", label:"Level 9 — Office", count:4 },
-  { id:"L10", label:"Level 10 — Office", count:4 },
-  { id:"L11", label:"Level 11 — Office", count:4 },
-  { id:"L12", label:"Level 12 — Office", count:4 },
-  { id:"L13", label:"Level 13 — Office", count:4 },
-  { id:"L14", label:"Level 14 — Office", count:4 },
-  { id:"L15", label:"Level 15 — Rooftop Plant", count:5 }
+  { id:"L1", label:"Ground Floor — Lobby & Retail", count:10 },
+  { id:"L2", label:"Floor 1 — Retail", count:4 },
+  { id:"L3", label:"Floor 2 — Retail", count:4 },
+  { id:"L4", label:"Floor 3 — Office", count:4 },
+  { id:"L5", label:"Floor 4 — Office", count:4 },
+  { id:"L6", label:"Floor 5 — Office", count:4 },
+  { id:"L7", label:"Floor 6 — Office", count:4 },
+  { id:"L8", label:"Floor 7 — Mechanical Floor", count:3 },
+  { id:"L9", label:"Floor 8 — Office", count:4 },
+  { id:"L10", label:"Floor 9 — Office", count:4 },
+  { id:"L11", label:"Floor 10 — Office", count:4 },
+  { id:"L12", label:"Floor 11 — Office", count:4 },
+  { id:"L13", label:"Floor 12 — Office", count:4 },
+  { id:"L14", label:"Floor 13 — Office", count:4 },
+  { id:"L15", label:"Floor 14 — Rooftop Plant", count:5 }
 ];
 
 const systemDefs = [
@@ -335,7 +349,8 @@ let currentNatureFilter = "All";
 let currentMobilityFilter = "All";
 let currentCategoryFilter = "All";
 let currentFloorFilter = "All";
-let currentLevelFilter = "All";
+let currentCriticalityFilter = "All";
+let currentRoomFilter = "All";
 let currentStatusFilter = "All";
 let currentSearch = "";
 
@@ -534,12 +549,13 @@ function renderDashboard() {
 function getFilteredAssets() {
   return assets.filter(a => {
     if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
-    if(currentLevelFilter!=="All" && a.floor!==currentLevelFilter) return false;
     if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
+    if(currentCriticalityFilter!=="All" && a.criticality!==currentCriticalityFilter) return false;
     if(currentNatureFilter!=="All" && a.nature!==currentNatureFilter) return false;
     if(currentMobilityFilter!=="All" && a.mobility!==currentMobilityFilter) return false;
     if(currentCategoryFilter!=="All" && a.category!==currentCategoryFilter) return false;
-    if(currentFloorFilter!=="All" && (a.floor||a.floor)!==currentFloorFilter) return false;
+    if(currentFloorFilter!=="All" && a.floor!==currentFloorFilter) return false;
+    if(currentRoomFilter!=="All" && a.room!==currentRoomFilter) return false;
     if(currentSearch) {
       const q = currentSearch.toLowerCase();
       const hay = (a.id+" "+a.name+" "+a.room+" "+a.manufacturer+" "+a.model+" "+a.category+" "+(a.nature||"")+" "+(a.category||"")+" "+(a.building||"")+" "+(a.room||"")).toLowerCase();
@@ -572,13 +588,20 @@ function renderAssets() {
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
     <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
       <option value="All">All Status</option>
-      <option value="Good"${currentStatusFilter==='Operational'?' selected':''}>Good</option>
-      <option value="Poor"${currentStatusFilter==='Scheduled Maintenance'?' selected':''}>Poor</option>
-      <option value="Critical"${currentStatusFilter==='Needs Attention'?' selected':''}>Critical</option>
+      <option value="Good"${currentStatusFilter==='Good'?' selected':''}>Good</option>
+      <option value="Poor"${currentStatusFilter==='Poor'?' selected':''}>Poor</option>
+      <option value="Critical"${currentStatusFilter==='Critical'?' selected':''}>Critical</option>
+    </select>
+    <select class="filter-select" onchange="currentCriticalityFilter=this.value;renderAssets()">
+      <option value="All">All Criticality</option>
+      <option value="High"${currentCriticalityFilter==='High'?' selected':''}>High</option>
+      <option value="Medium"${currentCriticalityFilter==='Medium'?' selected':''}>Medium</option>
+      <option value="Low"${currentCriticalityFilter==='Low'?' selected':''}>Low</option>
     </select>
   </div>`;
 
-  // Hierarchy filter row — cascading dropdowns matching page 10 of the guideline.
+  // Full hierarchy + location filter row, in order: Nature -> Mobility -> Category
+  // -> System -> Floor -> Room/Zone. Each narrows the options in the next one.
   // Hidden entirely if no assets have classification data yet (e.g. before backfill import).
   const uniqueNatures = [...new Set(assets.map(a=>a.nature).filter(Boolean))];
   if (uniqueNatures.length > 0) {
@@ -587,32 +610,47 @@ function renderAssets() {
     const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
     const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
     const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
-    const uniqueFloors = [...new Set(filteredByCat.map(a=>a.floor).filter(Boolean))].sort();
+    const uniqueSystemsInBranch = [...new Set(filteredByCat.map(a=>a.system).filter(Boolean))].sort();
+    const filteredBySystem = currentSystemFilter==="All" ? filteredByCat : filteredByCat.filter(a=>a.system===currentSystemFilter);
+    const uniqueFloors = [...new Set(filteredBySystem.map(a=>a.floor).filter(Boolean))]
+      .sort((a,b) => displayFloor(a).localeCompare(displayFloor(b), undefined, {numeric:true}));
+    const filteredByFloor = currentFloorFilter==="All" ? filteredBySystem : filteredBySystem.filter(a=>a.floor===currentFloorFilter);
+    const uniqueRooms = [...new Set(filteredByFloor.map(a=>a.room).filter(Boolean))].sort();
 
-    html += `<div class="filter-row" style="gap:6px">
-      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentFloorFilter='All';renderAssets()">
+    html += `<div class="filter-row" style="gap:6px;flex-wrap:wrap">
+      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Types</option>
         ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
       </select>
-      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentFloorFilter='All';renderAssets()">
+      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Mobility</option>
         ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
       </select>` : ''}
-      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentFloorFilter='All';renderAssets()">
+      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Categories</option>
         ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="currentFloorFilter=this.value;renderAssets()">
-        <option value="All">All Floors</option>
-        ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${f}</option>`).join('')}
+      <select class="filter-select" onchange="currentSystemFilter=this.value;currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+        <option value="All">All Systems</option>
+        ${uniqueSystemsInBranch.map(s=>`<option value="${s}"${currentSystemFilter===s?' selected':''}>${s}</option>`).join('')}
       </select>
-      ${(currentNatureFilter!=='All'||currentCategoryFilter!=='All'||currentFloorFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentFloorFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
+      <select class="filter-select" onchange="currentFloorFilter=this.value;currentRoomFilter='All';renderAssets()">
+        <option value="All">All Floors</option>
+        ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${displayFloor(f)}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentRoomFilter=this.value;renderAssets()">
+        <option value="All">All Rooms/Zones</option>
+        ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${r}</option>`).join('')}
+      </select>
+      ${(currentNatureFilter!=='All'||currentMobilityFilter!=='All'||currentCategoryFilter!=='All'||currentSystemFilter!=='All'||currentFloorFilter!=='All'||currentRoomFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
     </div>`;
+  } else {
+    // No classification data yet (pre-backfill) — still offer a plain System filter
+    // as buttons so System filtering works even before Nature/Category are populated.
+    html += `<div class="filters">`;
+    systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
+    html += `</div>`;
   }
-
-  html += `<div class="filters">`;
-  systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
-  html += `</div>`;
 
   html += `<div id="assetResultsContainer"></div>`;
 
@@ -676,7 +714,7 @@ function showDetail(idx) {
   <div class="detail-grid">`;
 
   const fields = [
-    ["Floor/Level", a.floor || "—"],
+    ["Floor/Level", displayFloor(a.floor) || "—"],
     ["Room/Zone", a.room || "—"],
     ["System", a.system || "—"],
     ["Manufacturer", a.manufacturer],
@@ -708,7 +746,7 @@ function showDetail(idx) {
     <button onclick="exportSingleAssetFormat('${a.id}','xlsx')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">XLSX</button>
     <button onclick="exportSingleAssetFormat('${a.id}','csv')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
     <button onclick="exportSingleAssetFormat('${a.id}','pdf')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
-    <a href="${qrUrl}" download="${a.id}-qr.png" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;text-decoration:none">↓ QR Code</a>
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ QR Code</button>
   </div>`;
 
   // Audit trail — edit history
@@ -764,7 +802,7 @@ function openEditForm(idx) {
       </select>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${a.floor||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${displayFloor(a.floor)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${a.room||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
       </div>
 
@@ -1295,7 +1333,7 @@ function generateCertificate(recordId) {
 // single-asset download button.
 function exportAssetsXLSX(assetList, filenameSuffix) {
   const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
-  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, a.floor, a.room, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), a.room, a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
@@ -1323,6 +1361,28 @@ function exportAssetRegisterCSV() {
 
 function exportSingleAssetXLSX(assetId) {
   exportSingleAssetFormat(assetId, 'xlsx');
+}
+
+// Cross-origin <a download> links often just navigate instead of downloading
+// (browsers require same-origin, or a blob, for that attribute to be honored
+// reliably). Fetching the QR image ourselves and turning it into a blob URL
+// fixes this — this is what actually makes "Download QR" save a real PNG file.
+async function downloadQrCode(qrUrl, assetId) {
+  try {
+    const resp = await fetch(qrUrl);
+    if (!resp.ok) throw new Error('QR service returned ' + resp.status);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${assetId}-qr.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } catch (err) {
+    alert('Could not download QR code: ' + err.message);
+  }
 }
 
 function exportSingleAssetFormat(assetId, format) {
