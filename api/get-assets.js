@@ -35,12 +35,14 @@ export default async function handler(req, res) {
     const showInactive = req.query.includeInactive === "true";
     let assets = showInactive ? allAssets : allAssets.filter(a => a.active);
 
-    // Cost/depreciation data only goes to roles cleared to see it
-    // (Business Owner, System Admin) — confirmed as sensitive during
-    // planning. Every other role gets the record with those fields
-    // stripped entirely, not just hidden client-side.
+    // TEMPORARY (Grace, July 2026): showing cost/depreciation data to every
+    // role for now, while access control is worked out per-client. Flip this
+    // back to `false` to restore the original rule — Business Owner and
+    // System Admin only — nothing else needs to change when you do.
+    const TEMP_SHOW_COST_TO_ALL = true;
+
     const role = session.r || "engineer";
-    if (!can(role, "viewCostAndDepreciation")) {
+    if (!TEMP_SHOW_COST_TO_ALL && !can(role, "viewCostAndDepreciation")) {
       assets = assets.map(({ acquisitionCost, residualValue, currentValue, ...rest }) => rest);
     }
 

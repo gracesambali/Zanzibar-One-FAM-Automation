@@ -18,6 +18,7 @@
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
+import { calculateCurrentValue } from "../lib/depreciation.js";
 
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
@@ -95,7 +96,14 @@ export default async function handler(req, res) {
 
     await sendHeartbeat(records.length, results);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, results });
+    // Sync "Current Value (TZS)" in Airtable to match the live depreciation
+    // calculation. The dashboard already computes this on every page load —
+    // this just keeps Airtable's own column reflecting the same number, so
+    // anyone browsing Airtable directly (without the dashboard) sees an
+    // accurate figure too, not something manually typed once and left stale.
+    const valueSyncCount = await syncCurrentValues(records);
+
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -411,4 +419,48 @@ async function updateComponentLastAlertSent(f, timestamp) {
   } catch (e) {
     console.error("updateComponentLastAlertSent failed for", assetId, e);
   }
+}
+
+// Recalculates Current Value (TZS) for every asset that has an Acquisition
+// Cost on record, and writes it into Airtable's own "Current Value (TZS)"
+// column. Only updates records where the number actually changed, to avoid
+// unnecessary writes. Runs once daily as part of the existing cron — no new
+// scheduled function needed (Vercel Hobby plan caps serverless functions).
+async function syncCurrentValues(records) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  let updated = 0;
+
+  for (const record of records) {
+    const f = record.fields;
+    if (!f["Acquisition Cost (TZS)"]) continue; // nothing to depreciate
+
+    const result = calculateCurrentValue({
+      acquisitionCost: f["Acquisition Cost (TZS)"],
+      residualValue: f["Residual Value (TZS)"],
+      economicLifeYears: Number(f["Expected Lifespan (Years)"]) || 15,
+      acquisitionDate: f["Install Date"],
+    });
+
+    if (result.currentValue === null) continue;
+
+    const existing = f["Current Value (TZS)"];
+    if (Number(existing) === result.currentValue) continue; // already correct, skip the write
+
+    try {
+      await fetch(`https://api.airtable.com/v0/${base}/${table}/${record.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ fields: { "Current Value (TZS)": result.currentValue } }),
+      });
+      updated++;
+    } catch (e) {
+      console.error(`Current Value sync failed for ${f["Asset ID"]}:`, e);
+    }
+  }
+
+  return updated;
 }

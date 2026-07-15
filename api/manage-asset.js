@@ -12,6 +12,7 @@
 // Both require a real login — this modifies the client's actual data.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { calculateCurrentValue } from "../lib/depreciation.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -32,6 +33,19 @@ export default async function handler(req, res) {
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
+}
+
+// Computes Current Value (TZS) at the moment an asset is created, so the
+// column isn't blank/stale until tomorrow's daily sync runs.
+function computeCurrentValue(a) {
+  if (a.acquisitionCost === undefined || a.acquisitionCost === "") return undefined;
+  const result = calculateCurrentValue({
+    acquisitionCost: Number(a.acquisitionCost),
+    residualValue: a.residualValue !== undefined ? Number(a.residualValue) : 0,
+    economicLifeYears: Number(a.lifespan) || 15,
+    acquisitionDate: a.installDate || new Date().toISOString().split("T")[0],
+  });
+  return result.currentValue !== null ? result.currentValue : undefined;
 }
 
 async function handleAddAsset(req, res, addedBy) {
@@ -72,6 +86,7 @@ async function handleAddAsset(req, res, addedBy) {
           "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
           "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
           "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
+          "Current Value (TZS)": computeCurrentValue(a),
           "Status": a.status || "Good",          // Good / Poor / Critical
           "Criticality": a.criticality || "Medium", // High / Medium / Low
           "Active": true,
@@ -267,6 +282,22 @@ async function handleEditAsset(req, res, editedBy) {
 
     if (Object.keys(updateFields).length === 0) {
       return res.status(200).json({ success: true, message: "No changes detected" });
+    }
+
+    // If any field that affects depreciation just changed, recalculate
+    // Current Value immediately rather than waiting for tomorrow's cron.
+    const DEPRECIATION_FIELDS = ["Acquisition Cost (TZS)", "Residual Value (TZS)", "Expected Lifespan (Years)", "Install Date"];
+    if (DEPRECIATION_FIELDS.some(f => f in updateFields)) {
+      const merged = { ...current.fields, ...updateFields };
+      const result = calculateCurrentValue({
+        acquisitionCost: merged["Acquisition Cost (TZS)"],
+        residualValue: merged["Residual Value (TZS)"],
+        economicLifeYears: Number(merged["Expected Lifespan (Years)"]) || 15,
+        acquisitionDate: merged["Install Date"],
+      });
+      if (result.currentValue !== null) {
+        updateFields["Current Value (TZS)"] = result.currentValue;
+      }
     }
 
     // Update the asset
