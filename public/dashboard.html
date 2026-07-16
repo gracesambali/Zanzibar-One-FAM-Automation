@@ -218,7 +218,7 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
     Dashboard
   </button>
- <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
+  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
     Asset Register
   </button>
@@ -253,6 +253,7 @@ button { font-family: inherit; cursor: pointer; }
 <div class="content" style="display:none;">
   <div id="view-dashboard" class="view active"></div>
   <div id="view-assets" class="view"></div>
+  <div id="view-sensors" class="view"></div>
   <div id="view-systems" class="view"></div>
   <div id="view-maintenance" class="view"></div>
   <div id="view-levelview" class="view"></div>
@@ -413,6 +414,7 @@ function switchTab(tab) {
   document.getElementById('view-'+tab).classList.add('active');
   if(tab==='dashboard') renderDashboard();
   if(tab==='assets') renderAssets();
+  if(tab==='sensors') renderSensorMonitor();
   if(tab==='systems') renderSystems();
   if(tab==='maintenance') renderMaintenance();
   if(tab==='levelview') renderLevelView();
@@ -1066,6 +1068,66 @@ async function submitRelocation(recordId) {
     btn.disabled = false;
     btn.textContent = 'Relocate';
   }
+}
+
+async function renderSensorMonitor() {
+  const container = document.getElementById('view-sensors');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
+
+  try {
+    const resp = await fetch('/api/get-sensor-readings');
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
+    const data = await resp.json();
+    const sensors = data.sensors || [];
+
+    const inRange = sensors.filter(s => s.withinRange === true).length;
+    const outRange = sensors.filter(s => s.withinRange === false).length;
+    const noData = sensors.filter(s => s.withinRange === null || s.withinRange === undefined).length;
+
+    let html = `<div class="summary-grid">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${sensors.length}</div><div class="summary-label">Total Sensors</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${inRange}</div><div class="summary-label">In Range</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${outRange}</div><div class="summary-label">Out of Range</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--muted)">${noData}</div><div class="summary-label">No Data Yet</div></div>
+    </div>`;
+
+    if (sensors.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No sensors registered yet — once a sensor is added to the Sensors table and starts sending readings, it will appear here automatically.</div>`;
+    } else {
+      html += `<div class="asset-list">`;
+      sensors.forEach(s => {
+        const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
+        const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
+        const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
+        html += `<div class="asset-row" style="cursor:default">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
+            <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;min-width:100px">
+            <div style="font-size:11px;color:var(--muted)">Latest Reading</div>
+            <div style="font-size:16px;font-weight:700;color:var(--navy)">${valueDisplay}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <span class="badge ${badgeClass}">${badgeLabel}</span>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 10s</div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
+  }
+
+  clearTimeout(window._sensorRefreshTimer);
+  window._sensorRefreshTimer = setTimeout(() => {
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor();
+  }, 10000);
 }
 
 function renderSystems() {
