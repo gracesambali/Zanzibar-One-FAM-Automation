@@ -110,7 +110,10 @@ async function sendEmail({ reporterName, reporterRole, location, description, wo
 
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) return;
+  if (phoneList.length === 0) {
+    console.error("Beem skipped: ALERT_TO_PHONE is empty or unset");
+    return;
+  }
 
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
@@ -127,5 +130,11 @@ async function sendSms(message) {
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
+
+  // Always log the full response, not just on HTTP failure - Beem can
+  // return HTTP 200 with "successful": false in the body for issues like
+  // bad recipient format or insufficient credits, which resp.ok misses.
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  if (!resp.ok) console.error("Beem HTTP error:", responseText);
 }
