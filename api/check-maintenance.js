@@ -257,7 +257,7 @@ async function sendDigestEmail(items) {
       <div style="font-size:12px;opacity:0.85;margin-top:4px">${new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · ${items.length} item${items.length!==1?"s":""} requiring attention</div>
     </div>
     <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
-      <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Team,</p>
+      <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Technical Team,</p>
       <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${urgentCount ? `, ${urgentCount} urgent` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0">
         <thead><tr style="background:#f7f8fa">

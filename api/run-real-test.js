@@ -15,6 +15,7 @@
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
+import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 
 const FAKE_DAYS = { OVERDUE: -3, URGENT: 2, UPCOMING: 10 };
 
@@ -49,7 +50,7 @@ export default async function handler(req, res) {
     const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
     const message = `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateStr}. ${timing}.`;
 
-    const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+    const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, daysUntil, message), sendSms(message)]);
     const logResult = await logAlert(f, urgency, message);
     const woResult = await createWorkOrder(f, urgency);
     await markAlerted(record.id);
@@ -171,9 +172,18 @@ async function createWorkOrder(f, urgency) {
   return woId;
 }
 
-async function sendEmail(f, urgency, message) {
+async function sendEmail(f, urgency, daysUntil, message) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return { ok: false, text: async () => "No recipients configured" };
+
+  const html = buildFriendlyEmailHtml({
+    f,
+    urgency,
+    daysUntil,
+    existingWoId: null,
+    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+  });
+
   return fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -184,7 +194,7 @@ async function sendEmail(f, urgency, message) {
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
+      html,
       text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
     }),
   });

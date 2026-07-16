@@ -15,6 +15,7 @@
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
+import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
       const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
-      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+      await Promise.all([sendEmail(f, urgency, daysUntil, null, message), sendSms(message)]);
       const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
 
       return res.status(200).json({ triggered: true, type: "initial", urgency, asset: f["Asset ID"], message, workOrder: woId });
@@ -70,7 +71,7 @@ export default async function handler(req, res) {
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
       const message = `[REMINDER - ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}.`;
 
-      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
+      await Promise.all([sendEmail(f, urgency, daysUntil, existingWO.fields["WO ID"], message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
 
       return res.status(200).json({ triggered: true, type: "reminder", urgency, asset: f["Asset ID"], message, workOrder: existingWO.fields["WO ID"] });
@@ -174,9 +175,17 @@ async function updateReminderTimestamp(recordId) {
   });
 }
 
-async function sendEmail(f, urgency, message) {
+async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
+
+  const html = buildFriendlyEmailHtml({
+    f,
+    urgency,
+    daysUntil,
+    existingWoId,
+    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+  });
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -188,7 +197,7 @@ async function sendEmail(f, urgency, message) {
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.</p>`,
+      html,
       text: `${message}\n\nSent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.`,
     }),
   });
