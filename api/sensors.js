@@ -143,8 +143,13 @@ async function fetchAllComponents() {
 // ---------------------------------------------------------------------
 
 async function handleRunTest(req, res) {
-  const { sensorId } = req.body || {};
+  const { sensorId, value } = req.body || {};
   if (!sensorId) return res.status(400).json({ error: "sensorId is required" });
+  if (value === undefined || value === null || value === "") {
+    return res.status(400).json({ error: "value is required" });
+  }
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return res.status(400).json({ error: "value must be a number" });
 
   try {
     const sensor = await fetchSensorBySensorId(sensorId);
@@ -158,53 +163,75 @@ async function handleRunTest(req, res) {
 
     const unit = UNIT_BY_TYPE[sensorType] || "";
     const isBinary = sensorType === "Door" || sensorType === "Equipment Status";
-    let value, targetRangeDisplay;
+    let withinRange, targetRangeDisplay;
 
     if (isBinary) {
-      value = 1; // forced abnormal
+      withinRange = numericValue === 0;
       targetRangeDisplay = sensorType === "Door" ? "Closed (0)" : "OK (0)";
     } else {
       const rangeStr = sensorType === "Humidity"
         ? component?.fields["Target Range (Humidity)"]
         : component?.fields["Target Range (Temp)"];
-      const match = (rangeStr || "").match(/(-?\d+(\.\d+)?)\s*-\s*(-?\d+(\.\d+)?)/);
-      if (match) {
-        const max = parseFloat(match[3]);
-        value = Number((max + 3).toFixed(1)); // force above range
-      } else {
-        value = 99; // no range set - just force an obviously odd number
-      }
+      withinRange = checkWithinRange(numericValue, rangeStr);
       targetRangeDisplay = rangeStr || "(not set)";
     }
 
     const timestamp = new Date().toISOString();
-    await createReading({ timestamp, sensorId, assetId, value, unit, withinRange: false });
+    await createReading({ timestamp, sensorId, assetId, value: numericValue, unit, withinRange: withinRange === true });
 
-    const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: value, unit, targetRangeDisplay });
+    if (withinRange === false) {
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay });
 
-    const [emailResp, smsResp] = await Promise.all([
-      sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange: targetRangeDisplay, woId }),
-      sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange: targetRangeDisplay, woId }),
-    ]);
-    const logResult = await logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorType} reading ${value}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}. [Manual test trigger]` });
+      const [emailResp, smsResp] = await Promise.all([
+        sendSensorAlertEmail({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
+        sendSensorAlertSms({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
+      ]);
+      const logResult = await logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorType} reading ${numericValue}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}. [Manual test trigger]` });
 
+      return res.status(200).json({
+        success: true,
+        triggered: true,
+        sensorId,
+        sensorType,
+        assetName,
+        location,
+        value: numericValue,
+        unit,
+        targetRange: targetRangeDisplay,
+        email: emailResp?.ok ? "sent" : `failed: ${emailResp ? await emailResp.text() : "no recipients"}`,
+        sms: smsResp?.ok ? "sent" : `failed: ${smsResp ? await smsResp.text() : "no recipients"}`,
+        alertLogWritten: logResult,
+        workOrder: woId,
+      });
+    }
+
+    // Value was within range (or no range is set to evaluate against) -
+    // record it honestly, but don't fire an alert that didn't really happen.
     return res.status(200).json({
       success: true,
+      triggered: false,
       sensorId,
       sensorType,
       assetName,
       location,
-      value,
+      value: numericValue,
       unit,
-      email: emailResp?.ok ? "sent" : `failed: ${emailResp ? await emailResp.text() : "no recipients"}`,
-      sms: smsResp?.ok ? "sent" : `failed: ${smsResp ? await smsResp.text() : "no recipients"}`,
-      alertLogWritten: logResult,
-      workOrder: woId,
+      targetRange: targetRangeDisplay,
+      reason: withinRange === null ? "No target range set - reading recorded, nothing to compare against." : "Value is within the target range - no alert fired.",
     });
   } catch (err) {
     console.error("sensors POST (run test) error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+function checkWithinRange(value, rangeStr) {
+  if (!rangeStr) return null;
+  const match = rangeStr.match(/(-?\d+(\.\d+)?)\s*-\s*(-?\d+(\.\d+)?)/);
+  if (!match) return null;
+  const min = parseFloat(match[1]);
+  const max = parseFloat(match[3]);
+  return value >= min && value <= max;
 }
 
 async function fetchSensorBySensorId(sensorId) {
