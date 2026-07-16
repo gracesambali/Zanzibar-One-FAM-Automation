@@ -13,6 +13,7 @@
 // alert, with the reporter's name and exact location attached.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+import { buildBreakdownEmailHtml } from "../lib/emailTemplate.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -32,7 +33,7 @@ export default async function handler(req, res) {
     const woId = await createReportedWorkOrder(reporterName, reporterRole, floor, roomZone, description);
 
     await Promise.all([
-      sendEmail(message),
+      sendEmail({ reporterName, reporterRole, location, description, woId }),
       sendSms(message),
     ]);
 
@@ -78,9 +79,18 @@ async function createReportedWorkOrder(reporterName, reporterRole, floor, roomZo
   return woId;
 }
 
-async function sendEmail(message) {
+async function sendEmail({ reporterName, reporterRole, location, description, woId }) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return;
+
+  const html = buildBreakdownEmailHtml({
+    reporterName,
+    reporterRole,
+    location,
+    description,
+    woId,
+    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+  });
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -91,9 +101,8 @@ async function sendEmail(message) {
     body: JSON.stringify({
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Staff-Reported Issue`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Reported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
-      text: `${message}\n\nReported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
+      subject: `Breakdown Reported — ${location}`,
+      html,
     }),
   });
   if (!resp.ok) console.error("Resend error:", await resp.text());
