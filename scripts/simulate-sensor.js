@@ -1,49 +1,65 @@
 // scripts/simulate-sensor.js
 //
-// Simulates a temperature sensor reporting to the REAL ingestion endpoint
-// (/api/ingest-sensor-data), using the real "SIM-TEST-001-TEMP" sensor
-// registered against the real "TEST-001" test asset (Target Range: 2-8°C).
+// Simulates all 4 registered TEST-001 sensors reporting to the REAL
+// ingestion endpoint (/api/ingest-sensor-data):
+//   SIM-TEST-001-TEMP       (temperature, target 2-8°C)
+//   SIM-TEST-001-HUMIDITY   (humidity, target 35-65%RH)
+//   SIM-TEST-001-DOOR       (binary: 0=Closed, 1=Open)
+//   SIM-TEST-001-EQUIP      (binary: 0=OK, 1=Fault)
 //
 // Run locally with: node scripts/simulate-sensor.js
-// Requires SENSOR_INGEST_SECRET and TARGET_URL set as env vars, or edit
-// the constants below directly for a quick one-off test.
-//
-// This does NOT touch the throwaway scaffold base from earlier - it
-// writes to the real "Zanzibar One Facility Asset Management" base via
-// the real deployed endpoint.
+// Requires SENSOR_INGEST_SECRET set as an env var (must match Vercel).
 
 const TARGET_URL = process.env.SIMULATOR_TARGET_URL || "https://zanzibar-one-fam-automation.vercel.app/api/ingest-sensor-data";
 const SECRET = process.env.SENSOR_INGEST_SECRET || "";
 const INTERVAL_MS = Number(process.env.SIMULATE_INTERVAL_MS || 10000);
 const ANOMALY_RATE = Number(process.env.SIMULATE_ANOMALY_RATE || 0.15);
 
-const SENSOR_ID = "SIM-TEST-001-TEMP";
-const TARGET_RANGE = [2, 8]; // matches TEST-001's Target Range (Temp) field
-const BASELINE = 5;
-
 function randomInRange(min, max) {
   return Math.random() * (max - min) + min;
 }
 
-function generateReading() {
+// --- Numeric sensors (temperature, humidity) ---
+function generateNumericReading(sensorId, type, targetRange, baseline) {
   const isAnomaly = Math.random() < ANOMALY_RATE;
   let value;
   if (isAnomaly) {
     const overOrUnder = Math.random() < 0.5 ? -1 : 1;
-    value = TARGET_RANGE[overOrUnder === 1 ? 1 : 0] + overOrUnder * randomInRange(2, 5);
+    value = targetRange[overOrUnder === 1 ? 1 : 0] + overOrUnder * randomInRange(2, 5);
   } else {
-    value = BASELINE + randomInRange(-1.5, 1.5);
+    value = baseline + randomInRange(-1, 1);
   }
   return {
-    device_id: SENSOR_ID,
+    device_id: sensorId,
     reading: Number(value.toFixed(1)),
-    type: "temperature",
+    type,
     ts: new Date().toISOString(),
   };
 }
 
-async function sendReading() {
-  const payload = generateReading();
+// --- Binary sensors (door, equipment) ---
+function generateBinaryReading(sensorId, type) {
+  const isAnomaly = Math.random() < ANOMALY_RATE;
+  return {
+    device_id: sensorId,
+    reading: isAnomaly ? 1 : 0,
+    type,
+    ts: new Date().toISOString(),
+  };
+}
+
+const SENSORS = [
+  { id: "SIM-TEST-001-TEMP", kind: "numeric", type: "temperature", targetRange: [2, 8], baseline: 5, unit: "\u00b0C" },
+  { id: "SIM-TEST-001-HUMIDITY", kind: "numeric", type: "humidity", targetRange: [35, 65], baseline: 50, unit: "%RH" },
+  { id: "SIM-TEST-001-DOOR", kind: "binary", type: "door", unit: "" },
+  { id: "SIM-TEST-001-EQUIP", kind: "binary", type: "equipment", unit: "" },
+];
+
+async function sendReading(sensor) {
+  const payload = sensor.kind === "numeric"
+    ? generateNumericReading(sensor.id, sensor.type, sensor.targetRange, sensor.baseline)
+    : generateBinaryReading(sensor.id, sensor.type);
+
   try {
     const res = await fetch(TARGET_URL, {
       method: "POST",
@@ -54,10 +70,22 @@ async function sendReading() {
       body: JSON.stringify(payload),
     });
     const body = await res.json().catch(() => ({}));
-    const flag = TARGET_RANGE[0] <= payload.reading && payload.reading <= TARGET_RANGE[1] ? "" : "  <-- OUT OF RANGE";
-    console.log(`[${new Date().toLocaleTimeString()}] ${payload.reading}°C -> HTTP ${res.status} ${JSON.stringify(body)}${flag}`);
+    let flag = "";
+    if (sensor.kind === "numeric") {
+      const inRange = sensor.targetRange[0] <= payload.reading && payload.reading <= sensor.targetRange[1];
+      flag = inRange ? "" : "  <-- OUT OF RANGE";
+    } else {
+      flag = payload.reading === 1 ? "  <-- ALERT (1 = abnormal)" : "";
+    }
+    console.log(`[${new Date().toLocaleTimeString()}] ${sensor.id} = ${payload.reading}${sensor.unit} -> HTTP ${res.status}${flag}`);
   } catch (err) {
-    console.error("Failed to send reading:", err.message);
+    console.error(`Failed to send reading for ${sensor.id}:`, err.message);
+  }
+}
+
+async function tick() {
+  for (const sensor of SENSORS) {
+    await sendReading(sensor);
   }
 }
 
@@ -66,9 +94,9 @@ if (!SECRET) {
   process.exit(1);
 }
 
-console.log(`Simulating ${SENSOR_ID} -> ${TARGET_URL}`);
-console.log(`Target range: ${TARGET_RANGE[0]}-${TARGET_RANGE[1]}°C | Interval: ${INTERVAL_MS}ms | Anomaly rate: ${ANOMALY_RATE * 100}%`);
+console.log(`Simulating 4 sensors -> ${TARGET_URL}`);
+console.log(`Interval: ${INTERVAL_MS}ms | Anomaly rate: ${ANOMALY_RATE * 100}%`);
 console.log("Press Ctrl+C to stop.\n");
 
-sendReading();
-setInterval(sendReading, INTERVAL_MS);
+tick();
+setInterval(tick, INTERVAL_MS);
