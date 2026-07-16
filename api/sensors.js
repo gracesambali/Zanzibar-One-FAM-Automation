@@ -386,13 +386,16 @@ function sanitizeForSms(text) {
 
 async function sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange, woId }) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) return null;
+  if (phoneList.length === 0) {
+    console.error("Beem skipped: ALERT_TO_PHONE is empty or unset");
+    return null;
+  }
 
   const rawMessage = `Sensor alert: ${assetName} at ${location} - ${sensorType} reading ${value}${unit}, expected ${targetRange || "(not set)"}. ${woId || ""}`;
   const cleanMessage = sanitizeForSms(rawMessage);
 
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  return fetch("https://apisms.beem.africa/v1/send", {
+  const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -406,4 +409,8 @@ async function sendSensorAlertSms({ assetName, location, sensorType, value, unit
       recipients: buildBeemRecipients(phoneList),
     }),
   });
+
+  const responseText = await resp.text();
+  console.log("Beem response (sensor alert):", resp.status, responseText);
+  return { ok: resp.ok, text: async () => responseText };
 }
