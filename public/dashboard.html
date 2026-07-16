@@ -1286,9 +1286,11 @@ function renderLevelView() {
 
 let lastWorkOrders = [];
 
-async function renderWorkOrders() {
+async function renderWorkOrders(isRefresh) {
   const container = document.getElementById('view-workorders');
-  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
+  if (!isRefresh) {
+    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
+  }
 
   try {
     const resp = await fetch('/api/work-orders');
@@ -1369,7 +1371,7 @@ async function updateWorkOrderStatus(recordId, status) {
       const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
       throw new Error(errorDetail);
     }
-    renderWorkOrders(); // refresh the summary counts
+    renderWorkOrders(true); // update in place, no loading-spinner flash
   } catch (err) {
     alert('Could not update work order:\n\n' + err.message);
   }
@@ -1412,10 +1414,10 @@ async function bulkCloseWorkOrders() {
       const errorDetail = data.errors && data.errors.length ? '\n\nReal error from Airtable:\n' + data.errors[0] : '';
       alert(`${data.updated} closed successfully, ${data.failed} failed.${errorDetail}`);
     }
-    renderWorkOrders(); // single refresh, after everything is done
+    renderWorkOrders(true); // single refresh, after everything is done - no flash
   } catch (err) {
     alert('Could not close selected work orders: ' + err.message);
-    renderWorkOrders();
+    renderWorkOrders(true);
   }
 }
 
@@ -1491,7 +1493,7 @@ async function runRealTest(urgency) {
     if (resp.ok && data.success) {
       resultBox.style.color = 'var(--green)';
       resultBox.innerHTML = `✓ Due date set to ${data.dueDateSet} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderWorkOrders(); // refresh so the new/updated work order shows immediately
+      renderWorkOrders(true); // refresh so the new/updated work order shows immediately, no flash
     } else {
       resultBox.style.color = 'var(--red)';
       resultBox.textContent = '✗ ' + (data.error || 'Test failed');
