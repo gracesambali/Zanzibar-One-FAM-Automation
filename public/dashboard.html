@@ -1088,11 +1088,16 @@ async function renderSensorMonitor(isRefresh) {
     const noData = sensors.filter(s => s.withinRange === null || s.withinRange === undefined).length;
 
     let html = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tools</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Forces a real out-of-range reading for the selected sensor — sends real email/SMS and opens a real Work Order, exactly like a genuine sensor breach would.</div>
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tool</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Pick a sensor and enter a test reading. If the value falls outside its target range, a real email + SMS fires and a real Work Order opens — the same as a genuine sensor breach. A value within range is just recorded, no alert.</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        ${sensors.map(s => `<button onclick="runSensorTest('${s.sensorId}')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test ${s.sensorType}: ${s.sensorId}</button>`).join('')}
+        <select id="sensorTestSelect" onchange="updateSensorTestHint()" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;min-width:220px">
+          ${sensors.map(s => `<option value="${s.sensorId}" data-target="${(s.targetRange || 'not set').replace(/"/g, '&quot;')}" data-unit="${s.latestUnit || ''}">${s.sensorType}: ${s.sensorId} (${s.assetName})</option>`).join('')}
+        </select>
+        <input id="sensorTestValue" type="number" step="0.1" placeholder="Value" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:100px">
+        <button onclick="runSensorTest()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Run Test</button>
       </div>
+      <div id="sensorTestHint" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
       <div id="sensorTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
     </div>
     <div class="summary-grid">
@@ -1129,9 +1134,8 @@ async function renderSensorMonitor(isRefresh) {
     }
 
     container.innerHTML = html;
+    updateSensorTestHint();
   } catch (err) {
-    // On a background refresh, don't wipe out whatever was showing before
-    // just because one poll failed - only show the error on first load.
     if (!isRefresh) {
       container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
     } else {
@@ -1415,25 +1419,47 @@ async function bulkCloseWorkOrders() {
   }
 }
 
-async function runSensorTest(sensorId) {
+function updateSensorTestHint() {
+  const select = document.getElementById('sensorTestSelect');
+  const hint = document.getElementById('sensorTestHint');
+  if (!select || !hint) return;
+  const opt = select.options[select.selectedIndex];
+  const target = opt ? opt.dataset.target : '';
+  const unit = opt ? opt.dataset.unit : '';
+  hint.textContent = `Target range: ${target}${unit ? ' ' + unit : ''}`;
+}
+
+async function runSensorTest() {
+  const select = document.getElementById('sensorTestSelect');
+  const valueInput = document.getElementById('sensorTestValue');
   const resultBox = document.getElementById('sensorTestResult');
+  const sensorId = select.value;
+  const value = valueInput.value;
+
+  if (!sensorId) { alert('No sensors available to test.'); return; }
+  if (value === '') { alert('Enter a test value first.'); return; }
+
   resultBox.style.display = 'block';
   resultBox.style.color = 'var(--muted)';
-  resultBox.textContent = `Forcing an out-of-range reading for ${sensorId}…`;
+  resultBox.textContent = `Testing ${sensorId} with value ${value}…`;
 
   try {
     const resp = await fetch('/api/sensors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sensorId }),
+      body: JSON.stringify({ sensorId, value }),
     });
     if (resp.status === 401) { window.location.href = '/login.html'; return; }
     const data = await resp.json();
 
-    if (resp.ok && data.success) {
+    if (resp.ok && data.success && data.triggered) {
+      resultBox.style.color = 'var(--red)';
+      resultBox.innerHTML = `⚠ ALERT TRIGGERED — ${data.sensorType} reading ${data.value}${data.unit} for ${data.assetName} (target: ${data.targetRange}) · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
+      renderSensorMonitor(true);
+    } else if (resp.ok && data.success) {
       resultBox.style.color = 'var(--green)';
-      resultBox.innerHTML = `✓ ${data.sensorType} reading ${data.value}${data.unit} forced for ${data.assetName} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderSensorMonitor(true); // refresh in place so the new reading shows immediately
+      resultBox.textContent = `✓ Reading recorded (${data.value}${data.unit}, target: ${data.targetRange}) — ${data.reason}`;
+      renderSensorMonitor(true);
     } else {
       resultBox.style.color = 'var(--red)';
       resultBox.textContent = '✗ ' + (data.error || 'Test failed');
