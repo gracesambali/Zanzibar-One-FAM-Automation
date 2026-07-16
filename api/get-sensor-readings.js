@@ -43,16 +43,28 @@ export default async function handler(req, res) {
       const assetId = f["Asset ID"] || "";
       const component = componentByAssetId[assetId] || {};
       const latest = latestBySensor[f["Sensor ID"]];
+      const sensorType = f["Sensor Type"] || "";
+
+      let targetRange;
+      if (sensorType === "Humidity") {
+        targetRange = component["Target Range (Humidity)"] || null;
+      } else if (sensorType === "Temperature") {
+        targetRange = component["Target Range (Temp)"] || null;
+      } else if (sensorType === "Door") {
+        targetRange = "Closed (0)";
+      } else if (sensorType === "Equipment Status") {
+        targetRange = "OK (0)";
+      } else {
+        targetRange = null;
+      }
 
       return {
         sensorId: f["Sensor ID"] || "",
-        sensorType: f["Sensor Type"] || "",
+        sensorType,
         assetId,
         assetName: component["Name"] || assetId,
         location: component["Room/Zone"] || "",
-        targetRange: f["Sensor Type"] === "Humidity"
-          ? component["Target Range (Humidity)"]
-          : component["Target Range (Temp)"],
+        targetRange,
         latestValue: latest ? latest.fields["Value"] : null,
         latestUnit: latest ? latest.fields["Unit"] : null,
         withinRange: latest ? latest.fields["Within Range"] : null,
