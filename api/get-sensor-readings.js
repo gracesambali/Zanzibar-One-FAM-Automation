@@ -1,11 +1,19 @@
 // api/get-sensor-readings.js
 //
-// Public read-only endpoint (no login required) - powers the live
-// sensor monitor page for demos/pitches. Returns the most recent
-// readings per sensor, joined with the asset's name/location/target
-// range so the page can show a full picture in one call.
+// Powers the live sensor monitor page. Requires login, same session
+// pattern as work-orders.js - not a public/demo endpoint. Returns the
+// most recent readings per sensor, joined with the asset's name/
+// location/target range so the page can show a full picture in one call.
+
+import { getSession, setSessionCookie } from "../lib/auth.js";
 
 export default async function handler(req, res) {
+  const session = getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: "Not logged in" });
+  }
+  setSessionCookie(res, session.u, session.r);
+
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
