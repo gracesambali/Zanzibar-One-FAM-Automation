@@ -263,6 +263,10 @@
   async function fetchAndRender() {
     try {
       const res = await fetch("/api/get-sensor-readings");
+      if (res.status === 401) {
+        window.location.href = "/login.html";
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       renderSensors(data.sensors);
