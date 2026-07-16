@@ -27,8 +27,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const location = roomZone ? `${floor} — ${roomZone}` : floor;
-    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
+    const location = roomZone ? `${floor} - ${roomZone}` : floor;
+    const message = `Breakdown reported at ${location}. Reported by: ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}. Issue: ${description}`;
 
     const woId = await createReportedWorkOrder(reporterName, reporterRole, floor, roomZone, description);
 
