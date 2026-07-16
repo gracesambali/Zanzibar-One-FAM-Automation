@@ -1,120 +1,98 @@
-// api/ingest-sensor-data.js
+// api/run-sensor-test.js
 //
-// Receives sensor readings (real hardware or the simulator) and writes
-// them to the real Airtable base - Readings table, checked against the
-// linked asset's Target Range fields on Components. An out-of-range
-// reading fires the same email + SMS alert pattern used everywhere
-// else in this system, logs to the same Alert Log table, AND opens a
-// real Work Order - matching how breakdown reports and maintenance
-// alerts behave, so a sensor breach shows up in the Work Orders tab
-// like anything else, not as a dead-end alert with no tracked action.
+// Login-protected version of the sensor breach pipeline, triggered
+// directly from the Sensors tab (mirrors run-real-test.js's pattern
+// for the Work Orders tab). Lets you demo "sensor detects a problem"
+// -> real email/SMS -> real Work Order, without running the external
+// simulator script.
 //
-// Auth: a shared secret header, not a login session - this endpoint is
-// called by machines (sensors/gateways), not people.
-//
-// Sensor types and how they're evaluated:
-//   temperature / humidity - numeric, checked against Components'
-//     Target Range (Temp) / Target Range (Humidity) fields (e.g. "2-8")
-//   door / equipment - binary: reading 0 = normal (Closed / OK),
-//     reading 1 = abnormal (Open / Fault). No target range needed.
-//
-// Payload shape (matches the simulator):
-//   { device_id, reading, type, ts }
-// device_id must match a Sensor ID already registered in the Sensors
-// table. Unknown sensor IDs are accepted (200) but not written, so a
-// misconfigured device doesn't 500 the whole ingestion pipeline.
+// Always forces an out-of-range/abnormal reading - the point of this
+// button is to reliably demonstrate the pipeline, not to simulate
+// realistic day-to-day values (that's what scripts/simulate-sensor.js
+// is for).
 
+import { getSession, setSessionCookie } from "../lib/auth.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
 
 const UNIT_BY_TYPE = {
-  temperature: "\u00b0C",
-  humidity: "%RH",
-  door: "Open-Closed",
-  equipment: "OK-Fault",
+  Temperature: "\u00b0C",
+  Humidity: "%RH",
+  Door: "Open-Closed",
+  "Equipment Status": "OK-Fault",
 };
 
 export default async function handler(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in" });
+  setSessionCookie(res, session.u, session.r);
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  if (req.headers["x-webhook-secret"] !== process.env.SENSOR_INGEST_SECRET) {
-    return res.status(401).json({ error: "Invalid or missing sensor webhook secret" });
-  }
-
-  const { device_id, reading, type, ts } = req.body || {};
-  if (!device_id || reading === undefined || !type) {
-    return res.status(400).json({ error: "device_id, reading, and type are required" });
-  }
+  const { sensorId } = req.body || {};
+  if (!sensorId) return res.status(400).json({ error: "sensorId is required" });
 
   try {
-    const unit = UNIT_BY_TYPE[type] || type;
-    const timestamp = ts || new Date().toISOString();
-
-    const sensor = await fetchSensorBySensorId(device_id);
-    if (!sensor) {
-      console.warn(`Unknown sensor ID: ${device_id} - reading accepted but not written`);
-      return res.status(202).json({ status: "ignored", reason: "unknown sensor ID" });
-    }
+    const sensor = await fetchSensorBySensorId(sensorId);
+    if (!sensor) return res.status(404).json({ error: `Sensor "${sensorId}" not found` });
 
     const assetId = sensor.fields["Asset ID"] || "";
+    const sensorType = sensor.fields["Sensor Type"] || "";
     const component = assetId ? await fetchComponentByAssetId(assetId) : null;
+    const assetName = component?.fields["Name"] || assetId;
+    const location = component?.fields["Room/Zone"] || "";
 
-    let withinRange;
-    let targetRangeDisplay;
+    const unit = UNIT_BY_TYPE[sensorType] || "";
+    const isBinary = sensorType === "Door" || sensorType === "Equipment Status";
+    let value, targetRangeDisplay;
 
-    if (type === "door" || type === "equipment") {
-      // Binary sensors: 0 = normal, 1 = abnormal. No numeric range to parse.
-      withinRange = reading === 0;
-      targetRangeDisplay = type === "door" ? "Closed (0)" : "OK (0)";
+    if (isBinary) {
+      value = 1; // forced abnormal
+      targetRangeDisplay = sensorType === "Door" ? "Closed (0)" : "OK (0)";
     } else {
-      const targetRangeRaw = type === "temperature"
-        ? component?.fields["Target Range (Temp)"]
-        : type === "humidity"
+      const rangeStr = sensorType === "Humidity"
         ? component?.fields["Target Range (Humidity)"]
-        : null;
-      withinRange = checkWithinRange(reading, targetRangeRaw);
-      targetRangeDisplay = targetRangeRaw || "(not set)";
+        : component?.fields["Target Range (Temp)"];
+      const match = (rangeStr || "").match(/(-?\d+(\.\d+)?)\s*-\s*(-?\d+(\.\d+)?)/);
+      if (match) {
+        const max = parseFloat(match[3]);
+        value = Number((max + 3).toFixed(1)); // force above range
+      } else {
+        value = 99; // no range set - just force an obviously odd number
+      }
+      targetRangeDisplay = rangeStr || "(not set)";
     }
 
-    await createReading({
-      timestamp,
-      sensorId: device_id,
-      assetId,
-      value: reading,
+    const timestamp = new Date().toISOString();
+    await createReading({ timestamp, sensorId, assetId, value, unit, withinRange: false });
+
+    const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: value, unit, targetRangeDisplay });
+
+    const [emailResp, smsResp] = await Promise.all([
+      sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange: targetRangeDisplay, woId }),
+      sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange: targetRangeDisplay, woId }),
+    ]);
+    const logResult = await logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorType} reading ${value}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}. [Manual test trigger]` });
+
+    return res.status(200).json({
+      success: true,
+      sensorId,
+      sensorType,
+      assetName,
+      location,
+      value,
       unit,
-      withinRange,
+      email: emailResp?.ok ? "sent" : `failed: ${emailResp ? await emailResp.text() : "no recipients"}`,
+      sms: smsResp?.ok ? "sent" : `failed: ${smsResp ? await smsResp.text() : "no recipients"}`,
+      alertLogWritten: logResult,
+      workOrder: woId,
     });
-
-    if (withinRange === false) {
-      const assetName = component?.fields["Name"] || device_id;
-      const location = component?.fields["Room/Zone"] || "";
-      const sensorTypeLabel = sensor.fields["Sensor Type"] || type;
-
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay });
-
-      await Promise.all([
-        sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
-        sendSensorAlertSms({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
-        logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorTypeLabel} reading ${reading}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}.` }),
-      ]);
-    }
-
-    return res.status(200).json({ status: "ok", withinRange });
   } catch (err) {
-    console.error("ingest-sensor-data error:", err);
+    console.error("run-sensor-test error:", err);
     return res.status(500).json({ error: err.message });
   }
-}
-
-function checkWithinRange(value, rangeStr) {
-  if (!rangeStr) return null; // no target range set - can't evaluate
-  const match = rangeStr.match(/(-?\d+(\.\d+)?)\s*-\s*(-?\d+(\.\d+)?)/);
-  if (!match) return null;
-  const min = parseFloat(match[1]);
-  const max = parseFloat(match[3]);
-  return value >= min && value <= max;
 }
 
 async function fetchSensorBySensorId(sensorId) {
@@ -168,10 +146,6 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
   if (!resp.ok) console.error("Reading write failed:", await resp.text());
 }
 
-// Creates a real Work Order in the same table/shape as every other
-// trigger in this system (report-issue.js, check-maintenance.js, etc.)
-// so sensor breaches show up in the Work Orders tab and can be worked
-// (In Progress / Completed) exactly like any other issue.
 async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay }) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -194,12 +168,12 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
         "Urgency": "SENSOR ALERT",
         "Created": new Date().toISOString(),
         "Last Reminder Sent": new Date().toISOString().split("T")[0],
-        "Notes": `Auto-generated from sensor alert: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+        "Notes": `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
       },
     }),
   });
   if (!resp.ok) {
-    console.error("Sensor work order creation failed:", await resp.text());
+    console.error("Sensor test work order creation failed:", await resp.text());
     return null;
   }
   return woId;
@@ -221,17 +195,21 @@ async function logAlert({ assetId, assetName, location, urgency, message }) {
         "Asset Name": assetName || "",
         "System": "",
         "Urgency": urgency,
-        "Channel": "Email + SMS (sensor threshold breach)",
+        "Channel": "Email + SMS (manual sensor test)",
         "Messages": message,
       },
     }),
   });
-  if (!resp.ok) console.error("Alert log write failed:", await resp.text());
+  if (!resp.ok) {
+    console.error("Alert log write failed:", await resp.text());
+    return `FAILED: ${await resp.text()}`;
+  }
+  return true;
 }
 
 async function sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange, woId }) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
-  if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
+  if (toList.length === 0) return null;
 
   const html = buildSensorAlertEmailHtml({
     assetName,
@@ -243,7 +221,7 @@ async function sendSensorAlertEmail({ assetName, location, sensorType, value, un
     fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
   });
 
-  const resp = await fetch("https://api.resend.com/emails", {
+  return fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -256,11 +234,8 @@ async function sendSensorAlertEmail({ assetName, location, sensorType, value, un
       html,
     }),
   });
-  if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
-// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
-// punctuation - same sanitizer used across the rest of the system.
 function sanitizeForSms(text) {
   return text
     .replace(/[\u2014\u2013]/g, "-")
@@ -272,13 +247,13 @@ function sanitizeForSms(text) {
 
 async function sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange, woId }) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
+  if (phoneList.length === 0) return null;
 
   const rawMessage = `Sensor alert: ${assetName} at ${location} - ${sensorType} reading ${value}${unit}, expected ${targetRange || "(not set)"}. ${woId || ""}`;
   const cleanMessage = sanitizeForSms(rawMessage);
 
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  const resp = await fetch("https://apisms.beem.africa/v1/send", {
+  return fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -292,8 +267,4 @@ async function sendSensorAlertSms({ assetName, location, sensorType, value, unit
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-
-  const responseText = await resp.text();
-  console.log("Beem response:", resp.status, responseText);
-  if (!resp.ok) console.error("Beem HTTP error:", responseText);
 }
