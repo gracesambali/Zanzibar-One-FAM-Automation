@@ -27,6 +27,19 @@ import { findOpenWorkOrder } from "../lib/workorders.js";
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
 
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
+// converts common offenders to their plain-ASCII equivalents, and strips
+// anything else non-ASCII as a safety net.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
+}
+
 export default async function handler(req, res) {
   // Simple test alert mode (GET with key) — merged from test-alert.js
   if (req.method === "GET") {
@@ -71,7 +84,7 @@ export default async function handler(req, res) {
         });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${realDueDate}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"} (simulated as of ${testDate}).`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${realDueDate}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"} (simulated as of ${testDate}).`;
 
       const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       const [logResult, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
@@ -101,7 +114,7 @@ export default async function handler(req, res) {
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${realDueDate}.`;
+      const message = `[REMINDER - ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${realDueDate}.`;
 
       const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
@@ -226,8 +239,10 @@ async function sendEmail(f, urgency, message) {
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) return { ok: false, text: async () => "No recipients configured" };
+
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  return fetch("https://apisms.beem.africa/v1/send", {
+  const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -237,10 +252,14 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
+
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  return { ok: resp.ok, text: async () => responseText };
 }
 
 function daysBetween(from, to) {
@@ -264,7 +283,7 @@ async function handleSimpleTestAlert(req, res) {
   try {
     const message = req.query.asset
       ? await buildRealMessage(req.query.asset, forcedUrgency)
-      : `Fire Pump FP-002 at Basement 1 — service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
+      : `Fire Pump FP-002 at Basement 1 - service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 
     if (!message) {
       return res.status(404).json({ error: `Asset "${req.query.asset}" not found in Airtable.` });
@@ -313,10 +332,10 @@ async function buildRealMessage(assetId, forcedUrgency) {
     const timing = days < 0 ? `${Math.abs(days)} days overdue` : `${days} days remaining`;
     const fakeDate = new Date();
     fakeDate.setDate(fakeDate.getDate() + days);
-    return `[TEST] [${forcedUrgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert — the real maintenance schedule for this asset has not been changed.`;
+    return `[TEST] [${forcedUrgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert - the real maintenance schedule for this asset has not been changed.`;
   }
 
-  return `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${f["Next Service Due"]}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
+  return `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${f["Next Service Due"]}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 }
 
 async function logDemoAlert(message, assetId, forcedUrgency) {
@@ -370,8 +389,9 @@ async function sendSimpleTestSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return { ok: false, text: async () => "No recipients configured" }; }
 
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  return fetch("https://apisms.beem.africa/v1/send", {
+  const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -381,8 +401,12 @@ async function sendSimpleTestSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
+
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  return { ok: resp.ok, text: async () => responseText };
 }
