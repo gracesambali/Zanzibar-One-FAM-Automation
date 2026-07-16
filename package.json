@@ -1,13 +1,12 @@
 {
-  "name": "gvc-sensor-integration",
+  "name": "zanzibar-one-fam-automation",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "seed": "node scripts/seed-demo-data.js",
-    "simulate": "node scripts/simulate-sensors.js"
+    "simulate-sensor": "node scripts/simulate-sensor.js"
   },
   "dependencies": {
     "airtable": "^0.12.2",
