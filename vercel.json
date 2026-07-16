@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/sync-sensor-data",
-      "schedule": "0 0 * * *"
-    }
-  ]
-}
+{}
