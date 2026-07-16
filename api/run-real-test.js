@@ -47,7 +47,7 @@ export default async function handler(req, res) {
     const f = updated.fields;
     const daysUntil = FAKE_DAYS[urgency]; // exact, since we just set it
     const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
-    const message = `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateStr}. ${timing}.`;
+    const message = `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateStr}. ${timing}.`;
 
     const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
     const logResult = await logAlert(f, urgency, message);
@@ -190,11 +190,26 @@ async function sendEmail(f, urgency, message) {
   });
 }
 
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
+// converts common offenders to their plain-ASCII equivalents, and strips
+// anything else non-ASCII as a safety net.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
+}
+
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) return { ok: false, text: async () => "No recipients configured" };
+
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  return fetch("https://apisms.beem.africa/v1/send", {
+  const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
@@ -204,8 +219,14 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
+
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  // Return an object matching the shape the caller expects (.ok / .text()),
+  // since resp.text() can only be consumed once - we already consumed it above.
+  return { ok: resp.ok, text: async () => responseText };
 }

@@ -49,7 +49,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}.`;
+      const message = `[REMINDER - ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
@@ -195,10 +195,24 @@ async function sendEmail(f, urgency, message) {
   if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
+// converts common offenders to their plain-ASCII equivalents, and strips
+// anything else non-ASCII as a safety net.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
+}
+
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
 
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -210,11 +224,14 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
+
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  if (!resp.ok) console.error("Beem HTTP error:", responseText);
 }
 
 function daysBetween(from, to) {

@@ -108,6 +108,20 @@ async function sendEmail({ reporterName, reporterRole, location, description, wo
   if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
+// converts common offenders to their plain-ASCII equivalents, and strips
+// anything else non-ASCII as a safety net, so a stray character (pasted
+// from Word, Docs, or some phone keyboards) never silently kills the SMS.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")   // em dash, en dash -> hyphen
+    .replace(/[\u2018\u2019]/g, "'")   // curly single quotes -> straight
+    .replace(/[\u201C\u201D]/g, '"')   // curly double quotes -> straight
+    .replace(/\u2026/g, "...")          // ellipsis -> three dots
+    .replace(/[^\x00-\x7F]/g, "");      // strip any remaining non-ASCII
+}
+
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) {
@@ -115,6 +129,7 @@ async function sendSms(message) {
     return;
   }
 
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -126,14 +141,11 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
 
-  // Always log the full response, not just on HTTP failure - Beem can
-  // return HTTP 200 with "successful": false in the body for issues like
-  // bad recipient format or insufficient credits, which resp.ok misses.
   const responseText = await resp.text();
   console.log("Beem response:", resp.status, responseText);
   if (!resp.ok) console.error("Beem HTTP error:", responseText);
