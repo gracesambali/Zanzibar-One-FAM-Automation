@@ -1070,9 +1070,11 @@ async function submitRelocation(recordId) {
   }
 }
 
-async function renderSensorMonitor() {
+async function renderSensorMonitor(isRefresh) {
   const container = document.getElementById('view-sensors');
-  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
+  if (!isRefresh) {
+    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
+  }
 
   try {
     const resp = await fetch('/api/get-sensor-readings');
@@ -1115,19 +1117,25 @@ async function renderSensorMonitor() {
         </div>`;
       });
       html += `</div>`;
-      html += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 10s</div>`;
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 5 minutes</div>`;
     }
 
     container.innerHTML = html;
   } catch (err) {
-    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
+    // On a background refresh, don't wipe out whatever was showing before
+    // just because one poll failed - only show the error on first load.
+    if (!isRefresh) {
+      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
+    } else {
+      console.error('Sensor refresh failed:', err);
+    }
   }
 
   clearTimeout(window._sensorRefreshTimer);
   window._sensorRefreshTimer = setTimeout(() => {
     const activeTab = document.querySelector('.tab-btn.active');
-    if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor();
-  }, 10000);
+    if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor(true);
+  }, 5 * 60 * 1000);
 }
 
 function renderSystems() {
