@@ -11,9 +11,18 @@
 // Supports closing multiple work orders in a single request — the
 // frontend can select several and close them all at once without a
 // page reload between each one.
+//
+// Notifications: moving a work order to "In Progress" or "Completed"
+// sends email + SMS. "Open" is NOT notified here — that's already
+// covered by the breakdown/maintenance alert sent at creation time
+// in report-issue.js, check-maintenance.js, webhook-trigger.js,
+// demo-trigger.js, and run-real-test.js, so notifying again here
+// would just duplicate that message.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklist } from "../lib/checklists.js";
+import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+import { buildWorkOrderEmailHtml } from "../lib/emailTemplate.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -119,30 +128,32 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername) {
 
   let assetIdForRollover = null;
 
-  if (status === "Completed") {
-    fields["Completed Date"] = new Date().toISOString();
-    // Pulled directly from the verified session — the person closing
-    // this cannot type in someone else's name instead of their own.
-    fields["Closed By"] = closedByUsername;
-
-    // BUG FIX (identified 2026-07-13): previously, closing a Work Order
-    // only updated the Work Order itself. The linked asset's "Next
-    // Service Due" stayed on the same old date, so the next daily check
-    // saw a still-overdue asset with no OPEN work order and created a
-    // brand new alert for the same already-resolved issue. We now read
-    // the WO's own Asset ID before patching, so we can roll the asset's
-    // due date forward in the same request.
+  // Read the WO's current fields BEFORE patching - needed both for the
+  // Completed rollover logic (already existed) and now for the
+  // notification (new), regardless of which status this is moving to.
+  let woFieldsForNotification = null;
+  if (status === "In Progress" || status === "Completed") {
     try {
       const woResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
         headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
       });
       if (woResp.ok) {
         const woData = await woResp.json();
-        assetIdForRollover = woData.fields && woData.fields["Asset ID"];
+        woFieldsForNotification = woData.fields || null;
+        if (status === "Completed") {
+          assetIdForRollover = woData.fields && woData.fields["Asset ID"];
+        }
       }
     } catch (e) {
-      console.error("Could not read WO before completing (rollover skipped):", e);
+      console.error("Could not read WO before updating (notification/rollover skipped):", e);
     }
+  }
+
+  if (status === "Completed") {
+    fields["Completed Date"] = new Date().toISOString();
+    // Pulled directly from the verified session — the person closing
+    // this cannot type in someone else's name instead of their own.
+    fields["Closed By"] = closedByUsername;
   }
 
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
@@ -160,7 +171,33 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername) {
     return { ok: false, recordId, error: errText };
   }
 
+  // Fire notification AFTER the update succeeds, using the fields we
+  // read a moment ago (WO ID, Asset Name, Location) plus the notes/
+  // closedBy from this request.
+  if (woFieldsForNotification && (status === "In Progress" || status === "Completed")) {
+    const notifyPayload = {
+      status,
+      woId: woFieldsForNotification["WO ID"] || "",
+      assetName: woFieldsForNotification["Asset Name"] || "Asset",
+      location: woFieldsForNotification["Location"] || "",
+      notes: notes || woFieldsForNotification["Notes"] || "",
+      closedBy: status === "Completed" ? closedByUsername : undefined,
+    };
+    // Fire-and-log, don't let a notification failure block the status
+    // update itself - the Airtable write above already succeeded.
+    Promise.all([sendWorkOrderEmail(notifyPayload), sendWorkOrderSms(notifyPayload)]).catch(e =>
+      console.error("Work order notification failed:", e)
+    );
+  }
+
   if (assetIdForRollover) {
+    // BUG FIX (identified 2026-07-13): previously, closing a Work Order
+    // only updated the Work Order itself. The linked asset's "Next
+    // Service Due" stayed on the same old date, so the next daily check
+    // saw a still-overdue asset with no OPEN work order and created a
+    // brand new alert for the same already-resolved issue. We now read
+    // the WO's own Asset ID before patching, so we can roll the asset's
+    // due date forward in the same request.
     await advanceAssetNextService(assetIdForRollover);
   }
 
@@ -212,6 +249,79 @@ async function advanceAssetNextService(assetId) {
       },
     }),
   });
+}
+
+async function sendWorkOrderEmail({ status, woId, assetName, location, notes, closedBy }) {
+  const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
+  if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
+
+  const html = buildWorkOrderEmailHtml({
+    status,
+    woId,
+    assetName,
+    location,
+    notes,
+    closedBy,
+    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+  });
+
+  const subjectLabel = status === "Completed" ? "Work Order Closed" : "Work Order In Progress";
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: toList,
+      subject: `${subjectLabel} — ${woId} for ${assetName}`,
+      html,
+    }),
+  });
+  if (!resp.ok) console.error("Resend error:", await resp.text());
+}
+
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
+// converts common offenders to their plain-ASCII equivalents, and strips
+// anything else non-ASCII as a safety net.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
+}
+
+async function sendWorkOrderSms({ status, woId, assetName, location, notes }) {
+  const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
+  if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
+
+  const statusLabel = status === "Completed" ? "closed" : "in progress";
+  const rawMessage = `Work order ${woId} for ${assetName} at ${location} is now ${statusLabel}.${notes ? ` Notes: ${notes}` : ""}`;
+  const cleanMessage = sanitizeForSms(rawMessage);
+
+  const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+  const resp = await fetch("https://apisms.beem.africa/v1/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source_addr: process.env.BEEM_SENDER_ID || "INFO",
+      schedule_time: "",
+      encoding: 0,
+      message: cleanMessage.slice(0, 160),
+      recipients: buildBeemRecipients(phoneList),
+    }),
+  });
+
+  const responseText = await resp.text();
+  console.log("Beem response:", resp.status, responseText);
+  if (!resp.ok) console.error("Beem HTTP error:", responseText);
 }
 
 async function handleMaintenanceReport(req, res) {
