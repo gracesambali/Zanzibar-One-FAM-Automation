@@ -882,22 +882,14 @@ function showDetail(idx) {
           el.innerHTML = `<div>No checklist items defined yet for <strong>${checklistClass}</strong>. Structure exists — content needs sourcing.</div>`;
           return;
         }
-        const freqGroups = {};
-        data.items.forEach(item => {
-          const freq = item.frequency || 'Unscheduled';
-          (freqGroups[freq] = freqGroups[freq] || []).push(item);
-        });
-        let html = `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:10px">Standard: ${data.sourceStandard || 'Not specified'}</div>`;
-        Object.keys(freqGroups).forEach(freq => {
-          html += `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 4px">${freq}</div>`;
-          freqGroups[freq].forEach(item => {
-            html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12.5px;color:var(--text);cursor:pointer">
-              <input type="checkbox" style="margin-top:2px">
-              <span>${item.text}</span>
-            </label>`;
-          });
-        });
-        el.innerHTML = html;
+        window.currentAssetChecklist = { asset: a, checklistClass, data };
+        el.innerHTML = `
+          <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${checklistClass}</strong> — ${data.items.length} items, sourced from:</div>
+          <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
+            <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
+          </div>`;
       })
       .catch(() => {
         document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
@@ -1933,6 +1925,91 @@ async function scheduleInspection(assetId, assetName) {
   } catch (err) {
     alert('Could not schedule inspection: ' + err.message);
   }
+}
+
+function buildChecklistDocumentHtml() {
+  const { asset: a, checklistClass, data } = window.currentAssetChecklist;
+  const freqGroups = {};
+  data.items.forEach(item => {
+    const freq = item.frequency || 'Unscheduled';
+    (freqGroups[freq] = freqGroups[freq] || []).push(item);
+  });
+  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const orderedFreqs = Object.keys(freqGroups).sort((x,y) => {
+    const ix = freqOrder.indexOf(x), iy = freqOrder.indexOf(y);
+    return (ix<0?99:ix) - (iy<0?99:iy);
+  });
+
+  let sectionsHtml = '';
+  orderedFreqs.forEach(freq => {
+    sectionsHtml += `<div class="freq-section">
+      <div class="freq-title">${freq}</div>
+      <table class="items-table">
+        ${freqGroups[freq].map(item => `<tr><td class="check-col">☐</td><td>${item.task}</td></tr>`).join('')}
+      </table>
+    </div>`;
+  });
+
+  return `
+    <html><head><title>Maintenance Checklist — ${a.name}</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
+      .doc { max-width: 700px; margin: 0 auto; }
+      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; }
+      .meta-grid { display:grid; grid-template-columns: 1fr 1fr; gap:6px 20px; margin: 16px 0 20px; font-size:12.5px; }
+      .meta-label { color:#6B7280; }
+      .meta-value { font-weight:600; color:#1A1A2E; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .freq-section { margin-bottom: 20px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .items-table { width:100%; border-collapse:collapse; }
+      .items-table tr { border-bottom: 1px solid #E5E7EB; }
+      .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
+      .check-col { width:24px; font-size:15px; color:#6B7280; }
+      .signoff { display:flex; justify-content:space-between; margin-top:40px; font-size:12px; }
+      .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
+      .footer-note { margin-top:30px; font-size:10.5px; color:#9CA3AF; text-align:center; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="doc">
+        <div class="header">
+          <div class="title">Maintenance Checklist</div>
+          <div class="subtitle">${checklistClass} — Gracing Ventures Facility Asset Management</div>
+        </div>
+        <div class="meta-grid">
+          <div><span class="meta-label">Asset:</span> <span class="meta-value">${a.name}</span></div>
+          <div><span class="meta-label">Asset ID:</span> <span class="meta-value">${a.id}</span></div>
+          <div><span class="meta-label">Location:</span> <span class="meta-value">${a.room || '—'}, ${displayFloor(a.floor) || '—'}</span></div>
+          <div><span class="meta-label">System:</span> <span class="meta-value">${a.system || '—'}</span></div>
+        </div>
+        <div class="standard-box"><strong>Reference Standard:</strong> ${data.sourceStandard || 'Not specified'}</div>
+        ${sectionsHtml}
+        <div class="signoff">
+          <div class="sig-line">Technician Signature</div>
+          <div class="sig-line">Date</div>
+        </div>
+        <div class="footer-note">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+      </div>
+    </body></html>
+  `;
+}
+
+function previewMaintenanceChecklist() {
+  const win = window.open('', '_blank');
+  win.document.write(buildChecklistDocumentHtml());
+  win.document.close();
+}
+
+function downloadMaintenanceChecklist() {
+  const win = window.open('', '_blank');
+  win.document.write(buildChecklistDocumentHtml());
+  win.document.close();
+  setTimeout(() => win.print(), 400);
 }
 
 function toggleFloorPlanUploadPanel() {
