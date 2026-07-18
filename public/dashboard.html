@@ -1746,6 +1746,19 @@ async function renderFloorPlan() {
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:4px"></span>Critical</span>
     </div>
     ${canManage ? `<button class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
+    ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
+  </div>
+  <div id="floorPlanUploadPanel" style="display:none;background:#F0F4FA;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:10px">Upload a floor plan drawing</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <select id="fp_uploadFloor" class="filter-select">
+        ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
+      </select>
+      <input type="file" id="fp_uploadFile" accept="image/*,.svg" style="font-size:12px">
+      <button id="fp_uploadBtn" onclick="submitFloorPlanUpload()" style="padding:7px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:12px;cursor:pointer">Upload</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">Max 5MB. This replaces the conceptual placeholder for the selected floor — your name and today's date are recorded automatically.</div>
+    <div id="fp_uploadError" style="display:none;color:var(--red);font-size:12px;margin-top:8px"></div>
   </div>
   <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>`;
 
@@ -1766,7 +1779,15 @@ async function renderFloorPlan() {
       data.imageUrl = DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor];
       data.isDefaultImage = true;
     }
-    if ((!data.positions || data.positions.length === 0)) {
+    // IMPORTANT: only use the pre-computed random positions when we're ALSO
+    // showing the default conceptual image. Those positions were scattered
+    // for that specific placeholder drawing — once a real floor plan is
+    // uploaded, they'd be meaningless on it (dots floating over random
+    // spots with no relation to the real layout). So on a real uploaded
+    // drawing with no saved positions yet, assets correctly show as
+    // "unplaced" instead, prompting you to place them for real via
+    // Place Markers mode.
+    if (data.isDefaultImage && (!data.positions || data.positions.length === 0)) {
       const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floorPlanCurrentFloor);
       if (defaults.length > 0) {
         data.positions = defaults;
@@ -1811,7 +1832,9 @@ function renderFloorPlanImage(canManage) {
   });
 
   wrap.innerHTML = `
-    ${floorPlanData.isDefaultImage ? `<div style="display:inline-block;background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">⚠ Conceptual layout — not a real scan. Replace with a real floor plan in Airtable when ready.</div><br>` : ''}
+    ${floorPlanData.isDefaultImage ? `<div style="display:inline-block;background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">⚠ Conceptual layout — not a real scan. Upload a real drawing above when ready.</div><br>` : ''}
+    ${!floorPlanData.isDefaultImage && floorPlanData.uploadedBy ? `<div style="display:inline-block;background:#DCFCE7;color:#166534;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">✓ Uploaded by ${floorPlanData.uploadedBy}${floorPlanData.uploadDate ? ' on ' + new Date(floorPlanData.uploadDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div><br>` : ''}
+    ${!floorPlanData.isDefaultImage && (!floorPlanData.positions || floorPlanData.positions.length === 0) ? `<div style="display:inline-block;background:#DBEAFE;color:#1E40AF;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">This real drawing has no assets placed on it yet — use "📍 Place Markers" above to position them.</div><br>` : ''}
     <div style="position:relative;display:inline-block;max-width:100%">
       <img src="${floorPlanData.imageUrl}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" id="floorPlanImg" onclick="handleFloorPlanClick(event)">
       ${dotsHtml}
@@ -1831,6 +1854,69 @@ function renderFloorPlanImage(canManage) {
     }
     sidebar += `</div>`;
     wrap.insertAdjacentHTML('beforeend', sidebar);
+  }
+}
+
+function toggleFloorPlanUploadPanel() {
+  const panel = document.getElementById('floorPlanUploadPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function submitFloorPlanUpload() {
+  const floorSelect = document.getElementById('fp_uploadFloor');
+  const fileInput = document.getElementById('fp_uploadFile');
+  const errorBox = document.getElementById('fp_uploadError');
+  const btn = document.getElementById('fp_uploadBtn');
+  const floor = floorSelect.value;
+  const file = fileInput.files[0];
+
+  errorBox.style.display = 'none';
+  if (!file) {
+    errorBox.textContent = 'Choose an image file first.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    errorBox.textContent = 'File is larger than 5MB — Airtable\'s direct upload limit. Try a smaller image.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]); // strip data: prefix
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadFloorPlan',
+        floor,
+        filename: file.name,
+        contentType: file.type || 'image/svg+xml',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    document.getElementById('floorPlanUploadPanel').style.display = 'none';
+    fileInput.value = '';
+    floorPlanCurrentFloor = floor; // jump to the floor that was just uploaded
+    renderFloorPlan();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload';
   }
 }
 
