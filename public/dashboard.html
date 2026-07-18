@@ -304,6 +304,16 @@ const TEMP_SHOW_COST_TO_ALL = true;
 // Calculated from the asset's own Last Service and Next Service Due dates —
 // not a separately typed number, so it can never drift out of sync with
 // what's actually on record. Returns null if either date is missing.
+// Returns { label, color } for an asset's warranty status — a separate
+// clock from depreciation. "Expiring Soon" is within 30 days.
+function warrantyStatus(expiryDate) {
+  if (!expiryDate) return { label: 'No warranty on record', color: 'var(--muted)' };
+  const days = Math.round((new Date(expiryDate) - new Date()) / 86400000);
+  if (days < 0) return { label: `Expired ${Math.abs(days)}d ago (${expiryDate})`, color: 'var(--red)' };
+  if (days <= 30) return { label: `Expires in ${days}d (${expiryDate})`, color: 'var(--amber)' };
+  return { label: `Active until ${expiryDate}`, color: 'var(--green)' };
+}
+
 function calcMaintenanceInterval(lastService, nextService) {
   if (!lastService || !nextService) return null;
   const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
@@ -607,6 +617,14 @@ function renderDashboard() {
   html += `</div>`;
 
   const canSeeApiKey = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+
+  if (canSeeApiKey) {
+    html += `<div class="dash-panel" style="margin-top:20px">
+      <div class="dash-panel-title">Maintenance Cost Overview</div>
+      <div id="costOverviewContent" style="padding:8px 0;font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+  }
+
   if (canSeeApiKey) {
     html += `<div class="dash-panel" style="margin-top:20px">
       <div class="dash-panel-title">API Integration (for ERP/SAP connections)</div>
@@ -617,6 +635,7 @@ function renderDashboard() {
   }
 
   document.getElementById('view-dashboard').innerHTML = html;
+  if (canSeeApiKey) loadCostOverview();
 
   setTimeout(() => {
     const hc = document.getElementById('health-donut');
@@ -819,6 +838,7 @@ function showDetail(idx) {
     ["Last Service", a.lastService || "—"],
     ["Next Service Due", a.nextService || "—"],
     ["Maintenance Interval (Calculated)", formatInterval(calcMaintenanceInterval(a.lastService, a.nextService))],
+    ["Warranty Status", `<span style="color:${warrantyStatus(a.warrantyExpiryDate).color};font-weight:600">${warrantyStatus(a.warrantyExpiryDate).label}</span>`],
     ["Added By", a.addedBy || "— (existing at pilot start)"],
   ];
   if (canSeeCost) {
@@ -980,6 +1000,10 @@ function openEditForm(idx) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Install / Acquisition Date</label>
       <input id="ea_installdate" type="date" value="${a.installDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Warranty Expiry Date</label>
+      <input id="ea_warranty" type="date" value="${a.warrantyExpiryDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Leave blank if no manufacturer warranty applies</div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
           <select id="ea_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
@@ -1056,6 +1080,7 @@ async function submitAssetEdit(recordId) {
     "Manufacturer": document.getElementById('ea_manufacturer').value.trim(),
     "Model": document.getElementById('ea_model').value.trim(),
     "Install Date": document.getElementById('ea_installdate').value,
+    "Warranty Expiry Date": document.getElementById('ea_warranty').value,
     "Status": document.getElementById('ea_status').value,
     "Criticality": document.getElementById('ea_criticality').value,
     "Note": document.getElementById('ea_note').value.trim(),
@@ -2040,6 +2065,53 @@ function downloadMaintenanceChecklist() {
   win.document.write(buildChecklistDocumentHtml());
   win.document.close();
   setTimeout(() => win.print(), 400);
+}
+
+async function loadCostOverview() {
+  const panel = document.getElementById('costOverviewContent');
+  if (!panel) return;
+  try {
+    const resp = await fetch('/api/work-orders?report=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load cost overview');
+
+    const byType = (data.summary && data.summary.costByMaintenanceType) || {};
+    const total = (data.summary && data.summary.totalCostRecorded) || 0;
+    const types = Object.keys(byType);
+
+    if (types.length === 0) {
+      panel.innerHTML = `<div>No costs recorded yet — costs get added when Engineer+ closes a work order, or via "Edit Cost" on a completed one. Once a few are in, this fills in automatically.</div>`;
+      return;
+    }
+
+    const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
+    const maxVal = Math.max(...types.map(t => byType[t]));
+
+    let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">TZS ${total.toLocaleString()} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
+    types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
+      const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
+      html += `<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+          <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
+          <span style="color:var(--muted)">TZS ${byType[type].toLocaleString()}</span>
+        </div>
+        <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
+        </div>
+      </div>`;
+    });
+
+    const preventive = byType['Preventive'] || 0;
+    const corrective = byType['Corrective'] || 0;
+    if (preventive > 0 && corrective > 0) {
+      const ratio = (corrective / preventive).toFixed(1);
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
+    }
+
+    panel.innerHTML = html;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
+  }
 }
 
 async function loadApiKeyInfo() {
