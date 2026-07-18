@@ -606,6 +606,16 @@ function renderDashboard() {
 
   html += `</div>`;
 
+  const canSeeApiKey = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+  if (canSeeApiKey) {
+    html += `<div class="dash-panel" style="margin-top:20px">
+      <div class="dash-panel-title">API Integration (for ERP/SAP connections)</div>
+      <div id="apiKeyPanelContent" style="font-size:12px;color:var(--muted);padding:8px 0">
+        <button onclick="loadApiKeyInfo()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Show API Key</button>
+      </div>
+    </div>`;
+  }
+
   document.getElementById('view-dashboard').innerHTML = html;
 
   setTimeout(() => {
@@ -2010,6 +2020,42 @@ function downloadMaintenanceChecklist() {
   win.document.write(buildChecklistDocumentHtml());
   win.document.close();
   setTimeout(() => win.print(), 400);
+}
+
+async function loadApiKeyInfo() {
+  const panel = document.getElementById('apiKeyPanelContent');
+  panel.innerHTML = 'Loading…';
+  try {
+    const resp = await fetch('/api/get-assets?apikeyinfo=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load API key info');
+
+    if (!data.configured) {
+      panel.innerHTML = `<div style="color:var(--amber)">No API key configured yet. Add <code>API_INTEGRATION_KEY</code> (any long random string) to your Vercel environment variables, then redeploy — it'll appear here automatically once set.</div>`;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div style="margin-bottom:8px">Acts as role: <strong>${data.actsAsRole}</strong></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <code id="apiKeyValue" style="flex:1;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all">${data.apiKey}</code>
+        <button onclick="copyApiKey()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Copy</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Example usage for whoever's building the ERP/SAP connection:</div>
+      <code style="display:block;padding:8px 10px;background:#1A1A2E;color:#D1D5DB;border-radius:6px;font-size:10.5px;white-space:pre-wrap;word-break:break-all">${data.usageExample}</code>
+    `;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
+  }
+}
+
+function copyApiKey() {
+  const el = document.getElementById('apiKeyValue');
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    alert('API key copied to clipboard.');
+  }).catch(() => {
+    alert('Could not copy automatically — select and copy the key manually.');
+  });
 }
 
 function toggleFloorPlanUploadPanel() {
