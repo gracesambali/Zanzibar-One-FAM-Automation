@@ -1,12 +1,10 @@
-<svg width="1000" height="680" viewBox="0 0 1000 680" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
-<rect x="0" y="0" width="1000" height="680" fill="#F0F2F6"/>
-<text x="500.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">F7 — Conceptual Layout</text>
-<line x1="40" y1="38" x2="960" y2="38" stroke="#1A3566" stroke-width="1" opacity="0.3"/>
-<rect x="54.0" y="84.0" width="278.7" height="542.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="60.0" y="90.0" width="266.7" height="530.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="95.8" y="623.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M95.8,626.0 A28.0,28.0 0 0 1 123.8,598.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="95.8" y1="626.0" x2="95.8" y2="598.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="68.0" y="106.0" font-size="12" font-weight="700" fill="#374151">Level 8 Mechanical Room</text>
-<circle cx="193.33333333333334" cy="420.04" r="13" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M193.33333333333334,407.04 A13,13 0 0 1 202.43333333333334,410.94" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M206.33333333333334,420.04 A13,13 0 0 1 202.43333333333334,429.14000000000004" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M193.33333333333334,433.04 A13,13 0 0 1 184.23333333333335,429.14000000000004" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M180.33333333333334,420.04 A13,13 0 0 1 184.23333333333335,410.94" stroke="#5B6B8C" stroke-width="2" fill="none"/>
+<svg width="1100" height="700" viewBox="0 0 1100 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1100" height="700" fill="#F0F2F6"/>
+<text x="550.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">F7 — Conceptual Layout</text>
+<rect x="50" y="80" width="1000" height="570" fill="#FDFDFE" stroke="#2D3748" stroke-width="8"/>
+<rect x="54.0" y="580" width="992" height="66.0" fill="#EEF1F5"/>
+<text x="550.0" y="619.0" text-anchor="middle" font-size="10" fill="#5B6B8C" opacity="0.7">CORRIDOR</text>
+<text x="60.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Level 8 Mechanical Room</text>
+<circle cx="550.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M550.0,344.0 A11,11 0 0 1 557.7,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M561.0,355.0 A11,11 0 0 1 557.7,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M550.0,366.0 A11,11 0 0 1 542.3,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M539.0,355.0 A11,11 0 0 1 542.3,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/>
+<rect x="537.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M537.0,580.0 A26.0,26.0 0 0 1 563.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="537.0" y1="580.0" x2="537.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
 </svg>

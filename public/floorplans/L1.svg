@@ -1,61 +1,37 @@
-<svg width="1000" height="680" viewBox="0 0 1000 680" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
-<rect x="0" y="0" width="1000" height="680" fill="#F0F2F6"/>
-<text x="500.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">GF — Conceptual Layout</text>
-<line x1="40" y1="38" x2="960" y2="38" stroke="#1A3566" stroke-width="1" opacity="0.3"/>
-<rect x="54.0" y="84.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="60.0" y="90.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="95.8" y="243.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M95.8,246.0 A28.0,28.0 0 0 1 123.8,218.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="95.8" y1="246.0" x2="95.8" y2="218.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="68.0" y="106.0" font-size="12" font-weight="700" fill="#374151">Main Lobby Core A</text>
-<rect x="185.53333333333333" y="171.44" width="15.6" height="26" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M193.33333333333334,176.64 L188.33333333333334,183.14 L198.33333333333334,183.14 Z" fill="#5B6B8C"/><path d="M193.33333333333334,192.24 L188.33333333333334,185.74 L198.33333333333334,185.74 Z" fill="#5B6B8C"/>
-<rect x="360.7" y="84.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="366.7" y="90.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="402.5" y="243.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M402.5,246.0 A28.0,28.0 0 0 1 430.5,218.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="402.5" y1="246.0" x2="402.5" y2="218.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="374.7" y="106.0" font-size="12" font-weight="700" fill="#374151">Service Core B</text>
-<rect x="492.2" y="171.44" width="15.6" height="26" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M500.0,176.64 L495.0,183.14 L505.0,183.14 Z" fill="#5B6B8C"/><path d="M500.0,192.24 L495.0,185.74 L505.0,185.74 Z" fill="#5B6B8C"/>
-<rect x="667.3" y="84.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="673.3" y="90.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="709.1" y="243.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M709.1,246.0 A28.0,28.0 0 0 1 737.1,218.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="709.1" y1="246.0" x2="709.1" y2="218.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="681.3" y="106.0" font-size="12" font-weight="700" fill="#374151">Level 1 Data Room</text>
-<rect x="793.6666666666667" y="176.64" width="23.400000000000002" height="15.6" rx="1.5" fill="none" stroke="#5B6B8C" stroke-width="2"/><rect x="817.0666666666667" y="180.54" width="3" height="7.8" fill="#5B6B8C"/>
-<rect x="54.0" y="274.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="60.0" y="280.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="95.8" y="433.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M95.8,436.0 A28.0,28.0 0 0 1 123.8,408.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="95.8" y1="436.0" x2="95.8" y2="408.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="68.0" y="296.0" font-size="12" font-weight="700" fill="#374151">Level 1 BMS Room</text>
-<circle cx="193.33333333333334" cy="374.44" r="13" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M193.33333333333334,374.44 L201.13333333333335,367.94" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="360.7" y="274.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="366.7" y="280.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="402.5" y="433.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M402.5,436.0 A28.0,28.0 0 0 1 430.5,408.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="402.5" y1="436.0" x2="402.5" y2="408.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="374.7" y="296.0" font-size="12" font-weight="700" fill="#374151">Level 1 Lobby</text>
-<rect x="489.6" y="367.94" width="18.2" height="13" rx="2" fill="none" stroke="#5B6B8C" stroke-width="2"/><circle cx="509.1" cy="374.44" r="4.55" fill="none" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="667.3" y="274.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="673.3" y="280.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="709.1" y="433.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M709.1,436.0 A28.0,28.0 0 0 1 737.1,408.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="709.1" y1="436.0" x2="709.1" y2="408.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="681.3" y="296.0" font-size="12" font-weight="700" fill="#374151">Level 1 Main Entrance</text>
-<rect x="798.8666666666668" y="373.14" width="15.6" height="11.700000000000001" rx="1.5" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M802.1166666666668,373.14 L802.1166666666668,367.94 A4.55,4.55 0 0 1 811.2166666666667,367.94 L811.2166666666667,373.14" fill="none" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="54.0" y="464.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="60.0" y="470.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="95.8" y="623.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M95.8,626.0 A28.0,28.0 0 0 1 123.8,598.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="95.8" y1="626.0" x2="95.8" y2="598.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="68.0" y="486.0" font-size="12" font-weight="700" fill="#374151">Level 1 Fire Control Room</text>
-<circle cx="193.33333333333334" cy="564.44" r="13" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M193.33333333333334,564.44 L201.13333333333335,557.94" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="360.7" y="464.0" width="278.7" height="162.0" fill="#E8EAED" stroke="#2D3748" stroke-width="6"/>
-<rect x="366.7" y="470.0" width="266.7" height="150.0" fill="#FDFDFE" stroke="#2D3748" stroke-width="1"/>
-<rect x="402.5" y="623.0" width="28.0" height="7" fill="#FDFDFE"/>
-<path d="M402.5,626.0 A28.0,28.0 0 0 1 430.5,598.0" fill="none" stroke="#2D3748" stroke-width="1"/>
-<line x1="402.5" y1="626.0" x2="402.5" y2="598.0" stroke="#2D3748" stroke-width="1.2"/>
-<text x="374.7" y="486.0" font-size="12" font-weight="700" fill="#374151">External Generator Yard</text>
-<path d="M504.0,551.44 L494.0,566.44 L500.0,566.44 L496.0,577.44 L506.0,562.44 L500.0,562.44 Z" fill="#5B6B8C"/>
+<svg width="1100" height="700" viewBox="0 0 1100 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1100" height="700" fill="#F0F2F6"/>
+<text x="550.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">GF — Conceptual Layout</text>
+<rect x="50" y="80" width="1000" height="570" fill="#FDFDFE" stroke="#2D3748" stroke-width="8"/>
+<rect x="54.0" y="330.0" width="992" height="70" fill="#EEF1F5"/>
+<text x="550.0" y="369.0" text-anchor="middle" font-size="10" fill="#5B6B8C" opacity="0.7">CORRIDOR</text>
+<text x="58.0" y="98" font-size="10.5" font-weight="700" fill="#374151">Main Lobby Core A</text>
+<rect x="169.5" y="207.6" width="11.0" height="19.8" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M175.0,211.45 L171.0,216.4 L179.0,216.4 Z" fill="#5B6B8C"/><path d="M175.0,223.55 L171.0,218.6 L179.0,218.6 Z" fill="#5B6B8C"/>
+<rect x="164.0" y="327.0" width="22.0" height="8" fill="#FDFDFE"/><path d="M164.0,330.0 A22.0,22.0 0 0 1 186.0,308.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="164.0" y1="330.0" x2="164.0" y2="308.0" stroke="#2D3748" stroke-width="1.2"/>
+<line x1="300.0" y1="80" x2="300.0" y2="330.0" stroke="#2D3748" stroke-width="3"/>
+<text x="308.0" y="98" font-size="10.5" font-weight="700" fill="#374151">Service Core B</text>
+<rect x="419.5" y="207.6" width="11.0" height="19.8" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M425.0,211.45 L421.0,216.4 L429.0,216.4 Z" fill="#5B6B8C"/><path d="M425.0,223.55 L421.0,218.6 L429.0,218.6 Z" fill="#5B6B8C"/>
+<rect x="414.0" y="327.0" width="22.0" height="8" fill="#FDFDFE"/><path d="M414.0,330.0 A22.0,22.0 0 0 1 436.0,308.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="414.0" y1="330.0" x2="414.0" y2="308.0" stroke="#2D3748" stroke-width="1.2"/>
+<line x1="550.0" y1="80" x2="550.0" y2="330.0" stroke="#2D3748" stroke-width="3"/>
+<text x="558.0" y="98" font-size="10.5" font-weight="700" fill="#374151">Level 1 Data Room</text>
+<rect x="665.1" y="211.45" width="17.6" height="12.100000000000001" rx="1.5" fill="none" stroke="#5B6B8C" stroke-width="2"/><rect x="682.7" y="214.75" width="3" height="5.5" fill="#5B6B8C"/>
+<rect x="664.0" y="327.0" width="22.0" height="8" fill="#FDFDFE"/><path d="M664.0,330.0 A22.0,22.0 0 0 1 686.0,308.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="664.0" y1="330.0" x2="664.0" y2="308.0" stroke="#2D3748" stroke-width="1.2"/>
+<line x1="800.0" y1="80" x2="800.0" y2="330.0" stroke="#2D3748" stroke-width="3"/>
+<text x="808.0" y="98" font-size="10.5" font-weight="700" fill="#374151">Level 1 BMS Room</text>
+<circle cx="925.0" cy="217.5" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M925.0,217.5 L931.05,212.55" stroke="#5B6B8C" stroke-width="2"/>
+<rect x="914.0" y="327.0" width="22.0" height="8" fill="#FDFDFE"/><path d="M914.0,330.0 A22.0,22.0 0 0 1 936.0,308.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="914.0" y1="330.0" x2="914.0" y2="308.0" stroke="#2D3748" stroke-width="1.2"/>
+<text x="58.0" y="418.0" font-size="10.5" font-weight="700" fill="#374151">Level 1 Lobby</text>
+<rect x="167.3" y="532.55" width="14.3" height="9.9" rx="2" fill="none" stroke="#5B6B8C" stroke-width="2"/><circle cx="181.6" cy="537.5" r="3.3" fill="none" stroke="#5B6B8C" stroke-width="2"/>
+<rect x="164.0" y="397.0" width="22.0" height="8" fill="#FDFDFE"/>
+<line x1="300.0" y1="400.0" x2="300.0" y2="650.0" stroke="#2D3748" stroke-width="3"/>
+<text x="308.0" y="418.0" font-size="10.5" font-weight="700" fill="#374151">Level 1 Main Entrance</text>
+<rect x="418.95" y="536.4" width="12.100000000000001" height="8.8" rx="1.5" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M421.7,536.4 L421.7,532.55 A3.3,3.3 0 0 1 428.3,532.55 L428.3,536.4" fill="none" stroke="#5B6B8C" stroke-width="2"/>
+<rect x="414.0" y="397.0" width="22.0" height="8" fill="#FDFDFE"/>
+<line x1="550.0" y1="400.0" x2="550.0" y2="650.0" stroke="#2D3748" stroke-width="3"/>
+<text x="558.0" y="418.0" font-size="10.5" font-weight="700" fill="#374151">Level 1 Fire Control Room</text>
+<circle cx="675.0" cy="537.5" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M675.0,537.5 L681.05,532.55" stroke="#5B6B8C" stroke-width="2"/>
+<rect x="664.0" y="397.0" width="22.0" height="8" fill="#FDFDFE"/>
+<line x1="800.0" y1="400.0" x2="800.0" y2="650.0" stroke="#2D3748" stroke-width="3"/>
+<text x="808.0" y="418.0" font-size="10.5" font-weight="700" fill="#374151">External Generator Yard</text>
+<path d="M928.0,526.5 L920.0,539.5 L925.0,539.5 L922.0,548.5 L930.0,535.5 L925.0,535.5 Z" fill="#5B6B8C"/>
+<rect x="914.0" y="397.0" width="22.0" height="8" fill="#FDFDFE"/>
 </svg>
