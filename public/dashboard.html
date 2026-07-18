@@ -1231,11 +1231,11 @@ function renderMaintenance() {
     (sysIntervals[a.system] = sysIntervals[a.system] || []).push(a.maintenanceIntervalDays || 90);
   });
   const freqLabel = (days) => {
-    if (days <= 10) return `~${Math.round(days)}d (Weekly-ish)`;
-    if (days <= 35) return `~${Math.round(days)}d (Monthly-ish)`;
-    if (days <= 100) return `~${Math.round(days)}d (Quarterly-ish)`;
+    if (days <= 10) return `~${Math.round(days)}d (Weekly)`;
+    if (days <= 35) return `~${Math.round(days)}d (Monthly)`;
+    if (days <= 100) return `~${Math.round(days)}d (Quarterly)`;
     if (days <= 200) return `~${Math.round(days)}d (Semi-Annual)`;
-    return `~${Math.round(days)}d (Annual+)`;
+    return `~${Math.round(days)}d (Annual)`;
   };
   const sysColors2 = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
   const maxInterval = Math.max(1, ...Object.values(sysIntervals).map(arr => arr.reduce((a,b)=>a+b,0)/arr.length));
