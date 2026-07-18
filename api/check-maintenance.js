@@ -39,9 +39,25 @@ export default async function handler(req, res) {
     // Grace confirmed: daily check = single bulk notification, not per-asset spam.
     // Breakdowns reported via /report.html still send immediately (that's in report-issue.js).
     const digestItems = [];
+    const warrantyItems = []; // separate from maintenance alerts — same email, own section
 
     for (const record of records) {
       const f = record.fields;
+
+      // Warranty expiry check — independent of the maintenance due-date
+      // logic below. Flags anything expired or expiring within 30 days.
+      const warrantyDate = f["Warranty Expiry Date"];
+      if (warrantyDate) {
+        const warrantyDaysLeft = daysBetween(new Date(), new Date(warrantyDate));
+        if (warrantyDaysLeft <= 30) {
+          warrantyItems.push({
+            assetId: f["Asset ID"] || "", name: f["Name"] || "",
+            expiryDate: warrantyDate, daysLeft: warrantyDaysLeft,
+            expired: warrantyDaysLeft < 0,
+          });
+        }
+      }
+
       const dueDateRaw = f["Next Service Due"];
       if (!dueDateRaw) continue;
 
@@ -82,10 +98,11 @@ export default async function handler(req, res) {
       }
     }
 
-    // Send ONE combined email + ONE combined SMS for all items today
-    if (digestItems.length > 0) {
-      await sendDigestEmail(digestItems);
-      await sendDigestSms(digestItems);
+    // Send ONE combined email + ONE combined SMS for all items today —
+    // maintenance alerts and warranty expiries together, still one message.
+    if (digestItems.length > 0 || warrantyItems.length > 0) {
+      await sendDigestEmail(digestItems, warrantyItems);
+      if (digestItems.length > 0) await sendDigestSms(digestItems);
 
       // Update "Last Alert Sent" on each affected Component record —
       // this was previously missing, causing the Airtable field to stay
@@ -240,7 +257,8 @@ async function updateReminderTimestamp(recordId) {
 // ---------------------------------------------------------------------
 
 // Sends ONE email containing all items for today — not per-asset.
-async function sendDigestEmail(items) {
+async function sendDigestEmail(items, warrantyItems) {
+  warrantyItems = warrantyItems || [];
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
 
@@ -249,6 +267,7 @@ async function sendDigestEmail(items) {
   const urgentCount = items.filter(i => i.urgency === "URGENT").length;
   const upcomingCount = items.filter(i => i.urgency === "UPCOMING").length;
   const reminderCount = items.filter(i => i.type === "reminder").length;
+  const totalItems = items.length + warrantyItems.length;
 
   const itemRows = items.map(i => {
     const color = i.urgency === "OVERDUE" ? "#dc2626" : i.urgency === "URGENT" ? "#d97706" : "#1A3566";
@@ -263,14 +282,26 @@ async function sendDigestEmail(items) {
     </tr>`;
   }).join("");
 
+  const warrantyRows = warrantyItems.map(w => {
+    const color = w.expired ? "#dc2626" : "#d97706";
+    const timing = w.expired ? `Expired ${Math.abs(w.daysLeft)} days ago` : `Expires in ${w.daysLeft} days`;
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${w.assetId}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${w.name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${w.expiryDate}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${timing}</span></td>
+    </tr>`;
+  }).join("");
+
   const html = `
   <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;color:#111827">
     <div style="background:#1A3566;color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
       <div style="font-size:18px;font-weight:700">Daily Maintenance Digest</div>
-      <div style="font-size:12px;opacity:0.85;margin-top:4px">${new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · ${items.length} item${items.length!==1?"s":""} requiring attention</div>
+      <div style="font-size:12px;opacity:0.85;margin-top:4px">${new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · ${totalItems} item${totalItems!==1?"s":""} requiring attention</div>
     </div>
     <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
       <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Team,</p>
+      ${items.length > 0 ? `
       <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${urgentCount ? `, ${urgentCount} urgent` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0">
         <thead><tr style="background:#f7f8fa">
@@ -281,14 +312,25 @@ async function sendDigestEmail(items) {
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Timing</th>
         </tr></thead>
         <tbody>${itemRows}</tbody>
-      </table>
+      </table>` : ''}
+      ${warrantyItems.length > 0 ? `
+      <p style="font-size:14px;line-height:1.6;font-weight:700;margin-bottom:6px">⚠ Warranty Expiring / Expired (${warrantyItems.length})</p>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
+        <thead><tr style="background:#f7f8fa">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">ID</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Name</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Expiry Date</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Status</th>
+        </tr></thead>
+        <tbody>${warrantyRows}</tbody>
+      </table>` : ''}
       <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${fromName}</p>
     </div>
     <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:14px">Sent automatically by ${fromName}</div>
   </div>`;
 
-  const subject = `${fromName} — Daily Digest: ${items.length} item${items.length!==1?"s":""} (${overdueCount ? overdueCount+" overdue" : "none overdue"})`;
-  const plaintext = items.map(i => i.message).join("\n");
+  const subject = `${fromName} — Daily Digest: ${totalItems} item${totalItems!==1?"s":""} (${overdueCount ? overdueCount+" overdue" : "none overdue"}${warrantyItems.length ? `, ${warrantyItems.length} warranty` : ""})`;
+  const plaintext = items.map(i => i.message).join("\n") + (warrantyItems.length ? "\n\nWARRANTY:\n" + warrantyItems.map(w => `${w.assetId} ${w.name} — ${w.expired ? "EXPIRED" : "expires"} ${w.expiryDate}`).join("\n") : "");
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",

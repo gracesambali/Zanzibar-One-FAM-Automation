@@ -147,6 +147,11 @@ function normalizeRecord(record) {
     })),
     documentsUploadedBy: f["Documents Last Uploaded By"] || "",
     documentsUploadedDate: f["Documents Last Uploaded Date"] || "",
+
+    // Warranty — a separate clock from depreciation. An asset can still
+    // be worth a lot on paper while its manufacturer warranty already
+    // lapsed, meaning repairs that could've been free now aren't.
+    warrantyExpiryDate: f["Warranty Expiry Date"] || null,
   };
 }
 

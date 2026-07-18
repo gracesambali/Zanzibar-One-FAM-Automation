@@ -249,6 +249,7 @@ async function handleRelocate(req, res, relocatedBy) {
 const EDITABLE_FIELDS = [
   "Name", "System", "Asset Nature", "Mobility", "Asset Category",
   "Floor/Level", "Room/Zone", "Manufacturer", "Model", "Install Date",
+  "Warranty Expiry Date",
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
   "Status", "Criticality", "Note",
