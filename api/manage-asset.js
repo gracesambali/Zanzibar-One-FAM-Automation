@@ -32,6 +32,8 @@ export default async function handler(req, res) {
   if (req.method === "PUT") {
     const action = (req.body && req.body.action) || "relocate";
     if (action === "savePosition") return handleSaveMarkerPosition(req, res);
+    if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u);
+    if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
@@ -380,6 +382,124 @@ async function handleSaveMarkerPosition(req, res) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleSaveMarkerPosition error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Uploads a floor plan drawing directly from the dashboard — no need to
+// touch Airtable manually. Finds (or creates) the Floor Plans record for
+// the given floor, uploads the image via Airtable's base64 upload API,
+// and stamps who uploaded it and when, for accountability.
+async function handleUploadFloorPlan(req, res, uploadedBy) {
+  const { floor, filename, contentType, fileBase64 } = req.body || {};
+  if (!floor || !filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "floor, filename, contentType, and fileBase64 are all required" });
+  }
+
+  // 5MB limit, same as Airtable's own base64 upload limit — check before
+  // sending, so the error is clear rather than a generic Airtable failure.
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "Image is too large — Airtable's direct upload limit is 5MB. Try a smaller or more compressed image." });
+  }
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+
+  try {
+    // 1. Find existing record for this floor, or create one
+    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+    findUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
+    findUrl.searchParams.set("maxRecords", "1");
+    const findResp = await fetch(findUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    const findData = findResp.ok ? await findResp.json() : { records: [] };
+    let recordId = findData.records && findData.records[0] && findData.records[0].id;
+
+    if (!recordId) {
+      const createResp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Floor": floor } }),
+      });
+      if (!createResp.ok) throw new Error("Could not create Floor Plans record: " + createResp.status);
+      const createData = await createResp.json();
+      recordId = createData.id;
+    }
+
+    // 2. Upload the image via Airtable's direct base64 upload API
+    const uploadResp = await fetch(
+      `https://content.airtable.com/v0/${base}/${recordId}/Image/uploadAttachment`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType, filename, file: fileBase64 }),
+      }
+    );
+    if (!uploadResp.ok) {
+      const errText = await uploadResp.text();
+      throw new Error(`Airtable upload failed: ${uploadResp.status} ${errText}`);
+    }
+
+    // 3. Stamp who uploaded it and when, for accountability
+    await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Uploaded By": uploadedBy, "Upload Date": new Date().toISOString() } }),
+    });
+
+    return res.status(200).json({ success: true, floor, uploadedBy });
+  } catch (err) {
+    console.error("handleUploadFloorPlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Uploads a real compliance document (Fire Safety Certificate, OSHA
+// Compliance Licence, etc.) directly to an asset's own record — not a
+// system-generated report, an actual file the client already has.
+// Airtable's attachment fields hold multiple files, so each upload adds
+// to the list rather than replacing what's there.
+async function handleUploadDocument(req, res, uploadedBy) {
+  const { recordId, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
+  }
+
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "File is too large — Airtable's direct upload limit is 5MB." });
+  }
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+  try {
+    const uploadResp = await fetch(
+      `https://content.airtable.com/v0/${base}/${recordId}/Compliance%20Documents/uploadAttachment`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType, filename, file: fileBase64 }),
+      }
+    );
+    if (!uploadResp.ok) {
+      const errText = await uploadResp.text();
+      throw new Error(`Airtable upload failed: ${uploadResp.status} ${errText}`);
+    }
+
+    // Stamp who uploaded it and when — same accountability pattern as
+    // floor plan uploads, relocations, and edits elsewhere in the system.
+    await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Documents Last Uploaded By": uploadedBy, "Documents Last Uploaded Date": new Date().toISOString() } }),
+    });
+
+    return res.status(200).json({ success: true, filename, uploadedBy });
+  } catch (err) {
+    console.error("handleUploadDocument error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

@@ -139,6 +139,14 @@ function normalizeRecord(record) {
     fullyDepreciated: depreciation.fullyDepreciated,
 
     maintenanceIntervalDays: Number(f["Maintenance Interval (Days)"]) || 90,
+
+    // Real compliance documents (Fire Safety Certificate, OSHA Licence,
+    // etc.) — actual files the client has uploaded, not system-generated.
+    documents: (f["Compliance Documents"] || []).map(doc => ({
+      filename: doc.filename, url: doc.url, size: doc.size, type: doc.type,
+    })),
+    documentsUploadedBy: f["Documents Last Uploaded By"] || "",
+    documentsUploadedDate: f["Documents Last Uploaded Date"] || "",
   };
 }
 
