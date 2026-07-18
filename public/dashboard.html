@@ -2200,10 +2200,12 @@ async function renderWorkOrders() {
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}</div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
             ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+            ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+            ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
             <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
               <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
@@ -2230,23 +2232,50 @@ async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
   updateWorkOrderStatus(recordId, newStatus);
 }
 
-function openCostEntryModal(recordId, assetName) {
+function openCostEntryModal(recordId, assetName, editMode, existingCost) {
   const overlay = document.createElement('div');
   overlay.id = 'costEntryOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const title = editMode ? `Edit Cost: ${assetName}` : `Closing: ${assetName}`;
+  const subtitle = editMode
+    ? 'Update the recorded cost for this already-completed work order. This does not change who closed it or when.'
+    : "Optional — record what this repair/service actually cost. Leave blank if not known yet; you can't add it later from here, but it's fine to close without it.";
+  const prefill = (existingCost !== null && existingCost !== undefined) ? existingCost : '';
+  const submitAction = editMode ? `submitCostEdit('${recordId}')` : `submitCostAndClose('${recordId}')`;
+  const skipButton = editMode
+    ? `<button onclick="document.getElementById('costEntryOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>`
+    : `<button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Completed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>`;
+
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:28px">
-      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Closing: ${assetName}</h3>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Optional — record what this repair/service actually cost. Leave blank if not known yet; you can't add it later from here, but it's fine to close without it.</div>
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">${title}</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">${subtitle}</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Cost (TZS)</label>
-      <input id="ce_cost" type="number" placeholder="e.g. 450000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <input id="ce_cost" type="number" placeholder="e.g. 450000" value="${prefill}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
       <div style="display:flex;gap:8px">
-        <button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Completed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>
-        <button onclick="submitCostAndClose('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Close with Cost</button>
+        ${skipButton}
+        <button onclick="${submitAction}" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">${editMode ? 'Save' : 'Close with Cost'}</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
+}
+
+async function submitCostEdit(recordId) {
+  const costVal = document.getElementById('ce_cost').value;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, costOnly: true, cost: costVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save cost');
+    document.getElementById('costEntryOverlay').remove();
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not save cost: ' + err.message);
+  }
 }
 
 function submitCostAndClose(recordId) {
