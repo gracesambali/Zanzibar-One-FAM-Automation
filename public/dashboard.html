@@ -1192,38 +1192,45 @@ function renderSystems() {
 function renderMaintenance() {
   let html = `<div class="dash-grid">`;
 
-  // Upcoming schedule timeline
-  html += `<div class="dash-panel"><div class="dash-panel-title">Upcoming Maintenance Schedule</div><div class="timeline" style="position:static">`;
-  const schedule = [
-    {date:"Jul 12", title:"Cooling Tower CT-1 Inspection", desc:"Rooftop L15 — quarterly visual and performance check.", color:"var(--green)"},
-    {date:"Jul 13", title:"Parking Barrier Service — B1", desc:"Basement 1 — actuator lubrication and sensor calibration.", color:"var(--blue)"},
-    {date:"Jul 15", title:"Fire Detection Loop Test — L4", desc:"Level 4 — smoke detector functional test.", color:"var(--amber)"},
-    {date:"Jul 20", title:"Fire Pump Emergency Retest", desc:"FP-001 / FP-002 — corrective retest following overdue flag.", color:"var(--red)"},
-    {date:"Jul 22", title:"Chiller CH-002 Vibration Check", desc:"Basement 2 — follow-up on elevated vibration reading.", color:"var(--amber)"},
-    {date:"Aug 05", title:"Lift Annual Inspection — Core A & B", desc:"All 3 lifts — statutory annual inspection and certification.", color:"var(--blue)"},
-    {date:"Aug 15", title:"Transformer & Switchgear Thermal Scan", desc:"Substation B1 — annual thermal imaging survey.", color:"var(--green)"},
-  ];
-  schedule.forEach(s => {
-    html += `<div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:8px;height:8px;border-radius:50%;background:${s.color};margin-top:6px;flex-shrink:0"></div><div><div style="font-size:12.5px;font-weight:600">${s.title} <span style="font-weight:400;color:var(--muted)">— ${s.date}</span></div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${s.desc}</div></div></div>`;
-  });
+  // Upcoming schedule timeline — live from real assets' Next Service Due
+  html += `<div class="dash-panel"><div class="dash-panel-title">Upcoming Maintenance Schedule (Next 30 Days)</div><div class="timeline" style="position:static">`;
+  const urgencyColor = (a) => {
+    const d = daysUntil(a.nextService);
+    if (d < 0) return 'var(--red)';
+    if (d <= 3) return 'var(--amber)';
+    return 'var(--green)';
+  };
+  const schedule = assets
+    .filter(a => {
+      const d = daysUntil(a.nextService);
+      return a.nextService && d <= 30;
+    })
+    .sort((a, b) => new Date(a.nextService) - new Date(b.nextService))
+    .slice(0, 10);
+
+  if (schedule.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">Nothing scheduled in the next 30 days.</div>`;
+  } else {
+    schedule.forEach(a => {
+      const d = daysUntil(a.nextService);
+      const dateLabel = new Date(a.nextService).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      const status = d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? 'Due today' : `in ${d}d`;
+      const loc = displayRoom(a.room) || displayFloor(a.floor) || '—';
+      html += `<div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:8px;height:8px;border-radius:50%;background:${urgencyColor(a)};margin-top:6px;flex-shrink:0"></div><div><div style="font-size:12.5px;font-weight:600">${a.name} <span style="font-weight:400;color:var(--muted)">— ${dateLabel} (${status})</span></div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${loc} · ${a.system || '—'} · ${a.id}</div></div></div>`;
+    });
+  }
   html += `</div></div>`;
 
-  // Frequency matrix
-  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Frequency by System</div>`;
-  const freqs = [
-    {name:"Fire Protection", freq:"Quarterly", pct:100, color:"var(--red)"},
-    {name:"Fire Detection", freq:"Quarterly", pct:100, color:"#F97316"},
-    {name:"HVAC", freq:"Semi-Annual", pct:60, color:"var(--navy)"},
-    {name:"Electrical", freq:"Annual", pct:35, color:"var(--amber)"},
-    {name:"Vertical Transport", freq:"Annual (Statutory)", pct:35, color:"var(--blue)"},
-    {name:"CCTV & Access Control", freq:"Semi-Annual", pct:60, color:"var(--teal)"},
-    {name:"Plumbing", freq:"Semi-Annual", pct:60, color:"var(--purple)"},
-    {name:"Parking System", freq:"Quarterly", pct:100, color:"var(--pink)"},
-    {name:"Controls (BMS)", freq:"Annual", pct:35, color:"#D1D5DB"},
-    {name:"Retail Tenant Interface", freq:"Annual", pct:35, color:"var(--gold)"},
-  ];
-  freqs.forEach(f => {
-    html += `<div class="freq-row"><div class="freq-label">${f.name}</div><div class="freq-track"><div class="freq-fill" style="width:${f.pct}%;background:${f.color}">${f.freq}</div></div></div>`;
+  // Frequency matrix — live count of assets per system, not fabricated percentages
+  html += `<div class="dash-panel"><div class="dash-panel-title">Assets by System</div>`;
+  const systemCounts = {};
+  assets.forEach(a => { if (a.system) systemCounts[a.system] = (systemCounts[a.system] || 0) + 1; });
+  const maxCount = Math.max(1, ...Object.values(systemCounts));
+  const sysColors = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
+  Object.keys(systemCounts).sort((a,b) => systemCounts[b]-systemCounts[a]).forEach((sysName, i) => {
+    const count = systemCounts[sysName];
+    const pct = (count / maxCount) * 100;
+    html += `<div class="freq-row"><div class="freq-label">${sysName}</div><div class="freq-track"><div class="freq-fill" style="width:${pct}%;background:${sysColors[i % sysColors.length]}">${count} asset${count!==1?'s':''}</div></div></div>`;
   });
   html += `</div>`;
 
