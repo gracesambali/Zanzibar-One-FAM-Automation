@@ -1207,6 +1207,513 @@ function renderLevelView() {
 let lastWorkOrders = [];
 
 // --- Floor Plan tab: live status markers on an uploaded floor plan image ---
+// --- Built-in default floor plans (conceptual, generated from real room/asset
+// data) so the Floor Plan tab works immediately with no Airtable setup needed.
+// Airtable's Floor Plans / Asset Positions tables, once populated, always take
+// priority over these — this is a working starting point, not a limit.
+const DEFAULT_FLOOR_PLAN_IMAGES = {
+  "B2": "/floorplans/B2.svg",
+  "B1": "/floorplans/B1.svg",
+  "L1": "/floorplans/L1.svg",
+  "L2": "/floorplans/L2.svg",
+  "L3": "/floorplans/L3.svg",
+  "L4": "/floorplans/L4.svg",
+  "L5": "/floorplans/L5.svg",
+  "L6": "/floorplans/L6.svg",
+  "L7": "/floorplans/L7.svg",
+  "L8": "/floorplans/L8.svg",
+  "L9": "/floorplans/L9.svg",
+  "L10": "/floorplans/L10.svg",
+  "L11": "/floorplans/L11.svg",
+  "L12": "/floorplans/L12.svg",
+  "L13": "/floorplans/L13.svg",
+  "L14": "/floorplans/L14.svg",
+  "L15": "/floorplans/L15.svg"
+};
+
+const DEFAULT_ASSET_POSITIONS = [
+  {
+    "assetId": "CH-001",
+    "floor": "B2",
+    "x": 12.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "CH-002",
+    "floor": "B2",
+    "x": 25.7,
+    "y": 32.5
+  },
+  {
+    "assetId": "SP-001",
+    "floor": "B2",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-B2-01",
+    "floor": "B2",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "PK-B2-01",
+    "floor": "B2",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FP-001",
+    "floor": "B1",
+    "x": 9.9,
+    "y": 23.6
+  },
+  {
+    "assetId": "FP-002",
+    "floor": "B1",
+    "x": 18.9,
+    "y": 23.6
+  },
+  {
+    "assetId": "FP-003",
+    "floor": "B1",
+    "x": 27.9,
+    "y": 23.6
+  },
+  {
+    "assetId": "WB-001",
+    "floor": "B1",
+    "x": 9.9,
+    "y": 41.4
+  },
+  {
+    "assetId": "SWG-001",
+    "floor": "B1",
+    "x": 41.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "TX-001",
+    "floor": "B1",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "TX-002",
+    "floor": "B1",
+    "x": 59.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "PK-B1-01",
+    "floor": "B1",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "PK-B1-02",
+    "floor": "B1",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "LFT-001",
+    "floor": "L1",
+    "x": 12.1,
+    "y": 25.0
+  },
+  {
+    "assetId": "LFT-002",
+    "floor": "L1",
+    "x": 25.7,
+    "y": 25.0
+  },
+  {
+    "assetId": "LFT-003",
+    "floor": "L1",
+    "x": 50.0,
+    "y": 25.0
+  },
+  {
+    "assetId": "UPS-001",
+    "floor": "L1",
+    "x": 81.1,
+    "y": 25.0
+  },
+  {
+    "assetId": "BMS-001",
+    "floor": "L1",
+    "x": 18.9,
+    "y": 55.0
+  },
+  {
+    "assetId": "CCTV-L1-01",
+    "floor": "L1",
+    "x": 43.2,
+    "y": 55.0
+  },
+  {
+    "assetId": "RTI-L1-01",
+    "floor": "L1",
+    "x": 56.8,
+    "y": 55.0
+  },
+  {
+    "assetId": "ACC-L1-01",
+    "floor": "L1",
+    "x": 81.1,
+    "y": 55.0
+  },
+  {
+    "assetId": "FD-L1-01",
+    "floor": "L1",
+    "x": 18.9,
+    "y": 85.0
+  },
+  {
+    "assetId": "GEN-001",
+    "floor": "L1",
+    "x": 50.0,
+    "y": 85.0
+  },
+  {
+    "assetId": "FCU-L2",
+    "floor": "L2",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L2",
+    "floor": "L2",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L2",
+    "floor": "L2",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "RTI-L2",
+    "floor": "L2",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L3",
+    "floor": "L3",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L3",
+    "floor": "L3",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L3",
+    "floor": "L3",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "RTI-L3",
+    "floor": "L3",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L4",
+    "floor": "L4",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L4",
+    "floor": "L4",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L4",
+    "floor": "L4",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L4",
+    "floor": "L4",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L5",
+    "floor": "L5",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L5",
+    "floor": "L5",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L5",
+    "floor": "L5",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L5",
+    "floor": "L5",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L6",
+    "floor": "L6",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L6",
+    "floor": "L6",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L6",
+    "floor": "L6",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L6",
+    "floor": "L6",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L7",
+    "floor": "L7",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L7",
+    "floor": "L7",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L7",
+    "floor": "L7",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L7",
+    "floor": "L7",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "AHU-002",
+    "floor": "L8",
+    "x": 9.9,
+    "y": 55.0
+  },
+  {
+    "assetId": "CCTV-L8",
+    "floor": "L8",
+    "x": 18.9,
+    "y": 55.0
+  },
+  {
+    "assetId": "FD-L8",
+    "floor": "L8",
+    "x": 27.9,
+    "y": 55.0
+  },
+  {
+    "assetId": "FCU-L9",
+    "floor": "L9",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L9",
+    "floor": "L9",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L9",
+    "floor": "L9",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L9",
+    "floor": "L9",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L10",
+    "floor": "L10",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L10",
+    "floor": "L10",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L10",
+    "floor": "L10",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L10",
+    "floor": "L10",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L11",
+    "floor": "L11",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L11",
+    "floor": "L11",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L11",
+    "floor": "L11",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L11",
+    "floor": "L11",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L12",
+    "floor": "L12",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L12",
+    "floor": "L12",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L12",
+    "floor": "L12",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L12",
+    "floor": "L12",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L13",
+    "floor": "L13",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L13",
+    "floor": "L13",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L13",
+    "floor": "L13",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L13",
+    "floor": "L13",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "FCU-L14",
+    "floor": "L14",
+    "x": 18.9,
+    "y": 32.5
+  },
+  {
+    "assetId": "CCTV-L14",
+    "floor": "L14",
+    "x": 50.0,
+    "y": 32.5
+  },
+  {
+    "assetId": "FD-L14",
+    "floor": "L14",
+    "x": 81.1,
+    "y": 32.5
+  },
+  {
+    "assetId": "ACC-L14",
+    "floor": "L14",
+    "x": 18.9,
+    "y": 77.5
+  },
+  {
+    "assetId": "AHU-001",
+    "floor": "L15",
+    "x": 18.9,
+    "y": 55.0
+  },
+  {
+    "assetId": "AHU-003",
+    "floor": "L15",
+    "x": 50.0,
+    "y": 55.0
+  },
+  {
+    "assetId": "CT-001",
+    "floor": "L15",
+    "x": 72.1,
+    "y": 55.0
+  },
+  {
+    "assetId": "CT-002",
+    "floor": "L15",
+    "x": 81.1,
+    "y": 55.0
+  },
+  {
+    "assetId": "CCTV-L15",
+    "floor": "L15",
+    "x": 90.1,
+    "y": 55.0
+  }
+];
+
 let floorPlanCurrentFloor = null;
 let floorPlanData = null; // { floor, imageUrl, positions }
 let floorPlanPlacementMode = false;
@@ -1250,6 +1757,21 @@ async function renderFloorPlan() {
   try {
     const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
     const data = await resp.json();
+
+    // Fall back to the built-in conceptual defaults if Airtable has no image
+    // or positions yet for this floor — Airtable always wins once populated.
+    if (!data.imageUrl && DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor]) {
+      data.imageUrl = DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor];
+      data.isDefaultImage = true;
+    }
+    if ((!data.positions || data.positions.length === 0)) {
+      const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floorPlanCurrentFloor);
+      if (defaults.length > 0) {
+        data.positions = defaults;
+        data.isDefaultPositions = true;
+      }
+    }
+
     floorPlanData = data;
     renderFloorPlanImage(canManage);
   } catch (err) {
@@ -1283,6 +1805,7 @@ function renderFloorPlanImage(canManage) {
   });
 
   wrap.innerHTML = `
+    ${floorPlanData.isDefaultImage ? `<div style="display:inline-block;background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">⚠ Conceptual layout — not a real scan. Replace with a real floor plan in Airtable when ready.</div><br>` : ''}
     <div style="position:relative;display:inline-block;max-width:100%">
       <img src="${floorPlanData.imageUrl}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" id="floorPlanImg" onclick="handleFloorPlanClick(event)">
       ${dotsHtml}
