@@ -1,0 +1,3104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title id="page-title">GVC Facility Asset Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #1A3566; --navy-light: #2A4A7F; --navy-pale: #E8EDF4;
+  --red: #E74C3C; --red-bg: #FDE8E6;
+  --green: #27AE60; --green-bg: #E8F8EF;
+  --amber: #F39C12; --amber-bg: #FEF5E7;
+  --blue: #3B82F6; --blue-bg: #EBF2FF;
+  --purple: #8B5CF6; --purple-bg: #F3EEFF;
+  --teal: #14B8A6; --teal-bg: #E6FBF8;
+  --pink: #EC4899; --pink-bg: #FDEBF3;
+  --gold: #D4A843; --gold-bg: #FBF3E3;
+  --bg: #F0F2F6; --white: #FFFFFF; --text: #1A1A2E; --muted: #6B7280; --border: #E2E6ED;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+button { font-family: inherit; cursor: pointer; }
+
+.header { background: var(--navy); padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.header-logo { width: 40px; height: 40px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 3px; box-sizing: border-box; }
+.header-logo img { width: 100%; height: 100%; object-fit: contain; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-title { color: #fff; font-weight: 700; font-size: 18px; letter-spacing: 0.5px; }
+.header-sub { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 2px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+.live-label { color: rgba(255,255,255,0.7); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+
+.tabs { display: flex; background: var(--white); border-bottom: 1px solid var(--border); padding: 0 24px; overflow-x: auto; }
+.tab-btn { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border: none; background: none; color: var(--muted); border-bottom: 2.5px solid transparent; font-weight: 400; font-size: 13.5px; white-space: nowrap; transition: all 0.2s; }
+.tab-btn.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
+.tab-btn svg { width: 18px; height: 18px; }
+
+.content { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+.view { display: none; } .view.active { display: block; }
+
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.summary-card { background: var(--white); border-radius: 10px; padding: 16px 18px; border: 1px solid var(--border); }
+.summary-val { font-size: 28px; font-weight: 700; }
+.summary-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--white); color: var(--text); font-size: 12.5px; font-weight: 400; transition: all 0.2s; }
+.filter-btn.active { border-color: var(--navy); background: var(--navy); color: #fff; font-weight: 600; }
+.filter-select { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--white); font-size: 12.5px; font-family: inherit; color: var(--text); }
+.search-input { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; font-family: inherit; flex: 1; min-width: 180px; }
+.filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+
+.asset-list { display: flex; flex-direction: column; gap: 8px; }
+.asset-row { display: flex; align-items: center; justify-content: space-between; background: var(--white); border-radius: 10px; padding: 14px 18px; border: 1px solid var(--border); cursor: pointer; text-align: left; width: 100%; transition: box-shadow 0.2s; gap: 10px; }
+.asset-row:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.asset-name { font-weight: 600; font-size: 14px; }
+.asset-id { font-size: 11px; color: var(--muted); font-family: monospace; }
+.asset-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.asset-class { font-size: 10.5px; color: var(--navy); background: var(--navy-pale); padding: 1px 8px; border-radius: 8px; display: inline-block; margin-top: 4px; }
+.badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.badge-good { color: var(--green); background: var(--green-bg); }
+.badge-warning { color: var(--amber); background: var(--amber-bg); }
+.badge-overdue { color: var(--red); background: var(--red-bg); }
+.badge-crit { color: var(--red); background: rgba(0,0,0,0.04); font-weight: 500; }
+.badge-high { color: var(--amber); background: rgba(0,0,0,0.04); font-weight: 500; }
+.badge-medium { color: var(--muted); background: rgba(0,0,0,0.04); font-weight: 500; }
+.result-count { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+
+.detail-panel { background: var(--white); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+.detail-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.detail-title { font-size: 20px; font-weight: 700; }
+.detail-sub { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: monospace; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.detail-field { padding: 14px 24px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+.detail-field-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.detail-field-value { font-size: 14px; font-weight: 500; margin-top: 4px; }
+.detail-alert { padding: 16px 24px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.lifecycle-bar-wrap { padding: 16px 24px; }
+.lifecycle-bar-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.lifecycle-track { background: #E5E7EB; border-radius: 6px; height: 10px; overflow: hidden; }
+.lifecycle-fill { height: 100%; border-radius: 6px; transition: width 0.6s; }
+.lifecycle-range { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.back-btn { border: none; background: none; color: var(--navy); font-weight: 600; font-size: 13px; padding: 0; margin-bottom: 16px; cursor: pointer; }
+
+.scenario-intro { background: var(--white); border-radius: 12px; border: 1px solid var(--border); padding: 24px; margin-bottom: 20px; }
+.start-btn { background: var(--navy); color: #fff; border: none; border-radius: 10px; padding: 14px 32px; font-size: 15px; font-weight: 600; transition: transform 0.15s; }
+.start-btn:hover { transform: scale(1.03); }
+.start-center { text-align: center; padding: 40px 0; }
+.start-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+.timeline { display: flex; flex-direction: column; position: relative; }
+.timeline-line { position: absolute; left: 19px; top: 0; bottom: 0; width: 2px; background: var(--border); z-index: 0; }
+.timeline-step { display: flex; gap: 16px; margin-bottom: 8px; position: relative; z-index: 1; opacity: 0.15; transition: opacity 0.5s, transform 0.5s; transform: translateY(8px); }
+.timeline-step.visible { opacity: 1; transform: translateY(0); }
+.timeline-dot { width: 16px; height: 16px; border-radius: 50%; border: 3px solid #F0F0F0; background: var(--border); transition: all 0.3s; }
+.timeline-step.active .timeline-dot { width: 20px; height: 20px; }
+.timeline-card { flex: 1; background: var(--white); border-radius: 10px; padding: 14px 18px; border: 1px solid var(--border); transition: all 0.3s; }
+
+.resolved-box { background: var(--green-bg); border-radius: 12px; padding: 20px 24px; margin-top: 12px; margin-left: 56px; border: 1px solid rgba(39,174,96,0.13); }
+.resolved-title { font-weight: 700; font-size: 15px; color: var(--green); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.resolved-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.resolved-label { font-size: 11px; color: var(--muted); }
+.resolved-value { font-weight: 600; font-size: 14px; margin-top: 2px; }
+.resolved-compare { margin-top: 14px; padding: 12px 16px; background: var(--white); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.replay-btn { margin-top: 14px; background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13px; font-weight: 600; }
+
+/* Dashboard styles */
+.dash-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.dash-kpi { background: var(--white); border-radius: 10px; padding: 16px; border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+.dash-kpi-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.dash-kpi-val { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.dash-kpi-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.dash-panel { background: var(--white); border-radius: 10px; padding: 18px; border: 1px solid var(--border); }
+.dash-panel-title { font-size: 13px; font-weight: 700; margin-bottom: 14px; }
+.dash-grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+
+.donut-wrap { display: flex; align-items: center; gap: 16px; }
+.donut-legend { font-size: 12px; line-height: 2; }
+.donut-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+.bar-chart-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.bar-chart-label { font-size: 11px; min-width: 30px; text-align: right; color: var(--muted); }
+.bar-group { display: flex; gap: 3px; flex:1; }
+.bar-planned { height: 18px; border-radius: 3px; background: var(--navy); }
+.bar-completed { height: 18px; border-radius: 3px; background: var(--green); }
+.bar-overdue { height: 18px; border-radius: 3px; background: var(--red); }
+
+.cat-bar-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+.cat-bar-label { width:130px; font-size:11.5px; color:var(--muted); text-align:right; flex-shrink:0; }
+.cat-bar-track { flex:1; height:18px; background:#EEF1F6; border-radius:4px; overflow:hidden; }
+.cat-bar-fill { height:100%; border-radius:4px; display:flex; align-items:center; padding-left:8px; font-size:10.5px; font-weight:600; color:#fff; }
+
+.wo-summary { display: flex; gap: 12px; text-align: center; }
+.wo-box { flex: 1; padding: 12px 8px; border-radius: 10px; }
+.wo-box-val { font-size: 22px; font-weight: 700; }
+.wo-box-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+.alert-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.alert-item:last-child { border-bottom: none; }
+.alert-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
+.alert-time { font-size: 10px; color: var(--muted); white-space: nowrap; margin-left: auto; flex-shrink: 0; }
+
+.maint-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.maint-item:last-child { border-bottom: none; }
+.maint-icon { margin-right: 8px; }
+
+.doc-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.doc-item:last-child { border-bottom: none; }
+.doc-icon { width: 28px; height: 28px; border-radius: 6px; background: var(--navy-pale); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+.view-link { font-size: 12px; color: var(--navy); font-weight: 600; margin-top: 10px; display: inline-block; }
+
+.footer { text-align: center; padding: 24px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 40px; }
+
+/* Systems tab */
+.sys-card { background:var(--white); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:14px; }
+.sys-card-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
+.sys-card-name { font-size:15px; font-weight:700; color:var(--navy); }
+.sys-card-count { font-size:11px; font-weight:600; padding:4px 12px; border-radius:12px; background:var(--navy-pale); color:var(--navy); }
+.sys-card-desc { font-size:13px; color:var(--muted); line-height:1.6; }
+
+/* Maintenance tab */
+.freq-row { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
+.freq-label { width:150px; font-size:12px; color:var(--muted); text-align:right; flex-shrink:0; }
+.freq-track { flex:1; height:20px; background:#EEF1F6; border-radius:4px; overflow:hidden; }
+.freq-fill { height:100%; border-radius:4px; display:flex; align-items:center; padding-left:8px; font-size:11px; font-weight:600; color:#fff; }
+
+.wo-flow { display:flex; flex-direction:column; gap:0; }
+.wo-flow-step { display:flex; gap:14px; position:relative; padding-bottom:22px; }
+.wo-flow-step::before { content:''; position:absolute; left:15px; top:32px; bottom:0; width:2px; background:var(--border); }
+.wo-flow-step:last-child::before { display:none; }
+.wo-flow-num { width:32px; height:32px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; flex-shrink:0; }
+.wo-flow-body { flex:1; padding-top:2px; }
+.wo-flow-title { font-weight:600; font-size:13.5px; }
+.wo-flow-desc { font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.5; }
+.wo-flow-channel { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:8px; margin-top:6px; margin-right:6px; }
+.chan-sms { background:var(--blue-bg); color:var(--blue); }
+.chan-email { background:var(--purple-bg); color:var(--purple); }
+.chan-system { background:var(--green-bg); color:var(--green); }
+
+/* Level view */
+.level-row { display:flex; justify-content:space-between; align-items:flex-start; padding:12px 0; border-bottom:1px solid var(--border); gap:10px; }
+.level-row:last-child { border-bottom:none; }
+.level-name { font-size:13.5px; font-weight:700; color:var(--navy); }
+.level-detail { font-size:11.5px; color:var(--muted); margin-top:2px; }
+.level-count { font-size:12px; color:var(--muted); white-space:nowrap; font-weight:600; }
+
+@media (max-width: 700px) {
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-grid-4 { grid-template-columns: 1fr; }
+  .dash-kpi-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
+</style>
+<script src="https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
+    <div>
+      <div class="header-title">Facility Asset Manager</div>
+      <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
+    <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Dashboard
+  </button>
+  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
+    Asset Register
+  </button>
+  <button class="tab-btn" data-tab="systems" onclick="switchTab('systems')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
+    Systems
+  </button>
+  <button class="tab-btn" data-tab="maintenance" onclick="switchTab('maintenance')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    Maintenance
+  </button>
+  <button class="tab-btn" data-tab="levelview" onclick="switchTab('levelview')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+    Level View
+  </button>
+  <button class="tab-btn" data-tab="floorplan" onclick="switchTab('floorplan')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
+    Floor Plan
+  </button>
+  <button class="tab-btn" data-tab="workorders" onclick="switchTab('workorders')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Work Orders
+  </button>
+</div>
+
+<div id="loading-screen" style="text-align:center;padding:100px 20px;">
+  <div style="width:36px;height:36px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto 16px;animation:spin 0.8s linear infinite;"></div>
+  <div style="font-size:14px;color:#6B7280;">Loading live asset data…</div>
+</div>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+<div class="content" style="display:none;">
+  <div id="view-dashboard" class="view active"></div>
+  <div id="view-assets" class="view"></div>
+  <div id="view-systems" class="view"></div>
+  <div id="view-maintenance" class="view"></div>
+  <div id="view-levelview" class="view"></div>
+  <div id="view-floorplan" class="view"></div>
+  <div id="view-workorders" class="view"></div>
+</div>
+
+<div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
+
+<script>
+// ============================================================
+// BRANDING CONFIG — edit these 4 lines for each client deployment.
+// Nothing else in this file needs to change per client.
+// ============================================================
+const CLIENT_CONFIG = {
+  clientName: "Sali International Hospital",
+  buildingLabel: "[Floor/Zone — confirm after site survey]", // fill in once the pilot floor/zone is agreed (Field 1 of the scope PDF)
+  region: "Zanzibar",           // project-level — one project = one region, set once here, not per-asset
+  district: "Zanzibar Urban",   // project-level — same reasoning as region
+  building: "[Building name]",  // project-level — the facility/building name for this deployment
+  accentColor: "#1A3566",
+  pageTitle: "GVC Facility Asset Manager"
+};
+
+// Apply config to the page (header text, browser tab title)
+document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
+document.addEventListener('DOMContentLoaded', () => {
+  const sub = document.getElementById('header-subtitle');
+  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.building} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
+});
+
+let assets = []; // populated live from Airtable via /api/get-assets
+let currentUserRole = "engineer";
+let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
+let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
+
+// TEMPORARY (Grace, July 2026): showing cost/depreciation data to every role
+// for now, while access control is worked out per-client. Flip this to
+// `false` (and set the same flag in api/get-assets.js) to restore the
+// original rule — Business Owner and System Admin only.
+const TEMP_SHOW_COST_TO_ALL = true;
+
+// Legacy imported assets use "L1", "L14" etc. In this building, L1 is the
+// Ground Floor and L15 is the top floor (no separate rooftop level) — so
+// L1 -> GF, and everything above shifts down by one: L2 -> F1, L15 -> F14.
+// New assets (via Add Asset) already use the correct GF/B1-B3/M/F1-F20/RF
+// convention directly, so this only affects display of legacy "L" data —
+// the underlying Airtable value is untouched, safe to run every time.
+// Calculated from the asset's own Last Service and Next Service Due dates —
+// not a separately typed number, so it can never drift out of sync with
+// what's actually on record. Returns null if either date is missing.
+// Returns { label, color } for an asset's warranty status — a separate
+// clock from depreciation. "Expiring Soon" is within 30 days.
+function warrantyStatus(expiryDate) {
+  if (!expiryDate) return { label: 'No warranty on record', color: 'var(--muted)' };
+  const days = Math.round((new Date(expiryDate) - new Date()) / 86400000);
+  if (days < 0) return { label: `Expired ${Math.abs(days)}d ago (${expiryDate})`, color: 'var(--red)' };
+  if (days <= 30) return { label: `Expires in ${days}d (${expiryDate})`, color: 'var(--amber)' };
+  return { label: `Active until ${expiryDate}`, color: 'var(--green)' };
+}
+
+function calcMaintenanceInterval(lastService, nextService) {
+  if (!lastService || !nextService) return null;
+  const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
+  return days > 0 ? days : null;
+}
+function formatInterval(days) {
+  if (days === null || days === undefined) return '—';
+  if (days >= 60) return `${days}d (~${Math.round(days/30)}mo)`;
+  return `${days} days`;
+}
+
+// Maps an asset's name/system to one of the sourced ISO/NFPA checklist
+// keys in lib/checklists.js. Returns null if nothing matches — better to
+// show "no checklist mapped yet" than guess wrong and imply a standard
+// that doesn't actually apply to this equipment.
+function guessChecklistClass(name, system) {
+  const text = (name + " " + (system||"")).toLowerCase();
+  if (text.includes("pump")) return "Pump";
+  if (text.includes("generator")) return "Generator";
+  if (text.includes("lift") || text.includes("elevator")) return "Lift / Elevator";
+  if (text.includes("ups")) return "UPS";
+  if (text.includes("fire panel") || text.includes("fire detection")) return "Fire Panel";
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("fan coil") || text.includes("cooling tower") || text.includes("air conditioning")) return "Air Conditioning Unit";
+  if (text.includes("cctv")) return "CCTV Camera";
+  if (text.includes("access control")) return "Access Control Panel";
+  if (text.includes("computer") && !text.includes("bms")) return "Desktop Computer";
+  if (text.includes("smoke detector")) return "Smoke Detector";
+  if (text.includes("compressor")) return "Compressor";
+  return null;
+}
+
+function displayFloor(floor) {
+  if (!floor) return '';
+  const m = floor.match(/^L(\d+)$/i);
+  if (!m) return floor; // already GF/B1/F3/M/RF etc — pass through unchanged
+  const n = parseInt(m[1], 10);
+  return n === 1 ? 'GF' : `F${n - 1}`;
+}
+
+// Some Room/Zone values are free text that embed the old floor naming
+// inside the description itself (e.g. "L14 Office Entry", "Level 8
+// Mechanical Room", "Rooftop Level 15") rather than using the clean
+// coded Floor field. This relabels those embedded references the same
+// way displayFloor() does, so the whole system reads consistently —
+// the underlying Airtable text is untouched, display only.
+function displayRoom(room) {
+  if (!room) return '';
+  let out = room;
+  // Spelled-out "Level N" -> "Ground Floor" or "Floor N-1"
+  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? 'Ground Floor' : `Floor ${n - 1}`;
+  });
+  // Compact "L14" style token -> "GF" or "F13"
+  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? 'GF' : `F${n - 1}`;
+  });
+  return out;
+}
+let dashboardWorkOrders = []; // populated live from /api/work-orders alongside assets
+
+// Mirrors lib/roles.js — used only to toggle UI elements (cost fields,
+// Add/Decommission buttons etc). The API is the real enforcement; this
+// just avoids showing controls a role isn't allowed to use.
+const ROLE_PERMISSIONS = {
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
+  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false },
+  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+};
+
+const levelDefs = [
+  { id:"B2", label:"Basement 2 — Plant & Parking", count:5 },
+  { id:"B1", label:"Basement 1 — Plant, Substation & Parking", count:9 },
+  { id:"L1", label:"Ground Floor — Lobby & Retail", count:10 },
+  { id:"L2", label:"Floor 1 — Retail", count:4 },
+  { id:"L3", label:"Floor 2 — Retail", count:4 },
+  { id:"L4", label:"Floor 3 — Office", count:4 },
+  { id:"L5", label:"Floor 4 — Office", count:4 },
+  { id:"L6", label:"Floor 5 — Office", count:4 },
+  { id:"L7", label:"Floor 6 — Office", count:4 },
+  { id:"L8", label:"Floor 7 — Mechanical Floor", count:3 },
+  { id:"L9", label:"Floor 8 — Office", count:4 },
+  { id:"L10", label:"Floor 9 — Office", count:4 },
+  { id:"L11", label:"Floor 10 — Office", count:4 },
+  { id:"L12", label:"Floor 11 — Office", count:4 },
+  { id:"L13", label:"Floor 12 — Office", count:4 },
+  { id:"L14", label:"Floor 13 — Office", count:4 },
+  { id:"L15", label:"Floor 14 — Rooftop Plant", count:5 }
+];
+
+const systemDefs = [
+  { name:"HVAC", desc:"Chillers, cooling towers, air handling units and fan coil units maintaining comfort conditions across all occupied floors.", color:"var(--navy)" },
+  { name:"Fire Protection", desc:"Electric and diesel fire pumps, jockey pump, and wet-riser distribution ensuring code-compliant fire suppression capacity.", color:"var(--red)" },
+  { name:"Electrical", desc:"HV/LV transformers, main switchgear, standby generator and UPS supporting building power resilience.", color:"var(--amber)" },
+  { name:"Vertical Transport", desc:"Passenger and freight lifts moving people and goods between all 15 levels and both basements.", color:"var(--blue)" },
+  { name:"Plumbing", desc:"Domestic water boosting and basement drainage/sump systems.", color:"var(--purple)" },
+  { name:"Controls", desc:"Building Management System (BMS) head-end monitoring and control across all connected systems.", color:"#D1D5DB" },
+  { name:"CCTV & Access Control", desc:"Camera coverage and access readers securing common areas, entrances, office floors and parking levels.", color:"var(--teal)" },
+  { name:"Parking System", desc:"Barrier gates and payment kiosks managing vehicle access across both basement parking levels.", color:"var(--pink)" },
+  { name:"Retail Tenant Interface", desc:"Tenant-facing kiosks and portals supporting retail zone operations and tenant communication.", color:"var(--gold)" },
+  { name:"Fire Detection", desc:"Smoke and heat detection loops with central control panel providing early warning coverage across every floor.", color:"#F97316" },
+];
+
+let currentSystemFilter = "All";
+let currentNatureFilter = "All";
+let currentMobilityFilter = "All";
+let currentCategoryFilter = "All";
+let currentFloorFilter = "All";
+let currentCriticalityFilter = "All";
+let currentRoomFilter = "All";
+let currentStatusFilter = "All";
+let currentSearch = "";
+
+function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
+function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
+function statusBg(s) { return s==="Good"?"var(--green-bg)":s==="Poor"?"var(--amber-bg)":"var(--red-bg)"; }
+function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
+function fmt(n) { return n.toLocaleString(); }
+function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date()) / 86400000); }
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-'+tab).classList.add('active');
+  if(tab==='dashboard') renderDashboard();
+  if(tab==='assets') renderAssets();
+  if(tab==='systems') renderSystems();
+  if(tab==='maintenance') renderMaintenance();
+  if(tab==='levelview') renderLevelView();
+  if(tab==='floorplan') renderFloorPlan();
+  if(tab==='workorders') renderWorkOrders();
+}
+
+function drawDonut(canvas, segments, size) {
+  const ctx = canvas.getContext('2d');
+  const cx = size/2, cy = size/2, r = size*0.38, inner = size*0.26;
+  let start = -Math.PI/2;
+  const total = segments.reduce((s,seg)=>s+seg.value,0);
+  segments.forEach(seg => {
+    const angle = (seg.value/total)*Math.PI*2;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,start,start+angle);
+    ctx.closePath(); ctx.fillStyle = seg.color; ctx.fill();
+    start += angle;
+  });
+  ctx.beginPath(); ctx.arc(cx,cy,inner,0,Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+}
+
+function renderDashboard() {
+  const windowDays = parseInt(currentDashboardWindow || 30);
+  const total = assets.length;
+  const operational = assets.filter(a=>a.status==="Good").length;
+  const schedMaint = assets.filter(a=>a.status==="Poor").length;
+  const needsAttn = assets.filter(a=>a.status==="Critical").length;
+  const opPct = Math.round((operational/total)*100);
+  const attnPct = Math.round((needsAttn/total)*100);
+  const criticalAlerts = assets.filter(a=>a.criticality==="High" && a.status!=="Operational").length;
+  const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
+
+  let html = '';
+
+  // Dashboard timeframe selector
+  html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
+    ${[3,7,14,21,30,90,180,365].map(d => `<button onclick="currentDashboardWindow=${d};renderDashboard()" style="padding:4px 10px;font-size:11px;font-weight:${windowDays===d?'700':'400'};border:1px solid ${windowDays===d?'var(--navy)':'var(--border)'};border-radius:6px;background:${windowDays===d?'var(--navy)':'#fff'};color:${windowDays===d?'#fff':'var(--text)'};cursor:pointer">${d <= 30 ? d+'d' : d <= 180 ? Math.round(d/30)+'mo' : '1yr'}</button>`).join('')}
+  </div>`;
+
+  // KPI row — Total Asset Value removed per brief
+  html += `<div class="dash-kpi-grid">
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--navy-pale);color:var(--navy)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg></div><div><div class="dash-kpi-val" style="color:var(--navy)">${fmt(total)}</div><div class="dash-kpi-label">Total Assets · All 17 levels</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Good · ${opPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Critical · ${attnPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--red-bg);color:var(--red)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div><div class="dash-kpi-val" style="color:var(--red)">${criticalAlerts}</div><div class="dash-kpi-label">Critical Alerts · High priority</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next ${windowDays} Days</div></div></div>
+  </div>`;
+
+  // Row 1: Asset Health + Maintenance Overview
+  html += `<div class="dash-grid">`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Asset Health Overview</div><div class="donut-wrap"><canvas id="health-donut" width="140" height="140"></canvas><div style="display:flex;flex-direction:column;gap:2px"><div class="donut-legend"><span class="donut-dot" style="background:var(--green)"></span>Operational <strong>${operational}</strong> (${opPct}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--amber)"></span>Scheduled Maintenance <strong>${schedMaint}</strong> (${Math.round(schedMaint/total*100)}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--red)"></span>Needs Attention <strong>${needsAttn}</strong> (${attnPct}%)</div></div></div></div>`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Overview</div><div style="display:flex;flex-direction:column;gap:4px">`;
+  // Live data from work orders — group by month
+  const now = new Date();
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const maintData = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const mKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const monthWOs = dashboardWorkOrders.filter(w => (w.created||'').startsWith(mKey));
+    const planned = monthWOs.length;
+    const completed = monthWOs.filter(w => w.status === 'Completed').length;
+    const overdue = monthWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+    maintData.push({ m: monthNames[d.getMonth()], p: planned, c: completed, o: overdue });
+  }
+  const maxM = Math.max(1, ...maintData.map(d => Math.max(d.p, d.c, d.o)));
+  maintData.forEach(d => {
+    html += `<div class="bar-chart-row"><div class="bar-chart-label">${d.m}</div><div class="bar-group"><div class="bar-planned" style="width:${(d.p/maxM)*100}%"></div><div class="bar-completed" style="width:${(d.c/maxM)*100}%"></div><div class="bar-overdue" style="width:${(d.o/maxM)*100}%"></div></div></div>`;
+  });
+  html += `<div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:var(--muted)"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--navy);margin-right:4px"></span>Planned</span><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green);margin-right:4px"></span>Completed</span><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--red);margin-right:4px"></span>Overdue</span></div></div></div>`;
+
+  html += `</div><div class="dash-grid">`;
+
+  // Assets by Category — count-based, replaces "Top Asset Categories by Value"
+  html += `<div class="dash-panel"><div class="dash-panel-title">Assets by Category</div>`;
+  const sysCounts = {};
+  systemDefs.forEach(s => sysCounts[s.name] = assets.filter(a=>a.system===s.name).length);
+  const maxCount = Math.max(...Object.values(sysCounts));
+  systemDefs.slice().sort((a,b)=>sysCounts[b.name]-sysCounts[a.name]).forEach(s => {
+    const cnt = sysCounts[s.name];
+    html += `<div class="cat-bar-row"><div class="cat-bar-label">${s.name}</div><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(cnt/maxCount)*100}%;background:${s.color}">${cnt}</div></div></div>`;
+  });
+  html += `</div>`;
+
+  // Recent Alerts — live from work orders, most recent first
+  html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>`;
+  const recentAlerts = dashboardWorkOrders
+    .filter(w => w.status !== 'Completed')
+    .sort((a, b) => new Date(b.created) - new Date(a.created))
+    .slice(0, 5);
+  if (recentAlerts.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">No active alerts — all clear.</div>`;
+  } else {
+    recentAlerts.forEach(w => {
+      const isOverdue = w.urgency === 'OVERDUE';
+      const bgColor = isOverdue ? 'var(--red-bg)' : 'var(--amber-bg)';
+      const fgColor = isOverdue ? 'var(--red)' : 'var(--amber)';
+      html += `<div class="alert-item"><div class="alert-icon" style="background:${bgColor};color:${fgColor}">⚠</div><div><div style="font-size:13px;font-weight:600">${w.assetName || w.assetId} — ${w.urgency}</div><div style="font-size:11px;color:var(--muted)">${w.location || "—"} · ${w.woId}</div></div><div class="alert-time">${w.status}</div></div>`;
+    });
+  }
+  html += `<a class="view-link" href="#" onclick="switchTab('workorders');return false;">View all work orders →</a>
+  </div>`;
+
+  html += `</div>`;
+
+  // Row 3: Work Orders + Planned Maintenance + Documents (3 cols now, lifecycle forecast removed)
+  html += `<div class="dash-grid-4">`;
+
+  // Work Orders Summary — live from dashboardWorkOrders
+  const woOpen = dashboardWorkOrders.filter(w => w.status === 'Open').length;
+  const woInProgress = dashboardWorkOrders.filter(w => w.status === 'In Progress').length;
+  const woOverdue = dashboardWorkOrders.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+  const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
+  const woCompletedYTD = dashboardWorkOrders.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
+    <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">${woOpen}</div><div class="wo-box-label">Open</div></div>
+    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">${woInProgress}</div><div class="wo-box-label">In Progress</div></div>
+    <div class="wo-box" style="background:var(--red-bg)"><div class="wo-box-val" style="color:var(--red)">${woOverdue}</div><div class="wo-box-label">Overdue</div></div>
+    <div class="wo-box" style="background:var(--green-bg)"><div class="wo-box-val" style="color:var(--green)">${woCompletedYTD}</div><div class="wo-box-label">Completed YTD</div></div>
+  </div><a class="view-link" href="#" onclick="switchTab('workorders');return false;">View all work orders →</a></div>`;
+
+  // Planned Maintenance — live from assets, filtered by dashboard window
+  html += `<div class="dash-panel"><div class="dash-panel-title">Planned Maintenance (Next ${windowDays <= 30 ? windowDays + ' Days' : windowDays <= 180 ? Math.round(windowDays/30) + ' Months' : '1 Year'})</div>`;
+  const upcoming = assets
+    .filter(a => {
+      const d = daysUntil(a.nextService);
+      return d >= 0 && d <= windowDays;
+    })
+    .sort((a, b) => new Date(a.nextService) - new Date(b.nextService))
+    .slice(0, 6);
+  if (upcoming.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">No maintenance due within this window.</div>`;
+  } else {
+    upcoming.forEach(a => {
+      const dueDate = new Date(a.nextService);
+      const dateLabel = dueDate.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      html += `<div class="maint-item"><div><div style="font-size:13px;font-weight:600">🔧 ${a.name}</div><div style="font-size:11px;color:var(--muted)">${displayRoom(a.room) || displayFloor(a.floor) || "—"}</div></div><div style="font-size:12px;color:var(--muted)">${dateLabel}</div></div>`;
+    });
+  }
+  html += `</div>`;
+
+  // Documents — Asset Register (real xlsx export, bold header, correct
+  // unicode), Maintenance Plan (windowed by days, real printable PDF),
+  // Monthly Report (real summary from Alert Log)
+  const todayLabel = new Date().toISOString().split('T')[0];
+  html += `<div class="dash-panel"><div class="dash-panel-title">Key Documents</div>
+    <div class="doc-item" style="cursor:pointer" onclick="exportAssetRegisterCSV()"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div style="flex:1"><div style="font-size:13px;font-weight:500">Asset Register <span style="color:var(--navy);font-size:11px;font-weight:600">↓ Download XLSX</span></div><div style="font-size:10px;color:var(--muted)">${total} assets · Live as of ${todayLabel}</div></div></div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Maintenance Plan</div><div style="font-size:10px;color:var(--muted)">Pick a window — shows only what falls due in that period</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="printMaintenancePlan(7)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">7 days</button>
+        <button onclick="printMaintenancePlan(14)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">14 days</button>
+        <button onclick="printMaintenancePlan(21)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">21 days</button>
+        <button onclick="printMaintenancePlan(30)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">30 days</button>
+      </div>
+    </div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="generateMonthlyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
+        <button onclick="exportMonthlyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
+        <button onclick="exportMonthlyReportXLSX()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ XLSX</button>
+      </div>
+    </div>
+  </div>`;
+
+  html += `</div>`;
+
+  const canSeeApiKey = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+
+  if (canSeeApiKey) {
+    html += `<div class="dash-panel" style="margin-top:20px">
+      <div class="dash-panel-title">Maintenance Cost Overview</div>
+      <div id="costOverviewContent" style="padding:8px 0;font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+  }
+
+  if (canSeeApiKey) {
+    html += `<div class="dash-panel" style="margin-top:20px">
+      <div class="dash-panel-title">API Integration (for ERP/SAP connections)</div>
+      <div id="apiKeyPanelContent" style="font-size:12px;color:var(--muted);padding:8px 0">
+        <button onclick="loadApiKeyInfo()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Show API Key</button>
+      </div>
+    </div>`;
+  }
+
+  document.getElementById('view-dashboard').innerHTML = html;
+  if (canSeeApiKey) loadCostOverview();
+
+  setTimeout(() => {
+    const hc = document.getElementById('health-donut');
+    if(hc) drawDonut(hc, [{value:operational,color:'#27AE60'},{value:schedMaint,color:'#F39C12'},{value:needsAttn,color:'#E74C3C'}], 140);
+  }, 50);
+}
+
+function getFilteredAssets() {
+  return assets.filter(a => {
+    if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
+    if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
+    if(currentCriticalityFilter!=="All" && a.criticality!==currentCriticalityFilter) return false;
+    if(currentNatureFilter!=="All" && a.nature!==currentNatureFilter) return false;
+    if(currentMobilityFilter!=="All" && a.mobility!==currentMobilityFilter) return false;
+    if(currentCategoryFilter!=="All" && a.category!==currentCategoryFilter) return false;
+    if(currentFloorFilter!=="All" && a.floor!==currentFloorFilter) return false;
+    if(currentRoomFilter!=="All" && a.room!==currentRoomFilter) return false;
+    if(currentSearch) {
+      const q = currentSearch.toLowerCase();
+      const hay = (a.id+" "+a.name+" "+a.room+" "+a.manufacturer+" "+a.model+" "+a.category+" "+(a.nature||"")+" "+(a.category||"")+" "+(a.building||"")+" "+(a.room||"")).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAssets() {
+  const systems = ["All", ...systemDefs.map(s=>s.name)];
+  const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
+  const attn = assets.filter(a=>a.status==="Critical").length;
+  const sched = assets.filter(a=>a.status==="Poor").length;
+
+  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button></div>`;
+  html += `<div class="summary-grid">
+    <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Poor</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Critical</div></div>
+  </div>`;
+
+  // Search input uses renderAssetResults() ONLY — never renderAssets() —
+  // so typing never rebuilds this input itself. Rebuilding it mid-type
+  // is what caused the "type one letter, lose focus" bug: the browser
+  // can't keep a cursor position in a DOM node that just got destroyed
+  // and recreated.
+  html += `<div class="filter-row">
+    <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
+    <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
+      <option value="All">All Status</option>
+      <option value="Good"${currentStatusFilter==='Good'?' selected':''}>Good</option>
+      <option value="Poor"${currentStatusFilter==='Poor'?' selected':''}>Poor</option>
+      <option value="Critical"${currentStatusFilter==='Critical'?' selected':''}>Critical</option>
+    </select>
+    <select class="filter-select" onchange="currentCriticalityFilter=this.value;renderAssets()">
+      <option value="All">All Criticality</option>
+      <option value="High"${currentCriticalityFilter==='High'?' selected':''}>High</option>
+      <option value="Medium"${currentCriticalityFilter==='Medium'?' selected':''}>Medium</option>
+      <option value="Low"${currentCriticalityFilter==='Low'?' selected':''}>Low</option>
+    </select>
+  </div>`;
+
+  // Full hierarchy + location filter row, in order: Nature -> Mobility -> Category
+  // -> System -> Floor -> Room/Zone. Each narrows the options in the next one.
+  // Hidden entirely if no assets have classification data yet (e.g. before backfill import).
+  const uniqueNatures = [...new Set(assets.map(a=>a.nature).filter(Boolean))];
+  if (uniqueNatures.length > 0) {
+    const filteredByNature = currentNatureFilter==="All" ? assets : assets.filter(a=>a.nature===currentNatureFilter);
+    const uniqueMobilities = [...new Set(filteredByNature.map(a=>a.mobility).filter(Boolean))];
+    const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
+    const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
+    const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
+    const uniqueSystemsInBranch = [...new Set(filteredByCat.map(a=>a.system).filter(Boolean))].sort();
+    const filteredBySystem = currentSystemFilter==="All" ? filteredByCat : filteredByCat.filter(a=>a.system===currentSystemFilter);
+    const uniqueFloors = [...new Set(filteredBySystem.map(a=>a.floor).filter(Boolean))]
+      .sort((a,b) => displayFloor(a).localeCompare(displayFloor(b), undefined, {numeric:true}));
+    const filteredByFloor = currentFloorFilter==="All" ? filteredBySystem : filteredBySystem.filter(a=>a.floor===currentFloorFilter);
+    const uniqueRooms = [...new Set(filteredByFloor.map(a=>a.room).filter(Boolean))].sort();
+
+    html += `<div class="filter-row" style="gap:6px;flex-wrap:wrap">
+      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+        <option value="All">All Types</option>
+        ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
+      </select>
+      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+        <option value="All">All Mobility</option>
+        ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
+      </select>` : ''}
+      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+        <option value="All">All Categories</option>
+        ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentSystemFilter=this.value;currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+        <option value="All">All Systems</option>
+        ${uniqueSystemsInBranch.map(s=>`<option value="${s}"${currentSystemFilter===s?' selected':''}>${s}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentFloorFilter=this.value;currentRoomFilter='All';renderAssets()">
+        <option value="All">All Floors</option>
+        ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${displayFloor(f)}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentRoomFilter=this.value;renderAssets()">
+        <option value="All">All Rooms/Zones</option>
+        ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${displayRoom(r)}</option>`).join('')}
+      </select>
+      ${(currentNatureFilter!=='All'||currentMobilityFilter!=='All'||currentCategoryFilter!=='All'||currentSystemFilter!=='All'||currentFloorFilter!=='All'||currentRoomFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
+    </div>`;
+  } else {
+    // No classification data yet (pre-backfill) — still offer a plain System filter
+    // as buttons so System filtering works even before Nature/Category are populated.
+    html += `<div class="filters">`;
+    systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
+    html += `</div>`;
+  }
+
+  html += `<div id="assetResultsContainer"></div>`;
+
+  document.getElementById('view-assets').innerHTML = html;
+  renderAssetResults(); // populate the results container on initial/full render
+}
+
+// Renders ONLY the result count + asset list — called on every
+// keystroke in search, and by renderAssets() itself after a full
+// rebuild. Never touches the search input, dropdowns, or filter chips,
+// so it can run continuously while someone is typing without breaking
+// focus.
+function renderAssetResults() {
+  const filtered = getFilteredAssets();
+  const container = document.getElementById('assetResultsContainer');
+  if (!container) return;
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+
+  let html = `<div class="result-count">Showing ${filtered.length} of ${assets.length} assets</div>`;
+  html += `<div class="asset-list">`;
+  filtered.forEach((a) => {
+    const idx = assets.indexOf(a);
+    const interval = calcMaintenanceInterval(a.lastService, a.nextService);
+    const intervalBlock = `
+      <div style="text-align:right;flex-shrink:0;min-width:90px">
+        <div style="font-size:11px;color:var(--muted)">Interval</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${formatInterval(interval)}</div>
+      </div>`;
+    const valueBlock = canSeeCost ? `
+      <div style="text-align:right;flex-shrink:0;min-width:110px">
+        <div style="font-size:11px;color:var(--muted)">Current Value</div>
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? 'TZS ' + Number(a.currentValue).toLocaleString() : '—'}</div>
+        ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
+      </div>` : '';
+    html += `<button class="asset-row" onclick="showDetail(${idx})">
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
+      <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
+      <span class="asset-class">${a.category}</span></div>
+      ${valueBlock}
+      ${intervalBlock}
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0"><span class="badge ${statusBadge(a.status)}">${a.status}</span><span class="badge ${critBadge(a.criticality)}">${a.criticality}</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
+  });
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+function showDetail(idx) {
+  const a = assets[idx];
+  const age = a.installDate ? (new Date().getFullYear()) - parseInt(a.installDate.split("-")[0]) : 0;
+  const pct = Math.min((age/a.lifespan)*100, 100);
+  const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
+  const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+  const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
+
+  let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
+  <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
+    ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
+    ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
+    ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
+    <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
+    <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span>
+  </div></div>
+  <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
+    <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Classification</div>
+      <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility ? a.mobility + " → " : ""}${a.category || "—"}</div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Status</div>
+      <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status || "Good"}</span>
+    </div>
+  </div>
+  <div class="detail-grid">`;
+
+  const fields = [
+    ["Floor/Level", displayFloor(a.floor) || "—"],
+    ["Room/Zone", displayRoom(a.room) || "—"],
+    ["System", a.system || "—"],
+    ["Manufacturer", a.manufacturer],
+    ["Model", a.model],
+    ["Install Date", a.installDate],
+    ["Expected Lifespan", a.lifespan+" years"],
+    ["Asset Age", age+" years"],
+    ["Last Service", a.lastService || "—"],
+    ["Next Service Due", a.nextService || "—"],
+    ["Maintenance Interval (Calculated)", formatInterval(calcMaintenanceInterval(a.lastService, a.nextService))],
+    ["Warranty Status", `<span style="color:${warrantyStatus(a.warrantyExpiryDate).color};font-weight:600">${warrantyStatus(a.warrantyExpiryDate).label}</span>`],
+    ["Added By", a.addedBy || "— (existing at pilot start)"],
+  ];
+  if (canSeeCost) {
+    fields.push(["Acquisition Cost (TZS)", a.acquisitionCost ? Number(a.acquisitionCost).toLocaleString() : "Not set"]);
+    fields.push(["Current Value (Calculated)", a.currentValue !== null && a.currentValue !== undefined ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
+    if (a.annualDepreciation) fields.push(["Annual Depreciation", Number(a.annualDepreciation).toLocaleString() + " /yr"]);
+  }
+  fields.forEach(([l,v])=>{
+    html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
+  });
+  html += `</div>`;
+  if(a.note) {
+    html += `<div class="detail-alert" style="background:${statusBg(a.status)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span><strong>Note:</strong> ${a.note}</span></div>`;
+  }
+  html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
+
+  // ISO Maintenance Checklist — auto-matched to this asset's type from its name
+  html += `<div id="checklistSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
+    <div id="checklistContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
+
+  // Compliance Documents — real files (Fire Safety Certificate, OSHA
+  // Licence, etc.), not system-generated records.
+  html += `<div id="documentsSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:600;color:var(--navy)">Compliance Documents</div>
+      ${canManage ? `<button onclick="document.getElementById('docUploadInput_${a.recordId}').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Document</button>` : ''}
+      <input type="file" id="docUploadInput_${a.recordId}" style="display:none" onchange="submitDocumentUpload('${a.recordId}', this)">
+    </div>
+    ${a.documents && a.documents.length > 0 ? `
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+        ${a.documents.map(doc => `<a href="${doc.url}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;text-decoration:none;color:var(--text);font-size:12.5px">
+          <span>📄 ${doc.filename}</span>
+          <span style="color:var(--muted);font-size:11px">${doc.size ? Math.round(doc.size/1024) + ' KB' : ''}</span>
+        </a>`).join('')}
+      </div>
+      ${a.documentsUploadedBy ? `<div style="font-size:10.5px;color:var(--muted)">Last uploaded by ${a.documentsUploadedBy}${a.documentsUploadedDate ? ' · ' + new Date(a.documentsUploadedDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : ''}
+    ` : `<div style="font-size:12px;color:var(--muted)">No documents uploaded yet — e.g. Fire Safety Certificate, OSHA Compliance Licence, or any real compliance paperwork for this asset.</div>`}
+    <div id="docUploadStatus_${a.recordId}" style="font-size:11px;margin-top:6px"></div>
+  </div>`;
+
+  // Per-asset download options
+  html += `<div style="display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--border)">
+    <span style="font-size:11px;color:var(--muted);align-self:center">Download this asset:</span>
+    <button onclick="exportSingleAssetFormat('${a.id}','xlsx')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">XLSX</button>
+    <button onclick="exportSingleAssetFormat('${a.id}','csv')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
+    <button onclick="exportSingleAssetFormat('${a.id}','pdf')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ QR Code</button>
+  </div>`;
+
+  // Audit trail — edit history
+  html += `<div id="editLogSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Edit History</div>
+    <div id="editLogEntries" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
+
+  html += `</div>`; // close detail-panel
+  document.getElementById('view-assets').innerHTML = html;
+
+  // Load edit log
+  fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(a.id))
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('editLogEntries');
+      if (!data.entries || data.entries.length === 0) {
+        el.textContent = 'No edits recorded yet.';
+        return;
+      }
+      el.innerHTML = data.entries.map(e => {
+        const dt = new Date(e.timestamp);
+        const dateStr = dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) + ', ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+        return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${e.field}</strong> changed from "${e.oldValue}" to "${e.newValue}" — by <strong>${e.editedBy}</strong> at ${dateStr}</div>`;
+      }).join('');
+    })
+    .catch(() => {
+      const el = document.getElementById('editLogEntries');
+      if (el) el.textContent = 'Could not load edit history.';
+    });
+
+  // Load ISO maintenance checklist — auto-matched from the asset's name/system
+  const checklistClass = guessChecklistClass(a.name, a.system);
+  if (!checklistClass) {
+    document.getElementById('checklistContent').innerHTML = `<div>No standard checklist mapping found for this asset type yet.</div>`;
+  } else {
+    fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass))
+      .then(r => r.json())
+      .then(data => {
+        const el = document.getElementById('checklistContent');
+        if (!data.items || data.items.length === 0) {
+          el.innerHTML = `<div>No checklist items defined yet for <strong>${checklistClass}</strong>. Structure exists — content needs sourcing.</div>`;
+          return;
+        }
+        window.currentAssetChecklist = { asset: a, checklistClass, data };
+        el.innerHTML = `
+          <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${checklistClass}</strong> — ${data.items.length} items, sourced from:</div>
+          <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
+            <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
+          </div>`;
+      })
+      .catch(() => {
+        document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
+      });
+  }
+}
+
+// --- Relocation form + API call ---
+// --- Edit Asset form ---
+function openEditForm(idx) {
+  const a = assets[idx];
+  const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
+  const overlay = document.createElement('div');
+  overlay.id = 'editAssetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px;max-height:90vh;overflow-y:auto">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Edit ${a.name}</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">${a.id} — any change is recorded with your name and the time.</div>
+      <div id="editAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name</label>
+      <input id="ea_name" value="${a.name.replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature</label>
+      <select id="ea_nature" onchange="onEditNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Tangible"${a.nature==='Tangible'?' selected':''}>Tangible</option>
+        <option value="Intangible"${a.nature==='Intangible'?' selected':''}>Intangible</option>
+        <option value=""${!a.nature?' selected':''}>— Not classified —</option>
+      </select>
+
+      <div id="ea_mobilityWrap">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Mobility</label>
+        <select id="ea_mobility" onchange="onEditCategoryOptionsRefresh()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+          <option value="Movable"${a.mobility==='Movable'?' selected':''}>Movable</option>
+          <option value="Immovable"${a.mobility==='Immovable'?' selected':''}>Immovable</option>
+        </select>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
+      <select id="ea_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
+      <select id="ea_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${systemDefs.map(s=>`<option value="${s.name}"${a.system===s.name?' selected':''}>${s.name}</option>`).join('')}
+      </select>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${displayFloor(a.floor)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${displayRoom(a.room)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
+      <input id="ea_manufacturer" value="${(a.manufacturer||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
+      <input id="ea_model" value="${(a.model||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Install / Acquisition Date</label>
+      <input id="ea_installdate" type="date" value="${a.installDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Warranty Expiry Date</label>
+      <input id="ea_warranty" type="date" value="${a.warrantyExpiryDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Leave blank if no manufacturer warranty applies</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
+          <select id="ea_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option${a.status==='Good'?' selected':''}>Good</option><option${a.status==='Poor'?' selected':''}>Poor</option><option${a.status==='Critical'?' selected':''}>Critical</option>
+          </select>
+        </div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+          <select id="ea_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option value="Low"${a.criticality==='Low'?' selected':''}>Low</option><option value="Medium"${a.criticality==='Medium'?' selected':''}>Medium</option><option value="High"${a.criticality==='High'?' selected':''}>High</option>
+          </select>
+        </div>
+      </div>
+
+      ${canSeeCost ? `
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label>
+      <input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label>
+      <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      ` : ''}
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note</label>
+      <textarea id="ea_note" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px">${(a.note||'').replace(/</g,'&lt;')}</textarea>
+
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  onEditNatureChange(true, a.category);
+}
+
+function onEditNatureChange(skipReset, preselectCategory) {
+  const nature = document.getElementById('ea_nature').value;
+  document.getElementById('ea_mobilityWrap').style.display = nature === 'Tangible' ? 'block' : 'none';
+  onEditCategoryOptionsRefresh(preselectCategory);
+}
+function onEditCategoryOptionsRefresh(preselectCategory) {
+  const nature = document.getElementById('ea_nature').value;
+  const mobility = document.getElementById('ea_mobility') ? document.getElementById('ea_mobility').value : 'Movable';
+  const categorySelect = document.getElementById('ea_category');
+  let categories;
+  if (nature === 'Intangible') categories = ASSET_HIERARCHY.Intangible;
+  else if (nature === 'Tangible') categories = ASSET_HIERARCHY.Tangible[mobility];
+  else categories = ['Furniture','Equipment','Computer Hardware','Plant & Machinery','Transport Assets','Biological Assets','Valuable Documents','Library Books','Land','Buildings','Infrastructure','Heritage','Minerals & Other Resources','Computer Software','Trademarks','Licenses','Patent Rights','Right to Use','Others'];
+  const current = preselectCategory !== undefined ? preselectCategory : categorySelect.value;
+  categorySelect.innerHTML = categories.map(c => `<option value="${c}"${c===current?' selected':''}>${c}</option>`).join('');
+  if (current && !categories.includes(current)) {
+    categorySelect.insertAdjacentHTML('afterbegin', `<option value="${current}" selected>${current} (current)</option>`);
+  }
+}
+
+function closeEditForm() {
+  const overlay = document.getElementById('editAssetOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function submitAssetEdit(recordId) {
+  const errorBox = document.getElementById('editAssetError');
+  const btn = document.getElementById('ea_submit');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  errorBox.style.display = 'none';
+
+  const changes = {
+    "Name": document.getElementById('ea_name').value.trim(),
+    "Asset Nature": document.getElementById('ea_nature').value,
+    "Mobility": document.getElementById('ea_nature').value === 'Tangible' ? document.getElementById('ea_mobility').value : '',
+    "Asset Category": document.getElementById('ea_category').value,
+    "System": document.getElementById('ea_system').value,
+    "Floor/Level": document.getElementById('ea_floor').value.trim(),
+    "Room/Zone": document.getElementById('ea_room').value.trim(),
+    "Manufacturer": document.getElementById('ea_manufacturer').value.trim(),
+    "Model": document.getElementById('ea_model').value.trim(),
+    "Install Date": document.getElementById('ea_installdate').value,
+    "Warranty Expiry Date": document.getElementById('ea_warranty').value,
+    "Status": document.getElementById('ea_status').value,
+    "Criticality": document.getElementById('ea_criticality').value,
+    "Note": document.getElementById('ea_note').value.trim(),
+  };
+  const costField = document.getElementById('ea_cost');
+  if (costField) {
+    changes["Acquisition Cost (TZS)"] = costField.value;
+    changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
+  }
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'edit', recordId, changes }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to save changes');
+    closeEditForm();
+    await loadAssetsAndInit();
+    alert(data.changesApplied ? `Saved ${data.changesApplied} change(s).` : 'No changes detected.');
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
+}
+
+function openRelocateForm(recordId, assetName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'relocateOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:28px">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Relocate Asset</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Moving <strong>${assetName}</strong> to a new location. The old location will be logged for history.</div>
+      <div id="relocateError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor/Level</label>
+      <select id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— No change —</option>
+        <option value="GF">Ground Floor (GF)</option>
+        <option value="B1">Basement 1 (B1)</option>
+        <option value="B2">Basement 2 (B2)</option>
+        <option value="B3">Basement 3 (B3)</option>
+        <option value="M">Mezzanine (M)</option>
+        ${Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="F${n}">Floor ${n} (F${n})</option>`).join('')}
+        <option value="RF">Rooftop (RF)</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Room/Zone</label>
+      <input id="rel_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reason for relocation</label>
+      <input id="rel_reason" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('relocateOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="rel_submit" onclick="submitRelocation('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--amber);color:#fff;font-weight:600;cursor:pointer">Relocate</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function submitRelocation(recordId) {
+  const floor = document.getElementById('rel_floor').value.trim();
+  const room = document.getElementById('rel_room').value.trim();
+  const reason = document.getElementById('rel_reason').value.trim();
+  const errorBox = document.getElementById('relocateError');
+  const btn = document.getElementById('rel_submit');
+
+  if (!floor && !room) {
+    errorBox.textContent = 'Enter at least a new floor or room/zone.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Relocating…';
+  errorBox.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, newFloor: floor, newRoom: room, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to relocate');
+    document.getElementById('relocateOverlay').remove();
+    loadAssetsAndInit();
+    alert('Asset relocated successfully.');
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Relocate';
+  }
+}
+
+function renderSystems() {
+  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
+  systemDefs.forEach(s => {
+    const cnt = assets.filter(a=>a.system===s.name).length;
+    const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="High").length;
+    html += `<div class="sys-card"><div class="sys-card-head"><div class="sys-card-name">${s.name}</div><div class="sys-card-count">${cnt} asset${cnt!==1?'s':''}${critCnt>0?' · '+critCnt+' critical':''}</div></div><div class="sys-card-desc">${s.desc}</div></div>`;
+  });
+  document.getElementById('view-systems').innerHTML = html;
+}
+
+function renderMaintenance() {
+  let html = `<div class="dash-grid">`;
+
+  // Upcoming schedule timeline — live from real assets' Next Service Due
+  html += `<div class="dash-panel"><div class="dash-panel-title">Upcoming Maintenance Schedule (Next 30 Days)</div><div class="timeline" style="position:static">`;
+  const urgencyColor = (a) => {
+    const d = daysUntil(a.nextService);
+    if (d < 0) return 'var(--red)';
+    if (d <= 3) return 'var(--amber)';
+    return 'var(--green)';
+  };
+  const schedule = assets
+    .filter(a => {
+      const d = daysUntil(a.nextService);
+      return a.nextService && d <= 30;
+    })
+    .sort((a, b) => new Date(a.nextService) - new Date(b.nextService))
+    .slice(0, 10);
+
+  if (schedule.length === 0) {
+    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">Nothing scheduled in the next 30 days.</div>`;
+  } else {
+    schedule.forEach(a => {
+      const d = daysUntil(a.nextService);
+      const dateLabel = new Date(a.nextService).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      const status = d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? 'Due today' : `in ${d}d`;
+      const loc = displayRoom(a.room) || displayFloor(a.floor) || '—';
+      html += `<div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:8px;height:8px;border-radius:50%;background:${urgencyColor(a)};margin-top:6px;flex-shrink:0"></div><div><div style="font-size:12.5px;font-weight:600">${a.name} <span style="font-weight:400;color:var(--muted)">— ${dateLabel} (${status})</span></div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${loc} · ${a.system || '—'} · ${a.id}</div></div></div>`;
+    });
+  }
+  html += `</div></div>`;
+
+  // Maintenance Frequency by System — the real average service interval
+  // per system, computed from each asset's actual Maintenance Interval
+  // (Days), not the old fabricated "Quarterly/Annual" labels.
+  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Frequency by System</div>`;
+  const sysIntervals = {};
+  assets.forEach(a => {
+    if (!a.system) return;
+    (sysIntervals[a.system] = sysIntervals[a.system] || []).push(a.maintenanceIntervalDays || 90);
+  });
+  const freqLabel = (days) => {
+    if (days <= 10) return `~${Math.round(days)}d (Weekly)`;
+    if (days <= 35) return `~${Math.round(days)}d (Monthly)`;
+    if (days <= 100) return `~${Math.round(days)}d (Quarterly)`;
+    if (days <= 200) return `~${Math.round(days)}d (Semi-Annual)`;
+    return `~${Math.round(days)}d (Annual)`;
+  };
+  const sysColors2 = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
+  const maxInterval = Math.max(1, ...Object.values(sysIntervals).map(arr => arr.reduce((a,b)=>a+b,0)/arr.length));
+  Object.keys(sysIntervals).sort((a,b) => sysIntervals[a].length - sysIntervals[b].length).forEach((sysName, i) => {
+    const arr = sysIntervals[sysName];
+    const avgDays = arr.reduce((a,b)=>a+b,0) / arr.length;
+    // Shorter interval = more frequent = visually more "urgent", so
+    // the bar fills inversely to the interval length.
+    const pct = 100 - ((avgDays / maxInterval) * 80);
+    html += `<div class="freq-row"><div class="freq-label">${sysName}</div><div class="freq-track"><div class="freq-fill" style="width:${pct}%;background:${sysColors2[i % sysColors2.length]}">${freqLabel(avgDays)}</div></div></div>`;
+  });
+  html += `</div>`;
+
+  html += `</div>`;
+
+  // Work Order Flow — conceptual, not yet functional
+  html += `<div class="dash-panel" style="margin-top:14px"><div class="dash-panel-title">Work Order Communication Flow — Live</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6">This is how an alert actually moves from detection to resolution — this is the real, live behavior of the system, not a proposal.</div>
+    <div class="wo-flow">
+      <div class="wo-flow-step"><div class="wo-flow-num">1</div><div class="wo-flow-body"><div class="wo-flow-title">Maintenance due within 7 days (or overdue)</div><div class="wo-flow-desc">System detects the due date, sends the first real alert, and opens a Work Order automatically.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">2</div><div class="wo-flow-body"><div class="wo-flow-title">Reminder every 5 days while still open</div><div class="wo-flow-desc">If the Work Order hasn't been marked Completed, a reminder repeats every 5 days — referencing the same open Work Order, not creating a new one each time.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">3</div><div class="wo-flow-body"><div class="wo-flow-title">Staff can also report an issue directly</div><div class="wo-flow-desc">Anyone can report a breakdown from the public homepage (no login) — this opens a Work Order the same way, tagged REPORTED, with the reporter's name attached.</div><span class="wo-flow-channel chan-system">No Login Needed</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">4</div><div class="wo-flow-body"><div class="wo-flow-title">Technician updates status in the dashboard</div><div class="wo-flow-desc">Open → In Progress → Completed, updated directly from the Work Orders tab.</div><span class="wo-flow-channel chan-system">System Update</span></div></div>
+      <div class="wo-flow-step"><div class="wo-flow-num">5</div><div class="wo-flow-body"><div class="wo-flow-title">Marking Completed stops the reminders</div><div class="wo-flow-desc">Once Status is Completed, no further reminders fire for that issue, and a real Certificate of Maintenance becomes available to generate.</div><span class="wo-flow-channel chan-system">Automatic</span></div></div>
+    </div>
+  </div>`;
+
+  document.getElementById('view-maintenance').innerHTML = html;
+}
+
+function renderLevelView() {
+  let html = `<div class="dash-grid">`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Floor-by-Floor Asset Summary</div>`;
+  [...levelDefs].reverse().forEach(l => {
+    const lvlAssets = assets.filter(a=>a.floor===l.id);
+    const bySys = {};
+    lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+    const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
+    html += `<div class="level-row"><div><div class="level-name">${l.label}</div><div class="level-detail">${breakdown}</div></div><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div></div>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="dash-panel"><div class="dash-panel-title">Building Section — Vertical System Distribution</div>
+    <svg viewBox="0 0 380 460" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="bldg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A4A7F"/><stop offset="1" stop-color="#1A3566"/></linearGradient></defs>
+      <rect x="60" y="15" width="270" height="430" rx="4" fill="url(#bldg2)" opacity=".07" stroke="#1A3566" stroke-width="1.2"/>
+      <!-- zone lines -->
+      <line x1="60" y1="15" x2="330" y2="15" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="75" x2="330" y2="75" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="180" x2="330" y2="180" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="225" x2="330" y2="225" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="330" x2="330" y2="330" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="375" x2="330" y2="375" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="410" x2="330" y2="410" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <line x1="60" y1="445" x2="330" y2="445" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
+      <!-- labels -->
+      <text x="50" y="48" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L15 Roof</text>
+      <text x="50" y="130" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L9–L14</text>
+      <text x="50" y="205" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L8 Mech</text>
+      <text x="50" y="280" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L4–L7</text>
+      <text x="50" y="355" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L2–L3</text>
+      <text x="50" y="395" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L1 GF</text>
+      <text x="50" y="430" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B1</text>
+      <text x="50" y="460" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B2</text>
+      <!-- risers -->
+      <rect x="80" y="18" width="7" height="425" rx="2" fill="#3B82F6" opacity=".3"/><text x="83.5" y="12" text-anchor="middle" font-size="7" fill="#3B82F6">CHW</text>
+      <rect x="100" y="18" width="7" height="425" rx="2" fill="#E74C3C" opacity=".3"/><text x="103.5" y="12" text-anchor="middle" font-size="7" fill="#E74C3C">FP</text>
+      <rect x="120" y="18" width="7" height="425" rx="2" fill="#14B8A6" opacity=".3"/><text x="123.5" y="12" text-anchor="middle" font-size="7" fill="#14B8A6">CCTV</text>
+      <rect x="140" y="18" width="7" height="425" rx="2" fill="#F97316" opacity=".3"/><text x="143.5" y="12" text-anchor="middle" font-size="7" fill="#F97316">FD</text>
+      <!-- Rooftop L15 -->
+      <rect x="175" y="22" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Cooling Twr</text>
+      <rect x="235" y="22" width="55" height="17" rx="3" fill="#3B82F6"/><text x="262" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 AHU</text>
+      <!-- L9-L14 -->
+      <rect x="175" y="120" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 FCU</text>
+      <rect x="235" y="120" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 CCTV</text>
+      <!-- L8 Mech -->
+      <rect x="175" y="195" width="115" height="17" rx="3" fill="#3B82F6"/><text x="232" y="207" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">AHU-002 · Serves L2–L7</text>
+      <!-- L4-L7 -->
+      <rect x="175" y="270" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 FCU</text>
+      <rect x="235" y="270" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 Access</text>
+      <!-- L2-L3 Retail -->
+      <rect x="175" y="345" width="115" height="17" rx="3" fill="#D4A843"/><text x="232" y="357" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Retail Tenant Interface ×2</text>
+      <!-- L1 GF -->
+      <rect x="175" y="385" width="55" height="17" rx="3" fill="#3B82F6"/><text x="202" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Lifts</text>
+      <rect x="235" y="385" width="55" height="17" rx="3" fill="#EC4899"/><text x="262" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Generator</text>
+      <!-- B1 -->
+      <rect x="175" y="418" width="55" height="17" rx="3" fill="#E74C3C"/><text x="202" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Fire Pumps</text>
+      <rect x="235" y="418" width="55" height="17" rx="3" fill="#F39C12"/><text x="262" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Transformers</text>
+      <!-- B2 -->
+      <rect x="175" y="450" width="55" height="9" rx="2" fill="#8B5CF6"/><text x="202" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">2 Chillers</text>
+      <rect x="235" y="450" width="55" height="9" rx="2" fill="#EC4899"/><text x="262" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">Parking</text>
+    </svg>
+  </div>`;
+
+  html += `</div>`;
+  document.getElementById('view-levelview').innerHTML = html;
+}
+
+let lastWorkOrders = [];
+
+// --- Floor Plan tab: live status markers on an uploaded floor plan image ---
+// --- Built-in default floor plans (conceptual, generated from real room/asset
+// data) so the Floor Plan tab works immediately with no Airtable setup needed.
+// Airtable's Floor Plans / Asset Positions tables, once populated, always take
+// priority over these — this is a working starting point, not a limit.
+const DEFAULT_FLOOR_PLAN_IMAGES = {
+  "B2": "/floorplans/B2.svg",
+  "B1": "/floorplans/B1.svg",
+  "L1": "/floorplans/L1.svg",
+  "L2": "/floorplans/L2.svg",
+  "L3": "/floorplans/L3.svg",
+  "L4": "/floorplans/L4.svg",
+  "L5": "/floorplans/L5.svg",
+  "L6": "/floorplans/L6.svg",
+  "L7": "/floorplans/L7.svg",
+  "L8": "/floorplans/L8.svg",
+  "L9": "/floorplans/L9.svg",
+  "L10": "/floorplans/L10.svg",
+  "L11": "/floorplans/L11.svg",
+  "L12": "/floorplans/L12.svg",
+  "L13": "/floorplans/L13.svg",
+  "L14": "/floorplans/L14.svg",
+  "L15": "/floorplans/L15.svg"
+};
+
+const DEFAULT_ASSET_POSITIONS = [
+  {
+    "assetId": "CH-001",
+    "floor": "B2",
+    "x": 61.0,
+    "y": 12.0
+  },
+  {
+    "assetId": "CH-002",
+    "floor": "B2",
+    "x": 29.7,
+    "y": 27.9
+  },
+  {
+    "assetId": "SP-001",
+    "floor": "B2",
+    "x": 69.3,
+    "y": 64.1
+  },
+  {
+    "assetId": "CCTV-B2-01",
+    "floor": "B2",
+    "x": 82.7,
+    "y": 17.0
+  },
+  {
+    "assetId": "PK-B2-01",
+    "floor": "B2",
+    "x": 42.3,
+    "y": 12.4
+  },
+  {
+    "assetId": "FP-001",
+    "floor": "B1",
+    "x": 24.8,
+    "y": 50.4
+  },
+  {
+    "assetId": "FP-002",
+    "floor": "B1",
+    "x": 8.3,
+    "y": 25.9
+  },
+  {
+    "assetId": "FP-003",
+    "floor": "B1",
+    "x": 61.9,
+    "y": 53.6
+  },
+  {
+    "assetId": "WB-001",
+    "floor": "B1",
+    "x": 25.0,
+    "y": 57.1
+  },
+  {
+    "assetId": "SWG-001",
+    "floor": "B1",
+    "x": 75.6,
+    "y": 10.5
+  },
+  {
+    "assetId": "TX-001",
+    "floor": "B1",
+    "x": 75.3,
+    "y": 65.9
+  },
+  {
+    "assetId": "TX-002",
+    "floor": "B1",
+    "x": 35.3,
+    "y": 22.4
+  },
+  {
+    "assetId": "PK-B1-01",
+    "floor": "B1",
+    "x": 88.3,
+    "y": 36.9
+  },
+  {
+    "assetId": "PK-B1-02",
+    "floor": "B1",
+    "x": 14.0,
+    "y": 17.7
+  },
+  {
+    "assetId": "LFT-001",
+    "floor": "L1",
+    "x": 78.9,
+    "y": 58.3
+  },
+  {
+    "assetId": "LFT-002",
+    "floor": "L1",
+    "x": 75.4,
+    "y": 68.4
+  },
+  {
+    "assetId": "LFT-003",
+    "floor": "L1",
+    "x": 52.1,
+    "y": 87.8
+  },
+  {
+    "assetId": "UPS-001",
+    "floor": "L1",
+    "x": 38.6,
+    "y": 54.2
+  },
+  {
+    "assetId": "BMS-001",
+    "floor": "L1",
+    "x": 77.3,
+    "y": 59.5
+  },
+  {
+    "assetId": "CCTV-L1-01",
+    "floor": "L1",
+    "x": 80.1,
+    "y": 56.2
+  },
+  {
+    "assetId": "ACC-L1-01",
+    "floor": "L1",
+    "x": 66.6,
+    "y": 13.7
+  },
+  {
+    "assetId": "FD-L1-01",
+    "floor": "L1",
+    "x": 25.6,
+    "y": 33.2
+  },
+  {
+    "assetId": "RTI-L1-01",
+    "floor": "L1",
+    "x": 12.9,
+    "y": 28.6
+  },
+  {
+    "assetId": "GEN-001",
+    "floor": "L1",
+    "x": 14.7,
+    "y": 32.2
+  },
+  {
+    "assetId": "FCU-L2",
+    "floor": "L2",
+    "x": 60.7,
+    "y": 39.2
+  },
+  {
+    "assetId": "CCTV-L2",
+    "floor": "L2",
+    "x": 37.8,
+    "y": 26.8
+  },
+  {
+    "assetId": "FD-L2",
+    "floor": "L2",
+    "x": 29.0,
+    "y": 84.9
+  },
+  {
+    "assetId": "RTI-L2",
+    "floor": "L2",
+    "x": 61.7,
+    "y": 58.7
+  },
+  {
+    "assetId": "FCU-L3",
+    "floor": "L3",
+    "x": 20.7,
+    "y": 68.3
+  },
+  {
+    "assetId": "CCTV-L3",
+    "floor": "L3",
+    "x": 20.1,
+    "y": 40.4
+  },
+  {
+    "assetId": "FD-L3",
+    "floor": "L3",
+    "x": 91.1,
+    "y": 61.2
+  },
+  {
+    "assetId": "RTI-L3",
+    "floor": "L3",
+    "x": 53.9,
+    "y": 64.8
+  },
+  {
+    "assetId": "FCU-L4",
+    "floor": "L4",
+    "x": 78.5,
+    "y": 72.1
+  },
+  {
+    "assetId": "CCTV-L4",
+    "floor": "L4",
+    "x": 25.7,
+    "y": 12.6
+  },
+  {
+    "assetId": "FD-L4",
+    "floor": "L4",
+    "x": 33.1,
+    "y": 31.4
+  },
+  {
+    "assetId": "ACC-L4",
+    "floor": "L4",
+    "x": 24.1,
+    "y": 85.4
+  },
+  {
+    "assetId": "FCU-L5",
+    "floor": "L5",
+    "x": 81.4,
+    "y": 35.2
+  },
+  {
+    "assetId": "CCTV-L5",
+    "floor": "L5",
+    "x": 62.4,
+    "y": 41.7
+  },
+  {
+    "assetId": "FD-L5",
+    "floor": "L5",
+    "x": 84.7,
+    "y": 46.7
+  },
+  {
+    "assetId": "ACC-L5",
+    "floor": "L5",
+    "x": 28.8,
+    "y": 29.7
+  },
+  {
+    "assetId": "FCU-L6",
+    "floor": "L6",
+    "x": 54.3,
+    "y": 31.0
+  },
+  {
+    "assetId": "CCTV-L6",
+    "floor": "L6",
+    "x": 56.3,
+    "y": 81.8
+  },
+  {
+    "assetId": "FD-L6",
+    "floor": "L6",
+    "x": 40.3,
+    "y": 27.5
+  },
+  {
+    "assetId": "ACC-L6",
+    "floor": "L6",
+    "x": 91.8,
+    "y": 50.8
+  },
+  {
+    "assetId": "FCU-L7",
+    "floor": "L7",
+    "x": 13.8,
+    "y": 13.8
+  },
+  {
+    "assetId": "CCTV-L7",
+    "floor": "L7",
+    "x": 15.4,
+    "y": 60.2
+  },
+  {
+    "assetId": "FD-L7",
+    "floor": "L7",
+    "x": 74.1,
+    "y": 43.8
+  },
+  {
+    "assetId": "ACC-L7",
+    "floor": "L7",
+    "x": 11.5,
+    "y": 40.5
+  },
+  {
+    "assetId": "AHU-002",
+    "floor": "L8",
+    "x": 91.7,
+    "y": 52.3
+  },
+  {
+    "assetId": "CCTV-L8",
+    "floor": "L8",
+    "x": 89.5,
+    "y": 78.9
+  },
+  {
+    "assetId": "FD-L8",
+    "floor": "L8",
+    "x": 7.0,
+    "y": 67.7
+  },
+  {
+    "assetId": "FCU-L9",
+    "floor": "L9",
+    "x": 64.6,
+    "y": 53.0
+  },
+  {
+    "assetId": "CCTV-L9",
+    "floor": "L9",
+    "x": 28.9,
+    "y": 61.3
+  },
+  {
+    "assetId": "FD-L9",
+    "floor": "L9",
+    "x": 15.6,
+    "y": 44.8
+  },
+  {
+    "assetId": "ACC-L9",
+    "floor": "L9",
+    "x": 45.0,
+    "y": 86.3
+  },
+  {
+    "assetId": "FCU-L10",
+    "floor": "L10",
+    "x": 81.3,
+    "y": 31.1
+  },
+  {
+    "assetId": "CCTV-L10",
+    "floor": "L10",
+    "x": 49.1,
+    "y": 24.3
+  },
+  {
+    "assetId": "FD-L10",
+    "floor": "L10",
+    "x": 84.5,
+    "y": 79.6
+  },
+  {
+    "assetId": "ACC-L10",
+    "floor": "L10",
+    "x": 31.7,
+    "y": 61.1
+  },
+  {
+    "assetId": "FCU-L11",
+    "floor": "L11",
+    "x": 58.4,
+    "y": 22.2
+  },
+  {
+    "assetId": "CCTV-L11",
+    "floor": "L11",
+    "x": 71.6,
+    "y": 53.2
+  },
+  {
+    "assetId": "FD-L11",
+    "floor": "L11",
+    "x": 73.0,
+    "y": 52.4
+  },
+  {
+    "assetId": "ACC-L11",
+    "floor": "L11",
+    "x": 6.0,
+    "y": 35.9
+  },
+  {
+    "assetId": "FCU-L12",
+    "floor": "L12",
+    "x": 7.7,
+    "y": 84.3
+  },
+  {
+    "assetId": "CCTV-L12",
+    "floor": "L12",
+    "x": 81.6,
+    "y": 76.5
+  },
+  {
+    "assetId": "FD-L12",
+    "floor": "L12",
+    "x": 32.4,
+    "y": 14.6
+  },
+  {
+    "assetId": "ACC-L12",
+    "floor": "L12",
+    "x": 81.5,
+    "y": 85.8
+  },
+  {
+    "assetId": "FCU-L13",
+    "floor": "L13",
+    "x": 13.4,
+    "y": 48.9
+  },
+  {
+    "assetId": "CCTV-L13",
+    "floor": "L13",
+    "x": 12.0,
+    "y": 70.8
+  },
+  {
+    "assetId": "FD-L13",
+    "floor": "L13",
+    "x": 71.9,
+    "y": 20.3
+  },
+  {
+    "assetId": "ACC-L13",
+    "floor": "L13",
+    "x": 46.9,
+    "y": 54.0
+  },
+  {
+    "assetId": "FCU-L14",
+    "floor": "L14",
+    "x": 28.8,
+    "y": 79.8
+  },
+  {
+    "assetId": "CCTV-L14",
+    "floor": "L14",
+    "x": 42.4,
+    "y": 26.9
+  },
+  {
+    "assetId": "FD-L14",
+    "floor": "L14",
+    "x": 52.4,
+    "y": 68.4
+  },
+  {
+    "assetId": "ACC-L14",
+    "floor": "L14",
+    "x": 23.3,
+    "y": 34.9
+  },
+  {
+    "assetId": "AHU-001",
+    "floor": "L15",
+    "x": 91.6,
+    "y": 62.0
+  },
+  {
+    "assetId": "AHU-003",
+    "floor": "L15",
+    "x": 43.7,
+    "y": 51.4
+  },
+  {
+    "assetId": "CT-001",
+    "floor": "L15",
+    "x": 16.4,
+    "y": 28.0
+  },
+  {
+    "assetId": "CT-002",
+    "floor": "L15",
+    "x": 35.1,
+    "y": 57.1
+  },
+  {
+    "assetId": "CCTV-L15",
+    "floor": "L15",
+    "x": 25.8,
+    "y": 27.6
+  }
+];
+
+
+
+let floorPlanCurrentFloor = null;
+let floorPlanData = null; // { floor, imageUrl, positions }
+let floorPlanPlacementMode = false;
+let floorPlanSelectedAssetId = null;
+
+function statusDotColor(status) {
+  if (status === "Good") return "#16a34a";
+  if (status === "Poor") return "#d97706";
+  return "#dc2626"; // Critical
+}
+
+async function renderFloorPlan() {
+  const container = document.getElementById('view-floorplan');
+  const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
+
+  const uniqueFloors = [...new Set(assets.map(a => a.floor).filter(Boolean))]
+    .sort((a, b) => displayFloor(a).localeCompare(displayFloor(b), undefined, { numeric: true }));
+
+  if (!floorPlanCurrentFloor && uniqueFloors.length > 0) floorPlanCurrentFloor = uniqueFloors[0];
+
+  let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+    <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;renderFloorPlan()">
+      ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:12px;font-size:12px;color:var(--muted);margin-left:auto">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:4px"></span>Good</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d97706;margin-right:4px"></span>Poor</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:4px"></span>Critical</span>
+    </div>
+    ${canManage ? `<button class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
+    ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
+  </div>
+  <div id="floorPlanUploadPanel" style="display:none;background:#F0F4FA;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:10px">Upload a floor plan drawing</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <select id="fp_uploadFloor" class="filter-select">
+        ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
+      </select>
+      <input type="file" id="fp_uploadFile" accept="image/*,.svg" style="font-size:12px">
+      <button id="fp_uploadBtn" onclick="submitFloorPlanUpload()" style="padding:7px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:12px;cursor:pointer">Upload</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">Max 5MB. This replaces the conceptual placeholder for the selected floor — your name and today's date are recorded automatically.</div>
+    <div id="fp_uploadError" style="display:none;color:var(--red);font-size:12px;margin-top:8px"></div>
+  </div>
+  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>`;
+
+  container.innerHTML = html;
+
+  if (!floorPlanCurrentFloor) {
+    document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px">No floors found on any asset yet.</div>`;
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
+    const data = await resp.json();
+
+    // Fall back to the built-in conceptual defaults if Airtable has no image
+    // or positions yet for this floor — Airtable always wins once populated.
+    if (!data.imageUrl && DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor]) {
+      data.imageUrl = DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor];
+      data.isDefaultImage = true;
+    }
+    // IMPORTANT: only use the pre-computed random positions when we're ALSO
+    // showing the default conceptual image. Those positions were scattered
+    // for that specific placeholder drawing — once a real floor plan is
+    // uploaded, they'd be meaningless on it (dots floating over random
+    // spots with no relation to the real layout). So on a real uploaded
+    // drawing with no saved positions yet, assets correctly show as
+    // "unplaced" instead, prompting you to place them for real via
+    // Place Markers mode.
+    if (data.isDefaultImage && (!data.positions || data.positions.length === 0)) {
+      const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floorPlanCurrentFloor);
+      if (defaults.length > 0) {
+        data.positions = defaults;
+        data.isDefaultPositions = true;
+      }
+    }
+
+    floorPlanData = data;
+    renderFloorPlanImage(canManage);
+  } catch (err) {
+    document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px;color:var(--red)">Could not load floor plan: ${err.message}</div>`;
+  }
+}
+
+function renderFloorPlanImage(canManage) {
+  const wrap = document.getElementById('floorPlanImageWrap');
+  if (!floorPlanData || !floorPlanData.imageUrl) {
+    wrap.innerHTML = `<div style="padding:60px 20px;max-width:480px;margin:0 auto">
+      <div style="font-size:14px;font-weight:600;color:var(--navy);margin-bottom:8px">No floor plan image uploaded for ${displayFloor(floorPlanCurrentFloor)} yet</div>
+      <div style="font-size:13px;color:var(--muted)">Upload an image for this floor in Airtable's Floor Plans table (Floor = "${floorPlanCurrentFloor}"), then refresh this tab.</div>
+    </div>`;
+    return;
+  }
+
+  const floorAssets = assets.filter(a => a.floor === floorPlanCurrentFloor);
+  const positionsByAsset = {};
+  (floorPlanData.positions || []).forEach(p => { positionsByAsset[p.assetId] = p; });
+
+  const unplaced = canManage ? floorAssets.filter(a => !positionsByAsset[a.id]) : [];
+
+  let dotsHtml = '';
+  floorAssets.forEach(a => {
+    const pos = positionsByAsset[a.id];
+    if (!pos) return;
+    const idx = assets.indexOf(a);
+    const clickHandler = floorPlanPlacementMode ? '' : `showDetail(${idx});switchTab('assets')`;
+    dotsHtml += `<div class="floorplan-dot-group" onclick="${clickHandler}" title="${a.name} (${a.id}) — ${a.status}"
+      style="position:absolute;left:${pos.x}%;top:${pos.y}%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:${floorPlanPlacementMode?'default':'pointer'};z-index:2">
+      <div class="floorplan-dot" style="width:16px;height:16px;border-radius:50%;background:${statusDotColor(a.status)};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>
+      <div style="font-size:9px;font-weight:700;color:#1A1A1A;background:rgba(255,255,255,0.85);padding:1px 4px;border-radius:3px;margin-top:2px;white-space:nowrap;line-height:1.3;box-shadow:0 1px 2px rgba(0,0,0,.15)">${a.id} ${a.name}</div>
+    </div>`;
+  });
+
+  wrap.innerHTML = `
+    ${floorPlanData.isDefaultImage ? `<div style="display:inline-block;background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">⚠ Conceptual layout — not a real scan. Upload a real drawing above when ready.</div><br>` : ''}
+    ${!floorPlanData.isDefaultImage && floorPlanData.uploadedBy ? `<div style="display:inline-block;background:#DCFCE7;color:#166534;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">✓ Uploaded by ${floorPlanData.uploadedBy}${floorPlanData.uploadDate ? ' on ' + new Date(floorPlanData.uploadDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div><br>` : ''}
+    ${!floorPlanData.isDefaultImage && (!floorPlanData.positions || floorPlanData.positions.length === 0) ? `<div style="display:inline-block;background:#DBEAFE;color:#1E40AF;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;margin-bottom:10px">This real drawing has no assets placed on it yet — use "📍 Place Markers" above to position them.</div><br>` : ''}
+    <div style="position:relative;display:inline-block;max-width:100%">
+      <img src="${floorPlanData.imageUrl}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" id="floorPlanImg" onclick="handleFloorPlanClick(event)">
+      ${dotsHtml}
+    </div>
+  `;
+
+  if (canManage && floorPlanPlacementMode) {
+    let sidebar = `<div style="margin-top:16px;text-align:left;max-width:480px;margin-left:auto;margin-right:auto">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Unplaced assets on this floor — select one, then click the image where it belongs:</div>`;
+    if (unplaced.length === 0) {
+      sidebar += `<div style="font-size:12px;color:var(--muted)">All assets on this floor have a marker placed.</div>`;
+    } else {
+      unplaced.forEach(a => {
+        const selected = floorPlanSelectedAssetId === a.id;
+        sidebar += `<button onclick="floorPlanSelectedAssetId='${a.id}';renderFloorPlanImage(true)" style="display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:4px;border-radius:6px;border:1px solid ${selected?'var(--navy)':'var(--border)'};background:${selected?'#F0F4FA':'#fff'};font-size:12px;cursor:pointer">${a.name} <span style="color:var(--muted)">(${a.id})</span></button>`;
+      });
+    }
+    sidebar += `</div>`;
+    wrap.insertAdjacentHTML('beforeend', sidebar);
+  }
+}
+
+async function scheduleInspection(assetId, assetName) {
+  if (!confirm(`Schedule an inspection for ${assetName} (${assetId})? This creates a new Inspection work order, separate from regular maintenance.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to schedule inspection');
+    alert(`Inspection scheduled — ${data.woId}. Find it in Work Orders.`);
+  } catch (err) {
+    alert('Could not schedule inspection: ' + err.message);
+  }
+}
+
+function buildChecklistDocumentHtml() {
+  const { asset: a, checklistClass, data } = window.currentAssetChecklist;
+  const freqGroups = {};
+  data.items.forEach(item => {
+    const freq = item.frequency || 'Unscheduled';
+    (freqGroups[freq] = freqGroups[freq] || []).push(item);
+  });
+  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const orderedFreqs = Object.keys(freqGroups).sort((x,y) => {
+    const ix = freqOrder.indexOf(x), iy = freqOrder.indexOf(y);
+    return (ix<0?99:ix) - (iy<0?99:iy);
+  });
+
+  let sectionsHtml = '';
+  orderedFreqs.forEach(freq => {
+    sectionsHtml += `<div class="freq-section">
+      <div class="freq-title">${freq}</div>
+      <table class="items-table">
+        ${freqGroups[freq].map(item => `<tr><td class="check-col">☐</td><td>${item.task}</td></tr>`).join('')}
+      </table>
+    </div>`;
+  });
+
+  return `
+    <html><head><title>Maintenance Checklist — ${a.name}</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
+      .doc { max-width: 700px; margin: 0 auto; }
+      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; }
+      .meta-grid { display:grid; grid-template-columns: 1fr 1fr; gap:6px 20px; margin: 16px 0 20px; font-size:12.5px; }
+      .meta-label { color:#6B7280; }
+      .meta-value { font-weight:600; color:#1A1A2E; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .freq-section { margin-bottom: 20px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .items-table { width:100%; border-collapse:collapse; }
+      .items-table tr { border-bottom: 1px solid #E5E7EB; }
+      .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
+      .check-col { width:24px; font-size:15px; color:#6B7280; }
+      .signoff { display:flex; justify-content:space-between; margin-top:40px; font-size:12px; }
+      .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
+      .footer-note { margin-top:30px; font-size:10.5px; color:#9CA3AF; text-align:center; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="doc">
+        <div class="header">
+          <div class="title">Maintenance Checklist</div>
+          <div class="subtitle">${checklistClass} — Gracing Ventures Facility Asset Management</div>
+        </div>
+        <div class="meta-grid">
+          <div><span class="meta-label">Asset:</span> <span class="meta-value">${a.name}</span></div>
+          <div><span class="meta-label">Asset ID:</span> <span class="meta-value">${a.id}</span></div>
+          <div><span class="meta-label">Location:</span> <span class="meta-value">${a.room || '—'}, ${displayFloor(a.floor) || '—'}</span></div>
+          <div><span class="meta-label">System:</span> <span class="meta-value">${a.system || '—'}</span></div>
+        </div>
+        <div class="standard-box"><strong>Reference Standard:</strong> ${data.sourceStandard || 'Not specified'}</div>
+        ${sectionsHtml}
+        <div class="signoff">
+          <div class="sig-line">Technician Signature</div>
+          <div class="sig-line">Date</div>
+        </div>
+        <div class="footer-note">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+      </div>
+    </body></html>
+  `;
+}
+
+function previewMaintenanceChecklist() {
+  const win = window.open('', '_blank');
+  win.document.write(buildChecklistDocumentHtml());
+  win.document.close();
+}
+
+function downloadMaintenanceChecklist() {
+  const win = window.open('', '_blank');
+  win.document.write(buildChecklistDocumentHtml());
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+}
+
+async function loadCostOverview() {
+  const panel = document.getElementById('costOverviewContent');
+  if (!panel) return;
+  try {
+    const resp = await fetch('/api/work-orders?report=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load cost overview');
+
+    const byType = (data.summary && data.summary.costByMaintenanceType) || {};
+    const total = (data.summary && data.summary.totalCostRecorded) || 0;
+    const types = Object.keys(byType);
+
+    if (types.length === 0) {
+      panel.innerHTML = `<div>No costs recorded yet — costs get added when Engineer+ closes a work order, or via "Edit Cost" on a completed one. Once a few are in, this fills in automatically.</div>`;
+      return;
+    }
+
+    const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
+    const maxVal = Math.max(...types.map(t => byType[t]));
+
+    let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">TZS ${total.toLocaleString()} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
+    types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
+      const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
+      html += `<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+          <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
+          <span style="color:var(--muted)">TZS ${byType[type].toLocaleString()}</span>
+        </div>
+        <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
+        </div>
+      </div>`;
+    });
+
+    const preventive = byType['Preventive'] || 0;
+    const corrective = byType['Corrective'] || 0;
+    if (preventive > 0 && corrective > 0) {
+      const ratio = (corrective / preventive).toFixed(1);
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
+    }
+
+    panel.innerHTML = html;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
+  }
+}
+
+async function loadApiKeyInfo() {
+  const panel = document.getElementById('apiKeyPanelContent');
+  panel.innerHTML = 'Loading…';
+  try {
+    const resp = await fetch('/api/get-assets?apikeyinfo=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load API key info');
+
+    if (!data.configured) {
+      panel.innerHTML = `<div style="color:var(--amber)">No API key configured yet. Add <code>API_INTEGRATION_KEY</code> (any long random string) to your Vercel environment variables, then redeploy — it'll appear here automatically once set.</div>`;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div style="margin-bottom:8px">Acts as role: <strong>${data.actsAsRole}</strong></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <code id="apiKeyValue" style="flex:1;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all">${data.apiKey}</code>
+        <button onclick="copyApiKey()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Copy</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Example usage for whoever's building the ERP/SAP connection:</div>
+      <code style="display:block;padding:8px 10px;background:#1A1A2E;color:#D1D5DB;border-radius:6px;font-size:10.5px;white-space:pre-wrap;word-break:break-all">${data.usageExample}</code>
+    `;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
+  }
+}
+
+function copyApiKey() {
+  const el = document.getElementById('apiKeyValue');
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    alert('API key copied to clipboard.');
+  }).catch(() => {
+    alert('Could not copy automatically — select and copy the key manually.');
+  });
+}
+
+async function submitDocumentUpload(recordId, inputEl) {
+  const file = inputEl.files[0];
+  const statusEl = document.getElementById('docUploadStatus_' + recordId);
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'File is larger than 5MB — Airtable\'s direct upload limit. Try a smaller file.';
+    return;
+  }
+
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Uploading…';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadDocument',
+        recordId,
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `✓ Uploaded ${file.name}`;
+    inputEl.value = '';
+    await loadAssetsAndInit();
+    const idx = assets.findIndex(a => a.recordId === recordId);
+    if (idx >= 0) showDetail(idx);
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not upload: ' + err.message;
+  }
+}
+
+function toggleFloorPlanUploadPanel() {
+  const panel = document.getElementById('floorPlanUploadPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function submitFloorPlanUpload() {
+  const floorSelect = document.getElementById('fp_uploadFloor');
+  const fileInput = document.getElementById('fp_uploadFile');
+  const errorBox = document.getElementById('fp_uploadError');
+  const btn = document.getElementById('fp_uploadBtn');
+  const floor = floorSelect.value;
+  const file = fileInput.files[0];
+
+  errorBox.style.display = 'none';
+  if (!file) {
+    errorBox.textContent = 'Choose an image file first.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    errorBox.textContent = 'File is larger than 5MB — Airtable\'s direct upload limit. Try a smaller image.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]); // strip data: prefix
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadFloorPlan',
+        floor,
+        filename: file.name,
+        contentType: file.type || 'image/svg+xml',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    document.getElementById('floorPlanUploadPanel').style.display = 'none';
+    fileInput.value = '';
+    floorPlanCurrentFloor = floor; // jump to the floor that was just uploaded
+    renderFloorPlan();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload';
+  }
+}
+
+function toggleFloorPlanPlacementMode() {
+  floorPlanPlacementMode = !floorPlanPlacementMode;
+  floorPlanSelectedAssetId = null;
+  renderFloorPlanImage(true);
+}
+
+async function handleFloorPlanClick(event) {
+  if (!floorPlanPlacementMode || !floorPlanSelectedAssetId) return;
+  const img = document.getElementById('floorPlanImg');
+  const rect = img.getBoundingClientRect();
+  const xPct = ((event.clientX - rect.left) / rect.width) * 100;
+  const yPct = ((event.clientY - rect.top) / rect.height) * 100;
+
+  try {
+    await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'savePosition', assetId: floorPlanSelectedAssetId, floor: floorPlanCurrentFloor, x: xPct.toFixed(1), y: yPct.toFixed(1) }),
+    });
+    floorPlanSelectedAssetId = null;
+    // Refresh positions from server so the new dot appears immediately
+    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
+    floorPlanData = await resp.json();
+    renderFloorPlanImage(true);
+  } catch (err) {
+    alert('Could not save marker position: ' + err.message);
+  }
+}
+
+async function renderWorkOrders() {
+  const container = document.getElementById('view-workorders');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
+
+  try {
+    const resp = await fetch('/api/work-orders');
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
+    const data = await resp.json();
+    const orders = data.workOrders || [];
+    lastWorkOrders = orders; // cache for generateCertificate() to reference
+
+    const open = orders.filter(o => o.status === 'Open').length;
+    const inProgress = orders.filter(o => o.status === 'In Progress').length;
+    const completed = orders.filter(o => o.status === 'Completed').length;
+
+    let html = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="testAssetId" value="TEST-001" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:120px">
+        <button onclick="runRealTest('OVERDUE')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test Overdue</button>
+        <button onclick="runRealTest('URGENT')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--amber);color:#fff;cursor:pointer">Test Urgent</button>
+        <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
+      </div>
+      <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
+    </div>`;
+
+    if (orders.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
+    } else {
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="selectAllWO" onchange="toggleAllWorkOrders(this.checked)"> Select all open/in-progress</label>
+        <button id="bulkCloseBtn" onclick="bulkCloseWorkOrders()" disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer;opacity:0.5">Close Selected (0)</button>
+      </div>`;
+      html += `<div class="asset-list">`;
+      orders.forEach(o => {
+        const closable = o.status !== 'Completed';
+        html += `<div class="asset-row" style="cursor:default">
+          ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}</div>
+            <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
+            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+            ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
+            ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+            ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
+            <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
+              <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
+              <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
+              <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
+            </select>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load work orders: ' + err.message + '</div>';
+  }
+}
+
+async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
+  const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
+  if (newStatus === 'Completed' && canEnterCost) {
+    openCostEntryModal(recordId, assetName);
+    return;
+  }
+  updateWorkOrderStatus(recordId, newStatus);
+}
+
+function openCostEntryModal(recordId, assetName, editMode, existingCost) {
+  const overlay = document.createElement('div');
+  overlay.id = 'costEntryOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const title = editMode ? `Edit Cost: ${assetName}` : `Closing: ${assetName}`;
+  const subtitle = editMode
+    ? 'Update the recorded cost for this already-completed work order. This does not change who closed it or when.'
+    : "Optional — record what this repair/service actually cost. Leave blank if not known yet; you can't add it later from here, but it's fine to close without it.";
+  const prefill = (existingCost !== null && existingCost !== undefined) ? existingCost : '';
+  const submitAction = editMode ? `submitCostEdit('${recordId}')` : `submitCostAndClose('${recordId}')`;
+  const skipButton = editMode
+    ? `<button onclick="document.getElementById('costEntryOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>`
+    : `<button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Completed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>`;
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:28px">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">${title}</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">${subtitle}</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Cost (TZS)</label>
+      <input id="ce_cost" type="number" placeholder="e.g. 450000" value="${prefill}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <div style="display:flex;gap:8px">
+        ${skipButton}
+        <button onclick="${submitAction}" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">${editMode ? 'Save' : 'Close with Cost'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function submitCostEdit(recordId) {
+  const costVal = document.getElementById('ce_cost').value;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, costOnly: true, cost: costVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save cost');
+    document.getElementById('costEntryOverlay').remove();
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not save cost: ' + err.message);
+  }
+}
+
+function submitCostAndClose(recordId) {
+  const costVal = document.getElementById('ce_cost').value;
+  document.getElementById('costEntryOverlay').remove();
+  updateWorkOrderStatus(recordId, 'Completed', costVal || undefined);
+}
+
+async function updateWorkOrderStatus(recordId, status, cost) {
+  try {
+    const body = { recordId, status };
+    if (cost !== undefined) body.cost = cost;
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
+      throw new Error(errorDetail);
+    }
+    renderWorkOrders(); // refresh the summary counts
+  } catch (err) {
+    alert('Could not update work order:\n\n' + err.message);
+  }
+}
+
+function toggleAllWorkOrders(checked) {
+  document.querySelectorAll('.wo-checkbox').forEach(cb => cb.checked = checked);
+  updateBulkCloseButton();
+}
+
+function updateBulkCloseButton() {
+  const checked = document.querySelectorAll('.wo-checkbox:checked').length;
+  const btn = document.getElementById('bulkCloseBtn');
+  if (!btn) return;
+  btn.textContent = `Close Selected (${checked})`;
+  btn.disabled = checked === 0;
+  btn.style.opacity = checked === 0 ? '0.5' : '1';
+}
+
+// Closes every checked work order in ONE request, then refreshes the
+// tab exactly once — not once per item, which is what made closing
+// several in a row slow and annoying before.
+async function bulkCloseWorkOrders() {
+  const ids = Array.from(document.querySelectorAll('.wo-checkbox:checked')).map(cb => cb.dataset.id);
+  if (ids.length === 0) return;
+
+  const btn = document.getElementById('bulkCloseBtn');
+  btn.disabled = true;
+  btn.textContent = `Closing ${ids.length}…`;
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordIds: ids, status: 'Completed' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Bulk close failed');
+    if (data.failed > 0) {
+      const errorDetail = data.errors && data.errors.length ? '\n\nReal error from Airtable:\n' + data.errors[0] : '';
+      alert(`${data.updated} closed successfully, ${data.failed} failed.${errorDetail}`);
+    }
+    renderWorkOrders(); // single refresh, after everything is done
+  } catch (err) {
+    alert('Could not close selected work orders: ' + err.message);
+    renderWorkOrders();
+  }
+}
+
+async function runRealTest(urgency) {
+  const assetId = document.getElementById('testAssetId').value.trim();
+  const resultBox = document.getElementById('testResult');
+  if (!assetId) { alert('Enter a test Asset ID first.'); return; }
+
+  resultBox.style.display = 'block';
+  resultBox.style.color = 'var(--muted)';
+  resultBox.textContent = `Running real ${urgency} test on ${assetId}…`;
+
+  try {
+    const resp = await fetch('/api/run-real-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId, urgency }),
+    });
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    const data = await resp.json();
+
+    if (resp.ok && data.success) {
+      resultBox.style.color = 'var(--green)';
+      resultBox.innerHTML = `✓ Due date set to ${data.dueDateSet} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
+      renderWorkOrders(); // refresh so the new/updated work order shows immediately
+    } else {
+      resultBox.style.color = 'var(--red)';
+      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
+    }
+  } catch (err) {
+    resultBox.style.color = 'var(--red)';
+    resultBox.textContent = '✗ Network error: ' + err.message;
+  }
+}
+
+function generateCertificate(recordId) {
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  if (!wo) { alert('Work order not found — try refreshing the tab.'); return; }
+
+  // Use the REAL date the work was marked complete. Older work orders
+  // from before this feature existed won't have one — flag that
+  // honestly rather than guessing at a date.
+  const completedDate = wo.completedDate
+    ? new Date(wo.completedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : 'Not recorded — completed before certificate tracking was enabled';
+
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><head><title>Certificate of Maintenance — ${wo.assetName}</title>
+    <style>
+      body { font-family: Georgia, 'Times New Roman', serif; padding: 50px; color:#1A1A2E; }
+      .border { border: 3px double #1A3566; padding: 40px; max-width: 700px; margin: 0 auto; }
+      .header { text-align:center; margin-bottom: 30px; }
+      .logo { width:70px; height:70px; border-radius:50%; margin: 0 auto 12px; display:block; }
+      .title { font-size:24px; color:#1A3566; letter-spacing:1px; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; font-style:italic; }
+      .divider { border-top: 1px solid #E2E6ED; margin: 24px 0; }
+      .field-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px dotted #D1D5DB; font-size:14px; }
+      .field-label { color:#6B7280; }
+      .field-value { font-weight:600; color:#1A1A2E; }
+      .notes-box { margin-top:20px; padding:16px; background:#F8FAFC; border-radius:8px; font-size:13px; line-height:1.7; }
+      .signoff { display:flex; justify-content:space-between; margin-top:50px; font-size:12px; }
+      .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="border">
+        <div class="header">
+          <img class="logo" src="/logo.png" alt="GVC">
+          <div class="title">Certificate of Maintenance</div>
+          <div class="subtitle">${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel}</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-row"><span class="field-label">Asset</span><span class="field-value">${wo.assetName}</span></div>
+        <div class="field-row"><span class="field-label">Asset ID</span><span class="field-value">${wo.assetId}</span></div>
+        <div class="field-row"><span class="field-label">System</span><span class="field-value">${wo.system}</span></div>
+        <div class="field-row"><span class="field-label">Location</span><span class="field-value">${wo.location}</span></div>
+        <div class="field-row"><span class="field-label">Work Order</span><span class="field-value">${wo.woId}</span></div>
+        <div class="field-row"><span class="field-label">Date Maintained</span><span class="field-value">${completedDate}</span></div>
+        <div class="notes-box"><strong>Work Performed:</strong><br>${wo.notes || 'No additional notes recorded for this work order.'}</div>
+        <div class="signoff">
+          <div class="sig-line">Technician Signature</div>
+          <div class="sig-line">Date</div>
+        </div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
+}
+
+// Init — load live data from Airtable before rendering anything
+// ---------------------------------------------------------------------
+// Document generation — real, built from whatever is currently loaded
+// ---------------------------------------------------------------------
+
+// Shared utility: builds a real .xlsx file (bold header row, correct
+// unicode handling — no more broken "—" characters) from any array of
+// asset objects. Used by both the full register download and the
+// single-asset download button.
+function exportAssetsXLSX(assetList, filenameSuffix) {
+  const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
+  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), displayRoom(a.room), a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+  // Bold the header row
+  const headerRange = XLSX.utils.decode_range(worksheet['!ref']);
+  for (let col = headerRange.s.c; col <= headerRange.e.c; col++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
+    if (!worksheet[cellRef]) continue;
+    worksheet[cellRef].s = { font: { bold: true } };
+  }
+
+  // Reasonable column widths so it's readable on open, not cramped
+  worksheet['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 14) }));
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Asset Register");
+
+  const filename = `${CLIENT_CONFIG.clientName.replace(/\s+/g,'_')}_${filenameSuffix}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  XLSX.writeFile(workbook, filename, { cellStyles: true });
+}
+
+function exportAssetRegisterCSV() {
+  exportAssetsXLSX(assets, "Asset_Register");
+}
+
+function exportSingleAssetXLSX(assetId) {
+  exportSingleAssetFormat(assetId, 'xlsx');
+}
+
+// Cross-origin <a download> links often just navigate instead of downloading
+// (browsers require same-origin, or a blob, for that attribute to be honored
+// reliably). Fetching the QR image ourselves and turning it into a blob URL
+// fixes this — this is what actually makes "Download QR" save a real PNG file.
+async function downloadQrCode(qrUrl, assetId) {
+  try {
+    const resp = await fetch(qrUrl);
+    if (!resp.ok) throw new Error('QR service returned ' + resp.status);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${assetId}-qr.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } catch (err) {
+    alert('Could not download QR code: ' + err.message);
+  }
+}
+
+function exportSingleAssetFormat(assetId, format) {
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset) { alert("Asset not found."); return; }
+
+  if (format === 'xlsx') {
+    exportAssetsXLSX([asset], `Asset_${assetId}`);
+    return;
+  }
+
+  if (format === 'csv') {
+    const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Criticality','Last Service','Next Service Due'];
+    const row = [asset.id, asset.name, asset.system, asset.category, asset.floor, asset.room, asset.manufacturer, asset.model, asset.installDate, asset.status, asset.criticality, asset.lastService, asset.nextService];
+    const csv = headers.join(',') + '\n' + row.map(v => `"${v||''}"`).join(',');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${assetId}.csv`;
+    a.click();
+    return;
+  }
+
+  if (format === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(`
+      <html><head><title>${asset.id} — ${asset.name}</title>
+      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1A1A2E}h1{color:#1A3566;font-size:20px}
+      table{width:100%;border-collapse:collapse;margin-top:16px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
+      td:first-child{font-weight:600;color:#6B7280;width:200px}</style></head><body>
+      <h1>${asset.name} (${asset.id})</h1>
+      <table>
+        <tr><td>System</td><td>${asset.system||'—'}</td></tr>
+        <tr><td>Category</td><td>${asset.category||'—'}</td></tr>
+        <tr><td>Floor/Level</td><td>${asset.floor||'—'}</td></tr>
+        <tr><td>Room/Zone</td><td>${asset.room||'—'}</td></tr>
+        <tr><td>Manufacturer</td><td>${asset.manufacturer||'—'}</td></tr>
+        <tr><td>Model</td><td>${asset.model||'—'}</td></tr>
+        <tr><td>Install Date</td><td>${asset.installDate||'—'}</td></tr>
+        <tr><td>Status</td><td>${asset.status||'—'}</td></tr>
+        <tr><td>Criticality</td><td>${asset.criticality||'—'}</td></tr>
+        <tr><td>Last Service</td><td>${asset.lastService||'—'}</td></tr>
+        <tr><td>Next Service Due</td><td>${asset.nextService||'—'}</td></tr>
+      </table>
+      <script>window.print()<\/script>
+      </body></html>
+    `);
+    win.document.close();
+    return;
+  }
+}
+
+
+function printMaintenancePlan(windowDays) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + windowDays);
+
+  const filtered = assets
+    .filter(a => a.nextService && new Date(a.nextService) <= cutoff)
+    .slice()
+    .sort((a,b) => new Date(a.nextService) - new Date(b.nextService));
+
+  const win = window.open('', '_blank');
+  const rows = filtered
+    .map(a => `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.system}</td><td>${displayRoom(a.room)}</td><td>${a.criticality}</td><td>${a.status}</td><td>${a.nextService}</td></tr>`)
+    .join('');
+
+  win.document.write(`
+    <html><head><title>Maintenance Plan — ${CLIENT_CONFIG.clientName}</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
+      h1 { color:#1A3566; font-size:20px; }
+      .sub { color:#6B7280; font-size:12px; margin-bottom:16px; }
+      .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+      table { width:100%; border-collapse:collapse; font-size:12px; }
+      th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
+      td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
+      tr:nth-child(even) { background:#F8FAFC; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <h1>Maintenance Plan — Next ${windowDays} Days</h1>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
+      ${filtered.length === 0 ? '<div class="empty">Nothing due for service within this window.</div>' : `
+      <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
+      <tbody>${rows}</tbody></table>`}
+    </body></html>
+  `);
+  win.document.close();
+  win.focus();
+}
+
+// ---------------------------------------------------------------------
+
+async function generateMonthlyReport() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
+    const data = await resp.json();
+
+    const win = window.open('', '_blank');
+    const urgencyRows = Object.entries(data.byUrgency)
+      .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+    const eventRows = data.events
+      .map(e => `<tr><td>${new Date(e.timestamp).toLocaleString()}</td><td>${e.assetId}</td><td>${e.assetName}</td><td>${e.system}</td><td>${e.urgency}</td><td>${e.channel}</td></tr>`)
+      .join('');
+
+    win.document.write(`
+      <html><head><title>Monthly Report — ${CLIENT_CONFIG.clientName}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
+        h1 { color:#1A3566; font-size:20px; }
+        h2 { color:#1A3566; font-size:14px; margin-top:24px; margin-bottom:10px; }
+        .sub { color:#6B7280; font-size:12px; margin-bottom:20px; }
+        .kpi { display:inline-block; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:12px 20px; margin-right:12px; margin-bottom:16px; }
+        .kpi-val { font-size:22px; font-weight:700; color:#1A3566; }
+        .kpi-label { font-size:11px; color:#6B7280; }
+        table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:20px; }
+        th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
+        td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
+        tr:nth-child(even) { background:#F8FAFC; }
+        .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+        .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+        @media print { .download-btn { display:none; } }
+      </style></head>
+      <body>
+        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+        <h1>Monthly Report — Last 30 Days</h1>
+        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
+
+        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts Sent</div></div>
+
+        ${data.totalAlerts === 0 ? '<div class="empty">No alerts have been sent yet in this period. This report will populate as the system runs.</div>' : `
+        <h2>By Urgency</h2>
+        <table><thead><tr><th>Urgency</th><th>Count</th></tr></thead><tbody>${urgencyRows}</tbody></table>
+
+        <h2>Full Alert History</h2>
+        <table><thead><tr><th>Date/Time</th><th>Asset ID</th><th>Asset Name</th><th>System</th><th>Urgency</th><th>Channel</th></tr></thead><tbody>${eventRows}</tbody></table>
+        `}
+      </body></html>
+    `);
+    win.document.close();
+    win.focus();
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
+
+async function exportMonthlyReportCSV() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const header = 'Date/Time,Asset ID,Asset Name,System,Urgency,Channel';
+    const rows = data.events.map(e => `"${new Date(e.timestamp).toLocaleString()}","${e.assetId}","${e.assetName}","${e.system}","${e.urgency}","${e.channel}"`).join('\n');
+    const blob = new Blob([header + '\n' + rows], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `monthly-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
+async function exportMonthlyReportXLSX() {
+  try {
+    const resp = await fetch('/api/monthly-report');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const rows = [['Date/Time','Asset ID','Asset Name','System','Urgency','Channel']];
+    data.events.forEach(e => rows.push([new Date(e.timestamp).toLocaleString(), e.assetId, e.assetName, e.system, e.urgency, e.channel]));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Monthly Report');
+    XLSX.writeFile(wb, `monthly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
+function openAddAssetForm() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addAssetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px;max-height:90vh;overflow-y:auto">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Add New Asset</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Onboarding a replacement? Decommission the old unit first from its detail view, then add the new one here.</div>
+      <div id="addAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+
+      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the category below — you never type it.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature *</label>
+      <select id="na_nature" onchange="onNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Tangible">Tangible</option>
+        <option value="Intangible">Intangible</option>
+      </select>
+
+      <div id="na_mobilityWrap">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Mobility *</label>
+        <select id="na_mobility" onchange="onMobilityChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+          <option value="Movable">Movable</option>
+          <option value="Immovable">Immovable</option>
+        </select>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category *</label>
+      <select id="na_category" onchange="onCategoryChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+      <div id="na_othersWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Specify Category *</label>
+        <input id="na_othersText" placeholder="e.g. Signage" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      </div>
+      <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
+      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
+      <select id="na_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
+      </select>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label>
+          <select id="na_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <option value="GF">Ground Floor (GF)</option>
+            <option value="B1">Basement 1 (B1)</option>
+            <option value="B2">Basement 2 (B2)</option>
+            <option value="B3">Basement 3 (B3)</option>
+            <option value="M">Mezzanine (M)</option>
+            ${Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="F${n}">Floor ${n} (F${n})</option>`).join('')}
+            <option value="RF">Rooftop (RF)</option>
+          </select>
+        </div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="na_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Manufacturer</label>
+      <input id="na_manufacturer" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
+      <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
+      <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option>Good</option><option>Poor</option><option>Critical</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
+      </select>
+
+      <div id="na_financeFields" style="display:${(TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation)) ? 'block' : 'none'}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Acquisition Cost (TZS)</label><input id="na_cost" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+          <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label><input id="na_lifespan" type="number" value="15" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button onclick="closeAddAssetForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button id="na_submit" onclick="submitNewAsset()" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Add Asset</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  onNatureChange();
+}
+
+// --- Classification hierarchy — exact match to page 10 of the guideline, each branch ends with "Others" ---
+const ASSET_HIERARCHY = {
+  Tangible: {
+    Movable: ["Furniture", "Equipment", "Computer Hardware", "Plant & Machinery", "Transport Assets", "Biological Assets", "Valuable Documents", "Library Books", "Others"],
+    Immovable: ["Land", "Buildings", "Infrastructure", "Heritage", "Minerals & Other Resources", "Others"],
+  },
+  Intangible: ["Computer Software", "Trademarks", "Licenses", "Patent Rights", "Right to Use", "Others"],
+};
+const CATEGORY_PREFIXES = {
+  "Furniture": "FURN", "Equipment": "EQP", "Computer Hardware": "PC", "Plant & Machinery": "PLT",
+  "Transport Assets": "VEH", "Biological Assets": "BIO", "Valuable Documents": "DOC", "Library Books": "LIB",
+  "Land": "LND", "Buildings": "BLD", "Infrastructure": "INF", "Heritage": "HER", "Minerals & Other Resources": "MIN",
+  "Computer Software": "SW", "Trademarks": "TM", "Licenses": "LIC", "Patent Rights": "PAT", "Right to Use": "RTU",
+};
+
+function onNatureChange() {
+  const nature = document.getElementById('na_nature').value;
+  document.getElementById('na_mobilityWrap').style.display = nature === 'Tangible' ? 'block' : 'none';
+  onMobilityChange();
+}
+function onMobilityChange() {
+  const nature = document.getElementById('na_nature').value;
+  const mobility = document.getElementById('na_mobility').value;
+  const categorySelect = document.getElementById('na_category');
+  const categories = nature === 'Intangible' ? ASSET_HIERARCHY.Intangible : ASSET_HIERARCHY.Tangible[mobility];
+  categorySelect.innerHTML = categories.map(c => `<option value="${c}">${c}</option>`).join('');
+  onCategoryChange();
+}
+function onCategoryChange() {
+  const category = document.getElementById('na_category').value;
+  const othersWrap = document.getElementById('na_othersWrap');
+  othersWrap.style.display = category === 'Others' ? 'block' : 'none';
+  const prefix = CATEGORY_PREFIXES[category] || 'AST';
+  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${prefix}-0XX`;
+}
+
+function closeAddAssetForm() {
+  const overlay = document.getElementById('addAssetOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function submitNewAsset() {
+  const name = document.getElementById('na_name').value.trim();
+  const nature = document.getElementById('na_nature').value;
+  const mobility = nature === 'Tangible' ? document.getElementById('na_mobility').value : '';
+  let category = document.getElementById('na_category').value;
+  const errorBox = document.getElementById('addAssetError');
+  const btn = document.getElementById('na_submit');
+
+  let customPrefix = null;
+  if (category === 'Others') {
+    const othersText = document.getElementById('na_othersText').value.trim();
+    if (!othersText) {
+      errorBox.textContent = 'Please specify the category for "Others".';
+      errorBox.style.display = 'block';
+      return;
+    }
+    category = othersText;
+    customPrefix = othersText.substring(0,4).toUpperCase().replace(/[^A-Z]/g,'') || 'AST';
+  }
+
+  if (!name || !category) {
+    errorBox.textContent = 'Name and Category are required.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  errorBox.style.display = 'none';
+
+  const costField = document.getElementById('na_cost');
+  const lifespanField = document.getElementById('na_lifespan');
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, nature, mobility, category, customPrefix,
+        system: document.getElementById('na_system').value,
+        floor: document.getElementById('na_floor').value,
+        room: document.getElementById('na_room').value.trim(),
+        manufacturer: document.getElementById('na_manufacturer').value.trim(),
+        model: document.getElementById('na_model').value.trim(),
+        status: document.getElementById('na_status').value,
+        criticality: document.getElementById('na_criticality').value,
+        acquisitionCost: costField ? costField.value : undefined,
+        lifespan: lifespanField ? lifespanField.value : undefined,
+      }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) throw new Error(data.error || 'Failed to add asset');
+
+    closeAddAssetForm();
+    loadAssetsAndInit(); // refresh live data so the new asset appears immediately
+    alert(`Asset added — ID auto-generated as ${data.assetId}`);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Add Asset';
+  }
+}
+
+async function decommissionAsset(recordId, assetName) {
+  const reason = prompt(`Decommissioning "${assetName}". Optional reason (e.g. "replaced before end of lifecycle"):`);
+  if (reason === null) return; // cancelled
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, reason }),
+    });
+    if (!resp.ok) throw new Error('Failed to decommission asset');
+    alert('Asset decommissioned. Its history stays intact, but it no longer appears in the active register.');
+    renderAssets();
+    loadAssetsAndInit();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+async function loadAssetsAndInit() {
+  const loadingEl = document.getElementById('loading-screen');
+  try {
+    const [assetsResp, woResp] = await Promise.all([
+      fetch('/api/get-assets'),
+      fetch('/api/work-orders'),
+    ]);
+    if (assetsResp.status === 401) {
+      window.location.href = '/login.html';
+      return;
+    }
+    if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
+    const data = await assetsResp.json();
+    assets = data.assets || [];
+    currentUserRole = data.role || "engineer";
+    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.engineer;
+
+    // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
+    if (woResp.ok) {
+      const woData = await woResp.json();
+      dashboardWorkOrders = woData.workOrders || [];
+    } else {
+      dashboardWorkOrders = [];
+    }
+
+    if (loadingEl) loadingEl.style.display = 'none';
+    document.querySelector('.content').style.display = 'block';
+    renderDashboard();
+  } catch (err) {
+    if (loadingEl) {
+      loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
+        '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Could not load live data</div>' +
+        '<div style="font-size:13px;color:var(--muted,#6B7280)">' + err.message + '</div></div>';
+    }
+    console.error(err);
+  }
+}
+
+async function logout() {
+  await fetch('/api/login', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'logout'}) });
+  window.location.href = '/login.html';
+}
+
+loadAssetsAndInit();
+
+</script>
+</body>
+</html>
