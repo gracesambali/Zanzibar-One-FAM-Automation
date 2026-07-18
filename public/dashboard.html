@@ -222,10 +222,6 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
     Asset Register
   </button>
-  <button class="tab-btn" data-tab="sensors" onclick="switchTab('sensors')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-    Sensors
-  </button>
   <button class="tab-btn" data-tab="systems" onclick="switchTab('systems')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
     Systems
@@ -237,6 +233,10 @@ button { font-family: inherit; cursor: pointer; }
   <button class="tab-btn" data-tab="levelview" onclick="switchTab('levelview')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     Level View
+  </button>
+  <button class="tab-btn" data-tab="floorplan" onclick="switchTab('floorplan')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
+    Floor Plan
   </button>
   <button class="tab-btn" data-tab="workorders" onclick="switchTab('workorders')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -253,10 +253,10 @@ button { font-family: inherit; cursor: pointer; }
 <div class="content" style="display:none;">
   <div id="view-dashboard" class="view active"></div>
   <div id="view-assets" class="view"></div>
-  <div id="view-sensors" class="view"></div>
   <div id="view-systems" class="view"></div>
   <div id="view-maintenance" class="view"></div>
   <div id="view-levelview" class="view"></div>
+  <div id="view-floorplan" class="view"></div>
   <div id="view-workorders" class="view"></div>
 </div>
 
@@ -414,10 +414,10 @@ function switchTab(tab) {
   document.getElementById('view-'+tab).classList.add('active');
   if(tab==='dashboard') renderDashboard();
   if(tab==='assets') renderAssets();
-  if(tab==='sensors') renderSensorMonitor();
   if(tab==='systems') renderSystems();
   if(tab==='maintenance') renderMaintenance();
   if(tab==='levelview') renderLevelView();
+  if(tab==='floorplan') renderFloorPlan();
   if(tab==='workorders') renderWorkOrders();
 }
 
@@ -1070,97 +1070,6 @@ async function submitRelocation(recordId) {
   }
 }
 
-async function renderSensorMonitor(isRefresh) {
-  const container = document.getElementById('view-sensors');
-  if (!isRefresh) {
-    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
-  }
-
-  try {
-    const resp = await fetch('/api/sensors');
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
-    if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
-    const data = await resp.json();
-    const sensors = data.sensors || [];
-
-    // The test tool panel (dropdown, value input, result box) is built
-    // ONLY on first load, never on a refresh - refreshing used to rebuild
-    // this whole area, which wiped out the test result message and the
-    // dropdown selection a split second after a test ran. Now a refresh
-    // only ever touches #sensorListArea below.
-    if (!isRefresh) {
-      const toolHtml = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tool</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Pick a sensor and enter a test reading. If the value falls outside its target range, a real email + SMS fires and a real Work Order opens — the same as a genuine sensor breach. A value within range is just recorded, no alert.</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="sensorTestSelect" onchange="updateSensorTestHint()" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;min-width:220px">
-            ${sensors.map(s => `<option value="${s.sensorId}" data-target="${(s.targetRange || 'not set').replace(/"/g, '&quot;')}" data-unit="${s.latestUnit || ''}">${s.sensorType}: ${s.sensorId} (${s.assetName})</option>`).join('')}
-          </select>
-          <input id="sensorTestValue" type="number" step="0.1" placeholder="Value" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:100px">
-          <button onclick="runSensorTest()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Run Test</button>
-        </div>
-        <div id="sensorTestHint" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
-        <div id="sensorTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
-      </div>
-      <div id="sensorListArea"></div>`;
-      container.innerHTML = toolHtml;
-      updateSensorTestHint();
-    }
-
-    const inRange = sensors.filter(s => s.withinRange === true).length;
-    const outRange = sensors.filter(s => s.withinRange === false).length;
-    const noData = sensors.filter(s => s.withinRange === null || s.withinRange === undefined).length;
-
-    let listHtml = `<div class="summary-grid">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${sensors.length}</div><div class="summary-label">Total Sensors</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${inRange}</div><div class="summary-label">In Range</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${outRange}</div><div class="summary-label">Out of Range</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--muted)">${noData}</div><div class="summary-label">No Data Yet</div></div>
-    </div>`;
-
-    if (sensors.length === 0) {
-      listHtml += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No sensors registered yet — once a sensor is added to the Sensors table and starts sending readings, it will appear here automatically.</div>`;
-    } else {
-      listHtml += `<div class="asset-list">`;
-      sensors.forEach(s => {
-        const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
-        const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
-        const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
-        listHtml += `<div class="asset-row" style="cursor:default">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
-            <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;min-width:100px">
-            <div style="font-size:11px;color:var(--muted)">Latest Reading</div>
-            <div style="font-size:16px;font-weight:700;color:var(--navy)">${valueDisplay}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-            <span class="badge ${badgeClass}">${badgeLabel}</span>
-          </div>
-        </div>`;
-      });
-      listHtml += `</div>`;
-      listHtml += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 5 minutes</div>`;
-    }
-
-    const listArea = document.getElementById('sensorListArea');
-    if (listArea) listArea.innerHTML = listHtml;
-  } catch (err) {
-    if (!isRefresh) {
-      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
-    } else {
-      console.error('Sensor refresh failed:', err);
-    }
-  }
-
-  clearTimeout(window._sensorRefreshTimer);
-  window._sensorRefreshTimer = setTimeout(() => {
-    const activeTab = document.querySelector('.tab-btn.active');
-    if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor(true);
-  }, 5 * 60 * 1000);
-}
-
 function renderSystems() {
   let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
   systemDefs.forEach(s => {
@@ -1297,11 +1206,137 @@ function renderLevelView() {
 
 let lastWorkOrders = [];
 
-async function renderWorkOrders(isRefresh) {
-  const container = document.getElementById('view-workorders');
-  if (!isRefresh) {
-    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
+// --- Floor Plan tab: live status markers on an uploaded floor plan image ---
+let floorPlanCurrentFloor = null;
+let floorPlanData = null; // { floor, imageUrl, positions }
+let floorPlanPlacementMode = false;
+let floorPlanSelectedAssetId = null;
+
+function statusDotColor(status) {
+  if (status === "Good") return "#16a34a";
+  if (status === "Poor") return "#d97706";
+  return "#dc2626"; // Critical
+}
+
+async function renderFloorPlan() {
+  const container = document.getElementById('view-floorplan');
+  const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
+
+  const uniqueFloors = [...new Set(assets.map(a => a.floor).filter(Boolean))]
+    .sort((a, b) => displayFloor(a).localeCompare(displayFloor(b), undefined, { numeric: true }));
+
+  if (!floorPlanCurrentFloor && uniqueFloors.length > 0) floorPlanCurrentFloor = uniqueFloors[0];
+
+  let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+    <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;renderFloorPlan()">
+      ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:12px;font-size:12px;color:var(--muted);margin-left:auto">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:4px"></span>Good</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d97706;margin-right:4px"></span>Poor</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:4px"></span>Critical</span>
+    </div>
+    ${canManage ? `<button class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
+  </div>
+  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>`;
+
+  container.innerHTML = html;
+
+  if (!floorPlanCurrentFloor) {
+    document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px">No floors found on any asset yet.</div>`;
+    return;
   }
+
+  try {
+    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
+    const data = await resp.json();
+    floorPlanData = data;
+    renderFloorPlanImage(canManage);
+  } catch (err) {
+    document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px;color:var(--red)">Could not load floor plan: ${err.message}</div>`;
+  }
+}
+
+function renderFloorPlanImage(canManage) {
+  const wrap = document.getElementById('floorPlanImageWrap');
+  if (!floorPlanData || !floorPlanData.imageUrl) {
+    wrap.innerHTML = `<div style="padding:60px 20px;max-width:480px;margin:0 auto">
+      <div style="font-size:14px;font-weight:600;color:var(--navy);margin-bottom:8px">No floor plan image uploaded for ${displayFloor(floorPlanCurrentFloor)} yet</div>
+      <div style="font-size:13px;color:var(--muted)">Upload an image for this floor in Airtable's Floor Plans table (Floor = "${floorPlanCurrentFloor}"), then refresh this tab.</div>
+    </div>`;
+    return;
+  }
+
+  const floorAssets = assets.filter(a => a.floor === floorPlanCurrentFloor);
+  const positionsByAsset = {};
+  (floorPlanData.positions || []).forEach(p => { positionsByAsset[p.assetId] = p; });
+
+  const unplaced = canManage ? floorAssets.filter(a => !positionsByAsset[a.id]) : [];
+
+  let dotsHtml = '';
+  floorAssets.forEach(a => {
+    const pos = positionsByAsset[a.id];
+    if (!pos) return;
+    const idx = assets.indexOf(a);
+    dotsHtml += `<div class="floorplan-dot" title="${a.name} (${a.id}) — ${a.status}" onclick="${floorPlanPlacementMode ? '' : `showDetail(${idx});switchTab('assets')`}"
+      style="position:absolute;left:${pos.x}%;top:${pos.y}%;width:16px;height:16px;border-radius:50%;background:${statusDotColor(a.status)};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);transform:translate(-50%,-50%);cursor:${floorPlanPlacementMode?'default':'pointer'};z-index:2"></div>`;
+  });
+
+  wrap.innerHTML = `
+    <div style="position:relative;display:inline-block;max-width:100%">
+      <img src="${floorPlanData.imageUrl}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" id="floorPlanImg" onclick="handleFloorPlanClick(event)">
+      ${dotsHtml}
+    </div>
+  `;
+
+  if (canManage && floorPlanPlacementMode) {
+    let sidebar = `<div style="margin-top:16px;text-align:left;max-width:480px;margin-left:auto;margin-right:auto">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Unplaced assets on this floor — select one, then click the image where it belongs:</div>`;
+    if (unplaced.length === 0) {
+      sidebar += `<div style="font-size:12px;color:var(--muted)">All assets on this floor have a marker placed.</div>`;
+    } else {
+      unplaced.forEach(a => {
+        const selected = floorPlanSelectedAssetId === a.id;
+        sidebar += `<button onclick="floorPlanSelectedAssetId='${a.id}';renderFloorPlanImage(true)" style="display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:4px;border-radius:6px;border:1px solid ${selected?'var(--navy)':'var(--border)'};background:${selected?'#F0F4FA':'#fff'};font-size:12px;cursor:pointer">${a.name} <span style="color:var(--muted)">(${a.id})</span></button>`;
+      });
+    }
+    sidebar += `</div>`;
+    wrap.insertAdjacentHTML('beforeend', sidebar);
+  }
+}
+
+function toggleFloorPlanPlacementMode() {
+  floorPlanPlacementMode = !floorPlanPlacementMode;
+  floorPlanSelectedAssetId = null;
+  renderFloorPlanImage(true);
+}
+
+async function handleFloorPlanClick(event) {
+  if (!floorPlanPlacementMode || !floorPlanSelectedAssetId) return;
+  const img = document.getElementById('floorPlanImg');
+  const rect = img.getBoundingClientRect();
+  const xPct = ((event.clientX - rect.left) / rect.width) * 100;
+  const yPct = ((event.clientY - rect.top) / rect.height) * 100;
+
+  try {
+    await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'savePosition', assetId: floorPlanSelectedAssetId, floor: floorPlanCurrentFloor, x: xPct.toFixed(1), y: yPct.toFixed(1) }),
+    });
+    floorPlanSelectedAssetId = null;
+    // Refresh positions from server so the new dot appears immediately
+    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
+    floorPlanData = await resp.json();
+    renderFloorPlanImage(true);
+  } catch (err) {
+    alert('Could not save marker position: ' + err.message);
+  }
+}
+
+async function renderWorkOrders() {
+  const container = document.getElementById('view-workorders');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
 
   try {
     const resp = await fetch('/api/work-orders');
@@ -1382,7 +1417,7 @@ async function updateWorkOrderStatus(recordId, status) {
       const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
       throw new Error(errorDetail);
     }
-    renderWorkOrders(true); // update in place, no loading-spinner flash
+    renderWorkOrders(); // refresh the summary counts
   } catch (err) {
     alert('Could not update work order:\n\n' + err.message);
   }
@@ -1425,61 +1460,10 @@ async function bulkCloseWorkOrders() {
       const errorDetail = data.errors && data.errors.length ? '\n\nReal error from Airtable:\n' + data.errors[0] : '';
       alert(`${data.updated} closed successfully, ${data.failed} failed.${errorDetail}`);
     }
-    renderWorkOrders(true); // single refresh, after everything is done - no flash
+    renderWorkOrders(); // single refresh, after everything is done
   } catch (err) {
     alert('Could not close selected work orders: ' + err.message);
-    renderWorkOrders(true);
-  }
-}
-
-function updateSensorTestHint() {
-  const select = document.getElementById('sensorTestSelect');
-  const hint = document.getElementById('sensorTestHint');
-  if (!select || !hint) return;
-  const opt = select.options[select.selectedIndex];
-  const target = opt ? opt.dataset.target : '';
-  const unit = opt ? opt.dataset.unit : '';
-  hint.textContent = `Target range: ${target}${unit ? ' ' + unit : ''}`;
-}
-
-async function runSensorTest() {
-  const select = document.getElementById('sensorTestSelect');
-  const valueInput = document.getElementById('sensorTestValue');
-  const resultBox = document.getElementById('sensorTestResult');
-  const sensorId = select.value;
-  const value = valueInput.value;
-
-  if (!sensorId) { alert('No sensors available to test.'); return; }
-  if (value === '') { alert('Enter a test value first.'); return; }
-
-  resultBox.style.display = 'block';
-  resultBox.style.color = 'var(--muted)';
-  resultBox.textContent = `Testing ${sensorId} with value ${value}…`;
-
-  try {
-    const resp = await fetch('/api/sensors', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sensorId, value }),
-    });
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
-    const data = await resp.json();
-
-    if (resp.ok && data.success && data.triggered) {
-      resultBox.style.color = 'var(--red)';
-      resultBox.innerHTML = `⚠ ALERT TRIGGERED — ${data.sensorType} reading ${data.value}${data.unit} for ${data.assetName} (target: ${data.targetRange}) · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderSensorMonitor(true);
-    } else if (resp.ok && data.success) {
-      resultBox.style.color = 'var(--green)';
-      resultBox.textContent = `✓ Reading recorded (${data.value}${data.unit}, target: ${data.targetRange}) — ${data.reason}`;
-      renderSensorMonitor(true);
-    } else {
-      resultBox.style.color = 'var(--red)';
-      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
-    }
-  } catch (err) {
-    resultBox.style.color = 'var(--red)';
-    resultBox.textContent = '✗ Network error: ' + err.message;
+    renderWorkOrders();
   }
 }
 
@@ -1504,7 +1488,7 @@ async function runRealTest(urgency) {
     if (resp.ok && data.success) {
       resultBox.style.color = 'var(--green)';
       resultBox.innerHTML = `✓ Due date set to ${data.dueDateSet} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderWorkOrders(true); // refresh so the new/updated work order shows immediately, no flash
+      renderWorkOrders(); // refresh so the new/updated work order shows immediately
     } else {
       resultBox.style.color = 'var(--red)';
       resultBox.textContent = '✗ ' + (data.error || 'Test failed');
