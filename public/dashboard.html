@@ -370,12 +370,12 @@ let dashboardWorkOrders = []; // populated live from /api/work-orders alongside 
 // Add/Decommission buttons etc). The API is the real enforcement; this
 // just avoids showing controls a role isn't allowed to use.
 const ROLE_PERMISSIONS = {
-  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false },
-  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true },
-  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true },
-  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false },
-  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true },
-  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true },
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
+  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false },
+  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
 };
 
 const levelDefs = [
@@ -2199,12 +2199,12 @@ async function renderWorkOrders() {
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}</div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
-            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}</div>` : ''}
+            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
-            <select onchange="updateWorkOrderStatus('${o.id}', this.value)" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
+            <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
               <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
               <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
@@ -2221,12 +2221,48 @@ async function renderWorkOrders() {
   }
 }
 
-async function updateWorkOrderStatus(recordId, status) {
+async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
+  const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
+  if (newStatus === 'Completed' && canEnterCost) {
+    openCostEntryModal(recordId, assetName);
+    return;
+  }
+  updateWorkOrderStatus(recordId, newStatus);
+}
+
+function openCostEntryModal(recordId, assetName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'costEntryOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:28px">
+      <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Closing: ${assetName}</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Optional — record what this repair/service actually cost. Leave blank if not known yet; you can't add it later from here, but it's fine to close without it.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Cost (TZS)</label>
+      <input id="ce_cost" type="number" placeholder="e.g. 450000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Completed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>
+        <button onclick="submitCostAndClose('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Close with Cost</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function submitCostAndClose(recordId) {
+  const costVal = document.getElementById('ce_cost').value;
+  document.getElementById('costEntryOverlay').remove();
+  updateWorkOrderStatus(recordId, 'Completed', costVal || undefined);
+}
+
+async function updateWorkOrderStatus(recordId, status, cost) {
   try {
+    const body = { recordId, status };
+    if (cost !== undefined) body.cost = cost;
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId, status }),
+      body: JSON.stringify(body),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) {
