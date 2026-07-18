@@ -49,7 +49,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null,
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -65,6 +65,43 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "PATCH") {
+    // Cost-only edit — for adding/correcting a cost on a work order that's
+    // already Completed. Deliberately separate from the status-change path
+    // below: it must NOT touch Closed By, Completed Date, or trigger the
+    // Next-Service-Due rollover again, since those already happened when
+    // the work order was first completed. Editing cost afterward should
+    // never reassign who closed it.
+    if (req.body && req.body.costOnly) {
+      const { recordId, cost } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      if (!can(session.r, "enterWorkOrderCost")) {
+        return res.status(403).json({ error: "Not permitted to edit work order costs." });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: {
+              "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
+              // Pulled from the verified session — same as Closed By,
+              // Added By, etc. elsewhere in the system. Cannot be typed
+              // in or faked by whoever's making the edit.
+              "Cost Edited By": session.u,
+              "Cost Edited Date": new Date().toISOString(),
+            },
+          }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("cost-only edit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Accepts either a single { recordId, status } OR a bulk
     // { recordIds: [...], status } — same accountability rule either way.
     const { recordId, recordIds, status, notes, cost } = req.body || {};
@@ -131,7 +168,11 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const fields = { "Status": status };
   if (notes !== undefined) fields["Notes"] = notes;
-  if (cost !== undefined) fields["Cost (TZS)"] = Number(cost);
+  if (cost !== undefined) {
+    fields["Cost (TZS)"] = Number(cost);
+    fields["Cost Edited By"] = closedByUsername;
+    fields["Cost Edited Date"] = new Date().toISOString();
+  }
 
   let assetIdForRollover = null;
 
@@ -245,7 +286,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null,
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
