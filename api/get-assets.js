@@ -31,6 +31,13 @@ export default async function handler(req, res) {
     return handleGetFloorPlan(req, res);
   }
 
+  // API integration key retrieval — for setting up ERP/SAP connections.
+  // Restricted to the same trust level as cost data (Business Owner /
+  // System Admin), since this key unlocks external programmatic access.
+  if (req.query.apikeyinfo === "true") {
+    return handleGetApiKeyInfo(req, res, session);
+  }
+
   try {
     const allAssets = await fetchAllRecords();
     // Decommissioned assets are hidden from the live register by
@@ -222,11 +229,15 @@ async function handleGetFloorPlan(req, res) {
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
     });
     let imageUrl = null;
+    let uploadedBy = null;
+    let uploadDate = null;
     if (planResp.ok) {
       const planData = await planResp.json();
       const record = planData.records && planData.records[0];
       const attachment = record && record.fields["Image"] && record.fields["Image"][0];
       imageUrl = attachment ? attachment.url : null;
+      uploadedBy = record ? record.fields["Uploaded By"] || null : null;
+      uploadDate = record ? record.fields["Upload Date"] || null : null;
     }
 
     // 2. Find all saved marker positions for assets on this floor
@@ -246,9 +257,36 @@ async function handleGetFloorPlan(req, res) {
       }));
     }
 
-    return res.status(200).json({ floor, imageUrl, positions });
+    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate });
   } catch (err) {
     console.error("handleGetFloorPlan error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+// Returns the currently configured API integration key so it can be
+// copied from the dashboard and handed to a client's IT team — without
+// this, the key would only exist invisibly in Vercel's env var settings,
+// which isn't practically usable day-to-day.
+async function handleGetApiKeyInfo(req, res, session) {
+  const role = session.r || "engineer";
+  if (!can(role, "viewCostAndDepreciation")) {
+    // Reusing the same trust boundary as financial data — issuing or
+    // viewing an API key is at least as sensitive as seeing cost figures.
+    return res.status(403).json({ error: "Not permitted to view API integration settings." });
+  }
+
+  const key = process.env.API_INTEGRATION_KEY || "";
+  const integrationRole = process.env.API_INTEGRATION_ROLE || "engineer";
+  const baseUrl = process.env.PUBLIC_SITE_URL || "";
+
+  return res.status(200).json({
+    configured: !!key,
+    apiKey: key || null,
+    actsAsRole: integrationRole,
+    baseUrl: baseUrl || null,
+    usageExample: key
+      ? `curl -H "Authorization: Bearer ${key}" ${baseUrl || "https://your-deployment.vercel.app"}/api/get-assets`
+      : null,
+  });
 }
