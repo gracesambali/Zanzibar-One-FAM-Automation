@@ -841,6 +841,26 @@ function showDetail(idx) {
     <div id="checklistContent" style="font-size:12px;color:var(--muted)">Loading…</div>
   </div>`;
 
+  // Compliance Documents — real files (Fire Safety Certificate, OSHA
+  // Licence, etc.), not system-generated records.
+  html += `<div id="documentsSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:600;color:var(--navy)">Compliance Documents</div>
+      ${canManage ? `<button onclick="document.getElementById('docUploadInput_${a.recordId}').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Document</button>` : ''}
+      <input type="file" id="docUploadInput_${a.recordId}" style="display:none" onchange="submitDocumentUpload('${a.recordId}', this)">
+    </div>
+    ${a.documents && a.documents.length > 0 ? `
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+        ${a.documents.map(doc => `<a href="${doc.url}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;text-decoration:none;color:var(--text);font-size:12.5px">
+          <span>📄 ${doc.filename}</span>
+          <span style="color:var(--muted);font-size:11px">${doc.size ? Math.round(doc.size/1024) + ' KB' : ''}</span>
+        </a>`).join('')}
+      </div>
+      ${a.documentsUploadedBy ? `<div style="font-size:10.5px;color:var(--muted)">Last uploaded by ${a.documentsUploadedBy}${a.documentsUploadedDate ? ' · ' + new Date(a.documentsUploadedDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : ''}
+    ` : `<div style="font-size:12px;color:var(--muted)">No documents uploaded yet — e.g. Fire Safety Certificate, OSHA Compliance Licence, or any real compliance paperwork for this asset.</div>`}
+    <div id="docUploadStatus_${a.recordId}" style="font-size:11px;margin-top:6px"></div>
+  </div>`;
+
   // Per-asset download options
   html += `<div style="display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--border)">
     <span style="font-size:11px;color:var(--muted);align-self:center">Download this asset:</span>
@@ -2056,6 +2076,54 @@ function copyApiKey() {
   }).catch(() => {
     alert('Could not copy automatically — select and copy the key manually.');
   });
+}
+
+async function submitDocumentUpload(recordId, inputEl) {
+  const file = inputEl.files[0];
+  const statusEl = document.getElementById('docUploadStatus_' + recordId);
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'File is larger than 5MB — Airtable\'s direct upload limit. Try a smaller file.';
+    return;
+  }
+
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Uploading…';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadDocument',
+        recordId,
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `✓ Uploaded ${file.name}`;
+    inputEl.value = '';
+    await loadAssetsAndInit();
+    const idx = assets.findIndex(a => a.recordId === recordId);
+    if (idx >= 0) showDetail(idx);
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not upload: ' + err.message;
+  }
 }
 
 function toggleFloorPlanUploadPanel() {
