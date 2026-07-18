@@ -1221,16 +1221,31 @@ function renderMaintenance() {
   }
   html += `</div></div>`;
 
-  // Frequency matrix — live count of assets per system, not fabricated percentages
-  html += `<div class="dash-panel"><div class="dash-panel-title">Assets by System</div>`;
-  const systemCounts = {};
-  assets.forEach(a => { if (a.system) systemCounts[a.system] = (systemCounts[a.system] || 0) + 1; });
-  const maxCount = Math.max(1, ...Object.values(systemCounts));
-  const sysColors = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
-  Object.keys(systemCounts).sort((a,b) => systemCounts[b]-systemCounts[a]).forEach((sysName, i) => {
-    const count = systemCounts[sysName];
-    const pct = (count / maxCount) * 100;
-    html += `<div class="freq-row"><div class="freq-label">${sysName}</div><div class="freq-track"><div class="freq-fill" style="width:${pct}%;background:${sysColors[i % sysColors.length]}">${count} asset${count!==1?'s':''}</div></div></div>`;
+  // Maintenance Frequency by System — the real average service interval
+  // per system, computed from each asset's actual Maintenance Interval
+  // (Days), not the old fabricated "Quarterly/Annual" labels.
+  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Frequency by System</div>`;
+  const sysIntervals = {};
+  assets.forEach(a => {
+    if (!a.system) return;
+    (sysIntervals[a.system] = sysIntervals[a.system] || []).push(a.maintenanceIntervalDays || 90);
+  });
+  const freqLabel = (days) => {
+    if (days <= 10) return `~${Math.round(days)}d (Weekly-ish)`;
+    if (days <= 35) return `~${Math.round(days)}d (Monthly-ish)`;
+    if (days <= 100) return `~${Math.round(days)}d (Quarterly-ish)`;
+    if (days <= 200) return `~${Math.round(days)}d (Semi-Annual)`;
+    return `~${Math.round(days)}d (Annual+)`;
+  };
+  const sysColors2 = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
+  const maxInterval = Math.max(1, ...Object.values(sysIntervals).map(arr => arr.reduce((a,b)=>a+b,0)/arr.length));
+  Object.keys(sysIntervals).sort((a,b) => sysIntervals[a].length - sysIntervals[b].length).forEach((sysName, i) => {
+    const arr = sysIntervals[sysName];
+    const avgDays = arr.reduce((a,b)=>a+b,0) / arr.length;
+    // Shorter interval = more frequent = visually more "urgent", so
+    // the bar fills inversely to the interval length.
+    const pct = 100 - ((avgDays / maxInterval) * 80);
+    html += `<div class="freq-row"><div class="freq-label">${sysName}</div><div class="freq-track"><div class="freq-fill" style="width:${pct}%;background:${sysColors2[i % sysColors2.length]}">${freqLabel(avgDays)}</div></div></div>`;
   });
   html += `</div>`;
 
