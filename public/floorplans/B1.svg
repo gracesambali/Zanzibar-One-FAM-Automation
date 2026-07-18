@@ -1,22 +1,40 @@
-<svg width="1100" height="700" viewBox="0 0 1100 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
-<rect x="0" y="0" width="1100" height="700" fill="#F0F2F6"/>
-<text x="550.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">B1 — Conceptual Layout</text>
-<rect x="50" y="80" width="1000" height="570" fill="#FDFDFE" stroke="#2D3748" stroke-width="8"/>
-<rect x="54.0" y="580" width="992" height="66.0" fill="#EEF1F5"/>
-<text x="550.0" y="619.0" text-anchor="middle" font-size="10" fill="#5B6B8C" opacity="0.7">CORRIDOR</text>
-<text x="60.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Plant Room B1</text>
-<circle cx="175.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M169.5,355.0 L180.5,355.0 M175.0,349.5 L175.0,360.5" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="162.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M162.0,580.0 A26.0,26.0 0 0 1 188.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="162.0" y1="580.0" x2="162.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="300.0" y1="80" x2="300.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="310.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Substation B1</text>
-<path d="M428.0,344.0 L420.0,357.0 L425.0,357.0 L422.0,366.0 L430.0,353.0 L425.0,353.0 Z" fill="#5B6B8C"/>
-<rect x="412.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M412.0,580.0 A26.0,26.0 0 0 1 438.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="412.0" y1="580.0" x2="412.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="550.0" y1="80" x2="550.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="560.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Basement B1 Ramp</text>
-<circle cx="675.0" cy="355.0" r="4" fill="#5B6B8C"/>
-<rect x="662.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M662.0,580.0 A26.0,26.0 0 0 1 688.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="662.0" y1="580.0" x2="662.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="800.0" y1="80" x2="800.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="810.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Basement B1 Payment Zone</text>
-<circle cx="925.0" cy="355.0" r="4" fill="#5B6B8C"/>
-<rect x="912.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M912.0,580.0 A26.0,26.0 0 0 1 938.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="912.0" y1="580.0" x2="912.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
+<svg width="1300" height="850" viewBox="0 0 1300 850" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1300" height="850" fill="#FFFFFF"/>
+<text x="650.0" y="30" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">B1 — Conceptual Layout</text>
+<rect x="60" y="55" width="1180" height="735" fill="none" stroke="#1A1A1A" stroke-width="5"/>
+<rect x="63" y="395.5" width="1174" height="54" fill="#EEF1F5"/>
+<text x="650.0" y="426.5" text-anchor="middle" font-size="10" fill="#8899AA">CORRIDOR</text>
+<text x="68.0" y="73" font-size="11" font-weight="700" fill="#2D3748">Plant Room B1</text>
+<circle cx="181.6" cy="233.25" r="16" fill="none" stroke="#4A5568" stroke-width="2"/><circle cx="181.6" cy="233.25" r="6.4" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="165.6" y1="233.25" x2="146.39999999999998" y2="233.25" stroke="#4A5568" stroke-width="3"/><line x1="197.6" y1="233.25" x2="216.8" y2="233.25" stroke="#4A5568" stroke-width="3"/>
+<circle cx="297.2" cy="233.25" r="16" fill="none" stroke="#4A5568" stroke-width="2"/><circle cx="297.2" cy="233.25" r="6.4" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="281.2" y1="233.25" x2="262.0" y2="233.25" stroke="#4A5568" stroke-width="3"/><line x1="313.2" y1="233.25" x2="332.4" y2="233.25" stroke="#4A5568" stroke-width="3"/>
+<circle cx="412.8" cy="233.25" r="16" fill="none" stroke="#4A5568" stroke-width="2"/><circle cx="412.8" cy="233.25" r="6.4" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="396.8" y1="233.25" x2="377.6" y2="233.25" stroke="#4A5568" stroke-width="3"/><line x1="428.8" y1="233.25" x2="448.0" y2="233.25" stroke="#4A5568" stroke-width="3"/>
+<circle cx="528.4" cy="233.25" r="16" fill="none" stroke="#4A5568" stroke-width="2"/><circle cx="528.4" cy="233.25" r="6.4" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="512.4" y1="233.25" x2="493.2" y2="233.25" stroke="#4A5568" stroke-width="3"/><line x1="544.4" y1="233.25" x2="563.6" y2="233.25" stroke="#4A5568" stroke-width="3"/>
+<rect x="344.0" y="392.5" width="22" height="6" fill="#FFFFFF"/>
+<path d="M344.0,395.5 A22,22 0 0 1 366.0,373.5" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="344.0" y1="395.5" x2="344.0" y2="373.5" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="650.0" y1="55" x2="650.0" y2="395.5" stroke="#1A1A1A" stroke-width="3"/>
+<text x="658.0" y="73" font-size="11" font-weight="700" fill="#2D3748">Substation B1</text>
+<rect x="787.5" y="213.25" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="791.5" y1="219.25" x2="809.5" y2="219.25" stroke="#8899AA" stroke-width="1"/><line x1="791.5" y1="227.25" x2="809.5" y2="227.25" stroke="#8899AA" stroke-width="1"/><line x1="791.5" y1="235.25" x2="809.5" y2="235.25" stroke="#8899AA" stroke-width="1"/><line x1="791.5" y1="243.25" x2="809.5" y2="243.25" stroke="#8899AA" stroke-width="1"/>
+<rect x="932.0" y="213.25" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="936.0" y1="219.25" x2="954.0" y2="219.25" stroke="#8899AA" stroke-width="1"/><line x1="936.0" y1="227.25" x2="954.0" y2="227.25" stroke="#8899AA" stroke-width="1"/><line x1="936.0" y1="235.25" x2="954.0" y2="235.25" stroke="#8899AA" stroke-width="1"/><line x1="936.0" y1="243.25" x2="954.0" y2="243.25" stroke="#8899AA" stroke-width="1"/>
+<rect x="1076.5" y="213.25" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="1080.5" y1="219.25" x2="1098.5" y2="219.25" stroke="#8899AA" stroke-width="1"/><line x1="1080.5" y1="227.25" x2="1098.5" y2="227.25" stroke="#8899AA" stroke-width="1"/><line x1="1080.5" y1="235.25" x2="1098.5" y2="235.25" stroke="#8899AA" stroke-width="1"/><line x1="1080.5" y1="243.25" x2="1098.5" y2="243.25" stroke="#8899AA" stroke-width="1"/>
+<rect x="934.0" y="392.5" width="22" height="6" fill="#FFFFFF"/>
+<path d="M934.0,395.5 A22,22 0 0 1 956.0,373.5" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="934.0" y1="395.5" x2="934.0" y2="373.5" stroke="#1A1A1A" stroke-width="1.2"/>
+<text x="68.0" y="467.5" font-size="11" font-weight="700" fill="#2D3748">Basement B1 Ramp</text>
+<rect x="330.0" y="615.75" width="50" height="24" rx="3" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="338.0" y1="615.75" x2="338.0" y2="639.75" stroke="#8899AA" stroke-width="1"/>
+<rect x="344.0" y="446.5" width="22" height="6" fill="#FFFFFF"/>
+<path d="M344.0,449.5 A22,22 0 0 0 366.0,471.5" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="344.0" y1="449.5" x2="344.0" y2="471.5" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="650.0" y1="449.5" x2="650.0" y2="790.0" stroke="#1A1A1A" stroke-width="3"/>
+<text x="658.0" y="467.5" font-size="11" font-weight="700" fill="#2D3748">Basement B1 Payment Zone</text>
+<path d="M900.0,567.075 h90 v30 h-54.0 v-15.0 h-36.0 Z" fill="none" stroke="#4A5568" stroke-width="1.5"/>
+<circle cx="915.0" cy="609.075" r="6" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<circle cx="939.0" cy="609.075" r="6" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<circle cx="963.0" cy="609.075" r="6" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<circle cx="771.6" cy="694.7" r="7" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<circle cx="916.1" cy="694.7" r="7" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<circle cx="1060.6" cy="694.7" r="7" fill="none" stroke="#8899AA" stroke-width="1.1"/>
+<rect x="934.0" y="446.5" width="22" height="6" fill="#FFFFFF"/>
+<path d="M934.0,449.5 A22,22 0 0 0 956.0,471.5" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="934.0" y1="449.5" x2="934.0" y2="471.5" stroke="#1A1A1A" stroke-width="1.2"/>
 </svg>

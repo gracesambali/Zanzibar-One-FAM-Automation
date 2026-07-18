@@ -1,22 +1,30 @@
-<svg width="1100" height="700" viewBox="0 0 1100 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
-<rect x="0" y="0" width="1100" height="700" fill="#F0F2F6"/>
-<text x="550.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">F3 — Conceptual Layout</text>
-<rect x="50" y="80" width="1000" height="570" fill="#FDFDFE" stroke="#2D3748" stroke-width="8"/>
-<rect x="54.0" y="580" width="992" height="66.0" fill="#EEF1F5"/>
-<text x="550.0" y="619.0" text-anchor="middle" font-size="10" fill="#5B6B8C" opacity="0.7">CORRIDOR</text>
-<text x="60.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Office</text>
-<circle cx="175.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M175.0,344.0 A11,11 0 0 1 182.7,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M186.0,355.0 A11,11 0 0 1 182.7,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M175.0,366.0 A11,11 0 0 1 167.3,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M164.0,355.0 A11,11 0 0 1 167.3,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/>
-<rect x="162.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M162.0,580.0 A26.0,26.0 0 0 1 188.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="162.0" y1="580.0" x2="162.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="300.0" y1="80" x2="300.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="310.0" y="100" font-size="11.5" font-weight="700" fill="#374151">L4 Common Area</text>
-<rect x="417.3" y="350.05" width="14.3" height="9.9" rx="2" fill="none" stroke="#5B6B8C" stroke-width="2"/><circle cx="431.6" cy="355.0" r="3.3" fill="none" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="412.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M412.0,580.0 A26.0,26.0 0 0 1 438.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="412.0" y1="580.0" x2="412.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="550.0" y1="80" x2="550.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="560.0" y="100" font-size="11.5" font-weight="700" fill="#374151">L4 Ceiling Void</text>
-<circle cx="675.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M675.0,355.0 L681.05,350.05" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="662.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M662.0,580.0 A26.0,26.0 0 0 1 688.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="662.0" y1="580.0" x2="662.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="800.0" y1="80" x2="800.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="810.0" y="100" font-size="11.5" font-weight="700" fill="#374151">L4 Office Entry</text>
-<rect x="918.95" y="353.9" width="12.100000000000001" height="8.8" rx="1.5" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M921.7,353.9 L921.7,350.05 A3.3,3.3 0 0 1 928.3,350.05 L928.3,353.9" fill="none" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="912.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M912.0,580.0 A26.0,26.0 0 0 1 938.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="912.0" y1="580.0" x2="912.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
+<svg width="1300" height="850" viewBox="0 0 1300 850" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1300" height="850" fill="#FFFFFF"/>
+<text x="650.0" y="30" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">F3 — Conceptual Layout</text>
+<rect x="60" y="55" width="1180" height="735" fill="none" stroke="#1A1A1A" stroke-width="5"/>
+<rect x="63" y="730" width="1174" height="57" fill="#EEF1F5"/>
+<text x="650.0" y="764.0" text-anchor="middle" font-size="10" fill="#8899AA">CORRIDOR</text>
+<text x="70.0" y="77" font-size="12" font-weight="700" fill="#2D3748">Office</text>
+<rect x="187.5" y="392.5" width="40" height="24.0" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="195.5" y1="392.5" x2="195.5" y2="416.5" stroke="#8899AA" stroke-width="1"/><line x1="203.5" y1="392.5" x2="203.5" y2="416.5" stroke="#8899AA" stroke-width="1"/><line x1="211.5" y1="392.5" x2="211.5" y2="416.5" stroke="#8899AA" stroke-width="1"/><line x1="219.5" y1="392.5" x2="219.5" y2="416.5" stroke="#8899AA" stroke-width="1"/>
+<rect x="194.5" y="727" width="26" height="6" fill="#FFFFFF"/>
+<path d="M194.5,730 A26,26 0 0 1 220.5,704" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="194.5" y1="730" x2="194.5" y2="704" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="355.0" y1="55" x2="355.0" y2="730" stroke="#1A1A1A" stroke-width="3"/>
+<text x="365.0" y="77" font-size="12" font-weight="700" fill="#2D3748">L4 Common Area</text>
+<rect x="489.5" y="384.5" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="493.5" y1="390.5" x2="511.5" y2="390.5" stroke="#8899AA" stroke-width="1"/><line x1="493.5" y1="398.5" x2="511.5" y2="398.5" stroke="#8899AA" stroke-width="1"/><line x1="493.5" y1="406.5" x2="511.5" y2="406.5" stroke="#8899AA" stroke-width="1"/><line x1="493.5" y1="414.5" x2="511.5" y2="414.5" stroke="#8899AA" stroke-width="1"/>
+<rect x="489.5" y="727" width="26" height="6" fill="#FFFFFF"/>
+<path d="M489.5,730 A26,26 0 0 1 515.5,704" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="489.5" y1="730" x2="489.5" y2="704" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="650.0" y1="55" x2="650.0" y2="730" stroke="#1A1A1A" stroke-width="3"/>
+<text x="660.0" y="77" font-size="12" font-weight="700" fill="#2D3748">L4 Ceiling Void</text>
+<rect x="784.5" y="384.5" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="788.5" y1="390.5" x2="806.5" y2="390.5" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="398.5" x2="806.5" y2="398.5" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="406.5" x2="806.5" y2="406.5" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="414.5" x2="806.5" y2="414.5" stroke="#8899AA" stroke-width="1"/>
+<rect x="784.5" y="727" width="26" height="6" fill="#FFFFFF"/>
+<path d="M784.5,730 A26,26 0 0 1 810.5,704" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="784.5" y1="730" x2="784.5" y2="704" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="945.0" y1="55" x2="945.0" y2="730" stroke="#1A1A1A" stroke-width="3"/>
+<text x="955.0" y="77" font-size="12" font-weight="700" fill="#2D3748">L4 Office Entry</text>
+<rect x="1079.5" y="384.5" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="1083.5" y1="390.5" x2="1101.5" y2="390.5" stroke="#8899AA" stroke-width="1"/><line x1="1083.5" y1="398.5" x2="1101.5" y2="398.5" stroke="#8899AA" stroke-width="1"/><line x1="1083.5" y1="406.5" x2="1101.5" y2="406.5" stroke="#8899AA" stroke-width="1"/><line x1="1083.5" y1="414.5" x2="1101.5" y2="414.5" stroke="#8899AA" stroke-width="1"/>
+<rect x="1079.5" y="727" width="26" height="6" fill="#FFFFFF"/>
+<path d="M1079.5,730 A26,26 0 0 1 1105.5,704" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="1079.5" y1="730" x2="1079.5" y2="704" stroke="#1A1A1A" stroke-width="1.2"/>
 </svg>

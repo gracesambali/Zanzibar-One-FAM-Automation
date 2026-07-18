@@ -1,22 +1,31 @@
-<svg width="1100" height="700" viewBox="0 0 1100 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
-<rect x="0" y="0" width="1100" height="700" fill="#F0F2F6"/>
-<text x="550.0" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">B2 — Conceptual Layout</text>
-<rect x="50" y="80" width="1000" height="570" fill="#FDFDFE" stroke="#2D3748" stroke-width="8"/>
-<rect x="54.0" y="580" width="992" height="66.0" fill="#EEF1F5"/>
-<text x="550.0" y="619.0" text-anchor="middle" font-size="10" fill="#5B6B8C" opacity="0.7">CORRIDOR</text>
-<text x="60.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Plant Room B2</text>
-<circle cx="175.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M175.0,344.0 A11,11 0 0 1 182.7,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M186.0,355.0 A11,11 0 0 1 182.7,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M175.0,366.0 A11,11 0 0 1 167.3,362.7" stroke="#5B6B8C" stroke-width="2" fill="none"/><path d="M164.0,355.0 A11,11 0 0 1 167.3,347.3" stroke="#5B6B8C" stroke-width="2" fill="none"/>
-<rect x="162.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M162.0,580.0 A26.0,26.0 0 0 1 188.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="162.0" y1="580.0" x2="162.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="300.0" y1="80" x2="300.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="310.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Basement B2 Sump Pit</text>
-<circle cx="425.0" cy="355.0" r="11" fill="none" stroke="#5B6B8C" stroke-width="2"/><path d="M419.5,355.0 L430.5,355.0 M425.0,349.5 L425.0,360.5" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="412.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M412.0,580.0 A26.0,26.0 0 0 1 438.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="412.0" y1="580.0" x2="412.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="550.0" y1="80" x2="550.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="560.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Basement B2 Parking</text>
-<rect x="667.3" y="350.05" width="14.3" height="9.9" rx="2" fill="none" stroke="#5B6B8C" stroke-width="2"/><circle cx="681.6" cy="355.0" r="3.3" fill="none" stroke="#5B6B8C" stroke-width="2"/>
-<rect x="662.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M662.0,580.0 A26.0,26.0 0 0 1 688.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="662.0" y1="580.0" x2="662.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
-<line x1="800.0" y1="80" x2="800.0" y2="580" stroke="#2D3748" stroke-width="3"/>
-<text x="810.0" y="100" font-size="11.5" font-weight="700" fill="#374151">Basement B2 Ramp</text>
-<circle cx="925.0" cy="355.0" r="4" fill="#5B6B8C"/>
-<rect x="912.0" y="577.0" width="26.0" height="8" fill="#FDFDFE"/><path d="M912.0,580.0 A26.0,26.0 0 0 1 938.0,554.0" fill="none" stroke="#2D3748" stroke-width="1"/><line x1="912.0" y1="580.0" x2="912.0" y2="554.0" stroke="#2D3748" stroke-width="1.2"/>
+<svg width="1300" height="850" viewBox="0 0 1300 850" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1300" height="850" fill="#FFFFFF"/>
+<text x="650.0" y="30" text-anchor="middle" font-size="17" font-weight="bold" fill="#1A3566">B2 — Conceptual Layout</text>
+<rect x="60" y="55" width="1180" height="735" fill="none" stroke="#1A1A1A" stroke-width="5"/>
+<rect x="63" y="725" width="1174" height="62" fill="#EEF1F5"/>
+<text x="650.0" y="761.5" text-anchor="middle" font-size="10" fill="#8899AA">CORRIDOR</text>
+<text x="70.0" y="77" font-size="12" font-weight="700" fill="#2D3748">Plant Room B2</text>
+<rect x="141.0" y="390.0" width="40" height="24.0" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="149.0" y1="390.0" x2="149.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="157.0" y1="390.0" x2="157.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="165.0" y1="390.0" x2="165.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="173.0" y1="390.0" x2="173.0" y2="414.0" stroke="#8899AA" stroke-width="1"/>
+<rect x="234.0" y="390.0" width="40" height="24.0" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="242.0" y1="390.0" x2="242.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="250.0" y1="390.0" x2="250.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="258.0" y1="390.0" x2="258.0" y2="414.0" stroke="#8899AA" stroke-width="1"/><line x1="266.0" y1="390.0" x2="266.0" y2="414.0" stroke="#8899AA" stroke-width="1"/>
+<rect x="194.5" y="722" width="26" height="6" fill="#FFFFFF"/>
+<path d="M194.5,725 A26,26 0 0 1 220.5,699" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="194.5" y1="725" x2="194.5" y2="699" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="355.0" y1="55" x2="355.0" y2="725" stroke="#1A1A1A" stroke-width="3"/>
+<text x="365.0" y="77" font-size="12" font-weight="700" fill="#2D3748">Basement B2 Sump Pit</text>
+<circle cx="502.5" cy="402.0" r="16" fill="none" stroke="#4A5568" stroke-width="2"/><circle cx="502.5" cy="402.0" r="6.4" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="486.5" y1="402.0" x2="467.3" y2="402.0" stroke="#4A5568" stroke-width="3"/><line x1="518.5" y1="402.0" x2="537.7" y2="402.0" stroke="#4A5568" stroke-width="3"/>
+<rect x="489.5" y="722" width="26" height="6" fill="#FFFFFF"/>
+<path d="M489.5,725 A26,26 0 0 1 515.5,699" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="489.5" y1="725" x2="489.5" y2="699" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="650.0" y1="55" x2="650.0" y2="725" stroke="#1A1A1A" stroke-width="3"/>
+<text x="660.0" y="77" font-size="12" font-weight="700" fill="#2D3748">Basement B2 Parking</text>
+<rect x="784.5" y="382.0" width="26" height="40" fill="none" stroke="#4A5568" stroke-width="1.6"/><line x1="788.5" y1="388.0" x2="806.5" y2="388.0" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="396.0" x2="806.5" y2="396.0" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="404.0" x2="806.5" y2="404.0" stroke="#8899AA" stroke-width="1"/><line x1="788.5" y1="412.0" x2="806.5" y2="412.0" stroke="#8899AA" stroke-width="1"/>
+<rect x="784.5" y="722" width="26" height="6" fill="#FFFFFF"/>
+<path d="M784.5,725 A26,26 0 0 1 810.5,699" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="784.5" y1="725" x2="784.5" y2="699" stroke="#1A1A1A" stroke-width="1.2"/>
+<line x1="945.0" y1="55" x2="945.0" y2="725" stroke="#1A1A1A" stroke-width="3"/>
+<text x="955.0" y="77" font-size="12" font-weight="700" fill="#2D3748">Basement B2 Ramp</text>
+<rect x="1067.5" y="390.0" width="50" height="24" rx="3" fill="none" stroke="#4A5568" stroke-width="1.4"/><line x1="1075.5" y1="390.0" x2="1075.5" y2="414.0" stroke="#8899AA" stroke-width="1"/>
+<rect x="1079.5" y="722" width="26" height="6" fill="#FFFFFF"/>
+<path d="M1079.5,725 A26,26 0 0 1 1105.5,699" fill="none" stroke="#1A1A1A" stroke-width="1"/>
+<line x1="1079.5" y1="725" x2="1079.5" y2="699" stroke="#1A1A1A" stroke-width="1.2"/>
 </svg>
