@@ -30,6 +30,8 @@ export default async function handler(req, res) {
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
+    const action = (req.body && req.body.action) || "relocate";
+    if (action === "savePosition") return handleSaveMarkerPosition(req, res);
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
@@ -331,6 +333,53 @@ async function handleEditAsset(req, res, editedBy) {
     return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId });
   } catch (err) {
     console.error("edit-asset error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Saves (or updates) where an asset's marker sits on its floor's plan image,
+// as a percentage position (0-100) so it stays correctly placed regardless
+// of the image's actual pixel dimensions or how it's displayed on screen.
+async function handleSaveMarkerPosition(req, res) {
+  const { assetId, floor, x, y } = req.body || {};
+  if (!assetId || !floor || x === undefined || y === undefined) {
+    return res.status(400).json({ error: "assetId, floor, x, and y are required" });
+  }
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions");
+
+  try {
+    // Check if a position already exists for this asset — update it if so,
+    // otherwise create a new one. Keeps one row per asset, not a growing log.
+    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+    findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+    findUrl.searchParams.set("maxRecords", "1");
+    const findResp = await fetch(findUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    const findData = findResp.ok ? await findResp.json() : { records: [] };
+    const existing = findData.records && findData.records[0];
+
+    const fields = { "Asset ID": assetId, "Floor": floor, "X%": Number(x), "Y%": Number(y) };
+
+    if (existing) {
+      await fetch(`https://api.airtable.com/v0/${base}/${table}/${existing.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+    } else {
+      await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleSaveMarkerPosition error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

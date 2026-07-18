@@ -26,6 +26,11 @@ export default async function handler(req, res) {
     return handleEditLog(req, res);
   }
 
+  // Floor plan image for a given floor code
+  if (req.query.floorplan) {
+    return handleGetFloorPlan(req, res);
+  }
+
   try {
     const allAssets = await fetchAllRecords();
     // Decommissioned assets are hidden from the live register by
@@ -194,6 +199,56 @@ async function handleEditLog(req, res) {
     }));
     return res.status(200).json({ entries });
   } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Returns the floor plan image URL + saved asset marker positions for a
+// given floor. The image itself lives in Airtable as an attachment (upload
+// it directly in the Floor Plans table — Airtable hosts it automatically,
+// no separate file storage needed).
+async function handleGetFloorPlan(req, res) {
+  const floor = req.query.floorplan;
+  const base = process.env.AIRTABLE_BASE_ID;
+  const floorPlansTable = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+  const positionsTable = encodeURIComponent(process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions");
+
+  try {
+    // 1. Find the floor plan image for this floor
+    const planUrl = new URL(`https://api.airtable.com/v0/${base}/${floorPlansTable}`);
+    planUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
+    planUrl.searchParams.set("maxRecords", "1");
+    const planResp = await fetch(planUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    let imageUrl = null;
+    if (planResp.ok) {
+      const planData = await planResp.json();
+      const record = planData.records && planData.records[0];
+      const attachment = record && record.fields["Image"] && record.fields["Image"][0];
+      imageUrl = attachment ? attachment.url : null;
+    }
+
+    // 2. Find all saved marker positions for assets on this floor
+    const posUrl = new URL(`https://api.airtable.com/v0/${base}/${positionsTable}`);
+    posUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
+    posUrl.searchParams.set("pageSize", "100");
+    const posResp = await fetch(posUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    let positions = [];
+    if (posResp.ok) {
+      const posData = await posResp.json();
+      positions = (posData.records || []).map(r => ({
+        assetId: r.fields["Asset ID"] || "",
+        x: Number(r.fields["X%"]) || 0,
+        y: Number(r.fields["Y%"]) || 0,
+      }));
+    }
+
+    return res.status(200).json({ floor, imageUrl, positions });
+  } catch (err) {
+    console.error("handleGetFloorPlan error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
