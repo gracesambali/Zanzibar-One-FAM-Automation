@@ -315,6 +315,26 @@ function formatInterval(days) {
   return `${days} days`;
 }
 
+// Maps an asset's name/system to one of the sourced ISO/NFPA checklist
+// keys in lib/checklists.js. Returns null if nothing matches — better to
+// show "no checklist mapped yet" than guess wrong and imply a standard
+// that doesn't actually apply to this equipment.
+function guessChecklistClass(name, system) {
+  const text = (name + " " + (system||"")).toLowerCase();
+  if (text.includes("pump")) return "Pump";
+  if (text.includes("generator")) return "Generator";
+  if (text.includes("lift") || text.includes("elevator")) return "Lift / Elevator";
+  if (text.includes("ups")) return "UPS";
+  if (text.includes("fire panel") || text.includes("fire detection")) return "Fire Panel";
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("fan coil") || text.includes("cooling tower") || text.includes("air conditioning")) return "Air Conditioning Unit";
+  if (text.includes("cctv")) return "CCTV Camera";
+  if (text.includes("access control")) return "Access Control Panel";
+  if (text.includes("computer") && !text.includes("bms")) return "Desktop Computer";
+  if (text.includes("smoke detector")) return "Smoke Detector";
+  if (text.includes("compressor")) return "Compressor";
+  return null;
+}
+
 function displayFloor(floor) {
   if (!floor) return '';
   const m = floor.match(/^L(\d+)$/i);
@@ -760,6 +780,7 @@ function showDetail(idx) {
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
+    ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
     ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
     ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
     <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
@@ -804,6 +825,12 @@ function showDetail(idx) {
   }
   html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
 
+  // ISO Maintenance Checklist — auto-matched to this asset's type from its name
+  html += `<div id="checklistSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
+    <div id="checklistContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
+
   // Per-asset download options
   html += `<div style="display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--border)">
     <span style="font-size:11px;color:var(--muted);align-self:center">Download this asset:</span>
@@ -841,6 +868,41 @@ function showDetail(idx) {
       const el = document.getElementById('editLogEntries');
       if (el) el.textContent = 'Could not load edit history.';
     });
+
+  // Load ISO maintenance checklist — auto-matched from the asset's name/system
+  const checklistClass = guessChecklistClass(a.name, a.system);
+  if (!checklistClass) {
+    document.getElementById('checklistContent').innerHTML = `<div>No standard checklist mapping found for this asset type yet.</div>`;
+  } else {
+    fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass))
+      .then(r => r.json())
+      .then(data => {
+        const el = document.getElementById('checklistContent');
+        if (!data.items || data.items.length === 0) {
+          el.innerHTML = `<div>No checklist items defined yet for <strong>${checklistClass}</strong>. Structure exists — content needs sourcing.</div>`;
+          return;
+        }
+        const freqGroups = {};
+        data.items.forEach(item => {
+          const freq = item.frequency || 'Unscheduled';
+          (freqGroups[freq] = freqGroups[freq] || []).push(item);
+        });
+        let html = `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:10px">Standard: ${data.sourceStandard || 'Not specified'}</div>`;
+        Object.keys(freqGroups).forEach(freq => {
+          html += `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 4px">${freq}</div>`;
+          freqGroups[freq].forEach(item => {
+            html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12.5px;color:var(--text);cursor:pointer">
+              <input type="checkbox" style="margin-top:2px">
+              <span>${item.text}</span>
+            </label>`;
+          });
+        });
+        el.innerHTML = html;
+      })
+      .catch(() => {
+        document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
+      });
+  }
 }
 
 // --- Relocation form + API call ---
@@ -1857,6 +1919,22 @@ function renderFloorPlanImage(canManage) {
   }
 }
 
+async function scheduleInspection(assetId, assetName) {
+  if (!confirm(`Schedule an inspection for ${assetName} (${assetId})? This creates a new Inspection work order, separate from regular maintenance.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to schedule inspection');
+    alert(`Inspection scheduled — ${data.woId}. Find it in Work Orders.`);
+  } catch (err) {
+    alert('Could not schedule inspection: ' + err.message);
+  }
+}
+
 function toggleFloorPlanUploadPanel() {
   const panel = document.getElementById('floorPlanUploadPanel');
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -1996,7 +2074,7 @@ async function renderWorkOrders() {
         html += `<div class="asset-row" style="cursor:default">
           ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}</div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
             ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}</div>` : ''}
           </div>
