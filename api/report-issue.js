@@ -13,7 +13,6 @@
 // alert, with the reporter's name and exact location attached.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
-import { buildBreakdownEmailHtml } from "../lib/emailTemplate.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -27,13 +26,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const location = roomZone ? `${floor} - ${roomZone}` : floor;
-    const message = `Breakdown reported at ${location}. Reported by: ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}. Issue: ${description}`;
+    const location = roomZone ? `${floor} — ${roomZone}` : floor;
+    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
 
     const woId = await createReportedWorkOrder(reporterName, reporterRole, floor, roomZone, description);
 
     await Promise.all([
-      sendEmail({ reporterName, reporterRole, location, description, woId }),
+      sendEmail(message),
       sendSms(message),
     ]);
 
@@ -65,6 +64,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, floor, roomZo
         "Location": location,
         "Status": "Open",
         "Urgency": "REPORTED",
+        "Maintenance Type": "Corrective",
         "Created": new Date().toISOString(),
         "Last Reminder Sent": new Date().toISOString().split("T")[0],
         "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
@@ -79,18 +79,9 @@ async function createReportedWorkOrder(reporterName, reporterRole, floor, roomZo
   return woId;
 }
 
-async function sendEmail({ reporterName, reporterRole, location, description, woId }) {
+async function sendEmail(message) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return;
-
-  const html = buildBreakdownEmailHtml({
-    reporterName,
-    reporterRole,
-    location,
-    description,
-    woId,
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
-  });
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -101,35 +92,18 @@ async function sendEmail({ reporterName, reporterRole, location, description, wo
     body: JSON.stringify({
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `Breakdown Reported — ${location}`,
-      html,
+      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Staff-Reported Issue`,
+      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Reported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
+      text: `${message}\n\nReported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
     }),
   });
   if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
-// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
-// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
-// converts common offenders to their plain-ASCII equivalents, and strips
-// anything else non-ASCII as a safety net, so a stray character (pasted
-// from Word, Docs, or some phone keyboards) never silently kills the SMS.
-function sanitizeForSms(text) {
-  return text
-    .replace(/[\u2014\u2013]/g, "-")   // em dash, en dash -> hyphen
-    .replace(/[\u2018\u2019]/g, "'")   // curly single quotes -> straight
-    .replace(/[\u201C\u201D]/g, '"')   // curly double quotes -> straight
-    .replace(/\u2026/g, "...")          // ellipsis -> three dots
-    .replace(/[^\x00-\x7F]/g, "");      // strip any remaining non-ASCII
-}
-
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) {
-    console.error("Beem skipped: ALERT_TO_PHONE is empty or unset");
-    return;
-  }
+  if (phoneList.length === 0) return;
 
-  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -141,12 +115,9 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: cleanMessage.slice(0, 160),
+      message: message.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-
-  const responseText = await resp.text();
-  console.log("Beem response:", resp.status, responseText);
-  if (!resp.ok) console.error("Beem HTTP error:", responseText);
+  if (!resp.ok) console.error("Beem error:", await resp.text());
 }

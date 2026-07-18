@@ -193,6 +193,7 @@ async function createWorkOrder(f, urgency) {
         "Location": f["Room/Zone"] || "",
         "Status": "Open",
         "Urgency": urgency,
+        "Maintenance Type": "Preventive",
         "Created": new Date().toISOString(),
         "Last Reminder Sent": todayString(),
         "Notes": "",
@@ -257,7 +258,7 @@ async function sendDigestEmail(items) {
       <div style="font-size:12px;opacity:0.85;margin-top:4px">${new Date().toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"})} · ${items.length} item${items.length!==1?"s":""} requiring attention</div>
     </div>
     <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
-      <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Technical Team,</p>
+      <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Team,</p>
       <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${urgentCount ? `, ${urgentCount} urgent` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0">
         <thead><tr style="background:#f7f8fa">
@@ -294,19 +295,6 @@ async function sendDigestEmail(items) {
   if (!resp.ok) console.error("Digest email error:", await resp.text());
 }
 
-// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
-// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
-// converts common offenders to their plain-ASCII equivalents, and strips
-// anything else non-ASCII as a safety net.
-function sanitizeForSms(text) {
-  return text
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/\u2026/g, "...")
-    .replace(/[^\x00-\x7F]/g, "");
-}
-
 // Sends ONE combined SMS listing all items — keeps within 160 chars if possible,
 // but expands for larger counts since a summary is more useful than truncation.
 async function sendDigestSms(items) {
@@ -324,7 +312,6 @@ async function sendDigestSms(items) {
   if (items.length > 3) smsText += ` +${items.length - 3} more`;
   smsText += ". Check dashboard.";
 
-  const cleanText = sanitizeForSms(smsText);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
 
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
@@ -337,14 +324,11 @@ async function sendDigestSms(items) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: cleanText.slice(0, 320),
+      message: smsText.slice(0, 320),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-
-  const responseText = await resp.text();
-  console.log("Beem digest response:", resp.status, responseText);
-  if (!resp.ok) console.error("Digest SMS error:", responseText);
+  if (!resp.ok) console.error("Digest SMS error:", await resp.text());
 }
 
 // ---------------------------------------------------------------------
@@ -357,8 +341,8 @@ function buildMessage(f, daysUntil, urgency, existingWoId) {
   const location = f["Room/Zone"] || "";
   const due = f["Next Service Due"] || "";
   const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
-  const prefix = existingWoId ? `[REMINDER - ${existingWoId} still open] ` : `[${urgency}] `;
-  return `${prefix}${name} (${assetId}) at ${location} - service due ${due}. ${timing}.`;
+  const prefix = existingWoId ? `[REMINDER — ${existingWoId} still open] ` : `[${urgency}] `;
+  return `${prefix}${name} (${assetId}) at ${location} — service due ${due}. ${timing}.`;
 }
 
 function daysBetween(from, to) {
