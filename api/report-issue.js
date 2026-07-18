@@ -49,28 +49,36 @@ async function createReportedWorkOrder(reporterName, reporterRole, floor, roomZo
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+  const baseFields = {
+    "WO ID": woId,
+    "Asset ID": "", // not tied to a specific asset — staff won't know this
+    "Asset Name": "Staff-Reported Issue (no specific asset)",
+    "System": "",
+    "Location": location,
+    "Status": "Open",
+    "Urgency": "REPORTED",
+    "Created": new Date().toISOString(),
+    "Last Reminder Sent": new Date().toISOString().split("T")[0],
+    "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
+  };
+
+  // Try with Maintenance Type first; fall back if that field doesn't exist
+  // yet in Airtable, so a breakdown report is never silently lost.
+  let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": "", // not tied to a specific asset — staff won't know this
-        "Asset Name": "Staff-Reported Issue (no specific asset)",
-        "System": "",
-        "Location": location,
-        "Status": "Open",
-        "Urgency": "REPORTED",
-        "Maintenance Type": "Corrective",
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": new Date().toISOString().split("T")[0],
-        "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
-      },
-    }),
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Corrective" } }),
   });
+
+  if (!resp.ok) {
+    console.error("Work order creation with Maintenance Type failed, retrying without it:", await resp.text());
+    resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: baseFields }),
+    });
+  }
+
   if (!resp.ok) {
     const errText = await resp.text();
     console.error("Work order creation failed:", errText);

@@ -277,25 +277,38 @@ async function handleScheduleInspection(req, res, scheduledBy) {
     const f = record.fields;
 
     const woId = `WO-${Date.now()}`;
-    const createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+    const baseFields = {
+      "WO ID": woId,
+      "Asset ID": f["Asset ID"] || assetId,
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Status": "Open",
+      "Urgency": "SCHEDULED",
+      "Created": new Date().toISOString(),
+      "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
+    };
+
+    let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          "WO ID": woId,
-          "Asset ID": f["Asset ID"] || assetId,
-          "Asset Name": f["Name"] || "",
-          "System": f["System"] || "",
-          "Location": f["Room/Zone"] || "",
-          "Status": "Open",
-          "Urgency": "SCHEDULED",
-          "Maintenance Type": "Inspection",
-          "Created": new Date().toISOString(),
-          "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
-        },
-      }),
+      body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Inspection" } }),
     });
-    if (!createResp.ok) throw new Error("Failed to create inspection work order: " + createResp.status);
+
+    if (!createResp.ok) {
+      const firstErr = await createResp.text();
+      console.error("Inspection creation with Maintenance Type failed, retrying without it:", firstErr);
+      createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: baseFields }),
+      });
+    }
+
+    if (!createResp.ok) {
+      const errText = await createResp.text();
+      throw new Error("Failed to create inspection work order: " + createResp.status + " " + errText);
+    }
 
     return res.status(200).json({ success: true, woId });
   } catch (err) {

@@ -178,28 +178,40 @@ async function createWorkOrder(f, urgency) {
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
 
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+  const baseFields = {
+    "WO ID": woId,
+    "Asset ID": f["Asset ID"] || "",
+    "Asset Name": f["Name"] || "",
+    "System": f["System"] || "",
+    "Location": f["Room/Zone"] || "",
+    "Status": "Open",
+    "Urgency": urgency,
+    "Created": new Date().toISOString(),
+    "Last Reminder Sent": todayString(),
+    "Notes": "",
+  };
+
+  // Try with Maintenance Type first; if that field doesn't exist yet in
+  // Airtable, Airtable rejects the WHOLE request — so we fall back to
+  // creating the work order without it, rather than silently losing the
+  // work order entirely. Once the field is added in Airtable, the first
+  // attempt succeeds and this fallback never triggers.
+  let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Status": "Open",
-        "Urgency": urgency,
-        "Maintenance Type": "Preventive",
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": todayString(),
-        "Notes": "",
-      },
-    }),
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Preventive" } }),
   });
+
+  if (!resp.ok) {
+    const firstError = await resp.text();
+    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstError);
+    resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: baseFields }),
+    });
+  }
+
   if (!resp.ok) {
     const errorText = await resp.text();
     console.error("Work order creation failed:", errorText);
