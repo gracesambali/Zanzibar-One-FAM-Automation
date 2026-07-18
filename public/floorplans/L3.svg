@@ -1,0 +1,13 @@
+<svg viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+<rect x="0" y="0" width="900" height="600" fill="#F7F8FA"/>
+<rect x="4" y="4" width="892" height="592" fill="none" stroke="#1A3566" stroke-width="3" rx="6"/>
+<text x="450.0" y="24" text-anchor="middle" font-size="16" font-weight="bold" fill="#1A3566">F2 — Conceptual Layout</text>
+<rect x="40.0" y="60.0" width="260.0" height="250.0" fill="#fff" stroke="#CBD5E1" stroke-width="1.5" rx="4"/>
+<text x="48.0" y="78.0" font-size="11" font-weight="600" fill="#374151">Retail</text>
+<rect x="320.0" y="60.0" width="260.0" height="250.0" fill="#fff" stroke="#CBD5E1" stroke-width="1.5" rx="4"/>
+<text x="328.0" y="78.0" font-size="11" font-weight="600" fill="#374151">L3 Common Area</text>
+<rect x="600.0" y="60.0" width="260.0" height="250.0" fill="#fff" stroke="#CBD5E1" stroke-width="1.5" rx="4"/>
+<text x="608.0" y="78.0" font-size="11" font-weight="600" fill="#374151">L3 Ceiling Void</text>
+<rect x="40.0" y="330.0" width="260.0" height="250.0" fill="#fff" stroke="#CBD5E1" stroke-width="1.5" rx="4"/>
+<text x="48.0" y="348.0" font-size="11" font-weight="600" fill="#374151">L3 Retail Zone</text>
+</svg>
