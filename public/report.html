@@ -14,6 +14,7 @@
   h1 { font-size:17px; color:#1A3566; }
   .sub { font-size:12.5px; color:#6B7280; margin-top:2px; margin-bottom:8px; }
   label { font-size:12px; font-weight:600; color:#1A3566; display:block; margin-bottom:6px; margin-top:16px; }
+  .hint { font-size:11px; color:#6B7280; margin-top:-3px; margin-bottom:6px; font-weight:400; }
   input, textarea, select { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; font-family:inherit; }
   textarea { resize:vertical; min-height:80px; }
   .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -24,6 +25,10 @@
   .result.success { background:#E8F8EF; color:#065F46; }
   .result.error { background:#FDE8E6; color:#991B1B; }
   .footer { text-align:center; font-size:11px; color:#9CA3AF; margin-top:22px; }
+  .photo-preview { margin-top:10px; display:none; }
+  .photo-preview.show { display:block; }
+  .photo-preview img { width:100%; max-height:160px; object-fit:cover; border-radius:8px; border:1px solid #E2E6ED; }
+  .photo-btn { display:flex; align-items:center; justify-content:center; gap:8px; padding:11px 14px; border:1px dashed #E2E6ED; border-radius:8px; font-size:13px; color:#6B7280; cursor:pointer; background:#fff; }
 </style>
 </head>
 <body>
@@ -43,6 +48,10 @@
       <label for="reporterRole">Your Role / Department</label>
       <input id="reporterRole" type="text" placeholder="e.g. Ward Nurse, Procurement">
 
+      <label for="reporterContact">Your Phone or Email</label>
+      <div class="hint">Optional — so we can tell you once it's actually fixed</div>
+      <input id="reporterContact" type="text" placeholder="e.g. +255 7XX XXX XXX or you@email.com">
+
       <div class="row2">
         <div>
           <label for="floor">Floor *</label>
@@ -57,6 +66,12 @@
       <label for="description">What's wrong? *</label>
       <textarea id="description" placeholder="Describe what you're seeing — noise, leak, not working, etc." required></textarea>
 
+      <label>Photo (optional)</label>
+      <div class="hint">A quick picture helps the team understand the issue faster</div>
+      <label for="photo" class="photo-btn">📷 Add a Photo</label>
+      <input id="photo" type="file" accept="image/*" capture="environment" style="display:none">
+      <div id="photoPreview" class="photo-preview"><img id="photoPreviewImg" src=""></div>
+
       <button type="submit" id="submitBtn">Submit Report</button>
     </form>
 
@@ -66,6 +81,31 @@
   </div>
 
 <script>
+let photoBase64 = null;
+let photoFilename = null;
+let photoContentType = null;
+
+document.getElementById('photo').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    alert('Photo is larger than 5MB — please choose a smaller one.');
+    e.target.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    photoBase64 = reader.result.split(',')[1];
+    photoFilename = file.name;
+    photoContentType = file.type || 'image/jpeg';
+    document.getElementById('photoPreviewImg').src = reader.result;
+    document.getElementById('photoPreview').classList.add('show');
+  };
+  reader.readAsDataURL(file);
+});
+
 document.getElementById('reportForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
@@ -73,6 +113,7 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
 
   const reporterName = document.getElementById('reporterName').value.trim();
   const reporterRole = document.getElementById('reporterRole').value.trim();
+  const reporterContact = document.getElementById('reporterContact').value.trim();
   const floor = document.getElementById('floor').value.trim();
   const roomZone = document.getElementById('roomZone').value.trim();
   const description = document.getElementById('description').value.trim();
@@ -85,7 +126,10 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/report-issue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reporterName, reporterRole, floor, roomZone, description }),
+      body: JSON.stringify({
+        reporterName, reporterRole, reporterContact, floor, roomZone, description,
+        photoBase64, photoFilename, photoContentType,
+      }),
     });
     const data = await resp.json();
 
@@ -93,6 +137,8 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
       result.className = 'result success show';
       result.textContent = data.message || 'Report submitted. The maintenance team has been notified.';
       document.getElementById('reportForm').reset();
+      document.getElementById('photoPreview').classList.remove('show');
+      photoBase64 = null; photoFilename = null; photoContentType = null;
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';
