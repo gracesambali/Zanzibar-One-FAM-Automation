@@ -385,6 +385,27 @@ function formatInterval(days) {
 // keys in lib/checklists.js. Returns null if nothing matches — better to
 // show "no checklist mapped yet" than guess wrong and imply a standard
 // that doesn't actually apply to this equipment.
+// Suggests System/Criticality/Lifespan from an asset's Name as it's
+// typed — lets a non-technical person confirm a sensible guess instead
+// of having to correctly classify equipment they may not understand.
+// Never overrides something the person already changed themselves.
+function guessAssetDefaults(name) {
+  const text = (name || "").toLowerCase();
+  if (text.includes("fire pump") || text.includes("fire protection")) return { system: "Fire Protection", criticality: "High", lifespan: 20 };
+  if (text.includes("generator")) return { system: "Electrical", criticality: "High", lifespan: 20 };
+  if (text.includes("transformer") || text.includes("switchgear")) return { system: "Electrical", criticality: "High", lifespan: 25 };
+  if (text.includes("ups")) return { system: "Electrical", criticality: "High", lifespan: 8 };
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("cooling tower") || text.includes("fan coil")) return { system: "HVAC", criticality: "Medium", lifespan: 20 };
+  if (text.includes("lift") || text.includes("elevator")) return { system: "Vertical Transport", criticality: "High", lifespan: 25 };
+  if (text.includes("pump")) return { system: "Plumbing", criticality: "Medium", lifespan: 15 };
+  if (text.includes("cctv") || text.includes("camera")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 7 };
+  if (text.includes("access control") || text.includes("door reader")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 10 };
+  if (text.includes("smoke detector") || text.includes("fire detection") || text.includes("fire panel")) return { system: "Fire Detection", criticality: "High", lifespan: 15 };
+  if (text.includes("bms") || text.includes("controls")) return { system: "Controls", criticality: "Medium", lifespan: 15 };
+  if (text.includes("barrier") || text.includes("parking")) return { system: "Parking System", criticality: "Low", lifespan: 10 };
+  return null; // no confident guess — let the person choose, no wrong assumption offered
+}
+
 function guessChecklistClass(name, system) {
   const text = (name + " " + (system||"")).toLowerCase();
   if (text.includes("pump")) return "Pump";
@@ -664,7 +685,14 @@ function renderDashboard() {
         <button onclick="printMaintenancePlan(30)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">30 days</button>
       </div>
     </div>
-    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Weekly Report — Last 7 Days</div><div style="font-size:10px;color:var(--muted)">One page · real summary from alert history</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="generateWeeklyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
+        <button onclick="exportWeeklyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
+        <button onclick="exportWeeklyReportXLSX()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ XLSX</button>
+      </div>
+    </div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">One page · real summary from alert history</div></div></div>
       <div style="display:flex;gap:6px;padding-left:38px">
         <button onclick="generateMonthlyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
         <button onclick="exportMonthlyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
@@ -842,7 +870,7 @@ function renderAssetResults() {
         ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
       </div>` : '';
     html += `<button class="asset-row" onclick="showDetail(${idx})">
-      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span>${a.needsTechnicalReview ? '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}</div>
       <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
       <span class="asset-class">${a.category}</span></div>
       ${valueBlock}
@@ -869,6 +897,7 @@ function showDetail(idx) {
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
+    ${canManage && a.needsTechnicalReview ? `<button onclick="markTechnicalReviewDone('${a.recordId}', ${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #92400E;border-radius:8px;background:#FEF3C7;color:#92400E;cursor:pointer">⚠ Mark Reviewed</button>` : ""}
     ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
     ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
     <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
@@ -876,7 +905,9 @@ function showDetail(idx) {
   </div></div>
   <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
     <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
+    ${a.nameplatePhoto ? `<a href="${a.nameplatePhoto.url}" target="_blank"><img src="${a.nameplatePhoto.url}" alt="Nameplate photo" style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="Nameplate photo — click to view full size"></a>` : ''}
     <div style="flex:1;min-width:200px">
+      ${a.needsTechnicalReview ? `<div style="background:#FEF3C7;color:#92400E;font-size:11.5px;font-weight:600;padding:6px 10px;border-radius:6px;margin-bottom:10px">⚠ Added by a non-technical role — classification not yet confirmed by an Engineer</div>` : ''}
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Classification</div>
       <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility ? a.mobility + " → " : ""}${a.category || "—"}</div>
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Status</div>
@@ -2189,6 +2220,24 @@ function renderFloorPlanImage(canManage) {
   }
 }
 
+async function markTechnicalReviewDone(recordId, idx) {
+  if (!confirm('Confirm this asset\'s classification has been checked and is correct?')) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clearTechnicalReview', recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not clear review flag');
+    await loadAssetsAndInit();
+    const newIdx = assets.findIndex(a => a.recordId === recordId);
+    if (newIdx >= 0) showDetail(newIdx);
+  } catch (err) {
+    alert('Could not mark reviewed: ' + err.message);
+  }
+}
+
 async function scheduleInspection(assetId, assetName) {
   if (!confirm(`Schedule an inspection for ${assetName} (${assetId})? This creates a new Inspection work order, separate from regular maintenance.`)) return;
   try {
@@ -3034,53 +3083,83 @@ function printMaintenancePlan(windowDays) {
 
 // ---------------------------------------------------------------------
 
+// Shared builder for both Weekly and Monthly reports — genuinely one
+// page, not an unbounded event list. Caps the printed/PDF view to the
+// most recent events; CSV/XLSX exports (built separately) still carry
+// everything, since a spreadsheet has no "page" to overflow.
+function buildPeriodReportHtml(data, title, periodLabel) {
+  const MAX_SHOWN = 8;
+  const urgencyRows = Object.entries(data.byUrgency)
+    .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const shownEvents = data.events.slice(0, MAX_SHOWN);
+  const eventRows = shownEvents
+    .map(e => `<tr><td>${new Date(e.timestamp).toLocaleDateString()}</td><td>${e.assetName || e.assetId}</td><td>${e.system || '—'}</td><td>${e.urgency}</td></tr>`)
+    .join('');
+  const remaining = data.events.length - shownEvents.length;
+
+  return `
+    <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
+    <style>
+      @page { size: A4; margin: 16mm; }
+      body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 12px; }
+      h1 { color:#1A3566; font-size:19px; margin-bottom:2px; }
+      .sub { color:#6B7280; font-size:11.5px; margin-bottom:16px; }
+      .kpi-row { display:flex; gap:10px; margin-bottom:18px; }
+      .kpi { flex:1; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 14px; }
+      .kpi-val { font-size:20px; font-weight:700; color:#1A3566; }
+      .kpi-label { font-size:10.5px; color:#6B7280; }
+      h2 { color:#1A3566; font-size:12.5px; margin:14px 0 6px; }
+      table { width:100%; border-collapse:collapse; font-size:11px; }
+      th { background:#1A3566; color:#fff; text-align:left; padding:6px 8px; }
+      td { padding:6px 8px; border-bottom:1px solid #E2E6ED; }
+      tr:nth-child(even) { background:#F8FAFC; }
+      .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+      .more-note { font-size:10.5px; color:#6B7280; margin-top:6px; font-style:italic; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <h1>${title}</h1>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
+
+      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period. This report fills in as the system runs.</div>' : `
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts</div></div>
+        ${Object.entries(data.byUrgency).slice(0,3).map(([k,v]) => `<div class="kpi"><div class="kpi-val">${v}</div><div class="kpi-label">${k}</div></div>`).join('')}
+      </div>
+
+      <h2>Most Recent Activity</h2>
+      <table><thead><tr><th>Date</th><th>Asset</th><th>System</th><th>Urgency</th></tr></thead><tbody>${eventRows}</tbody></table>
+      ${remaining > 0 ? `<div class="more-note">+ ${remaining} more this period — full history available in the CSV/XLSX export.</div>` : ''}
+      `}
+    </body></html>
+  `;
+}
+
 async function generateMonthlyReport() {
   try {
     const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
     const data = await resp.json();
-
+    const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
     const win = window.open('', '_blank');
-    const urgencyRows = Object.entries(data.byUrgency)
-      .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-    const eventRows = data.events
-      .map(e => `<tr><td>${new Date(e.timestamp).toLocaleString()}</td><td>${e.assetId}</td><td>${e.assetName}</td><td>${e.system}</td><td>${e.urgency}</td><td>${e.channel}</td></tr>`)
-      .join('');
+    win.document.write(buildPeriodReportHtml(data, 'Monthly Report — Last 30 Days', periodLabel));
+    win.document.close();
+    win.focus();
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
 
-    win.document.write(`
-      <html><head><title>Monthly Report — ${CLIENT_CONFIG.clientName}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
-        h1 { color:#1A3566; font-size:20px; }
-        h2 { color:#1A3566; font-size:14px; margin-top:24px; margin-bottom:10px; }
-        .sub { color:#6B7280; font-size:12px; margin-bottom:20px; }
-        .kpi { display:inline-block; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:12px 20px; margin-right:12px; margin-bottom:16px; }
-        .kpi-val { font-size:22px; font-weight:700; color:#1A3566; }
-        .kpi-label { font-size:11px; color:#6B7280; }
-        table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:20px; }
-        th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
-        td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
-        tr:nth-child(even) { background:#F8FAFC; }
-        .empty { color:#6B7280; font-style:italic; padding:12px 0; }
-        .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
-        @media print { .download-btn { display:none; } }
-      </style></head>
-      <body>
-        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
-        <h1>Monthly Report — Last 30 Days</h1>
-        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
-
-        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts Sent</div></div>
-
-        ${data.totalAlerts === 0 ? '<div class="empty">No alerts have been sent yet in this period. This report will populate as the system runs.</div>' : `
-        <h2>By Urgency</h2>
-        <table><thead><tr><th>Urgency</th><th>Count</th></tr></thead><tbody>${urgencyRows}</tbody></table>
-
-        <h2>Full Alert History</h2>
-        <table><thead><tr><th>Date/Time</th><th>Asset ID</th><th>Asset Name</th><th>System</th><th>Urgency</th><th>Channel</th></tr></thead><tbody>${eventRows}</tbody></table>
-        `}
-      </body></html>
-    `);
+async function generateWeeklyReport() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
+    const data = await resp.json();
+    const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
+    const win = window.open('', '_blank');
+    win.document.write(buildPeriodReportHtml(data, 'Weekly Report — Last 7 Days', periodLabel));
     win.document.close();
     win.focus();
   } catch (err) {
@@ -3104,6 +3183,22 @@ async function exportMonthlyReportCSV() {
   } catch (err) { alert('Could not export: ' + err.message); }
 }
 
+async function exportWeeklyReportCSV() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const header = 'Date/Time,Asset ID,Asset Name,System,Urgency,Channel';
+    const rows = data.events.map(e => `"${new Date(e.timestamp).toLocaleString()}","${e.assetId}","${e.assetName}","${e.system}","${e.urgency}","${e.channel}"`).join('\n');
+    const blob = new Blob([header + '\n' + rows], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `weekly-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
 async function exportMonthlyReportXLSX() {
   try {
     const resp = await fetch('/api/get-assets?monthlyreport=true');
@@ -3119,7 +3214,24 @@ async function exportMonthlyReportXLSX() {
   } catch (err) { alert('Could not export: ' + err.message); }
 }
 
+async function exportWeeklyReportXLSX() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const rows = [['Date/Time','Asset ID','Asset Name','System','Urgency','Channel']];
+    data.events.forEach(e => rows.push([new Date(e.timestamp).toLocaleString(), e.assetId, e.assetName, e.system, e.urgency, e.channel]));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Weekly Report');
+    XLSX.writeFile(wb, `weekly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
 function openAddAssetForm() {
+  userTouchedSystem = false;
+  userTouchedCriticality = false;
   const overlay = document.createElement('div');
   overlay.id = 'addAssetOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
@@ -3154,9 +3266,10 @@ function openAddAssetForm() {
       <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
-      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" oninput="applyAssetSuggestion(this.value)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+      <div id="na_suggestion_hint" style="font-size:10.5px;color:var(--green);margin-bottom:6px;display:none"></div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
-      <select id="na_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="na_system" onchange="userTouchedSystem=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
       </select>
 
@@ -3180,12 +3293,16 @@ function openAddAssetForm() {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
       <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Photograph the Nameplate (optional)</label>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Not sure about the technical details? Just take a clear photo of the equipment's label — an engineer can read it properly later.</div>
+      <input id="na_nameplate" type="file" accept="image/*" capture="environment" style="width:100%;font-size:12px;margin-bottom:10px">
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
       <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option>Good</option><option>Poor</option><option>Critical</option>
       </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
-      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="na_criticality" onchange="userTouchedCriticality=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
       </select>
 
@@ -3220,6 +3337,25 @@ const CATEGORY_PREFIXES = {
   "Land": "LND", "Buildings": "BLD", "Infrastructure": "INF", "Heritage": "HER", "Minerals & Other Resources": "MIN",
   "Computer Software": "SW", "Trademarks": "TM", "Licenses": "LIC", "Patent Rights": "PAT", "Right to Use": "RTU",
 };
+
+// Applies a live suggestion as the Name is typed — pre-fills System and
+// Criticality, shown as a visible hint so it's clear this is a
+// suggestion to confirm, not a silent auto-decision. Never overwrites a
+// value the person has already picked differently themselves.
+let userTouchedSystem = false, userTouchedCriticality = false;
+function applyAssetSuggestion(name) {
+  const guess = guessAssetDefaults(name);
+  const hint = document.getElementById('na_suggestion_hint');
+  if (!guess) { hint.style.display = 'none'; return; }
+
+  if (!userTouchedSystem) document.getElementById('na_system').value = guess.system;
+  if (!userTouchedCriticality) document.getElementById('na_criticality').value = guess.criticality;
+  const lifespanField = document.getElementById('na_lifespan');
+  if (lifespanField && lifespanField.value === '15') lifespanField.value = guess.lifespan; // only if still at default
+
+  hint.textContent = `Suggested: ${guess.system} · ${guess.criticality} criticality — check and adjust if needed`;
+  hint.style.display = 'block';
+}
 
 function onNatureChange() {
   const nature = document.getElementById('na_nature').value;
@@ -3281,6 +3417,17 @@ async function submitNewAsset() {
   const lifespanField = document.getElementById('na_lifespan');
 
   try {
+    const nameplateFile = document.getElementById('na_nameplate').files[0];
+    let nameplateBase64 = null;
+    if (nameplateFile) {
+      nameplateBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(nameplateFile);
+      });
+    }
+
     const resp = await fetch('/api/manage-asset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3295,6 +3442,9 @@ async function submitNewAsset() {
         criticality: document.getElementById('na_criticality').value,
         acquisitionCost: costField ? costField.value : undefined,
         lifespan: lifespanField ? lifespanField.value : undefined,
+        nameplatePhotoBase64: nameplateBase64,
+        nameplatePhotoFilename: nameplateFile ? nameplateFile.name : undefined,
+        nameplatePhotoContentType: nameplateFile ? nameplateFile.type : undefined,
       }),
     });
     const data = await resp.json();
