@@ -2756,6 +2756,9 @@ async function renderWorkOrders() {
             ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
             ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
             ${procStatus === 'Rejected' && o.procurementRejectionReason ? `<div style="font-size:11px;color:#991B1B;margin-top:3px">❌ Rejected: ${o.procurementRejectionReason} — revise and resubmit</div>` : ''}
+            ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:11px;color:#991B1B;margin-top:3px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
+            ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✅ Reporter confirmed satisfied</div>` : ''}
+            ${o.reporterPhoto ? `<a href="${o.reporterPhoto}" target="_blank" style="font-size:11px;color:var(--navy)">📷 View reporter's photo</a>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
