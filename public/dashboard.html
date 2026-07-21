@@ -2762,6 +2762,10 @@ async function renderWorkOrders() {
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
             ${guessChecklistClass(o.assetName || '', o.system || '') ? `<button onclick="openWorkOrderChecklist('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}', '${(o.system||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">📋 Checklist</button>` : ''}
             <button onclick="openWorkOrderActivity('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">💬 Activity</button>
+            ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="Before photo"></a>` : `<button onclick="document.getElementById('woPhotoInput_before_${o.id}').click()" style="padding:6px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Before</button>`}
+            <input type="file" id="woPhotoInput_before_${o.id}" accept="image/*" capture="environment" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
+            ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="After photo"></a>` : `<button onclick="document.getElementById('woPhotoInput_after_${o.id}').click()" style="padding:6px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 After</button>`}
+            <input type="file" id="woPhotoInput_after_${o.id}" accept="image/*" capture="environment" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
             ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
             ${o.status !== 'Completed' && (procStatus === 'None' || procStatus === 'Rejected') ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 ${procStatus === 'Rejected' ? 'Revise Request' : 'Request Procurement'}</button>` : ''}
             ${procStatus === 'Requested' && currentUserPermissions && currentUserPermissions.approveProcurement ? `
@@ -2793,6 +2797,42 @@ async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
     return;
   }
   updateWorkOrderStatus(recordId, newStatus);
+}
+
+async function submitWorkOrderPhoto(recordId, photoType, inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    alert("File is larger than 5MB — Airtable's direct upload limit. Try a smaller photo.");
+    return;
+  }
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/work-orders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadWorkOrderPhoto',
+        recordId, photoType,
+        filename: file.name,
+        contentType: file.type || 'image/jpeg',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not upload photo: ' + err.message);
+  }
 }
 
 let procurementLineItemCount = 0;
