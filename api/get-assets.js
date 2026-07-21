@@ -50,6 +50,12 @@ export default async function handler(req, res) {
     return handleWeeklyReport(req, res);
   }
 
+  // Planned Maintenance — standalone budgeted projects, separate from
+  // Work Orders entirely (confirmed: does not spawn real Work Orders).
+  if (req.query.plannedmaintenance === "true") {
+    return handleGetPlannedMaintenance(req, res);
+  }
+
   try {
     const allAssets = await fetchAllRecords();
     // Decommissioned assets are hidden from the live register by
@@ -395,4 +401,51 @@ function countBy(records, field) {
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
+}
+
+// ---------------------------------------------------------------------
+// Planned Maintenance — standalone budgeted projects with milestones
+// and a meeting log. Deliberately does NOT create real Work Orders —
+// confirmed as a separate management/tracking layer, not an execution
+// mechanism.
+// ---------------------------------------------------------------------
+
+async function handleGetPlannedMaintenance(req, res) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}?pageSize=100`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status}`);
+    const data = await resp.json();
+
+    const plans = (data.records || []).map(r => {
+      const f = r.fields;
+      let budgetItems = [], milestones = [], meetingLog = [], actionPoints = [];
+      try { budgetItems = JSON.parse(f["Budget Items"] || "[]"); } catch {}
+      try { milestones = JSON.parse(f["Milestones"] || "[]"); } catch {}
+      try { meetingLog = JSON.parse(f["Meeting Log"] || "[]"); } catch {}
+      try { actionPoints = JSON.parse(f["Action Points"] || "[]"); } catch {}
+
+      return {
+        recordId: r.id,
+        planId: f["Plan ID"] || "",
+        title: f["Name"] || "",
+        description: f["Description"] || "",
+        status: f["Plan Status"] || "Planning",
+        createdBy: f["Created By"] || "",
+        createdDate: f["Created Date"] || "",
+        targetStartDate: f["Target Start Date"] || "",
+        targetEndDate: f["Target End Date"] || "",
+        budgetItems, milestones, meetingLog, actionPoints,
+        documents: (f["Attachments"] || []).map(a => ({ url: a.url, filename: a.filename })),
+      };
+    });
+
+    return res.status(200).json({ plans });
+  } catch (err) {
+    console.error("planned-maintenance GET error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }

@@ -22,11 +22,15 @@ export default async function handler(req, res) {
   setSessionCookie(res, session.u, session.r);
 
   if (req.method === "POST") {
+    if (req.body && req.body.entityType === "plannedMaintenance") {
+      return handleCreatePlan(req, res, session.u);
+    }
     return handleAddAsset(req, res, session.u, session.r);
   }
   if (req.method === "PATCH") {
     const action = (req.body && req.body.action) || "decommission";
     if (action === "edit") return handleEditAsset(req, res, session.u);
+    if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -35,6 +39,7 @@ export default async function handler(req, res) {
     if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u);
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u);
+    if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u);
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
@@ -563,6 +568,101 @@ async function handleClearTechnicalReview(req, res, clearedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("clearTechnicalReview error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Planned Maintenance handlers
+// ---------------------------------------------------------------------
+
+async function handleCreatePlan(req, res, createdBy) {
+  const { title, description, targetStartDate, targetEndDate, budgetItems } = req.body || {};
+  if (!title) return res.status(400).json({ error: "Title is required" });
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+    const planId = `PM-${Date.now()}`;
+
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          "Plan ID": planId,
+          "Name": title,
+          "Description": description || "",
+          "Plan Status": "Planning",
+          "Created By": createdBy,
+          "Created Date": new Date().toISOString().split("T")[0],
+          "Target Start Date": targetStartDate || "",
+          "Target End Date": targetEndDate || "",
+          "Budget Items": JSON.stringify(Array.isArray(budgetItems) ? budgetItems : []),
+          "Milestones": "[]",
+          "Meeting Log": "[]",
+          "Action Points": "[]",
+        },
+      }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const created = await resp.json();
+    return res.status(200).json({ success: true, planId, recordId: created.id });
+  } catch (err) {
+    console.error("handleCreatePlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// One shared update path for everything on a plan — status, budget
+// items, milestones, meeting log entries, action points. The caller
+// sends only the piece it's changing; everything else is read first
+// and preserved, same read-modify-write pattern used for Activity Log.
+async function handleUpdatePlan(req, res, editedBy) {
+  const { recordId, field, value } = req.body || {};
+  const allowedFields = ["Plan Status", "Description", "Target Start Date", "Target End Date", "Budget Items", "Milestones", "Meeting Log", "Action Points"];
+  if (!recordId || !field || !allowedFields.includes(field)) {
+    return res.status(400).json({ error: "recordId and a valid field are required" });
+  }
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+    const fields = { [field]: value };
+
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleUpdatePlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleUploadPlanDocument(req, res, uploadedBy) {
+  const { recordId, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !filename || !fileBase64) {
+    return res.status(400).json({ error: "recordId, filename, and fileBase64 are required" });
+  }
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const resp = await fetch(
+      `https://content.airtable.com/v0/${base}/${recordId}/Attachments/uploadAttachment`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
+      }
+    );
+    if (!resp.ok) throw new Error(await resp.text());
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleUploadPlanDocument error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
