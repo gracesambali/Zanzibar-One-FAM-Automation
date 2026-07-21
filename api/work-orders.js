@@ -50,7 +50,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -63,6 +63,10 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     return handleScheduleInspection(req, res, session.u);
+  }
+
+  if (req.method === "PUT" && req.body && req.body.action === "uploadWorkOrderPhoto") {
+    return handleUploadWorkOrderPhoto(req, res, session.u);
   }
 
   if (req.method === "PATCH") {
@@ -342,6 +346,42 @@ async function appendActivityLog(recordId, text, by, type) {
   if (!patchResp.ok) console.error("appendActivityLog: could not save entry");
 }
 
+// Before/after photo upload — same uploadAttachment pattern already
+// used for Compliance Documents and Floor Plans elsewhere in this
+// system. photoType is "before" or "after", mapping to the matching
+// Airtable field.
+async function handleUploadWorkOrderPhoto(req, res, uploadedBy) {
+  const { recordId, photoType, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !photoType || !filename || !fileBase64) {
+    return res.status(400).json({ error: "recordId, photoType, filename, and fileBase64 are required" });
+  }
+  if (photoType !== "before" && photoType !== "after") {
+    return res.status(400).json({ error: "photoType must be 'before' or 'after'" });
+  }
+
+  const fieldName = photoType === "before" ? "Before Photo" : "After Photo";
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const uploadResp = await fetch(
+      `https://content.airtable.com/v0/${base}/${recordId}/${encodeURIComponent(fieldName)}/uploadAttachment`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: contentType || "image/jpeg", filename, file: fileBase64 }),
+      }
+    );
+    if (!uploadResp.ok) throw new Error(await uploadResp.text());
+
+    await appendActivityLog(recordId, `📷 ${photoType === "before" ? "Before" : "After"} photo uploaded by ${uploadedBy}`, uploadedBy, "system");
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("uploadWorkOrderPhoto error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function fetchAllWorkOrders() {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -402,6 +442,8 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   }
 
   let assetIdForRollover = null;
+  let reporterContactForSatisfaction = null;
+  let assetNameForSatisfaction = null;
 
   if (status === "Completed") {
     fields["Completed Date"] = new Date().toISOString();
@@ -423,6 +465,8 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
       if (woResp.ok) {
         const woData = await woResp.json();
         assetIdForRollover = woData.fields && woData.fields["Asset ID"];
+        reporterContactForSatisfaction = woData.fields && woData.fields["Reporter Contact"];
+        assetNameForSatisfaction = (woData.fields && woData.fields["Asset Name"]) || "the reported issue";
       }
     } catch (e) {
       console.error("Could not read WO before completing (rollover skipped):", e);
@@ -448,7 +492,55 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     await advanceAssetNextService(assetIdForRollover);
   }
 
+  if (reporterContactForSatisfaction) {
+    await sendSatisfactionRequest(reporterContactForSatisfaction, recordId, assetNameForSatisfaction);
+  }
+
   return { ok: true, recordId };
+}
+
+// Sends the reporter a simple confirm/deny link once their issue is
+// marked Completed — the same link works whether it arrives by email
+// or SMS, since it's just a plain URL. Detects channel by presence of
+// "@" rather than asking the reporter to pick one.
+async function sendSatisfactionRequest(contact, recordId, assetName) {
+  const appUrl = process.env.APP_BASE_URL || "https://zanzibar-one-fam-automation.vercel.app";
+  const yesLink = `${appUrl}/api/report-issue?satisfaction=yes&recordId=${recordId}`;
+  const noLink = `${appUrl}/api/report-issue?satisfaction=no&recordId=${recordId}`;
+  const isEmail = contact.includes("@");
+
+  try {
+    if (isEmail) {
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: [contact],
+          subject: `Was your reported issue fixed? — ${assetName}`,
+          html: `<p>The issue you reported (${assetName}) has been marked as completed.</p>
+                 <p>Was it actually fixed to your satisfaction?</p>
+                 <p><a href="${yesLink}" style="background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;margin-right:10px">Yes, it's fixed</a>
+                 <a href="${noLink}" style="background:#dc2626;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">No, still a problem</a></p>`,
+        }),
+      });
+    } else {
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: `Was "${assetName}" fixed? Yes: ${yesLink} No: ${noLink}`.slice(0, 300),
+          recipients: [{ recipient_id: 1, dest_addr: contact }],
+        }),
+      });
+    }
+  } catch (err) {
+    console.error("sendSatisfactionRequest error:", err);
+  }
 }
 
 // Rolls the linked Component's maintenance date forward the same way a
@@ -513,7 +605,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 

@@ -105,6 +105,14 @@ export default async function handler(req, res) {
       await Promise.all(digestItems.map(item => updateComponentLastAlertSent(item.f, now)));
     }
 
+    // 24-hour escalation — any work order still Open/In Progress more
+    // than a day after creation gets flagged to a supervisor. Runs once
+    // daily alongside everything else here (Vercel Hobby only allows
+    // once-daily cron per job), so in practice this means "checked each
+    // morning," not a strict rolling 24-hour clock. Each work order is
+    // escalated once, not re-notified every day it stays open.
+    const escalatedCount = await checkAndEscalateStaleWorkOrders();
+
     await sendHeartbeat(records.length, results);
 
     // Sync "Current Value (TZS)" in Airtable to match the live depreciation
@@ -114,7 +122,7 @@ export default async function handler(req, res) {
     // accurate figure too, not something manually typed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, results });
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -404,6 +412,71 @@ function daysBetween(from, to) {
 // Heartbeat — a daily proof-of-life email to YOU, separate from any
 // client-facing alert.
 // ---------------------------------------------------------------------
+
+// Finds work orders sitting open more than 24 hours and flags them to
+// a supervisor — once per work order, not repeated daily, so this
+// doesn't turn into noise for something already known to be stuck.
+async function checkAndEscalateStaleWorkOrders() {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  try {
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}?pageSize=100`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) { console.error("Escalation check: could not fetch work orders"); return 0; }
+    const data = await resp.json();
+
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const stale = (data.records || []).filter(r => {
+      const f = r.fields;
+      const isOpenState = f["Status"] === "Open" || f["Status"] === "In Progress";
+      const isOld = f["Created"] && new Date(f["Created"]).getTime() < cutoff;
+      const alreadyEscalated = f["Escalation Sent"] === true;
+      return isOpenState && isOld && !alreadyEscalated;
+    });
+
+    if (stale.length === 0) return 0;
+
+    const toList = parseEmailList(process.env.ESCALATION_EMAIL || process.env.ALERT_TO_EMAIL);
+    if (toList.length > 0) {
+      const rows = stale.map(r => `<li>${r.fields["Asset Name"] || r.fields["Asset ID"] || "Unknown"} (${r.fields["WO ID"]}) — open since ${new Date(r.fields["Created"]).toLocaleDateString()}, assigned to ${r.fields["Assigned Role"] || "unassigned"}</li>`).join("");
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: toList,
+          subject: `${stale.length} work order${stale.length !== 1 ? "s" : ""} open more than 24 hours`,
+          html: `<p>The following work orders have been open for more than 24 hours:</p><ul>${rows}</ul>`,
+        }),
+      });
+    }
+
+    // Mark each as escalated so it isn't re-sent tomorrow, and log it
+    // into the same conversation thread as everything else on that WO.
+    for (const r of stale) {
+      await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${r.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Escalation Sent": true } }),
+      });
+      let log = [];
+      try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
+      log.push({ type: "system", text: "🚩 Escalated — open more than 24 hours, supervisor notified", by: "system", at: new Date().toISOString() });
+      await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${r.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+      });
+    }
+
+    return stale.length;
+  } catch (err) {
+    console.error("checkAndEscalateStaleWorkOrders error:", err);
+    return 0;
+  }
+}
 
 async function sendHeartbeat(checkedCount, results, errorMessage) {
   const to = process.env.HEARTBEAT_EMAIL || process.env.ALERT_TO_EMAIL;
