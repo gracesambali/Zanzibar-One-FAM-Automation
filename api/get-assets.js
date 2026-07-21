@@ -45,6 +45,11 @@ export default async function handler(req, res) {
     return handleMonthlyReport(req, res);
   }
 
+  // Weekly report — same underlying logic, 7-day window instead of 30.
+  if (req.query.weeklyreport === "true") {
+    return handleWeeklyReport(req, res);
+  }
+
   try {
     const allAssets = await fetchAllRecords();
     // Decommissioned assets are hidden from the live register by
@@ -154,6 +159,8 @@ function normalizeRecord(record) {
     })),
     documentsUploadedBy: f["Documents Last Uploaded By"] || "",
     documentsUploadedDate: f["Documents Last Uploaded Date"] || "",
+    needsTechnicalReview: f["Needs Technical Review"] === true,
+    nameplatePhoto: (f["Nameplate Photo"] || [])[0] ? { url: f["Nameplate Photo"][0].url, filename: f["Nameplate Photo"][0].filename } : null,
 
     // Warranty — a separate clock from depreciation. An asset can still
     // be worth a lot on paper while its manufacturer warranty already
@@ -316,10 +323,18 @@ async function handleGetApiKeyInfo(req, res, session) {
 // ---------------------------------------------------------------------
 
 async function handleMonthlyReport(req, res) {
+  return buildPeriodReport(req, res, 30);
+}
+
+async function handleWeeklyReport(req, res) {
+  return buildPeriodReport(req, res, 7);
+}
+
+async function buildPeriodReport(req, res, days) {
   try {
     const records = await fetchAllLogRecords();
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 30);
+    cutoff.setDate(cutoff.getDate() - days);
 
     const recent = records
       .filter(r => new Date(r.fields["Timestamp"]) >= cutoff)
@@ -344,7 +359,7 @@ async function handleMonthlyReport(req, res) {
 
     return res.status(200).json(summary);
   } catch (err) {
-    console.error("monthly-report error:", err);
+    console.error("period-report error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

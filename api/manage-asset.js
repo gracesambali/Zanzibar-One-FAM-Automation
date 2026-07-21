@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   setSessionCookie(res, session.u, session.r);
 
   if (req.method === "POST") {
-    return handleAddAsset(req, res, session.u);
+    return handleAddAsset(req, res, session.u, session.r);
   }
   if (req.method === "PATCH") {
     const action = (req.body && req.body.action) || "decommission";
@@ -34,6 +34,7 @@ export default async function handler(req, res) {
     if (action === "savePosition") return handleSaveMarkerPosition(req, res);
     if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u);
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
+    if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u);
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
@@ -52,7 +53,7 @@ function computeCurrentValue(a) {
   return result.currentValue !== null ? result.currentValue : undefined;
 }
 
-async function handleAddAsset(req, res, addedBy) {
+async function handleAddAsset(req, res, addedBy, addedByRole) {
   const a = req.body || {};
 
   if (!a.name || !a.nature || !a.category) {
@@ -66,6 +67,15 @@ async function handleAddAsset(req, res, addedBy) {
 
     const base = process.env.AIRTABLE_BASE_ID;
     const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+    // Non-technical roles (Admin, Stock Keeper) can't be expected to
+    // correctly judge classification/criticality on unfamiliar
+    // equipment — flag it for an Engineer to confirm, rather than
+    // silently trusting a guess neither the system nor the person
+    // could verify. Engineers/Business Owner/System Admin adding an
+    // asset are assumed to already know what they're doing.
+    const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
+    const needsReview = nonTechnicalRoles.includes(addedByRole);
 
     const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
       method: "POST",
@@ -95,12 +105,41 @@ async function handleAddAsset(req, res, addedBy) {
           "Criticality": a.criticality || "Medium", // High / Medium / Low
           "Active": true,
           "Added By": addedBy,
+          "Needs Technical Review": needsReview,
         },
       }),
     });
 
     if (!resp.ok) throw new Error(`Airtable create failed: ${resp.status} ${await resp.text()}`);
-    return res.status(200).json({ success: true, assetId });
+    const created = await resp.json();
+
+    // Nameplate photo — a non-technical person can photograph the
+    // physical label instead of needing to correctly transcribe
+    // technical specs they may not understand. Uploaded after creation
+    // since it needs the new record's ID.
+    if (a.nameplatePhotoBase64 && a.nameplatePhotoFilename) {
+      try {
+        const uploadResp = await fetch(
+          `https://content.airtable.com/v0/${base}/${created.id}/Nameplate%20Photo/uploadAttachment`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contentType: a.nameplatePhotoContentType || "image/jpeg",
+              filename: a.nameplatePhotoFilename,
+              file: a.nameplatePhotoBase64,
+            }),
+          }
+        );
+        if (!uploadResp.ok) console.error("Nameplate photo upload failed:", await uploadResp.text());
+      } catch (photoErr) {
+        // Non-fatal — the asset itself was created successfully; a
+        // failed photo upload shouldn't fail the whole request.
+        console.error("Nameplate photo upload error:", photoErr);
+      }
+    }
+
+    return res.status(200).json({ success: true, assetId, needsTechnicalReview: needsReview });
   } catch (err) {
     console.error("manage-asset POST error:", err);
     return res.status(500).json({ error: err.message });
@@ -501,6 +540,29 @@ async function handleUploadDocument(req, res, uploadedBy) {
     return res.status(200).json({ success: true, filename, uploadedBy });
   } catch (err) {
     console.error("handleUploadDocument error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Clears the "Needs Technical Review" flag once an Engineer has actually
+// looked at what a non-technical person entered and confirmed it's
+// correct (or fixed it via the normal Edit form first).
+async function handleClearTechnicalReview(req, res, clearedBy) {
+  const { recordId } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Needs Technical Review": false } }),
+    });
+    if (!resp.ok) throw new Error("Could not clear review flag");
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("clearTechnicalReview error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
