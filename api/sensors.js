@@ -17,6 +17,7 @@
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
+import { getAssignedRole } from "../lib/routing.js";
 
 const UNIT_BY_TYPE = {
   Temperature: "\u00b0C",
@@ -180,7 +181,7 @@ async function handleRunTest(req, res) {
     await createReading({ timestamp, sensorId, assetId, value: numericValue, unit, withinRange: withinRange === true });
 
     if (withinRange === false) {
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay });
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.fields["System"] });
 
       const [emailResp, smsResp] = await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
@@ -285,7 +286,7 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
   if (!resp.ok) console.error("Reading write failed:", await resp.text());
 }
 
-async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay }) {
+async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
@@ -308,6 +309,7 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
         "Created": new Date().toISOString(),
         "Last Reminder Sent": new Date().toISOString().split("T")[0],
         "Notes": `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+        "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
       },
     }),
   });

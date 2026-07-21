@@ -16,6 +16,7 @@
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
+import { getAssignedRole } from "../lib/routing.js";
 
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
@@ -152,6 +153,7 @@ async function createWorkOrder(f, urgency) {
         "Created": new Date().toISOString(),
         "Last Reminder Sent": todayString(),
         "Notes": "",
+        "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
       },
     }),
   });

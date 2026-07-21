@@ -26,6 +26,7 @@
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
+import { getAssignedRole } from "../lib/routing.js";
 
 const UNIT_BY_TYPE = {
   temperature: "\u00b0C",
@@ -92,7 +93,7 @@ export default async function handler(req, res) {
       const location = component?.fields["Room/Zone"] || "";
       const sensorTypeLabel = sensor.fields["Sensor Type"] || type;
 
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay });
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem: component?.fields["System"] });
 
       await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
@@ -172,7 +173,7 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
 // trigger in this system (report-issue.js, check-maintenance.js, etc.)
 // so sensor breaches show up in the Work Orders tab and can be worked
 // (In Progress / Completed) exactly like any other issue.
-async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay }) {
+async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
@@ -195,6 +196,7 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
         "Created": new Date().toISOString(),
         "Last Reminder Sent": new Date().toISOString().split("T")[0],
         "Notes": `Auto-generated from sensor alert: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+        "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
       },
     }),
   });
