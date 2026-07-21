@@ -32,11 +32,11 @@ button { font-family: inherit; cursor: pointer; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
 .live-label { color: rgba(255,255,255,0.7); font-size: 12px; display: flex; align-items: center; gap: 6px; }
 
-.main-layout { display: flex; align-items: flex-start; width: 100%; overflow-x: hidden; }
+.main-layout { display: flex; align-items: flex-start; width: 100%; }
 
 .sidebar {
   width: 220px; flex-shrink: 0; background: var(--white); border-right: 1px solid var(--border);
-  position: sticky; top: 0; height: 100vh; overflow-y: auto; transition: width 0.2s ease;
+  position: sticky; top: 0; max-height: 100vh; overflow-y: auto; transition: width 0.2s ease;
   display: flex; flex-direction: column;
 }
 .sidebar.collapsed { width: 64px; }
@@ -54,7 +54,38 @@ button { font-family: inherit; cursor: pointer; }
 .tab-btn.active { color: var(--navy); border-left-color: var(--navy); background: var(--navy-pale); font-weight: 600; }
 .tab-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
 .sidebar.collapsed .tab-btn span.tab-label { display: none; }
-.sidebar.collapsed .tab-btn { justify-content: center; padding: 12px; }
+.sidebar.collapsed .tab-btn { justify-content: center; padding: 12px; position: relative; }
+
+/* Hover tooltip — only shown when collapsed, since the label is already
+   visible right there when expanded. Pure CSS, no JS needed. */
+.sidebar.collapsed .tab-btn:hover::after {
+  content: attr(data-label);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--text);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.sidebar.collapsed .tab-btn:hover::before {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: var(--text);
+  z-index: 100;
+  pointer-events: none;
+}
 
 .content { flex: 1; min-width: 0; max-width: 100%; padding: 20px 24px; overflow-x: auto; }
 .view { display: none; } .view.active { display: block; }
@@ -240,35 +271,35 @@ button { font-family: inherit; cursor: pointer; }
     </button>
   </div>
   <div class="sidebar-nav">
-  <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+  <button class="tab-btn active" data-tab="dashboard" data-label="Dashboard" onclick="switchTab('dashboard')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
     <span class="tab-label">Dashboard</span>
   </button>
-  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
+  <button class="tab-btn" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
     <span class="tab-label">Asset Register</span>
   </button>
-  <button class="tab-btn" data-tab="sensors" onclick="switchTab('sensors')">
+  <button class="tab-btn" data-tab="sensors" data-label="Sensors" onclick="switchTab('sensors')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
     <span class="tab-label">Sensors</span>
   </button>
-  <button class="tab-btn" data-tab="systems" onclick="switchTab('systems')">
+  <button class="tab-btn" data-tab="systems" data-label="Systems" onclick="switchTab('systems')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
     <span class="tab-label">Systems</span>
   </button>
-  <button class="tab-btn" data-tab="maintenance" onclick="switchTab('maintenance')">
+  <button class="tab-btn" data-tab="maintenance" data-label="Maintenance" onclick="switchTab('maintenance')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
     <span class="tab-label">Maintenance</span>
   </button>
-  <button class="tab-btn" data-tab="levelview" onclick="switchTab('levelview')">
+  <button class="tab-btn" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     <span class="tab-label">Level View</span>
   </button>
-  <button class="tab-btn" data-tab="floorplan" onclick="switchTab('floorplan')">
+  <button class="tab-btn" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
     <span class="tab-label">Floor Plan</span>
   </button>
-  <button class="tab-btn" data-tab="workorders" onclick="switchTab('workorders')">
+  <button class="tab-btn" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     <span class="tab-label">Work Orders</span>
   </button>
