@@ -2535,6 +2535,305 @@ async function submitWOActivity(recordId) {
   }
 }
 
+// Re-fetches work order data and, if currently viewing a specific
+// work order's detail page, re-renders that same page in place —
+// rather than bouncing back to the list after every action.
+async function refreshWorkOrdersView(recordId) {
+  try {
+    const resp = await fetch('/api/work-orders');
+    if (resp.ok) {
+      const data = await resp.json();
+      lastWorkOrders = data.workOrders || [];
+    }
+  } catch (err) {
+    console.error('Could not refresh work orders:', err);
+  }
+  if (recordId && lastWorkOrders.find(w => w.id === recordId)) {
+    showWorkOrderDetail(recordId);
+  } else {
+    renderWorkOrders();
+  }
+}
+
+async function showWorkOrderDetail(recordId) {
+  const o = lastWorkOrders.find(w => w.id === recordId);
+  if (!o) return;
+  const container = document.getElementById('view-workorders');
+  const procStatus = o.procurementStatus || 'None';
+  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
+  const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
+  const statusClass = o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue';
+
+  let html = `<button class="back-btn" onclick="renderWorkOrders()">← Back to Work Orders</button>
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.status}</span>
+        <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
+        ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+        ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Report</div>
+      <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div class="detail-field"><div class="detail-field-label">Location</div><div class="detail-field-value">${o.location || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created</div><div class="detail-field-value">${new Date(o.created).toLocaleString()}</div></div>
+      </div>
+      ${o.notes ? `<div style="margin-top:12px;padding:12px 14px;background:#F7F8FA;border-radius:8px;font-size:13px;line-height:1.6">${o.notes}</div>` : ''}
+      ${o.reporterContact ? `<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reporter contact: ${o.reporterContact}</div>` : ''}
+      ${o.reporterPhoto ? `<a href="${o.reporterPhoto}" target="_blank"><img src="${o.reporterPhoto}" style="margin-top:10px;max-width:200px;border-radius:8px;border:1px solid var(--border)"></a>` : ''}
+    </div>
+
+    <div id="woDetailProcurement" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
+
+    <div id="woDetailChecklist" style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
+      <div style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Photos</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Before</div>
+          ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_before').click()" style="width:100px;height:100px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+          <input type="file" id="woDetailPhoto_before" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">After</div>
+          ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_after').click()" style="width:100px;height:100px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+          <input type="file" id="woDetailPhoto_after" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+      <div id="woDetailActivityThread" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px">
+        <input id="woDetailActivityInput" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailActivity('${o.id}')">
+        <button onclick="submitWODetailActivity('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
+      ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+      ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
+      ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+          <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
+          <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
+          <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
+        </select>
+        ${o.status === 'Completed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
+        ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+
+  renderWODetailProcurement(o);
+  renderWODetailChecklist(o);
+  renderWODetailActivityThread(o);
+}
+
+function renderWODetailProcurement(o) {
+  const el = document.getElementById('woDetailProcurement');
+  if (!el) return;
+  const procStatus = o.procurementStatus || 'None';
+  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
+  let breakdown = [];
+  try { breakdown = JSON.parse(o.costBreakdown || '[]'); } catch { breakdown = []; }
+  const total = breakdown.reduce((s, i) => s + (Number(i.cost) || 0), 0);
+
+  let html = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Procurement</div>`;
+
+  if (procStatus === 'None') {
+    html += `<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Not requested for this work order.</div>
+      ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
+  } else {
+    const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
+    html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatus}</span>`;
+    if (breakdown.length > 0) {
+      html += `<table style="width:100%;margin-top:10px;font-size:12.5px;border-collapse:collapse">
+        ${breakdown.map(i => `<tr><td style="padding:4px 0;border-bottom:1px solid var(--border)">${i.description}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">TZS ${Number(i.cost).toLocaleString()}</td></tr>`).join('')}
+        <tr><td style="padding:6px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:6px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${total.toLocaleString()}</td></tr>
+      </table>`;
+    }
+    if (procStatus === 'Rejected' && o.procurementRejectionReason) {
+      html += `<div style="font-size:12px;color:#991B1B;margin-top:8px">❌ ${o.procurementRejectionReason}</div>
+        <button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:8px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">Revise Request</button>`;
+    }
+    if (procStatus === 'Requested' && canApprove) {
+      html += `<div style="margin-top:10px;display:flex;gap:8px">
+        <button onclick="approveProcurement('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✓ Approve</button>
+        <button onclick="rejectProcurementPrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Reject</button>
+      </div>`;
+    }
+    if (procStatus === 'Approved') {
+      html += `<button onclick="fulfillProcurement('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+async function renderWODetailChecklist(o) {
+  const el = document.getElementById('woDetailChecklist');
+  if (!el) return;
+  const checklistClass = guessChecklistClass(o.assetName || '', o.system || '');
+  if (!checklistClass) {
+    el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No standard checklist mapped for this asset type.</div>`;
+    return;
+  }
+
+  let progress = {};
+  try { progress = JSON.parse(o.checklistProgress || '{}'); } catch { progress = {}; }
+
+  try {
+    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+    const data = await resp.json();
+    if (!data.items || data.items.length === 0) {
+      el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet for ${checklistClass}.</div>`;
+      return;
+    }
+    window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass, data, progress };
+
+    // Time-bound grouping — same pattern as the printable version, so
+    // this reads consistently whether viewed on screen or downloaded.
+    const freqGroups = {};
+    data.items.forEach((item, i) => {
+      const freq = item.frequency || 'Unscheduled';
+      (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
+    });
+    const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+    const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
+
+    const completedCount = data.items.filter((_, i) => progress[i] && progress[i].checked).length;
+
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${checklistClass}</div>
+      <button onclick="downloadWODetailChecklist()" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download PDF</button>
+    </div>
+    <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${completedCount} of ${data.items.length} completed — optional tracking, does not block closing this work order</div>`;
+
+    orderedFreqs.forEach(freq => {
+      html += `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--navy);background:#EEF1F5;padding:5px 10px;margin-top:10px">${freq}</div>`;
+      freqGroups[freq].forEach(item => {
+        const state = progress[item._index] || {};
+        const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+        html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this)" style="margin-top:2px">
+          <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+        </label>`;
+      });
+    });
+
+    el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load checklist: ${err.message}</div>`;
+  }
+}
+
+function downloadWODetailChecklist() {
+  const { workOrderId, assetName, checklistClass, data, progress } = window.currentWODetailChecklist;
+  const freqGroups = {};
+  data.items.forEach((item, i) => {
+    const freq = item.frequency || 'Unscheduled';
+    (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
+  });
+  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
+
+  let sectionsHtml = '';
+  orderedFreqs.forEach(freq => {
+    sectionsHtml += `<div class="freq-section"><div class="freq-title">${freq}</div><table class="items-table">
+      ${freqGroups[freq].map(item => {
+        const state = progress[item._index] || {};
+        return `<tr><td class="check-col">${state.checked ? '☑' : '☐'}</td><td>${item.task}${state.checked ? `<div style="font-size:10px;color:#16a34a">Checked by ${state.by} · ${state.at ? new Date(state.at).toLocaleDateString() : ''}</div>` : ''}</td></tr>`;
+      }).join('')}
+    </table></div>`;
+  });
+
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><head><title>Checklist — ${assetName}</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
+      .doc { max-width: 700px; margin: 0 auto; }
+      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .freq-section { margin-bottom: 20px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .items-table { width:100%; border-collapse:collapse; }
+      .items-table tr { border-bottom: 1px solid #E5E7EB; }
+      .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
+      .check-col { width:24px; font-size:15px; color:#6B7280; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="doc">
+        <div class="header"><div class="title">Maintenance Checklist</div><div class="subtitle">${checklistClass} — ${assetName}</div></div>
+        <div class="standard-box"><strong>Reference Standard:</strong> ${data.sourceStandard || 'Not specified'}</div>
+        ${sectionsHtml}
+        <div style="margin-top:30px;font-size:10.5px;color:#9CA3AF;text-align:center">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+}
+
+function renderWODetailActivityThread(o) {
+  const el = document.getElementById('woDetailActivityThread');
+  if (!el) return;
+  let log = [];
+  try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
+  if (log.length === 0) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">No activity yet.</div>`;
+    return;
+  }
+  el.innerHTML = log.map(entry => `
+    <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  `).join('');
+}
+
+async function submitWODetailActivity(recordId) {
+  const input = document.getElementById('woDetailActivityInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addActivityEntry: true, recordId, text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save update');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) o.activityLog = JSON.stringify(data.log);
+    input.value = '';
+    renderWODetailActivityThread(o);
+  } catch (err) {
+    alert('Could not send update: ' + err.message);
+  } finally {
+    input.disabled = false;
+  }
+}
+
 async function openWorkOrderChecklist(recordId, assetName, system) {
   const checklistClass = guessChecklistClass(assetName, system);
   if (!checklistClass) return;
@@ -2739,50 +3038,28 @@ async function renderWorkOrders() {
     if (orders.length === 0) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
     } else {
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="selectAllWO" onchange="toggleAllWorkOrders(this.checked)"> Select all open/in-progress</label>
-        <button id="bulkCloseBtn" onclick="bulkCloseWorkOrders()" disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer;opacity:0.5">Close Selected (0)</button>
-      </div>`;
       html += `<div class="asset-list">`;
       orders.forEach(o => {
         const closable = o.status !== 'Completed';
         const procStatus = o.procurementStatus || 'None';
         const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
-        html += `<div class="asset-row" style="cursor:default">
-          ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
+        const idx = lastWorkOrders.indexOf(o);
+        html += `<button class="asset-row" onclick="showWorkOrderDetail('${o.id}')" style="text-align:left">
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
+              ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+              ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
+              ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
+            </div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
-            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
-            ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
-            ${procStatus === 'Rejected' && o.procurementRejectionReason ? `<div style="font-size:11px;color:#991B1B;margin-top:3px">❌ Rejected: ${o.procurementRejectionReason} — revise and resubmit</div>` : ''}
-            ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:11px;color:#991B1B;margin-top:3px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
-            ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✅ Reporter confirmed satisfied</div>` : ''}
-            ${o.reporterPhoto ? `<a href="${o.reporterPhoto}" target="_blank" style="font-size:11px;color:var(--navy)">📷 View reporter's photo</a>` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
-            ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
-            ${guessChecklistClass(o.assetName || '', o.system || '') ? `<button onclick="openWorkOrderChecklist('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}', '${(o.system||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">📋 Checklist</button>` : ''}
-            <button onclick="openWorkOrderActivity('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">💬 Activity</button>
-            ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="Before photo"></a>` : `<button onclick="document.getElementById('woPhotoInput_before_${o.id}').click()" style="padding:6px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Before</button>`}
-            <input type="file" id="woPhotoInput_before_${o.id}" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
-            ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="After photo"></a>` : `<button onclick="document.getElementById('woPhotoInput_after_${o.id}').click()" style="padding:6px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 After</button>`}
-            <input type="file" id="woPhotoInput_after_${o.id}" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
-            ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
-            ${o.status !== 'Completed' && (procStatus === 'None' || procStatus === 'Rejected') ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 ${procStatus === 'Rejected' ? 'Revise Request' : 'Request Procurement'}</button>` : ''}
-            ${procStatus === 'Requested' && currentUserPermissions && currentUserPermissions.approveProcurement ? `
-              <button onclick="approveProcurement('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✓ Approve</button>
-              <button onclick="rejectProcurementPrompt('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Reject</button>
-            ` : ''}
-            ${procStatus === 'Approved' ? `<button onclick="fulfillProcurement('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>` : ''}
-            <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
-              <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
-              <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
-              <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
-            </select>
+            <span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${o.status}</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
-        </div>`;
+        </button>`;
       });
       html += `</div>`;
     }
@@ -2832,7 +3109,7 @@ async function submitWorkOrderPhoto(recordId, photoType, inputEl) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
-    renderWorkOrders();
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not upload photo: ' + err.message);
   }
@@ -2909,7 +3186,7 @@ async function submitProcurementRequest(recordId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
     document.getElementById('procurementOverlay').remove();
-    renderWorkOrders();
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -2926,7 +3203,7 @@ async function approveProcurement(recordId) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
-    renderWorkOrders();
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not approve: ' + err.message);
   }
@@ -2943,7 +3220,7 @@ async function rejectProcurementPrompt(recordId) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reject');
-    renderWorkOrders();
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not reject: ' + err.message);
   }
@@ -2959,7 +3236,7 @@ async function fulfillProcurement(recordId) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark fulfilled');
-    renderWorkOrders();
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not mark fulfilled: ' + err.message);
   }
@@ -3031,7 +3308,7 @@ async function updateWorkOrderStatus(recordId, status, cost) {
       const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
       throw new Error(errorDetail);
     }
-    renderWorkOrders(); // refresh the summary counts
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not update work order:\n\n' + err.message);
   }
