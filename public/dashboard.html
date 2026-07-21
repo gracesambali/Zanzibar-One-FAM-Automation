@@ -2907,7 +2907,7 @@ function printMaintenancePlan(windowDays) {
 
 async function generateMonthlyReport() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
     const data = await resp.json();
 
@@ -2961,7 +2961,7 @@ async function generateMonthlyReport() {
 
 async function exportMonthlyReportCSV() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
@@ -2977,7 +2977,7 @@ async function exportMonthlyReportCSV() {
 
 async function exportMonthlyReportXLSX() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
