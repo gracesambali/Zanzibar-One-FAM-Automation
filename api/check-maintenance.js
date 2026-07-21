@@ -24,13 +24,6 @@ const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
 
 export default async function handler(req, res) {
-  // ---- Protect this endpoint ----
-  // Vercel Cron sends this automatically once CRON_SECRET is set.
-  const authHeader = req.headers.authorization;
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
   try {
     const records = await fetchAllRecords();
     const results = [];
