@@ -50,7 +50,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -80,6 +80,102 @@ export default async function handler(req, res) {
     // attributed to who actually wrote them and when. This is the
     // foundation the routing/approval/performance-tracking pieces will
     // build on next.
+    // Procurement — a real blocking gate. Requesting it locks the work
+    // order from being closed until an Engineer+ approves the cost
+    // breakdown AND it's marked fulfilled. Rejection sends it back for
+    // revision rather than a dead end.
+    if (req.body && req.body.requestProcurement) {
+      const { recordId, lineItems } = req.body;
+      if (!recordId || !Array.isArray(lineItems) || lineItems.length === 0) {
+        return res.status(400).json({ error: "recordId and at least one line item required" });
+      }
+      const total = lineItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: {
+              "Procurement Status": "Requested",
+              "Cost Breakdown": JSON.stringify(lineItems),
+              "Procurement Requested By": session.u,
+              "Procurement Rejection Reason": "",
+            },
+          }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save procurement request");
+        await appendActivityLog(recordId, `🛒 Procurement requested — TZS ${total.toLocaleString()} (${lineItems.length} item${lineItems.length !== 1 ? "s" : ""})`, session.u, "procurement_request");
+        return res.status(200).json({ success: true, total });
+      } catch (err) {
+        console.error("requestProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.approveProcurement) {
+      if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to approve procurement" });
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Procurement Status": "Approved", "Procurement Approved By": session.u } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not approve procurement");
+        await appendActivityLog(recordId, `✅ Procurement approved by ${session.u}`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("approveProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.rejectProcurement) {
+      if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to reject procurement" });
+      const { recordId, reason } = req.body;
+      if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Procurement Status": "Rejected", "Procurement Rejection Reason": reason } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not reject procurement");
+        await appendActivityLog(recordId, `❌ Procurement rejected by ${session.u} — ${reason}`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("rejectProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.fulfillProcurement) {
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled" } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
+        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — technician can now proceed`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("fulfillProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.addActivityEntry) {
       const { recordId, text, entryType } = req.body;
       if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
@@ -221,6 +317,31 @@ export default async function handler(req, res) {
   return res.status(405).json({ error: "Method not allowed" });
 }
 
+// Shared helper — appends one entry to a work order's Activity Log,
+// used by the procurement actions above. Read-modify-write, same
+// pattern as the inline addActivityEntry handler.
+async function appendActivityLog(recordId, text, by, type) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendActivityLog: could not read work order"); return; }
+  const woData = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  log.push({ type: type || "comment", text, by, at: new Date().toISOString() });
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) console.error("appendActivityLog: could not save entry");
+}
+
 async function fetchAllWorkOrders() {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -248,6 +369,30 @@ async function fetchAllWorkOrders() {
 async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  // The actual procurement gate: a work order can't be closed while
+  // procurement is still awaiting approval or was rejected and needs
+  // revision. This is checked here, server-side, not just hidden in the
+  // UI — the whole point of a real gate is that it can't be bypassed.
+  if (status === "Completed") {
+    const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (checkResp.ok) {
+      const checkData = await checkResp.json();
+      const procStatus = checkData.fields["Procurement Status"];
+      if (procStatus === "Requested" || procStatus === "Rejected") {
+        return {
+          ok: false,
+          recordId,
+          error: procStatus === "Requested"
+            ? "This work order can't be closed yet — procurement is still awaiting approval."
+            : `This work order can't be closed yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
+        };
+      }
+    }
+  }
+
   const fields = { "Status": status };
   if (notes !== undefined) fields["Notes"] = notes;
   if (cost !== undefined) {
@@ -368,7 +513,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
