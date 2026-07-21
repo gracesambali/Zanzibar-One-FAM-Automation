@@ -2746,20 +2746,29 @@ async function renderWorkOrders() {
       html += `<div class="asset-list">`;
       orders.forEach(o => {
         const closable = o.status !== 'Completed';
+        const procStatus = o.procurementStatus || 'None';
+        const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
         html += `<div class="asset-row" style="cursor:default">
           ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}</div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
             ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
             ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
+            ${procStatus === 'Rejected' && o.procurementRejectionReason ? `<div style="font-size:11px;color:#991B1B;margin-top:3px">❌ Rejected: ${o.procurementRejectionReason} — revise and resubmit</div>` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
             ${guessChecklistClass(o.assetName || '', o.system || '') ? `<button onclick="openWorkOrderChecklist('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}', '${(o.system||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">📋 Checklist</button>` : ''}
             <button onclick="openWorkOrderActivity('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">💬 Activity</button>
             ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
+            ${o.status !== 'Completed' && (procStatus === 'None' || procStatus === 'Rejected') ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 ${procStatus === 'Rejected' ? 'Revise Request' : 'Request Procurement'}</button>` : ''}
+            ${procStatus === 'Requested' && currentUserPermissions && currentUserPermissions.approveProcurement ? `
+              <button onclick="approveProcurement('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✓ Approve</button>
+              <button onclick="rejectProcurementPrompt('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Reject</button>
+            ` : ''}
+            ${procStatus === 'Approved' ? `<button onclick="fulfillProcurement('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>` : ''}
             <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
               <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
@@ -2784,6 +2793,133 @@ async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
     return;
   }
   updateWorkOrderStatus(recordId, newStatus);
+}
+
+let procurementLineItemCount = 0;
+
+function openProcurementRequestModal(recordId, assetName) {
+  procurementLineItemCount = 0;
+  const overlay = document.createElement('div');
+  overlay.id = 'procurementOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Request Procurement: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Add each item and its cost. This work order can't be closed until the request is approved and fulfilled.</div>
+    <div id="procLineItems"></div>
+    <button onclick="addProcurementLineItem()" style="margin:8px 0 16px;padding:7px 14px;font-size:12px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;width:100%">+ Add Item</button>
+    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;color:var(--navy);padding-top:10px;border-top:1px solid var(--border);margin-bottom:16px">
+      <span>Total</span><span id="procTotal">TZS 0</span>
+    </div>
+    <div id="procRequestError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="document.getElementById('procurementOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="submitProcurementRequest('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:#B45309;color:#fff;font-weight:600;cursor:pointer">Submit Request</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  addProcurementLineItem();
+}
+
+function addProcurementLineItem() {
+  const id = procurementLineItemCount++;
+  const container = document.getElementById('procLineItems');
+  const row = document.createElement('div');
+  row.id = `procItem_${id}`;
+  row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px';
+  row.innerHTML = `
+    <input placeholder="e.g. Pipe fitting" class="proc-item-desc" style="flex:2;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <input type="number" placeholder="Cost" class="proc-item-cost" oninput="updateProcurementTotal()" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <button onclick="document.getElementById('procItem_${id}').remove();updateProcurementTotal()" style="padding:8px 10px;border:none;background:none;color:var(--red);cursor:pointer;font-size:16px">×</button>
+  `;
+  container.appendChild(row);
+}
+
+function updateProcurementTotal() {
+  const costs = document.querySelectorAll('.proc-item-cost');
+  let total = 0;
+  costs.forEach(c => total += Number(c.value) || 0);
+  document.getElementById('procTotal').textContent = 'TZS ' + total.toLocaleString();
+}
+
+async function submitProcurementRequest(recordId) {
+  const rows = document.querySelectorAll('#procLineItems > div');
+  const lineItems = [];
+  rows.forEach(row => {
+    const desc = row.querySelector('.proc-item-desc').value.trim();
+    const cost = Number(row.querySelector('.proc-item-cost').value) || 0;
+    if (desc) lineItems.push({ description: desc, cost });
+  });
+
+  const errorBox = document.getElementById('procRequestError');
+  if (lineItems.length === 0) {
+    errorBox.textContent = 'Add at least one item with a description.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestProcurement: true, recordId, lineItems }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
+    document.getElementById('procurementOverlay').remove();
+    renderWorkOrders();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+async function approveProcurement(recordId) {
+  if (!confirm('Approve this procurement request?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approveProcurement: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not approve: ' + err.message);
+  }
+}
+
+async function rejectProcurementPrompt(recordId) {
+  const reason = prompt('Why is this being rejected? (shown to whoever requested it)');
+  if (!reason) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejectProcurement: true, recordId, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reject');
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not reject: ' + err.message);
+  }
+}
+
+async function fulfillProcurement(recordId) {
+  if (!confirm('Mark this procurement as fulfilled? This unblocks the work order for the technician to complete.')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fulfillProcurement: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark fulfilled');
+    renderWorkOrders();
+  } catch (err) {
+    alert('Could not mark fulfilled: ' + err.message);
+  }
 }
 
 function openCostEntryModal(recordId, assetName, editMode, existingCost) {
