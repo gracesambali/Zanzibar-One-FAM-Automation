@@ -294,6 +294,10 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     <span class="tab-label">Work Orders</span>
   </button>
+  <button class="tab-btn" data-tab="plannedmaintenance" data-label="Planned Maintenance" onclick="switchTab('plannedmaintenance')" onmouseenter="showSidebarTooltip(this, 'Planned Maintenance')" onmouseleave="hideSidebarTooltip()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+    <span class="tab-label">Planned Maintenance</span>
+  </button>
   </div>
 </div>
 </div>
@@ -313,6 +317,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-levelview" class="view"></div>
   <div id="view-floorplan" class="view"></div>
   <div id="view-workorders" class="view"></div>
+  <div id="view-plannedmaintenance" class="view"></div>
 </div>
 </div>
 
@@ -527,6 +532,7 @@ function switchTab(tab) {
   if(tab==='levelview') renderLevelView();
   if(tab==='floorplan') renderFloorPlan();
   if(tab==='workorders') renderWorkOrders();
+  if(tab==='plannedmaintenance') renderPlannedMaintenance();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -1565,6 +1571,289 @@ function renderLevelView() {
 
   html += `</div>`;
   document.getElementById('view-levelview').innerHTML = html;
+}
+
+let lastPlans = [];
+
+async function renderPlannedMaintenance() {
+  const container = document.getElementById('view-plannedmaintenance');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading…</div>';
+
+  try {
+    const resp = await fetch('/api/get-assets?plannedmaintenance=true');
+    if (!resp.ok) throw new Error('Failed to load (' + resp.status + ')');
+    const data = await resp.json();
+    lastPlans = data.plans || [];
+
+    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openCreatePlanForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Plan</button></div>`;
+
+    if (lastPlans.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No planned maintenance projects yet — these are created manually for larger, budgeted initiatives, separate from day-to-day work orders.</div>`;
+    } else {
+      html += `<div class="asset-list">`;
+      lastPlans.forEach(p => {
+        const statusColors = { Planning: ['#F3F4F6','#374151'], 'In Progress': ['#DBEAFE','#1E40AF'], Completed: ['#DCFCE7','#166534'], 'On Hold': ['#FEE2E2','#991B1B'] };
+        const sc = statusColors[p.status] || statusColors.Planning;
+        const totalBudget = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
+        html += `<button class="asset-row" onclick="showPlanDetail('${p.recordId}')" style="text-align:left">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${p.title}</span><span class="asset-id">${p.planId}</span>
+              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sc[0]};color:${sc[1]}">${p.status}</span>
+            </div>
+            <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: TZS ${totalBudget.toLocaleString()} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
+          </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>`;
+      });
+      html += `</div>`;
+    }
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load: ' + err.message + '</div>';
+  }
+}
+
+function openCreatePlanForm() {
+  const overlay = document.createElement('div');
+  overlay.id = 'createPlanOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:16px">New Planned Maintenance</h3>
+    <div id="cpError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Title *</label>
+    <input id="cp_title" placeholder="e.g. Annual Fire System Overhaul" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description</label>
+    <textarea id="cp_description" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Start</label><input id="cp_start" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target End</label><input id="cp_end" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button onclick="document.getElementById('createPlanOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="submitCreatePlan()" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Create</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitCreatePlan() {
+  const title = document.getElementById('cp_title').value.trim();
+  const errorBox = document.getElementById('cpError');
+  if (!title) { errorBox.textContent = 'Title is required.'; errorBox.style.display = 'block'; return; }
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entityType: 'plannedMaintenance',
+        title,
+        description: document.getElementById('cp_description').value.trim(),
+        targetStartDate: document.getElementById('cp_start').value,
+        targetEndDate: document.getElementById('cp_end').value,
+        budgetItems: [],
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create plan');
+    document.getElementById('createPlanOverlay').remove();
+    renderPlannedMaintenance();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+async function refreshPlanView(recordId) {
+  try {
+    const resp = await fetch('/api/get-assets?plannedmaintenance=true');
+    if (resp.ok) { const data = await resp.json(); lastPlans = data.plans || []; }
+  } catch (err) { console.error(err); }
+  if (recordId && lastPlans.find(p => p.recordId === recordId)) showPlanDetail(recordId);
+  else renderPlannedMaintenance();
+}
+
+function showPlanDetail(recordId) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  if (!p) return;
+  const container = document.getElementById('view-plannedmaintenance');
+  const totalPlanned = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
+  const totalActual = p.budgetItems.reduce((s,i) => s + (Number(i.actualCost)||0), 0);
+
+  let html = `<button class="back-btn" onclick="renderPlannedMaintenance()">← Back to Planned Maintenance</button>
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div><div class="detail-title">${p.title}</div><div class="detail-sub">${p.planId}</div></div>
+      <select onchange="updatePlanField('${p.recordId}', 'Plan Status', this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+        <option value="Planning" ${p.status==='Planning'?'selected':''}>Planning</option>
+        <option value="In Progress" ${p.status==='In Progress'?'selected':''}>In Progress</option>
+        <option value="Completed" ${p.status==='Completed'?'selected':''}>Completed</option>
+        <option value="On Hold" ${p.status==='On Hold'?'selected':''}>On Hold</option>
+      </select>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Overview</div>
+      ${p.description ? `<div style="font-size:13px;line-height:1.6;margin-bottom:12px">${p.description}</div>` : ''}
+      <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div class="detail-field"><div class="detail-field-label">Target Start</div><div class="detail-field-value">${p.targetStartDate || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Target End</div><div class="detail-field-value">${p.targetEndDate || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created By</div><div class="detail-field-value">${p.createdBy || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created</div><div class="detail-field-value">${p.createdDate || '—'}</div></div>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Budget</div>
+        <button onclick="addPlanBudgetItem('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add Item</button>
+      </div>
+      ${p.budgetItems.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No budget items yet.</div>' : `
+      <table style="width:100%;font-size:12.5px;border-collapse:collapse">
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Planned</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Actual</td></tr>
+        ${p.budgetItems.map((i,idx) => `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 0">${i.description}</td><td style="padding:6px 0;text-align:right">TZS ${Number(i.plannedCost||0).toLocaleString()}</td><td style="padding:6px 0;text-align:right">${i.actualCost ? 'TZS ' + Number(i.actualCost).toLocaleString() : `<button onclick="setPlanActualCost('${p.recordId}',${idx})" style="font-size:10.5px;color:var(--navy);background:none;border:none;cursor:pointer;text-decoration:underline">+ add actual</button>`}</td></tr>`).join('')}
+        <tr><td style="padding:8px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalPlanned.toLocaleString()}</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalActual.toLocaleString()}</td></tr>
+      </table>`}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Milestones</div>
+        <button onclick="addPlanMilestone('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add Milestone</button>
+      </div>
+      ${p.milestones.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No milestones yet.</div>' :
+        p.milestones.map((m,idx) => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${m.completed?'checked':''} onchange="togglePlanMilestone('${p.recordId}',${idx},this.checked)">
+          <span style="font-size:13px;${m.completed?'text-decoration:line-through;color:var(--muted)':''}">${m.title} <span style="color:var(--muted);font-size:11px">— ${m.targetDate||'no date'}</span></span>
+        </label>`).join('')}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Meeting Log</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="document.getElementById('planDocInput').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📎 Upload Doc</button>
+          <input type="file" id="planDocInput" style="display:none" onchange="uploadPlanDocument('${p.recordId}', this)">
+          <button onclick="addPlanMeeting('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Log Meeting</button>
+        </div>
+      </div>
+      ${p.meetingLog.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No meetings logged yet.</div>' :
+        p.meetingLog.slice().reverse().map(m => `<div style="padding:8px 10px;background:#F7F8FA;border-radius:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:600">${m.date}</div><div style="font-size:12.5px;margin-top:2px">${m.notes}</div>${m.attendees ? `<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Attendees: ${m.attendees}</div>` : ''}</div>`).join('')}
+      ${p.documents.length > 0 ? `<div style="margin-top:10px">${p.documents.map(d => `<a href="${d.url}" target="_blank" style="display:block;font-size:12px;color:var(--navy);margin-bottom:4px">📄 ${d.filename}</a>`).join('')}</div>` : ''}
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Action Points</div>
+        <button onclick="addPlanActionPoint('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add</button>
+      </div>
+      ${p.actionPoints.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No action points yet.</div>' :
+        p.actionPoints.map((a,idx) => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${a.done?'checked':''} onchange="togglePlanActionPoint('${p.recordId}',${idx},this.checked)">
+          <span style="font-size:13px;${a.done?'text-decoration:line-through;color:var(--muted)':''}">${a.what} <span style="color:var(--muted);font-size:11px">— ${a.who}${a.dueDate ? ', due ' + a.dueDate : ''}</span></span>
+        </label>`).join('')}
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function updatePlanField(recordId, field, value) {
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'updatePlan', recordId, field, value }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    refreshPlanView(recordId);
+  } catch (err) {
+    alert('Could not save: ' + err.message);
+  }
+}
+
+function addPlanBudgetItem(recordId) {
+  const description = prompt('Item description:');
+  if (!description) return;
+  const plannedCost = Number(prompt('Planned cost (TZS):') || 0);
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const items = [...p.budgetItems, { description, plannedCost }];
+  updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
+}
+
+function setPlanActualCost(recordId, idx) {
+  const actualCost = Number(prompt('Actual cost (TZS):') || 0);
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const items = [...p.budgetItems];
+  items[idx] = { ...items[idx], actualCost };
+  updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
+}
+
+function addPlanMilestone(recordId) {
+  const title = prompt('Milestone:');
+  if (!title) return;
+  const targetDate = prompt('Target date (YYYY-MM-DD), optional:') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const milestones = [...p.milestones, { title, targetDate, completed: false }];
+  updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+}
+
+function togglePlanMilestone(recordId, idx, checked) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const milestones = [...p.milestones];
+  milestones[idx] = { ...milestones[idx], completed: checked };
+  updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+}
+
+function addPlanMeeting(recordId) {
+  const notes = prompt('What was discussed / decided?');
+  if (!notes) return;
+  const attendees = prompt('Attendees (optional):') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const meetingLog = [...p.meetingLog, { date: new Date().toISOString().split('T')[0], notes, attendees }];
+  updatePlanField(recordId, 'Meeting Log', JSON.stringify(meetingLog));
+}
+
+function addPlanActionPoint(recordId) {
+  const what = prompt('Action point:');
+  if (!what) return;
+  const who = prompt('Who is responsible?') || '';
+  const dueDate = prompt('Due date (optional):') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const actionPoints = [...p.actionPoints, { what, who, dueDate, done: false }];
+  updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+}
+
+function togglePlanActionPoint(recordId, idx, checked) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const actionPoints = [...p.actionPoints];
+  actionPoints[idx] = { ...actionPoints[idx], done: checked };
+  updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+}
+
+async function uploadPlanDocument(recordId, inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert('File larger than 5MB.'); return; }
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'uploadPlanDocument', recordId, filename: file.name, contentType: file.type, fileBase64: base64 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+    refreshPlanView(recordId);
+  } catch (err) {
+    alert('Could not upload: ' + err.message);
+  }
 }
 
 let lastWorkOrders = [];
