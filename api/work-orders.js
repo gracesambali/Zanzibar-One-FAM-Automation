@@ -49,7 +49,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -74,6 +74,49 @@ export default async function handler(req, res) {
     // Checklist item toggle — real, per-work-order accountability for
     // ISO checklist items. Never blocks closing the work order; it's a
     // status signal, not a gate, matching what was explicitly asked for.
+    // Activity log — makes every work order a real, timestamped
+    // conversation: comments, procurement requests, status notes, all
+    // attributed to who actually wrote them and when. This is the
+    // foundation the routing/approval/performance-tracking pieces will
+    // build on next.
+    if (req.body && req.body.addActivityEntry) {
+      const { recordId, text, entryType } = req.body;
+      if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        let log = [];
+        try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
+
+        log.push({
+          type: entryType || "comment", // comment / procurement_request / system
+          text,
+          by: session.u,
+          at: new Date().toISOString(),
+        });
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save activity entry");
+
+        return res.status(200).json({ success: true, log });
+      } catch (err) {
+        console.error("activity log error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.checklistToggle) {
       const { recordId, itemId, checked } = req.body;
       if (!recordId || !itemId) return res.status(400).json({ error: "recordId and itemId required" });
@@ -324,7 +367,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
