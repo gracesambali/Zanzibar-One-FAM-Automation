@@ -2470,6 +2470,71 @@ async function submitDocumentUpload(recordId, inputEl) {
   }
 }
 
+async function openWorkOrderActivity(recordId, assetName) {
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  let log = [];
+  try { log = JSON.parse((wo && wo.activityLog) || "[]"); } catch { log = []; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'activityWOOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:500px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Activity: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every update here is timestamped and attributed — this is the real record of what happened.</div>
+    <div id="wo_activity_thread" style="flex:1;overflow-y:auto;margin-bottom:14px;padding-right:4px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="wo_activity_input" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWOActivity('${recordId}')">
+      <button onclick="submitWOActivity('${recordId}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+    </div>
+    <button onclick="document.getElementById('activityWOOverlay').remove()" style="margin-top:12px;width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  renderWOActivityThread(log);
+}
+
+function renderWOActivityThread(log) {
+  const thread = document.getElementById('wo_activity_thread');
+  if (!thread) return;
+  if (log.length === 0) {
+    thread.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:12px 0">No activity yet — the first update starts the record.</div>`;
+    return;
+  }
+  thread.innerHTML = log.map(entry => `
+    <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  `).join('');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function submitWOActivity(recordId) {
+  const input = document.getElementById('wo_activity_input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addActivityEntry: true, recordId, text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save update');
+
+    const wo = lastWorkOrders.find(o => o.id === recordId);
+    if (wo) wo.activityLog = JSON.stringify(data.log);
+
+    input.value = '';
+    renderWOActivityThread(data.log);
+  } catch (err) {
+    alert('Could not send update: ' + err.message);
+  } finally {
+    input.disabled = false;
+  }
+}
+
 async function openWorkOrderChecklist(recordId, assetName, system) {
   const checklistClass = guessChecklistClass(assetName, system);
   if (!checklistClass) return;
@@ -2693,6 +2758,7 @@ async function renderWorkOrders() {
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
             ${guessChecklistClass(o.assetName || '', o.system || '') ? `<button onclick="openWorkOrderChecklist('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}', '${(o.system||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">📋 Checklist</button>` : ''}
+            <button onclick="openWorkOrderActivity('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">💬 Activity</button>
             ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
             <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
