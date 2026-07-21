@@ -273,11 +273,11 @@ button { font-family: inherit; cursor: pointer; }
 // Nothing else in this file needs to change per client.
 // ============================================================
 const CLIENT_CONFIG = {
-  clientName: "Sali International Hospital",
-  buildingLabel: "[Floor/Zone — confirm after site survey]", // fill in once the pilot floor/zone is agreed (Field 1 of the scope PDF)
-  region: "Zanzibar",           // project-level — one project = one region, set once here, not per-asset
-  district: "Zanzibar Urban",   // project-level — same reasoning as region
-  building: "[Building name]",  // project-level — the facility/building name for this deployment
+  clientName: "Zanzibar One Tower",
+  buildingLabel: "Zanzibar One Tower",
+  region: "Zanzibar",
+  district: "Zanzibar Urban",
+  building: "Zanzibar One Tower",
   accentColor: "#1A3566",
   pageTitle: "GVC Facility Asset Manager"
 };
@@ -286,7 +286,7 @@ const CLIENT_CONFIG = {
 document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
 document.addEventListener('DOMContentLoaded', () => {
   const sub = document.getElementById('header-subtitle');
-  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.building} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
+  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
 });
 
 let assets = []; // populated live from Airtable via /api/get-assets
@@ -486,10 +486,12 @@ function renderDashboard() {
 
   let html = '';
 
-  // Dashboard timeframe selector
+  // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
-    ${[3,7,14,21,30,90,180,365].map(d => `<button onclick="currentDashboardWindow=${d};renderDashboard()" style="padding:4px 10px;font-size:11px;font-weight:${windowDays===d?'700':'400'};border:1px solid ${windowDays===d?'var(--navy)':'var(--border)'};border-radius:6px;background:${windowDays===d?'var(--navy)':'#fff'};color:${windowDays===d?'#fff':'var(--text)'};cursor:pointer">${d <= 30 ? d+'d' : d <= 180 ? Math.round(d/30)+'mo' : '1yr'}</button>`).join('')}
+    <select class="filter-select" onchange="currentDashboardWindow=parseInt(this.value);renderDashboard()">
+      ${[3,7,14,21,30,90,180,365].map(d => `<option value="${d}"${windowDays===d?' selected':''}>${d <= 30 ? d+' Days' : d <= 180 ? Math.round(d/30)+' Months' : '1 Year'}</option>`).join('')}
+    </select>
   </div>`;
 
   // KPI row — Total Asset Value removed per brief
@@ -2368,6 +2370,81 @@ async function submitDocumentUpload(recordId, inputEl) {
   }
 }
 
+async function openWorkOrderChecklist(recordId, assetName, system) {
+  const checklistClass = guessChecklistClass(assetName, system);
+  if (!checklistClass) return;
+
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  let progress = {};
+  try { progress = JSON.parse((wo && wo.checklistProgress) || "{}"); } catch { progress = {}; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'checklistWOOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Checklist: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Optional tracking — checking items off does not block closing this work order.</div>
+    <div id="wo_checklist_body" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+    <button onclick="document.getElementById('checklistWOOverlay').remove()" style="margin-top:16px;width:100%;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+    const data = await resp.json();
+    const body = document.getElementById('wo_checklist_body');
+    if (!data.items || data.items.length === 0) {
+      body.innerHTML = `<div>No checklist items defined yet for ${checklistClass}.</div>`;
+      return;
+    }
+    body.innerHTML = data.items.map((item, i) => {
+      const state = progress[i] || {};
+      const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+      return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this)" style="margin-top:2px">
+        <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+      </label>`;
+    }).join('');
+  } catch (err) {
+    document.getElementById('wo_checklist_body').innerHTML = `<div style="color:var(--red)">Could not load checklist: ${err.message}</div>`;
+  }
+}
+
+async function toggleWOChecklistItem(recordId, itemId, checked, inputEl) {
+  inputEl.disabled = true;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checklistToggle: true, recordId, itemId, checked }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+
+    // Update local cache so re-opening the modal reflects the change
+    // immediately without needing a full work orders reload.
+    const wo = lastWorkOrders.find(o => o.id === recordId);
+    if (wo) wo.checklistProgress = JSON.stringify(data.progress);
+
+    const label = inputEl.closest('label');
+    const noteSpan = label.querySelector('span');
+    if (checked) {
+      const noteDiv = noteSpan.querySelector('div:last-child');
+      const noteHtml = `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ Checked by ${data.progress[itemId].by} · just now</div>`;
+      if (noteDiv && noteDiv.tagName === 'DIV' && noteDiv !== noteSpan.firstElementChild) {
+        noteDiv.outerHTML = noteHtml;
+      } else {
+        noteSpan.insertAdjacentHTML('beforeend', noteHtml);
+      }
+    }
+  } catch (err) {
+    inputEl.checked = !checked; // revert on failure
+    alert('Could not save checklist item: ' + err.message);
+  } finally {
+    inputEl.disabled = false;
+  }
+}
+
 function toggleFloorPlanUploadPanel() {
   const panel = document.getElementById('floorPlanUploadPanel');
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -2515,6 +2592,7 @@ async function renderWorkOrders() {
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
             ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+            ${guessChecklistClass(o.assetName || '', o.system || '') ? `<button onclick="openWorkOrderChecklist('${o.id}', '${(o.assetName||'').replace(/'/g,"\\'")}', '${(o.system||'').replace(/'/g,"\\'")}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">📋 Checklist</button>` : ''}
             ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
             <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
               <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
@@ -2893,7 +2971,7 @@ function printMaintenancePlan(windowDays) {
     <body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <h1>Maintenance Plan — Next ${windowDays} Days</h1>
-      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
       ${filtered.length === 0 ? '<div class="empty">Nothing due for service within this window.</div>' : `
       <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
       <tbody>${rows}</tbody></table>`}
@@ -2939,7 +3017,7 @@ async function generateMonthlyReport() {
       <body>
         <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
         <h1>Monthly Report — Last 30 Days</h1>
-        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
+        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
 
         <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts Sent</div></div>
 
