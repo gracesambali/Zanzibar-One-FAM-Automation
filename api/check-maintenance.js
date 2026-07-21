@@ -19,6 +19,7 @@ import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/reci
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
+import { getAssignedRole } from "../lib/routing.js";
 
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
@@ -199,6 +200,7 @@ async function createWorkOrder(f, urgency) {
     "Created": new Date().toISOString(),
     "Last Reminder Sent": todayString(),
     "Notes": "",
+    "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
   };
 
   // Try with Maintenance Type first; if that field doesn't exist yet in

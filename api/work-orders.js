@@ -15,6 +15,7 @@
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklist } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
+import { getAssignedRole } from "../lib/routing.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -49,7 +50,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -367,7 +368,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
@@ -434,6 +435,7 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       "Urgency": "SCHEDULED",
       "Created": new Date().toISOString(),
       "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
+      "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
     };
 
     let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
