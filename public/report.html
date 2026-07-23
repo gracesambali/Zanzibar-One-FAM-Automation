@@ -43,6 +43,10 @@
       <label for="reporterRole">Your Role / Department</label>
       <input id="reporterRole" type="text" placeholder="e.g. Ward Nurse, Procurement">
 
+      <label for="reporterContact">Your Phone or Email</label>
+      <div class="sub" style="margin:0 0 6px">Optional — so we can tell you once it's actually fixed</div>
+      <input id="reporterContact" type="text" placeholder="e.g. +255 7XX XXX XXX or you@email.com">
+
       <div class="row2">
         <div>
           <label for="floor">Floor *</label>
@@ -68,6 +72,10 @@
       <label for="description">What's wrong? *</label>
       <textarea id="description" placeholder="Describe what you're seeing — noise, leak, not working, etc." required></textarea>
 
+      <label for="photo">Photo (optional)</label>
+      <div class="sub" style="margin:0 0 6px">A quick picture helps the team understand the issue faster</div>
+      <input id="photo" type="file" accept="image/*">
+
       <button type="submit" id="submitBtn">Submit Report</button>
     </form>
 
@@ -84,20 +92,34 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
 
   const reporterName = document.getElementById('reporterName').value.trim();
   const reporterRole = document.getElementById('reporterRole').value.trim();
+  const reporterContact = document.getElementById('reporterContact').value.trim();
   const floor = document.getElementById('floor').value.trim();
   const roomZone = document.getElementById('roomZone').value.trim();
   const category = document.getElementById('category').value;
   const description = document.getElementById('description').value.trim();
+  const photoFile = document.getElementById('photo').files[0];
 
   btn.disabled = true;
   btn.textContent = 'Submitting…';
   result.className = 'result';
 
   try {
+    let photoBase64 = null, photoFilename = null, photoContentType = null;
+    if (photoFile) {
+      photoBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(photoFile);
+      });
+      photoFilename = photoFile.name;
+      photoContentType = photoFile.type;
+    }
+
     const resp = await fetch('/api/report-issue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reporterName, reporterRole, floor, roomZone, category, description }),
+      body: JSON.stringify({ reporterName, reporterRole, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType }),
     });
     const data = await resp.json();
 
