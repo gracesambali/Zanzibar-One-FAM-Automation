@@ -284,9 +284,10 @@ export default async function handler(req, res) {
         let progress = {};
         try { progress = JSON.parse(woData.fields["Checklist Progress"] || "{}"); } catch { progress = {}; }
 
-        progress[itemId] = checked
-          ? { checked: true, by: session.u, at: new Date().toISOString() }
-          : { checked: false };
+        // Unchecking used to just wipe the entry — no record of who
+        // unchecked it or when. Every checklist action is now recorded
+        // the same way, in both directions.
+        progress[itemId] = { checked: !!checked, by: session.u, at: new Date().toISOString() };
 
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
@@ -294,6 +295,14 @@ export default async function handler(req, res) {
           body: JSON.stringify({ fields: { "Checklist Progress": JSON.stringify(progress) } }),
         });
         if (!patchResp.ok) throw new Error("Could not save checklist progress");
+
+        const itemLabel = req.body.itemLabel || `item ${Number(itemId) + 1}`;
+        await appendActivityLog(
+          recordId,
+          checked ? `☑ Checked off: ${itemLabel}` : `☐ Unchecked: ${itemLabel}`,
+          session.u,
+          "system"
+        );
 
         return res.status(200).json({ success: true, progress });
       } catch (err) {
