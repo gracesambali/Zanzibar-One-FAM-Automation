@@ -144,6 +144,15 @@ async function sendUnsatisfactionAlert(assetName, reason) {
   }
 }
 
+const CATEGORY_TO_ROLE = {
+  "Electrical": "Electrical",
+  "Plumbing": "Mechanical",
+  "HVAC": "Mechanical",
+  "Fire": "Electrical",
+  "General": "Admin",
+  "NotSure": "Admin", // confirmed default — an unclear report goes to Admin, not left unrouted
+};
+
 export default async function handler(req, res) {
   // Satisfaction confirmation — the link sent to the reporter once
   // their work order is marked Completed. No login: this is the same
@@ -157,17 +166,19 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { reporterName, reporterRole, reporterContact, floor, roomZone, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  const { reporterName, reporterRole, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
 
-  if (!reporterName || !floor || !description) {
-    return res.status(400).json({ error: "Your name, the floor, and a description are required" });
+  if (!reporterName || !floor || !description || !category) {
+    return res.status(400).json({ error: "Your name, the floor, a category, and a description are required" });
   }
+
+  const assignedRole = CATEGORY_TO_ROLE[category] || "Admin";
 
   try {
     const location = roomZone ? `${floor} — ${roomZone}` : floor;
     const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
 
-    const { woId, recordId } = await createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description);
+    const { woId, recordId } = await createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole);
 
     if (photoBase64 && photoFilename) {
       await uploadReporterPhoto(recordId, photoFilename, photoContentType, photoBase64);
@@ -187,7 +198,7 @@ export default async function handler(req, res) {
   }
 }
 
-async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description) {
+async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
@@ -198,6 +209,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     "Asset ID": "",
     "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
     "System": "",
+    "Assigned Role": assignedRole,
     "Location": location,
     "Status": "Open",
     "Urgency": "REPORTED",
