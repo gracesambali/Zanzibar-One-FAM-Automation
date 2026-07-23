@@ -4124,12 +4124,14 @@ function buildPeriodReportHtml(data, title, periodLabel) {
     return grouped;
   })();
 
-  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not Closed';
+  const fmtOpenDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
   const itemTable = (items) => `
     <table class="report-table">
+      <colgroup><col style="width:55%"><col style="width:22.5%"><col style="width:22.5%"></colgroup>
       <thead><tr><th>Item</th><th>Date Opened</th><th>Date Closed</th></tr></thead>
-      <tbody>${items.map(i => `<tr><td>${i.name || i.assetName}</td><td>${fmtDate(i.dateOpened)}</td><td>${fmtDate(i.dateClosed)}</td></tr>`).join('')}</tbody>
+      <tbody>${items.map(i => `<tr><td>${i.name || i.assetName}</td><td>${fmtOpenDate(i.dateOpened)}</td><td>${fmtDate(i.dateClosed)}</td></tr>`).join('')}</tbody>
     </table>`;
 
   return `
@@ -4147,7 +4149,7 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       .kpi-label { font-size:11px; color:#6B7280; }
       h2 { color:#1A3566; font-size:15px; margin:20px 0 8px; }
       h3 { color:#1A3566; font-size:13px; margin:14px 0 6px; }
-      .report-table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:10px; }
+      .report-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; margin-bottom:10px; }
       .report-table th { background:#1A3566; color:#fff; text-align:left; padding:7px 10px; }
       .report-table td { padding:6px 10px; border-bottom:1px solid #E2E6ED; }
       .report-table tr:nth-child(even) { background:#F8FAFC; }
@@ -4233,13 +4235,39 @@ async function generateWeeklyReport() {
 }
 
 function buildReportExportRows(data) {
-  const rows = [['Section', 'Type/Urgency', 'Item', 'Date Opened', 'Date Closed']];
+  const ws = data.workOrderStatus || {};
   const fmt = (iso) => iso ? new Date(iso).toLocaleDateString() : '';
+  const rows = [];
+
+  rows.push(['Work Orders Summary']);
+  rows.push(['Completed', ws.completed || 0]);
+  rows.push(['Open', ws.open || 0]);
+  rows.push(['In Progress', ws.inProgress || 0]);
+  rows.push(['Ready for Review', ws.readyForReview || 0]);
+  rows.push(['Overdue', ws.overdue || 0]);
+  rows.push(['Urgent', ws.urgent || 0]);
+  rows.push(['Upcoming', ws.upcoming || 0]);
+  rows.push([]);
+  rows.push(['Total Maintenance Cost This Period (TZS)', data.totalCost || 0]);
+  rows.push([]);
+
+  rows.push(['Section', 'Type/Urgency', 'Item', 'Date Opened', 'Date Closed']);
   for (const [type, items] of Object.entries(data.maintenanceItemsByType || {})) {
-    items.forEach(i => rows.push(['Maintenance', type, i.name, fmt(i.dateOpened), fmt(i.dateClosed)]));
+    items.forEach(i => rows.push(['Maintenance', type, i.name, fmt(i.dateOpened), i.dateClosed ? fmt(i.dateClosed) : 'Not Closed']));
   }
-  (data.alerts || []).forEach(a => rows.push(['Alert', a.urgency, a.assetName, fmt(a.dateOpened), fmt(a.dateClosed)]));
+  (data.alerts || []).forEach(a => rows.push(['Alert', a.urgency, a.assetName, fmt(a.dateOpened), a.dateClosed ? fmt(a.dateClosed) : 'Not Closed']));
   return rows;
+}
+
+// First column bolded throughout — labels in the summary block, and
+// the Section column in the item table below it.
+function applyFirstColumnBold(ws, rowCount) {
+  for (let r = 0; r < rowCount; r++) {
+    const addr = XLSX.utils.encode_cell({ r, c: 0 });
+    if (ws[addr]) {
+      ws[addr].s = Object.assign({}, ws[addr].s, { font: { bold: true } });
+    }
+  }
 }
 
 function hasReportData(data) {
@@ -4286,6 +4314,7 @@ async function exportMonthlyReportXLSX() {
     if (!hasReportData(data)) { alert('No report data yet.'); return; }
     const rows = buildReportExportRows(data);
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyFirstColumnBold(ws, rows.length);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Monthly Report');
     XLSX.writeFile(wb, `monthly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -4300,6 +4329,7 @@ async function exportWeeklyReportXLSX() {
     if (!hasReportData(data)) { alert('No report data yet.'); return; }
     const rows = buildReportExportRows(data);
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyFirstColumnBold(ws, rows.length);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Weekly Report');
     XLSX.writeFile(wb, `weekly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
