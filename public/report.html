@@ -74,7 +74,13 @@
 
       <label for="photo">Photo (optional)</label>
       <div class="sub" style="margin:0 0 6px">A quick picture helps the team understand the issue faster</div>
-      <input id="photo" type="file" accept="image/*">
+      <div style="display:flex;gap:10px">
+        <button type="button" id="takePhotoBtn" style="flex:1;margin-top:0;padding:11px;background:#fff;border:1px solid #E2E6ED;color:#1A3566;font-size:13px">📷 Take Photo</button>
+        <button type="button" id="choosePhotoBtn" style="flex:1;margin-top:0;padding:11px;background:#fff;border:1px solid #E2E6ED;color:#1A3566;font-size:13px">🖼️ Choose File</button>
+      </div>
+      <input id="photoCamera" type="file" accept="image/*" capture="environment" style="display:none">
+      <input id="photoFile" type="file" accept="image/*" style="display:none">
+      <div id="photoPreviewName" style="font-size:11.5px;color:#6B7280;margin-top:8px"></div>
 
       <button type="submit" id="submitBtn">Submit Report</button>
     </form>
@@ -85,6 +91,17 @@
   </div>
 
 <script>
+document.getElementById('takePhotoBtn').addEventListener('click', () => document.getElementById('photoCamera').click());
+document.getElementById('choosePhotoBtn').addEventListener('click', () => document.getElementById('photoFile').click());
+
+let selectedPhotoFile = null;
+function handlePhotoSelected(e) {
+  selectedPhotoFile = e.target.files[0] || null;
+  document.getElementById('photoPreviewName').textContent = selectedPhotoFile ? `✓ ${selectedPhotoFile.name}` : '';
+}
+document.getElementById('photoCamera').addEventListener('change', handlePhotoSelected);
+document.getElementById('photoFile').addEventListener('change', handlePhotoSelected);
+
 document.getElementById('reportForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
@@ -97,7 +114,7 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
   const roomZone = document.getElementById('roomZone').value.trim();
   const category = document.getElementById('category').value;
   const description = document.getElementById('description').value.trim();
-  const photoFile = document.getElementById('photo').files[0];
+  const photoFile = selectedPhotoFile;
 
   btn.disabled = true;
   btn.textContent = 'Submitting…';
@@ -127,6 +144,8 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
       result.className = 'result success show';
       result.textContent = data.message || 'Report submitted. The maintenance team has been notified.';
       document.getElementById('reportForm').reset();
+      selectedPhotoFile = null;
+      document.getElementById('photoPreviewName').textContent = '';
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';
