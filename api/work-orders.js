@@ -618,20 +618,32 @@ async function sendSatisfactionRequest(contact, recordId, assetName) {
 
   try {
     if (isEmail) {
+      const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Work Completed</div>
+            <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName}</div>
+          </div>
+          <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+            <p style="margin:0 0 16px;color:#1A1A2E;font-size:14px;line-height:1.6">Are you satisfied with how this was resolved?</p>
+            <a href="${yesLink}" style="background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;margin-right:10px;font-size:13px;font-weight:600">Yes, I'm satisfied</a>
+            <a href="${noLink}" style="background:#dc2626;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">No, still a problem</a>
+          </div>
+        </div>`;
       await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
           to: [contact],
-          subject: `Was your reported issue fixed? — ${assetName}`,
-          html: `<p>The issue you reported (${assetName}) has been marked as completed.</p>
-                 <p>Was it actually fixed to your satisfaction?</p>
-                 <p><a href="${yesLink}" style="background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;margin-right:10px">Yes, it's fixed</a>
-                 <a href="${noLink}" style="background:#dc2626;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">No, still a problem</a></p>`,
+          subject: `Are you satisfied with the fix? — ${assetName}`,
+          html,
         }),
       });
     } else {
+      const rawMessage = `Are you satisfied with how "${assetName}" was resolved? Yes: ${yesLink} No: ${noLink}`;
+      const cleanMessage = sanitizeForSmsWO(rawMessage);
       const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
       await fetch("https://apisms.beem.africa/v1/send", {
         method: "POST",
@@ -640,7 +652,7 @@ async function sendSatisfactionRequest(contact, recordId, assetName) {
           source_addr: process.env.BEEM_SENDER_ID || "INFO",
           schedule_time: "",
           encoding: 0,
-          message: `Was "${assetName}" fixed? Yes: ${yesLink} No: ${noLink}`.slice(0, 300),
+          message: cleanMessage.slice(0, 300),
           recipients: [{ recipient_id: 1, dest_addr: contact }],
         }),
       });
@@ -648,6 +660,17 @@ async function sendSatisfactionRequest(contact, recordId, assetName) {
   } catch (err) {
     console.error("sendSatisfactionRequest error:", err);
   }
+}
+
+// Same sanitizer used everywhere else — Beem's GSM-7 encoding rejects
+// smart quotes and em-dashes, which asset/description text often has.
+function sanitizeForSmsWO(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
 }
 
 // Rolls the linked Component's maintenance date forward the same way a

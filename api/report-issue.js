@@ -13,6 +13,7 @@
 // alert, with the reporter's name and exact location attached.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+import { getAllStaffDirectory } from "../lib/staffDirectory.js";
 
 async function handleSatisfactionResponse(req, res) {
   const { recordId, satisfaction, reason } = req.query;
@@ -46,8 +47,9 @@ async function handleSatisfactionResponse(req, res) {
     const getResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
     });
+    let woData = null;
     if (getResp.ok) {
-      const woData = await getResp.json();
+      woData = await getResp.json();
       let log = [];
       try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
       log.push({
@@ -72,6 +74,9 @@ async function handleSatisfactionResponse(req, res) {
     if (!reason) {
       return res.status(200).send(reasonFormPage(recordId));
     }
+
+    await sendUnsatisfactionAlert(woData?.fields?.["Asset Name"] || "a reported issue", reason);
+
     return res.status(200).send(simplePage("We've reopened this", "Thanks for letting us know — the team has been notified and will follow up."));
   } catch (err) {
     console.error("satisfaction response error:", err);
@@ -98,6 +103,45 @@ function reasonFormPage(recordId) {
       <textarea name="reason" rows="4" placeholder="Briefly describe what's still wrong" required></textarea>
       <button type="submit">Submit</button>
     </form></body></html>`;
+}
+
+// Fires when a reporter says they're NOT satisfied — Engineer, Admin,
+// and Property Manager all get a direct email, not just a quietly
+// reopened work order nobody notices.
+async function sendUnsatisfactionAlert(assetName, reason) {
+  const directory = getAllStaffDirectory();
+  const toList = directory
+    .filter(e => ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(e.role) && e.email)
+    .map(e => e.email);
+  if (toList.length === 0) return;
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#dc2626;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Reporter Not Satisfied</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">The reporter said the work wasn't done to their satisfaction. The work order has been reopened.</p>
+        <p style="margin:12px 0 0;color:#6B7280;font-size:13px"><strong>Reason:</strong> ${reason || "(no reason given)"}</p>
+      </div>
+    </div>`;
+
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Not satisfied — reopened: ${assetName}`,
+        html,
+      }),
+    });
+  } catch (err) {
+    console.error("sendUnsatisfactionAlert error:", err);
+  }
 }
 
 export default async function handler(req, res) {
@@ -130,9 +174,11 @@ export default async function handler(req, res) {
     }
 
     await Promise.all([
-      sendEmail(message),
+      sendEmail(message, description, location),
       sendSms(message),
     ]);
+
+    await logAlert(description, location, recordId);
 
     return res.status(200).json({ success: true, message: "Report submitted. The technical team has been notified.", woId });
   } catch (err) {
@@ -150,7 +196,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   const baseFields = {
     "WO ID": woId,
     "Asset ID": "",
-    "Asset Name": "Staff-Reported Issue (no specific asset)",
+    "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
     "System": "",
     "Location": location,
     "Status": "Open",
@@ -204,9 +250,23 @@ async function uploadReporterPhoto(recordId, filename, contentType, fileBase64) 
   }
 }
 
-async function sendEmail(message) {
+async function sendEmail(message, description, location) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return;
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Staff-Reported Issue</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${location}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
+        <p style="margin:0;color:#6B7280;font-size:12.5px">${message.match(/Reported by [^:]+/)?.[0] || ""}</p>
+      </div>
+      <p style="color:#9CA3AF;font-size:11px;margin-top:16px">Reported directly by staff through ${fromName}.</p>
+    </div>`;
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -215,20 +275,34 @@ async function sendEmail(message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Staff-Reported Issue`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Reported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.</p>`,
-      text: `${message}\n\nReported directly by staff through ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
+      subject: `${fromName} — Staff-Reported Issue: ${location}`,
+      html,
+      text: `${message}\n\nReported directly by staff through ${fromName}.`,
     }),
   });
   if (!resp.ok) console.error("Resend error:", await resp.text());
+}
+
+// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
+// punctuation — the exact same sanitizer used everywhere else in this
+// system. This file was the one place missing it, which is the likely
+// reason staff-reported SMS were silently failing to send at all.
+function sanitizeForSms(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, "");
 }
 
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) return;
 
+  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -240,9 +314,35 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: message.slice(0, 160),
+      message: cleanMessage.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
   if (!resp.ok) console.error("Beem error:", await resp.text());
+}
+
+// Missing until now — every other alert-triggering file writes to
+// Alert Log, which is what the Weekly/Monthly reports actually read
+// from. Without this, staff-reported issues were invisible in those
+// reports even though the notification and Work Order both worked.
+async function logAlert(description, location, recordId) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
+  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fields: {
+        "Timestamp": new Date().toISOString(),
+        "Asset ID": "",
+        "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+        "System": "",
+        "Location": location,
+        "Urgency": "REPORTED",
+        "Channel": "Email + SMS (staff report)",
+        "Message": `Staff-reported issue: ${description}`,
+      },
+    }),
+  });
+  if (!resp.ok) console.error("Alert log write failed:", await resp.text());
 }
