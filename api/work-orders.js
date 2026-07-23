@@ -297,14 +297,10 @@ export default async function handler(req, res) {
         if (!patchResp.ok) throw new Error("Could not save checklist progress");
 
         const itemLabel = req.body.itemLabel || `item ${Number(itemId) + 1}`;
-        await appendActivityLog(
-          recordId,
-          checked ? `☑ Checked off: ${itemLabel}` : `☐ Unchecked: ${itemLabel}`,
-          session.u,
-          "system"
-        );
+        const activityText = checked ? `☑ Checked off: ${itemLabel}` : `☐ Unchecked: ${itemLabel}`;
+        const newEntry = await appendActivityLog(recordId, activityText, session.u, "system");
 
-        return res.status(200).json({ success: true, progress });
+        return res.status(200).json({ success: true, progress, activityEntry: newEntry });
       } catch (err) {
         console.error("checklist toggle error:", err);
         return res.status(500).json({ error: err.message });
@@ -389,19 +385,21 @@ async function appendActivityLog(recordId, text, by, type) {
   const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
     headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
   });
-  if (!getResp.ok) { console.error("appendActivityLog: could not read work order"); return; }
+  if (!getResp.ok) { console.error("appendActivityLog: could not read work order"); return null; }
   const woData = await getResp.json();
 
   let log = [];
   try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
-  log.push({ type: type || "comment", text, by, at: new Date().toISOString() });
+  const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
+  log.push(entry);
 
   const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
   });
-  if (!patchResp.ok) console.error("appendActivityLog: could not save entry");
+  if (!patchResp.ok) { console.error("appendActivityLog: could not save entry"); return null; }
+  return entry;
 }
 
 // Before/after photo upload — same uploadAttachment pattern already
