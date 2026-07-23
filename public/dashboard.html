@@ -198,6 +198,36 @@ button { font-family: inherit; cursor: pointer; }
 
 .footer { text-align: center; padding: 24px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 40px; background: var(--white); }
 
+.staff-perf-header, .staff-perf-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.8fr 0.8fr 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.staff-perf-header { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.staff-perf-header .staff-perf-cell { color: var(--muted); font-size: 10.5px; text-transform: uppercase; text-align: right; }
+.staff-perf-header .staff-perf-name { text-align: left; }
+.staff-perf-row { padding: 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.staff-perf-row .staff-perf-cell { text-align: right; }
+.staff-perf-row .staff-perf-name { text-align: left; font-weight: 600; }
+.staff-perf-label { display: none; }
+
+@media (max-width: 640px) {
+  .staff-perf-header { display: none; }
+  .staff-perf-row {
+    display: block;
+    background: #F7F8FA;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border-bottom: none;
+    padding: 12px 14px;
+  }
+  .staff-perf-row .staff-perf-name { font-size: 14px; margin-bottom: 8px; }
+  .staff-perf-row .staff-perf-cell { display: flex; justify-content: space-between; padding: 3px 0; }
+  .staff-perf-label { display: inline; color: var(--muted); font-size: 11.5px; }
+  .staff-perf-val { font-weight: 600; }
+}
+
 /* Systems tab */
 .sys-card { background:var(--white); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:14px; }
 .sys-card-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
@@ -253,6 +283,13 @@ button { font-family: inherit; cursor: pointer; }
   </div>
   <div style="display:flex;align-items:center;gap:16px">
     <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
+    <div id="loggedInUserBadge" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px 4px 4px">
+      <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:#1A3566;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0"></div>
+      <div style="line-height:1.2">
+        <div id="userNameLabel" style="font-size:12px;font-weight:600;color:#fff"></div>
+        <div id="userRoleLabel" style="font-size:10px;color:rgba(255,255,255,0.7)"></div>
+      </div>
+    </div>
     <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
   </div>
 </div>
@@ -465,6 +502,27 @@ let dashboardWorkOrders = []; // populated live from /api/work-orders alongside 
 // Mirrors lib/roles.js — used only to toggle UI elements (cost fields,
 // Add/Decommission buttons etc). The API is the real enforcement; this
 // just avoids showing controls a role isn't allowed to use.
+const ROLE_LABELS = {
+  technician: "Technician",
+  electrical_engineer: "Electrical Engineer",
+  mechanical_engineer: "Mechanical Engineer",
+  admin: "Admin",
+  property_manager: "Property Manager",
+  procurement: "Procurement",
+  stock_keeper: "Stock Keeper",
+  business_owner: "Business Owner",
+  system_admin: "System Admin",
+};
+
+function populateLoggedInUserBadge(username, role) {
+  const badge = document.getElementById('loggedInUserBadge');
+  if (!badge || !username) return;
+  document.getElementById('userAvatarCircle').textContent = username.charAt(0).toUpperCase();
+  document.getElementById('userNameLabel').textContent = username;
+  document.getElementById('userRoleLabel').textContent = ROLE_LABELS[role] || role;
+  badge.style.display = 'flex';
+}
+
 const ROLE_PERMISSIONS = {
   technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
@@ -2676,29 +2734,27 @@ async function loadStaffPerformance() {
     for (const person of people) {
       const perf = data.performance.find(p => p.person === person) || {};
       const proc = data.procurement.find(p => p.person === person) || {};
-      rows += `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:600">${person}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${perf.workOrdersClosed ?? '—'}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${proc.requestsMade ?? '—'}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${proc.requestsMade ? proc.rejectionRate + '%' : '—'}</td>
-      </tr>`;
+      rows += `<div class="staff-perf-row">
+        <div class="staff-perf-cell staff-perf-name">${person}</div>
+        <div class="staff-perf-cell"><span class="staff-perf-label">Closed</span><span class="staff-perf-val">${perf.workOrdersClosed ?? '—'}</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-label">Avg. Days</span><span class="staff-perf-val">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-label">Procurement Reqs</span><span class="staff-perf-val">${proc.requestsMade ?? '—'}</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-label">Rejection Rate</span><span class="staff-perf-val">${proc.requestsMade ? proc.rejectionRate + '%' : '—'}</span></div>
+      </div>`;
     }
 
-    const escalationBadges = Object.entries(data.escalationsByRole || {}).map(([role, count]) => `<span style="background:#FEE2E2;color:#991B1B;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;margin-right:6px">${role}: ${count} escalated</span>`).join('');
+    const escalationBadges = Object.entries(data.escalationsByRole || {}).map(([role, count]) => `<span style="background:#FEE2E2;color:#991B1B;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;margin-right:6px;display:inline-block;margin-bottom:6px">${role}: ${count} escalated</span>`).join('');
 
     el.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:12px">
-        <thead><tr>
-          <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Person</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Closed</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Avg. Days</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Procurement Reqs</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Rejection Rate</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      ${escalationBadges ? `<div>${escalationBadges}</div>` : ''}
+      <div class="staff-perf-header">
+        <div class="staff-perf-cell staff-perf-name">Person</div>
+        <div class="staff-perf-cell"><span class="staff-perf-val">Closed</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-val">Avg. Days</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-val">Procurement Reqs</span></div>
+        <div class="staff-perf-cell"><span class="staff-perf-val">Rejection Rate</span></div>
+      </div>
+      <div class="staff-perf-body">${rows}</div>
+      ${escalationBadges ? `<div style="margin-top:12px">${escalationBadges}</div>` : ''}
     `;
   } catch (err) {
     el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load: ${err.message}</div>`;
@@ -3097,10 +3153,12 @@ async function renderWODetailChecklist(o) {
       html += `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--navy);background:#EEF1F5;padding:5px 10px;margin-top:10px">${freq}</div>`;
       freqGroups[freq].forEach(item => {
         const state = progress[item._index] || {};
-        const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+        const noteText = state.checked
+          ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
+          : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
         html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer">
-          <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this)" style="margin-top:2px">
-          <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+          <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
+          <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
         </label>`;
       });
     });
@@ -3233,10 +3291,12 @@ async function openWorkOrderChecklist(recordId, assetName, system) {
     }
     body.innerHTML = data.items.map((item, i) => {
       const state = progress[i] || {};
-      const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+      const noteText = state.checked
+        ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
+        : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
       return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
-        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this)" style="margin-top:2px">
-        <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
+        <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
       </label>`;
     }).join('');
   } catch (err) {
@@ -3244,13 +3304,13 @@ async function openWorkOrderChecklist(recordId, assetName, system) {
   }
 }
 
-async function toggleWOChecklistItem(recordId, itemId, checked, inputEl) {
+async function toggleWOChecklistItem(recordId, itemId, checked, inputEl, itemLabel) {
   inputEl.disabled = true;
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ checklistToggle: true, recordId, itemId, checked }),
+      body: JSON.stringify({ checklistToggle: true, recordId, itemId, checked, itemLabel }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
@@ -3496,7 +3556,7 @@ function openProcurementRequestModal(recordId, assetName) {
     <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Request Procurement: ${assetName}</h3>
     <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Add each item and its cost. This work order can't be closed until the request is approved and fulfilled.</div>
     <div id="procLineItemsHeader" style="display:flex;gap:8px;margin-bottom:6px;font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">
-      <div style="flex:2">Description</div><div style="width:60px">Qty</div><div style="width:90px">Unit Rate</div><div style="width:90px">Line Total</div><div style="width:20px"></div>
+      <div style="box-sizing:border-box;flex:2;min-width:0">Description</div><div style="box-sizing:border-box;flex-shrink:0;width:60px">Qty</div><div style="box-sizing:border-box;flex-shrink:0;width:90px">Unit Rate</div><div style="box-sizing:border-box;flex-shrink:0;width:90px">Line Total</div><div style="box-sizing:border-box;flex-shrink:0;width:20px"></div>
     </div>
     <div id="procLineItems"></div>
     <button onclick="addProcurementLineItem()" style="margin:8px 0 16px;padding:7px 14px;font-size:12px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;width:100%">+ Add Item</button>
@@ -3520,11 +3580,11 @@ function addProcurementLineItem() {
   row.id = `procItem_${id}`;
   row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center';
   row.innerHTML = `
-    <input placeholder="e.g. Pipe fitting" class="proc-item-desc" style="flex:2;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <input type="number" placeholder="1" class="proc-item-qty" value="1" min="0" oninput="updateLineTotal('${id}')" style="width:60px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <input type="number" placeholder="0" class="proc-item-rate" oninput="updateLineTotal('${id}')" style="width:90px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <div class="proc-item-linetotal" style="width:90px;font-size:13px;font-weight:600;color:var(--navy);text-align:right;padding-right:4px">0</div>
-    <button onclick="document.getElementById('procItem_${id}').remove();updateProcurementTotal()" style="width:20px;border:none;background:none;color:var(--red);cursor:pointer;font-size:16px;flex-shrink:0">×</button>
+    <input placeholder="e.g. Pipe fitting" class="proc-item-desc" style="box-sizing:border-box;flex:2;min-width:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <input type="number" placeholder="1" class="proc-item-qty" value="1" min="0" oninput="updateLineTotal('${id}')" style="box-sizing:border-box;flex-shrink:0;width:60px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <input type="number" placeholder="0" class="proc-item-rate" oninput="updateLineTotal('${id}')" style="box-sizing:border-box;flex-shrink:0;width:90px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <div class="proc-item-linetotal" style="box-sizing:border-box;flex-shrink:0;width:90px;font-size:13px;font-weight:600;color:var(--navy);text-align:right;padding-right:4px">0</div>
+    <button onclick="document.getElementById('procItem_${id}').remove();updateProcurementTotal()" style="box-sizing:border-box;flex-shrink:0;width:20px;border:none;background:none;color:var(--red);cursor:pointer;font-size:16px">×</button>
   `;
   container.appendChild(row);
 }
@@ -4456,8 +4516,9 @@ async function loadAssetsAndInit() {
     if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
     const data = await assetsResp.json();
     assets = data.assets || [];
-    currentUserRole = data.role || "engineer";
+    currentUserRole = data.role || "technician";
     currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
+    populateLoggedInUserBadge(data.username, currentUserRole);
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
     if (woResp.ok) {
