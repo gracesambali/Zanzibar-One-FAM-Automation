@@ -4105,7 +4105,7 @@ function printMaintenancePlan(windowDays) {
 function buildPeriodReportHtml(data, title, periodLabel) {
   const ws = data.workOrderStatus || {};
   const maintItemsByType = data.maintenanceItemsByType || {};
-  const MAX_NAMES_PER_TYPE = 6;
+  const MAX_NAMES_PER_TYPE = 10;
 
   return `
     <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
@@ -4121,9 +4121,12 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       h2 { color:#1A3566; font-size:12px; margin:12px 0 6px; }
       .badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
       .type-badge { background:#EEF1F5; border-radius:14px; padding:5px 12px; font-size:10.5px; color:#1A3566; font-weight:600; }
-      .type-block { margin-bottom:8px; }
-      .type-block-label { font-size:10.5px; font-weight:700; color:#1A3566; margin-bottom:3px; }
-      .type-block-items { font-size:10.5px; color:#4B5563; line-height:1.5; }
+      .type-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:16px; margin-bottom:14px; }
+      .type-col { border-left:2px solid #1A3566; padding-left:10px; }
+      .type-col-label { font-size:10.5px; font-weight:700; color:#1A3566; margin-bottom:6px; }
+      .type-col-list { list-style:none; margin:0; padding:0; font-size:10.5px; color:#374151; }
+      .type-col-list li { padding:2px 0; border-bottom:1px solid #F0F2F6; }
+      .type-col-more { font-size:9.5px; color:#6B7280; font-style:italic; margin-top:5px; padding-top:4px; border-top:1px dashed #D1D5DB; }
       .cost-highlight { background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 14px; margin-bottom:14px; }
       .cost-val { font-size:20px; font-weight:700; color:#1A3566; }
       .cost-label { font-size:10px; color:#6B7280; }
@@ -4154,14 +4157,17 @@ function buildPeriodReportHtml(data, title, periodLabel) {
 
       ${Object.keys(maintItemsByType).length > 0 ? `
       <h2>Maintenance Worked, By Type</h2>
+      <div class="type-grid">
       ${Object.entries(maintItemsByType).map(([type, items]) => {
         const shown = items.slice(0, MAX_NAMES_PER_TYPE);
         const extra = items.length - shown.length;
-        return `<div class="type-block">
-          <div class="type-block-label">${type} (${items.length})</div>
-          <div class="type-block-items">${shown.join(', ')}${extra > 0 ? ` — +${extra} more` : ''}</div>
+        return `<div class="type-col">
+          <div class="type-col-label">${type} (${items.length})</div>
+          <ul class="type-col-list">${shown.map(name => `<li>${name}</li>`).join('')}</ul>
+          ${extra > 0 ? `<div class="type-col-more">+${extra} more — see full list in the Excel export</div>` : ''}
         </div>`;
       }).join('')}
+      </div>
       ` : '<div class="empty">No maintenance work recorded this period yet.</div>'}
 
       <h2>Alerts — ${data.totalAlerts} Total</h2>
