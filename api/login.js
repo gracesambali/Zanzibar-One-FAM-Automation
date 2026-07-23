@@ -31,15 +31,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Username and password required" });
   }
 
-  // Six role-based credential pairs, one per role in lib/roles.js. Each
-  // is entirely optional — a client with only two real people can set
-  // just ENGINEER_* and TECHNICIAN_* and leave the rest blank. Any pair
-  // that isn't configured is simply ignored, same as before.
+  // Eight role-based credential pairs, one per role in lib/roles.js. Each
+  // is entirely optional — a client can configure only the roles they
+  // actually have people for. Any pair that isn't configured is simply
+  // ignored.
   const validPairs = [
-    { u: process.env.ENGINEER_USERNAME, p: process.env.ENGINEER_PASSWORD, role: "engineer" },
     { u: process.env.TECHNICIAN_USERNAME, p: process.env.TECHNICIAN_PASSWORD, role: "technician" },
+    { u: process.env.ELECTRICAL_ENGINEER_USERNAME, p: process.env.ELECTRICAL_ENGINEER_PASSWORD, role: "electrical_engineer" },
+    { u: process.env.MECHANICAL_ENGINEER_USERNAME, p: process.env.MECHANICAL_ENGINEER_PASSWORD, role: "mechanical_engineer" },
+    { u: process.env.ADMIN_USERNAME, p: process.env.ADMIN_PASSWORD, role: "admin" },
+    { u: process.env.PROPERTY_MANAGER_USERNAME, p: process.env.PROPERTY_MANAGER_PASSWORD, role: "property_manager" },
+    { u: process.env.PROCUREMENT_USERNAME, p: process.env.PROCUREMENT_PASSWORD, role: "procurement" },
     { u: process.env.STOCK_KEEPER_USERNAME, p: process.env.STOCK_KEEPER_PASSWORD, role: "stock_keeper" },
-    { u: process.env.OFFICE_ADMIN_USERNAME, p: process.env.OFFICE_ADMIN_PASSWORD, role: "office_admin" },
     { u: process.env.BUSINESS_OWNER_USERNAME, p: process.env.BUSINESS_OWNER_PASSWORD, role: "business_owner" },
     { u: process.env.SYSTEM_ADMIN_USERNAME, p: process.env.SYSTEM_ADMIN_PASSWORD, role: "system_admin" },
   ].filter(pair => pair.u && pair.p); // ignore any pair that isn't actually configured
