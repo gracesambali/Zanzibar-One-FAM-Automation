@@ -20,6 +20,14 @@ import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
+import { getContactsForRole } from "../lib/staffDirectory.js";
+
+const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
+  "Mechanical": "mechanical_engineer",
+  "Electrical": "electrical_engineer",
+  "Admin": "admin",
+  "Property Manager": "property_manager",
+};
 
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
@@ -438,6 +446,7 @@ async function checkAndEscalateStaleWorkOrders() {
 
     if (stale.length === 0) return 0;
 
+    // The existing generic supervisor email — unchanged, still fires.
     const toList = parseEmailList(process.env.ESCALATION_EMAIL || process.env.ALERT_TO_EMAIL);
     if (toList.length > 0) {
       const rows = stale.map(r => `<li>${r.fields["Asset Name"] || r.fields["Asset ID"] || "Unknown"} (${r.fields["WO ID"]}) — open since ${new Date(r.fields["Created"]).toLocaleDateString()}, assigned to ${r.fields["Assigned Role"] || "unassigned"}</li>`).join("");
@@ -451,6 +460,36 @@ async function checkAndEscalateStaleWorkOrders() {
           html: `<p>The following work orders have been open for more than 24 hours:</p><ul>${rows}</ul>`,
         }),
       });
+    }
+
+    // New — the specific routed role for each stale work order also
+    // gets notified directly, on top of the generic supervisor email
+    // above. Grouped by role, since different stale work orders can
+    // belong to different people.
+    const byRole = {};
+    for (const r of stale) {
+      const assignedRole = r.fields["Assigned Role"];
+      const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+      if (!loginRole) continue; // no matching role — nothing to notify beyond the generic email above
+      (byRole[loginRole] = byRole[loginRole] || []).push(r);
+    }
+
+    for (const [loginRole, records] of Object.entries(byRole)) {
+      const contacts = getContactsForRole(loginRole);
+      const roleEmails = contacts.map(c => c.email).filter(Boolean);
+      if (roleEmails.length === 0) continue;
+
+      const rows = records.map(r => `<li>${r.fields["Asset Name"] || r.fields["Asset ID"] || "Unknown"} (${r.fields["WO ID"]}) — open since ${new Date(r.fields["Created"]).toLocaleDateString()}</li>`).join("");
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: roleEmails,
+          subject: `${records.length} of your work order${records.length !== 1 ? "s" : ""} open more than 24 hours`,
+          html: `<p>The following work orders assigned to you have been open for more than 24 hours:</p><ul>${rows}</ul>`,
+        }),
+      }).catch(err => console.error("Routed-role escalation email error:", err));
     }
 
     // Mark each as escalated so it isn't re-sent tomorrow, and log it
