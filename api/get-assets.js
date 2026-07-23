@@ -364,10 +364,16 @@ async function buildPeriodReport(req, res, days) {
       totalAlerts: recent.length,
       byUrgency: countBy(recent, "Urgency"),
       bySystem: countBy(recent, "System"),
+      // Full list, uncapped — the report page itself decides how much
+      // actually fits, rather than an arbitrary fixed number here.
+      alerts: recent.map(r => ({
+        assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+        urgency: r.fields["Urgency"] || "",
+        location: r.fields["Location"] || "",
+      })),
       maintenanceTypes: countBy(workOrdersInPeriod, "Maintenance Type"),
-      // Named, not just counted — a brief, real list of what was
-      // actually worked, grouped by type. Capped per type so a busy
-      // month still fits one page.
+      // Named, not just counted — uncapped here too, since the page
+      // itself now decides how much fits.
       maintenanceItemsByType: (() => {
         const grouped = {};
         for (const r of workOrdersInPeriod) {
