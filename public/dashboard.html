@@ -734,8 +734,16 @@ function renderDashboard() {
     </div>`;
   }
 
+  if (currentUserPermissions && currentUserPermissions.viewStaffPerformance) {
+    html += `<div class="dash-panel" style="margin-top:20px">
+      <div class="dash-panel-title">Staff Performance</div>
+      <div id="staffPerformancePanel" style="font-size:12px;color:var(--muted);padding:8px 0">Loading…</div>
+    </div>`;
+  }
+
   document.getElementById('view-dashboard').innerHTML = html;
   if (canSeeApiKey) loadCostOverview();
+  if (currentUserPermissions && currentUserPermissions.viewStaffPerformance) loadStaffPerformance();
 
   setTimeout(() => {
     const hc = document.getElementById('health-donut');
@@ -1760,6 +1768,21 @@ function showPlanDetail(recordId) {
           <span style="font-size:13px;${a.done?'text-decoration:line-through;color:var(--muted)':''}">${a.what} <span style="color:var(--muted);font-size:11px">— ${a.who}${a.dueDate ? ', due ' + a.dueDate : ''}</span></span>
         </label>`).join('')}
     </div>
+
+    <div style="padding:20px 24px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+      ${(() => {
+        let planLog = [];
+        try { planLog = JSON.parse(p.activityLog || '[]'); } catch { planLog = []; }
+        if (planLog.length === 0) return '<div style="font-size:12px;color:var(--muted)">No activity yet.</div>';
+        return planLog.slice().reverse().map(entry => `
+          <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+            <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+          </div>
+        `).join('');
+      })()}
+    </div>
   </div>`;
 
   container.innerHTML = html;
@@ -2633,6 +2656,53 @@ function downloadMaintenanceChecklist() {
   win.document.write(buildChecklistDocumentHtml());
   win.document.close();
   setTimeout(() => win.print(), 400);
+}
+
+async function loadStaffPerformance() {
+  const el = document.getElementById('staffPerformancePanel');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/get-assets?staffperformance=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load');
+
+    if (data.performance.length === 0 && data.procurement.length === 0) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No completed work orders yet — this fills in as the system runs.</div>';
+      return;
+    }
+
+    let rows = '';
+    const people = new Set([...data.performance.map(p=>p.person), ...data.procurement.map(p=>p.person)]);
+    for (const person of people) {
+      const perf = data.performance.find(p => p.person === person) || {};
+      const proc = data.procurement.find(p => p.person === person) || {};
+      rows += `<tr>
+        <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:600">${person}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${perf.workOrdersClosed ?? '—'}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${proc.requestsMade ?? '—'}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right">${proc.requestsMade ? proc.rejectionRate + '%' : '—'}</td>
+      </tr>`;
+    }
+
+    const escalationBadges = Object.entries(data.escalationsByRole || {}).map(([role, count]) => `<span style="background:#FEE2E2;color:#991B1B;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;margin-right:6px">${role}: ${count} escalated</span>`).join('');
+
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:12px">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Person</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Closed</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Avg. Days</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Procurement Reqs</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase">Rejection Rate</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${escalationBadges ? `<div>${escalationBadges}</div>` : ''}
+    `;
+  } catch (err) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load: ${err.message}</div>`;
+  }
 }
 
 async function loadCostOverview() {
