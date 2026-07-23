@@ -364,16 +364,22 @@ async function buildPeriodReport(req, res, days) {
       totalAlerts: recent.length,
       byUrgency: countBy(recent, "Urgency"),
       bySystem: countBy(recent, "System"),
-      events: recent.map(r => ({
-        timestamp: r.fields["Timestamp"],
-        assetId: r.fields["Asset ID"],
-        assetName: r.fields["Asset Name"],
-        system: r.fields["System"],
-        location: r.fields["Location"],
-        urgency: r.fields["Urgency"],
-        channel: r.fields["Channel"],
-      })),
       maintenanceTypes: countBy(workOrdersInPeriod, "Maintenance Type"),
+      // Named, not just counted — a brief, real list of what was
+      // actually worked, grouped by type. Capped per type so a busy
+      // month still fits one page.
+      maintenanceItemsByType: (() => {
+        const grouped = {};
+        for (const r of workOrdersInPeriod) {
+          const type = r.fields["Maintenance Type"] || "Unspecified";
+          (grouped[type] = grouped[type] || []).push(r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed");
+        }
+        return grouped;
+      })(),
+      totalCost: workOrdersInPeriod.reduce((sum, r) => {
+        const cost = r.fields["Cost (TZS)"];
+        return sum + (typeof cost === "number" ? cost : 0);
+      }, 0),
       workOrderStatus: {
         completed: allWorkOrders.filter(r => r.fields["Status"] === "Completed" && r.fields["Completed Date"] && new Date(r.fields["Completed Date"]) >= cutoff).length,
         open: allWorkOrders.filter(r => r.fields["Status"] === "Open").length,
