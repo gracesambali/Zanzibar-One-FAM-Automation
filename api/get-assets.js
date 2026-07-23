@@ -360,25 +360,47 @@ async function buildPeriodReport(req, res, days) {
     const allWorkOrders = await fetchAllWorkOrdersForReport();
     const workOrdersInPeriod = allWorkOrders.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) >= cutoff);
 
+    // Build a lookup by WO ID so alerts (which embed "Work Order WO-xxx"
+    // in their message text) can be matched back to real open/close
+    // dates, not just the moment the alert itself fired.
+    const woByWoId = {};
+    for (const r of allWorkOrders) {
+      const woId = r.fields["WO ID"];
+      if (woId) woByWoId[woId] = r;
+    }
+    function findLinkedWO(messageText) {
+      const match = (messageText || "").match(/WO-\d+/);
+      return match ? woByWoId[match[0]] : null;
+    }
+
     const summary = {
       totalAlerts: recent.length,
       byUrgency: countBy(recent, "Urgency"),
       bySystem: countBy(recent, "System"),
-      // Full list, uncapped — the report page itself decides how much
-      // actually fits, rather than an arbitrary fixed number here.
-      alerts: recent.map(r => ({
-        assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
-        urgency: r.fields["Urgency"] || "",
-        location: r.fields["Location"] || "",
-      })),
+      // Full list, uncapped. Each alert now carries the open/close
+      // dates of whatever work order it actually generated, found by
+      // matching the WO ID embedded in the alert's own message text.
+      alerts: recent.map(r => {
+        const linkedWO = findLinkedWO(r.fields["Messages"]);
+        return {
+          assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+          urgency: r.fields["Urgency"] || "",
+          location: r.fields["Location"] || "",
+          dateOpened: linkedWO ? linkedWO.fields["Created"] : r.fields["Timestamp"],
+          dateClosed: linkedWO && linkedWO.fields["Status"] === "Completed" ? linkedWO.fields["Completed Date"] : null,
+        };
+      }),
       maintenanceTypes: countBy(workOrdersInPeriod, "Maintenance Type"),
-      // Named, not just counted — uncapped here too, since the page
-      // itself now decides how much fits.
+      // Named, with real open/close dates per item — not just a name.
       maintenanceItemsByType: (() => {
         const grouped = {};
         for (const r of workOrdersInPeriod) {
           const type = r.fields["Maintenance Type"] || "Unspecified";
-          (grouped[type] = grouped[type] || []).push(r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed");
+          (grouped[type] = grouped[type] || []).push({
+            name: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+            dateOpened: r.fields["Created"] || null,
+            dateClosed: r.fields["Status"] === "Completed" ? (r.fields["Completed Date"] || null) : null,
+          });
         }
         return grouped;
       })(),
