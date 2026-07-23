@@ -17,6 +17,18 @@ import { getChecklist } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
 import { getAssignedRole } from "../lib/routing.js";
 
+// "Assigned Role" on a work order is a display label (Mechanical,
+// Electrical, Admin, Property Manager). Login roles are the actual
+// permission-checked identities (mechanical_engineer, etc). This maps
+// one to the other so closure sign-off can verify the specific person
+// reviewing is actually who the job was routed to.
+const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
+  "Mechanical": "mechanical_engineer",
+  "Electrical": "electrical_engineer",
+  "Admin": "admin",
+  "Property Manager": "property_manager",
+};
+
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
@@ -50,7 +62,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -178,6 +190,43 @@ export default async function handler(req, res) {
         console.error("fulfillProcurement error:", err);
         return res.status(500).json({ error: err.message });
       }
+    }
+
+    // Closure sign-off — only the SPECIFIC routed role a work order was
+    // actually assigned to can approve or reject its finished work
+    // (plus Business Owner / System Admin as a standing override).
+    // This is the accountability piece: closing was never meant to be
+    // just anyone with reviewWorkOrderClosure permission — it's whoever
+    // actually owns that job.
+    if (req.body && (req.body.approveClosure || req.body.rejectClosure)) {
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+      if (!can(session.r, "reviewWorkOrderClosure")) {
+        return res.status(403).json({ error: "Not permitted to review work order closure" });
+      }
+
+      // Business Owner / System Admin can act on any work order. Every
+      // other routed role must match the specific role this work order
+      // was actually assigned to.
+      if (session.r !== "business_owner" && session.r !== "system_admin") {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (checkResp.ok) {
+          const checkData = await checkResp.json();
+          const assignedRole = checkData.fields["Assigned Role"];
+          const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+          if (expectedLoginRole && session.r !== expectedLoginRole) {
+            return res.status(403).json({ error: `Only ${assignedRole} can review this work order's closure.` });
+          }
+        }
+      }
+
+      if (req.body.approveClosure) return handleApproveClosure(req, res, session.u);
+      return handleRejectClosure(req, res, session.u);
     }
 
     if (req.body && req.body.addActivityEntry) {
@@ -410,24 +459,45 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
 
-  // The actual procurement gate: a work order can't be closed while
-  // procurement is still awaiting approval or was rejected and needs
-  // revision. This is checked here, server-side, not just hidden in the
-  // UI — the whole point of a real gate is that it can't be bypassed.
+  // Closing is never a single person's unilateral call anymore.
+  // "Completed" can only be reached through the dedicated approveClosure
+  // action below, which checks the routed role's sign-off. Anyone still
+  // trying to set Status directly to Completed through this general
+  // path is blocked here, server-side — the same principle as the
+  // procurement gate: a real gate has to hold even if someone bypasses
+  // the UI and calls the API directly.
   if (status === "Completed") {
+    return {
+      ok: false,
+      recordId,
+      error: "Work orders can no longer be closed directly. Mark it Ready for Review instead — the routed role approves the actual closure.",
+    };
+  }
+
+  // A work order needs a routed role before it can ever reach Ready for
+  // Review — confirmed requirement, no silent exceptions. Without a
+  // routed role, there's nobody whose job it is to sign off on it.
+  if (status === "Ready for Review") {
     const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
     });
     if (checkResp.ok) {
       const checkData = await checkResp.json();
+      if (!checkData.fields["Assigned Role"]) {
+        return {
+          ok: false,
+          recordId,
+          error: "This work order has no routed role assigned yet — it can't be marked Ready for Review until it does.",
+        };
+      }
       const procStatus = checkData.fields["Procurement Status"];
       if (procStatus === "Requested" || procStatus === "Rejected") {
         return {
           ok: false,
           recordId,
           error: procStatus === "Requested"
-            ? "This work order can't be closed yet — procurement is still awaiting approval."
-            : `This work order can't be closed yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
+            ? "This work order can't be marked Ready for Review yet — procurement is still awaiting approval."
+            : `This work order can't be marked Ready for Review yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
         };
       }
     }
@@ -439,38 +509,6 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     fields["Cost (TZS)"] = Number(cost);
     fields["Cost Edited By"] = closedByUsername;
     fields["Cost Edited Date"] = new Date().toISOString();
-  }
-
-  let assetIdForRollover = null;
-  let reporterContactForSatisfaction = null;
-  let assetNameForSatisfaction = null;
-
-  if (status === "Completed") {
-    fields["Completed Date"] = new Date().toISOString();
-    // Pulled directly from the verified session — the person closing
-    // this cannot type in someone else's name instead of their own.
-    fields["Closed By"] = closedByUsername;
-
-    // BUG FIX (identified 2026-07-13): previously, closing a Work Order
-    // only updated the Work Order itself. The linked asset's "Next
-    // Service Due" stayed on the same old date, so the next daily check
-    // saw a still-overdue asset with no OPEN work order and created a
-    // brand new alert for the same already-resolved issue. We now read
-    // the WO's own Asset ID before patching, so we can roll the asset's
-    // due date forward in the same request.
-    try {
-      const woResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-      });
-      if (woResp.ok) {
-        const woData = await woResp.json();
-        assetIdForRollover = woData.fields && woData.fields["Asset ID"];
-        reporterContactForSatisfaction = woData.fields && woData.fields["Reporter Contact"];
-        assetNameForSatisfaction = (woData.fields && woData.fields["Asset Name"]) || "the reported issue";
-      }
-    } catch (e) {
-      console.error("Could not read WO before completing (rollover skipped):", e);
-    }
   }
 
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
@@ -488,15 +526,84 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     return { ok: false, recordId, error: errText };
   }
 
-  if (assetIdForRollover) {
-    await advanceAssetNextService(assetIdForRollover);
-  }
-
-  if (reporterContactForSatisfaction) {
-    await sendSatisfactionRequest(reporterContactForSatisfaction, recordId, assetNameForSatisfaction);
-  }
-
   return { ok: true, recordId };
+}
+
+// Approves the finished work — the routed role's sign-off is what
+// actually closes a work order now, not the technician's own say-so.
+// Carries the same asset-rollover and satisfaction-request logic that
+// used to live in the direct-close path, since this is the only place
+// "Completed" is ever reached from now on.
+async function handleApproveClosure(req, res, approvedByUsername) {
+  const { recordId } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  try {
+    const woResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!woResp.ok) throw new Error("Could not read work order");
+    const woData = await woResp.json();
+
+    if (woData.fields["Status"] !== "Ready for Review") {
+      return res.status(400).json({ error: "This work order isn't waiting for review — nothing to approve." });
+    }
+
+    const assetIdForRollover = woData.fields["Asset ID"];
+    const reporterContact = woData.fields["Reporter Contact"];
+    const assetName = woData.fields["Asset Name"] || "the reported issue";
+
+    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          "Status": "Completed",
+          "Completed Date": new Date().toISOString(),
+          "Closed By": approvedByUsername,
+          "Closure Rejection Reason": "",
+        },
+      }),
+    });
+    if (!patchResp.ok) throw new Error("Could not approve closure");
+
+    if (assetIdForRollover) await advanceAssetNextService(assetIdForRollover);
+    if (reporterContact) await sendSatisfactionRequest(reporterContact, recordId, assetName);
+    await appendActivityLog(recordId, `✅ Work approved and closed by ${approvedByUsername}`, approvedByUsername, "system");
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleApproveClosure error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Rejects the finished work — sends it back to the technician as still
+// open, with a reason attached, instead of a dead end.
+async function handleRejectClosure(req, res, rejectedByUsername) {
+  const { recordId, reason } = req.body || {};
+  if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  try {
+    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Status": "In Progress", "Closure Rejection Reason": reason } }),
+    });
+    if (!patchResp.ok) throw new Error("Could not reject closure");
+
+    await appendActivityLog(recordId, `❌ Work sent back by ${rejectedByUsername} — ${reason}`, rejectedByUsername, "system");
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleRejectClosure error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 // Sends the reporter a simple confirm/deny link once their issue is
@@ -605,7 +712,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
