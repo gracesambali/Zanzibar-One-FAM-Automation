@@ -32,12 +32,50 @@ button { font-family: inherit; cursor: pointer; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
 .live-label { color: rgba(255,255,255,0.7); font-size: 12px; display: flex; align-items: center; gap: 6px; }
 
-.tabs { display: flex; background: var(--white); border-bottom: 1px solid var(--border); padding: 0 24px; overflow-x: auto; }
-.tab-btn { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border: none; background: none; color: var(--muted); border-bottom: 2.5px solid transparent; font-weight: 400; font-size: 13.5px; white-space: nowrap; transition: all 0.2s; }
-.tab-btn.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
-.tab-btn svg { width: 18px; height: 18px; }
+.main-layout { display: flex; align-items: flex-start; width: 100%; }
 
-.content { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+.sidebar {
+  width: 220px; flex-shrink: 0; background: var(--white); border-right: 1px solid var(--border);
+  align-self: stretch; min-height: 100vh; transition: width 0.2s ease;
+}
+.sidebar.collapsed { width: 64px; }
+.sidebar-inner {
+  position: sticky; top: 0; max-height: 100vh;
+  display: flex; flex-direction: column;
+}
+.sidebar-nav { flex: 1; padding: 8px 0; }
+.sidebar-toggle-row { display: flex; justify-content: flex-end; padding: 10px; border-bottom: 1px solid var(--border); }
+.sidebar-toggle { background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px; border-radius: 6px; display: flex; }
+.sidebar-toggle:hover { background: var(--bg); color: var(--navy); }
+
+.tab-btn {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 18px;
+  border: none; background: none; color: var(--muted); border-left: 3px solid transparent;
+  font-weight: 400; font-size: 13.5px; white-space: nowrap; transition: all 0.15s; text-align: left; cursor: pointer;
+}
+.tab-btn:hover { background: var(--bg); }
+.tab-btn.active { color: var(--navy); border-left-color: var(--navy); background: var(--navy-pale); font-weight: 600; }
+.tab-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+.sidebar.collapsed .tab-btn span.tab-label { display: none; }
+.sidebar.collapsed .tab-btn { justify-content: center; padding: 12px; position: relative; }
+
+.sidebar-tooltip-box {
+  position: fixed;
+  background: var(--text);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  display: none;
+}
+.sidebar-tooltip-box.visible { display: block; }
+
+.content { flex: 1; min-width: 0; max-width: 100%; padding: 20px 24px; overflow-x: auto; }
 .view { display: none; } .view.active { display: block; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -55,6 +93,10 @@ button { font-family: inherit; cursor: pointer; }
 .asset-list { display: flex; flex-direction: column; gap: 8px; }
 .asset-row { display: flex; align-items: center; justify-content: space-between; background: var(--white); border-radius: 10px; padding: 14px 18px; border: 1px solid var(--border); cursor: pointer; text-align: left; width: 100%; transition: box-shadow 0.2s; gap: 10px; }
 .asset-row:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+
+@media (max-width: 700px) {
+  .asset-row { align-items: flex-start; flex-wrap: wrap; }
+}
 .asset-name { font-weight: 600; font-size: 14px; }
 .asset-id { font-size: 11px; color: var(--muted); font-family: monospace; }
 .asset-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -154,7 +196,7 @@ button { font-family: inherit; cursor: pointer; }
 
 .view-link { font-size: 12px; color: var(--navy); font-weight: 600; margin-top: 10px; display: inline-block; }
 
-.footer { text-align: center; padding: 24px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 40px; }
+.footer { text-align: center; padding: 24px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 40px; background: var(--white); }
 
 /* Systems tab */
 .sys-card { background:var(--white); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:14px; }
@@ -199,6 +241,8 @@ button { font-family: inherit; cursor: pointer; }
 </head>
 <body>
 
+<div id="sidebarTooltip" class="sidebar-tooltip-box"></div>
+
 <div class="header">
   <div class="header-left">
     <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
@@ -213,38 +257,56 @@ button { font-family: inherit; cursor: pointer; }
   </div>
 </div>
 
-<div class="tabs">
-  <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+<div class="main-layout">
+<div class="sidebar" id="sidebar">
+<div class="sidebar-inner">
+  <div class="sidebar-toggle-row">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse/expand menu">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+  </div>
+  <div class="sidebar-nav">
+  <button class="tab-btn active" data-tab="dashboard" data-label="Dashboard" onclick="switchTab('dashboard')" onmouseenter="showSidebarTooltip(this, 'Dashboard')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-    Dashboard
+    <span class="tab-label">Dashboard</span>
   </button>
-  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">
+  <button class="tab-btn" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')" onmouseenter="showSidebarTooltip(this, 'Asset Register')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
-    Asset Register
+    <span class="tab-label">Asset Register</span>
   </button>
-  <button class="tab-btn" data-tab="systems" onclick="switchTab('systems')">
+  <button class="tab-btn" data-tab="sensors" data-label="Sensors" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensors')" onmouseleave="hideSidebarTooltip()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    <span class="tab-label">Sensors</span>
+  </button>
+  <button class="tab-btn" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
-    Systems
+    <span class="tab-label">Systems</span>
   </button>
-  <button class="tab-btn" data-tab="maintenance" onclick="switchTab('maintenance')">
+  <button class="tab-btn" data-tab="maintenance" data-label="Maintenance" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Maintenance')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    Maintenance
+    <span class="tab-label">Maintenance</span>
   </button>
-  <button class="tab-btn" data-tab="levelview" onclick="switchTab('levelview')">
+  <button class="tab-btn" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
-    Level View
+    <span class="tab-label">Level View</span>
   </button>
-  <button class="tab-btn" data-tab="floorplan" onclick="switchTab('floorplan')">
+  <button class="tab-btn" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Floor Plan')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
-    Floor Plan
+    <span class="tab-label">Floor Plan</span>
   </button>
-  <button class="tab-btn" data-tab="workorders" onclick="switchTab('workorders')">
+  <button class="tab-btn" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')" onmouseenter="showSidebarTooltip(this, 'Work Orders')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    Work Orders
+    <span class="tab-label">Work Orders</span>
   </button>
+  <button class="tab-btn" data-tab="plannedmaintenance" data-label="Planned Maintenance" onclick="switchTab('plannedmaintenance')" onmouseenter="showSidebarTooltip(this, 'Planned Maintenance')" onmouseleave="hideSidebarTooltip()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+    <span class="tab-label">Planned Maintenance</span>
+  </button>
+  </div>
+</div>
 </div>
 
-<div id="loading-screen" style="text-align:center;padding:100px 20px;">
+<div id="loading-screen" style="text-align:center;padding:100px 20px;flex:1">
   <div style="width:36px;height:36px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto 16px;animation:spin 0.8s linear infinite;"></div>
   <div style="font-size:14px;color:#6B7280;">Loading live asset data…</div>
 </div>
@@ -253,11 +315,14 @@ button { font-family: inherit; cursor: pointer; }
 <div class="content" style="display:none;">
   <div id="view-dashboard" class="view active"></div>
   <div id="view-assets" class="view"></div>
+  <div id="view-sensors" class="view"></div>
   <div id="view-systems" class="view"></div>
   <div id="view-maintenance" class="view"></div>
   <div id="view-levelview" class="view"></div>
   <div id="view-floorplan" class="view"></div>
   <div id="view-workorders" class="view"></div>
+  <div id="view-plannedmaintenance" class="view"></div>
+</div>
 </div>
 
 <div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
@@ -268,11 +333,11 @@ button { font-family: inherit; cursor: pointer; }
 // Nothing else in this file needs to change per client.
 // ============================================================
 const CLIENT_CONFIG = {
-  clientName: "Sali International Hospital",
-  buildingLabel: "[Floor/Zone — confirm after site survey]", // fill in once the pilot floor/zone is agreed (Field 1 of the scope PDF)
-  region: "Zanzibar",           // project-level — one project = one region, set once here, not per-asset
-  district: "Zanzibar Urban",   // project-level — same reasoning as region
-  building: "[Building name]",  // project-level — the facility/building name for this deployment
+  clientName: "Zanzibar One Tower",
+  buildingLabel: "Zanzibar One Tower",
+  region: "Zanzibar",
+  district: "Zanzibar Urban",
+  building: "Zanzibar One Tower",
   accentColor: "#1A3566",
   pageTitle: "GVC Facility Asset Manager"
 };
@@ -281,11 +346,11 @@ const CLIENT_CONFIG = {
 document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
 document.addEventListener('DOMContentLoaded', () => {
   const sub = document.getElementById('header-subtitle');
-  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.building} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
+  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
 });
 
 let assets = []; // populated live from Airtable via /api/get-assets
-let currentUserRole = "engineer";
+let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
@@ -329,6 +394,27 @@ function formatInterval(days) {
 // keys in lib/checklists.js. Returns null if nothing matches — better to
 // show "no checklist mapped yet" than guess wrong and imply a standard
 // that doesn't actually apply to this equipment.
+// Suggests System/Criticality/Lifespan from an asset's Name as it's
+// typed — lets a non-technical person confirm a sensible guess instead
+// of having to correctly classify equipment they may not understand.
+// Never overrides something the person already changed themselves.
+function guessAssetDefaults(name) {
+  const text = (name || "").toLowerCase();
+  if (text.includes("fire pump") || text.includes("fire protection")) return { system: "Fire Protection", criticality: "High", lifespan: 20 };
+  if (text.includes("generator")) return { system: "Electrical", criticality: "High", lifespan: 20 };
+  if (text.includes("transformer") || text.includes("switchgear")) return { system: "Electrical", criticality: "High", lifespan: 25 };
+  if (text.includes("ups")) return { system: "Electrical", criticality: "High", lifespan: 8 };
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("cooling tower") || text.includes("fan coil")) return { system: "HVAC", criticality: "Medium", lifespan: 20 };
+  if (text.includes("lift") || text.includes("elevator")) return { system: "Vertical Transport", criticality: "High", lifespan: 25 };
+  if (text.includes("pump")) return { system: "Plumbing", criticality: "Medium", lifespan: 15 };
+  if (text.includes("cctv") || text.includes("camera")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 7 };
+  if (text.includes("access control") || text.includes("door reader")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 10 };
+  if (text.includes("smoke detector") || text.includes("fire detection") || text.includes("fire panel")) return { system: "Fire Detection", criticality: "High", lifespan: 15 };
+  if (text.includes("bms") || text.includes("controls")) return { system: "Controls", criticality: "Medium", lifespan: 15 };
+  if (text.includes("barrier") || text.includes("parking")) return { system: "Parking System", criticality: "Low", lifespan: 10 };
+  return null; // no confident guess — let the person choose, no wrong assumption offered
+}
+
 function guessChecklistClass(name, system) {
   const text = (name + " " + (system||"")).toLowerCase();
   if (text.includes("pump")) return "Pump";
@@ -380,12 +466,15 @@ let dashboardWorkOrders = []; // populated live from /api/work-orders alongside 
 // Add/Decommission buttons etc). The API is the real enforcement; this
 // just avoids showing controls a role isn't allowed to use.
 const ROLE_PERMISSIONS = {
-  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
-  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true },
-  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false },
-  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
-  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
-  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  procurement: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
 };
 
 const levelDefs = [
@@ -444,11 +533,13 @@ function switchTab(tab) {
   document.getElementById('view-'+tab).classList.add('active');
   if(tab==='dashboard') renderDashboard();
   if(tab==='assets') renderAssets();
+  if(tab==='sensors') renderSensorMonitor();
   if(tab==='systems') renderSystems();
   if(tab==='maintenance') renderMaintenance();
   if(tab==='levelview') renderLevelView();
   if(tab==='floorplan') renderFloorPlan();
   if(tab==='workorders') renderWorkOrders();
+  if(tab==='plannedmaintenance') renderPlannedMaintenance();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -480,10 +571,12 @@ function renderDashboard() {
 
   let html = '';
 
-  // Dashboard timeframe selector
+  // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
-    ${[3,7,14,21,30,90,180,365].map(d => `<button onclick="currentDashboardWindow=${d};renderDashboard()" style="padding:4px 10px;font-size:11px;font-weight:${windowDays===d?'700':'400'};border:1px solid ${windowDays===d?'var(--navy)':'var(--border)'};border-radius:6px;background:${windowDays===d?'var(--navy)':'#fff'};color:${windowDays===d?'#fff':'var(--text)'};cursor:pointer">${d <= 30 ? d+'d' : d <= 180 ? Math.round(d/30)+'mo' : '1yr'}</button>`).join('')}
+    <select class="filter-select" onchange="currentDashboardWindow=parseInt(this.value);renderDashboard()">
+      ${[3,7,14,21,30,90,180,365].map(d => `<option value="${d}"${windowDays===d?' selected':''}>${d <= 30 ? d+' Days' : d <= 180 ? Math.round(d/30)+' Months' : '1 Year'}</option>`).join('')}
+    </select>
   </div>`;
 
   // KPI row — Total Asset Value removed per brief
@@ -605,7 +698,14 @@ function renderDashboard() {
         <button onclick="printMaintenancePlan(30)" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">30 days</button>
       </div>
     </div>
-    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">Real summary from alert history</div></div></div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Weekly Report — Last 7 Days</div><div style="font-size:10px;color:var(--muted)">One page · real summary from alert history</div></div></div>
+      <div style="display:flex;gap:6px;padding-left:38px">
+        <button onclick="generateWeeklyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
+        <button onclick="exportWeeklyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
+        <button onclick="exportWeeklyReportXLSX()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ XLSX</button>
+      </div>
+    </div>
+    <div class="doc-item" style="display:block"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><div class="doc-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div><div style="font-size:13px;font-weight:500">Monthly Report — Last 30 Days</div><div style="font-size:10px;color:var(--muted)">One page · real summary from alert history</div></div></div>
       <div style="display:flex;gap:6px;padding-left:38px">
         <button onclick="generateMonthlyReport()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ PDF</button>
         <button onclick="exportMonthlyReportCSV()" style="flex:1;padding:6px 4px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ CSV</button>
@@ -783,7 +883,7 @@ function renderAssetResults() {
         ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
       </div>` : '';
     html += `<button class="asset-row" onclick="showDetail(${idx})">
-      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span></div>
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span>${a.needsTechnicalReview ? '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}</div>
       <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
       <span class="asset-class">${a.category}</span></div>
       ${valueBlock}
@@ -810,6 +910,7 @@ function showDetail(idx) {
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
+    ${canManage && a.needsTechnicalReview ? `<button onclick="markTechnicalReviewDone('${a.recordId}', ${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #92400E;border-radius:8px;background:#FEF3C7;color:#92400E;cursor:pointer">⚠ Mark Reviewed</button>` : ""}
     ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
     ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
     <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
@@ -817,7 +918,9 @@ function showDetail(idx) {
   </div></div>
   <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
     <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
+    ${a.nameplatePhoto ? `<a href="${a.nameplatePhoto.url}" target="_blank"><img src="${a.nameplatePhoto.url}" alt="Nameplate photo" style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="Nameplate photo — click to view full size"></a>` : ''}
     <div style="flex:1;min-width:200px">
+      ${a.needsTechnicalReview ? `<div style="background:#FEF3C7;color:#92400E;font-size:11.5px;font-weight:600;padding:6px 10px;border-radius:6px;margin-bottom:10px">⚠ Added by a non-technical role — classification not yet confirmed by an Engineer</div>` : ''}
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Classification</div>
       <div style="font-size:13px;line-height:1.8">${a.nature || "—"} → ${a.mobility ? a.mobility + " → " : ""}${a.category || "—"}</div>
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Status</div>
@@ -1179,6 +1282,148 @@ async function submitRelocation(recordId) {
   }
 }
 
+async function renderSensorMonitor(isRefresh) {
+  const container = document.getElementById('view-sensors');
+  if (!isRefresh) {
+    container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
+  }
+
+  try {
+    const resp = await fetch('/api/sensors');
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
+    const data = await resp.json();
+    const sensors = data.sensors || [];
+
+    // The test tool panel (dropdown, value input, result box) is built
+    // ONLY on first load, never on a refresh - refreshing used to rebuild
+    // this whole area, which wiped out the test result message and the
+    // dropdown selection a split second after a test ran. Now a refresh
+    // only ever touches #sensorListArea below.
+    if (!isRefresh) {
+      const toolHtml = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tool</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Pick a sensor and enter a test reading. If the value falls outside its target range, a real email + SMS fires and a real Work Order opens — the same as a genuine sensor breach. A value within range is just recorded, no alert.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="sensorTestSelect" onchange="updateSensorTestHint()" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;min-width:220px">
+            ${sensors.map(s => `<option value="${s.sensorId}" data-target="${(s.targetRange || 'not set').replace(/"/g, '&quot;')}" data-unit="${s.latestUnit || ''}">${s.sensorType}: ${s.sensorId} (${s.assetName})</option>`).join('')}
+          </select>
+          <input id="sensorTestValue" type="number" step="0.1" placeholder="Value" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:100px">
+          <button onclick="runSensorTest()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Run Test</button>
+        </div>
+        <div id="sensorTestHint" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+        <div id="sensorTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
+      </div>
+      <div id="sensorListArea"></div>`;
+      container.innerHTML = toolHtml;
+      updateSensorTestHint();
+    }
+
+    const inRange = sensors.filter(s => s.withinRange === true).length;
+    const outRange = sensors.filter(s => s.withinRange === false).length;
+    const noData = sensors.filter(s => s.withinRange === null || s.withinRange === undefined).length;
+
+    let listHtml = `<div class="summary-grid">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${sensors.length}</div><div class="summary-label">Total Sensors</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${inRange}</div><div class="summary-label">In Range</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${outRange}</div><div class="summary-label">Out of Range</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--muted)">${noData}</div><div class="summary-label">No Data Yet</div></div>
+    </div>`;
+
+    if (sensors.length === 0) {
+      listHtml += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No sensors registered yet — once a sensor is added to the Sensors table and starts sending readings, it will appear here automatically.</div>`;
+    } else {
+      listHtml += `<div class="asset-list">`;
+      sensors.forEach(s => {
+        const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
+        const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
+        const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
+        listHtml += `<div class="asset-row" style="cursor:default">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
+            <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;min-width:100px">
+            <div style="font-size:11px;color:var(--muted)">Latest Reading</div>
+            <div style="font-size:16px;font-weight:700;color:var(--navy)">${valueDisplay}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <span class="badge ${badgeClass}">${badgeLabel}</span>
+          </div>
+        </div>`;
+      });
+      listHtml += `</div>`;
+      listHtml += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 5 minutes</div>`;
+    }
+
+    const listArea = document.getElementById('sensorListArea');
+    if (listArea) listArea.innerHTML = listHtml;
+  } catch (err) {
+    if (!isRefresh) {
+      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
+    } else {
+      console.error('Sensor refresh failed:', err);
+    }
+  }
+
+  clearTimeout(window._sensorRefreshTimer);
+  window._sensorRefreshTimer = setTimeout(() => {
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor(true);
+  }, 5 * 60 * 1000);
+}
+
+function updateSensorTestHint() {
+  const select = document.getElementById('sensorTestSelect');
+  const hint = document.getElementById('sensorTestHint');
+  if (!select || !hint) return;
+  const opt = select.options[select.selectedIndex];
+  const target = opt ? opt.dataset.target : '';
+  const unit = opt ? opt.dataset.unit : '';
+  hint.textContent = `Target range: ${target}${unit ? ' ' + unit : ''}`;
+}
+
+async function runSensorTest() {
+  const select = document.getElementById('sensorTestSelect');
+  const valueInput = document.getElementById('sensorTestValue');
+  const resultBox = document.getElementById('sensorTestResult');
+  const sensorId = select.value;
+  const value = valueInput.value;
+
+  if (!sensorId) { alert('No sensors available to test.'); return; }
+  if (value === '') { alert('Enter a test value first.'); return; }
+
+  resultBox.style.display = 'block';
+  resultBox.style.color = 'var(--muted)';
+  resultBox.textContent = `Testing ${sensorId} with value ${value}…`;
+
+  try {
+    const resp = await fetch('/api/sensors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sensorId, value }),
+    });
+    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    const data = await resp.json();
+
+    if (resp.ok && data.success && data.triggered) {
+      resultBox.style.color = 'var(--red)';
+      resultBox.innerHTML = `⚠ ALERT TRIGGERED — ${data.sensorType} reading ${data.value}${data.unit} for ${data.assetName} (target: ${data.targetRange}) · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
+      renderSensorMonitor(true);
+    } else if (resp.ok && data.success) {
+      resultBox.style.color = 'var(--green)';
+      resultBox.textContent = `✓ Reading recorded (${data.value}${data.unit}, target: ${data.targetRange}) — ${data.reason}`;
+      renderSensorMonitor(true);
+    } else {
+      resultBox.style.color = 'var(--red)';
+      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
+    }
+  } catch (err) {
+    resultBox.style.color = 'var(--red)';
+    resultBox.textContent = '✗ Network error: ' + err.message;
+  }
+}
+
 function renderSystems() {
   let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
   systemDefs.forEach(s => {
@@ -1333,6 +1578,289 @@ function renderLevelView() {
 
   html += `</div>`;
   document.getElementById('view-levelview').innerHTML = html;
+}
+
+let lastPlans = [];
+
+async function renderPlannedMaintenance() {
+  const container = document.getElementById('view-plannedmaintenance');
+  container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading…</div>';
+
+  try {
+    const resp = await fetch('/api/get-assets?plannedmaintenance=true');
+    if (!resp.ok) throw new Error('Failed to load (' + resp.status + ')');
+    const data = await resp.json();
+    lastPlans = data.plans || [];
+
+    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openCreatePlanForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Plan</button></div>`;
+
+    if (lastPlans.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No planned maintenance projects yet — these are created manually for larger, budgeted initiatives, separate from day-to-day work orders.</div>`;
+    } else {
+      html += `<div class="asset-list">`;
+      lastPlans.forEach(p => {
+        const statusColors = { Planning: ['#F3F4F6','#374151'], 'In Progress': ['#DBEAFE','#1E40AF'], Completed: ['#DCFCE7','#166534'], 'On Hold': ['#FEE2E2','#991B1B'] };
+        const sc = statusColors[p.status] || statusColors.Planning;
+        const totalBudget = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
+        html += `<button class="asset-row" onclick="showPlanDetail('${p.recordId}')" style="text-align:left">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${p.title}</span><span class="asset-id">${p.planId}</span>
+              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sc[0]};color:${sc[1]}">${p.status}</span>
+            </div>
+            <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: TZS ${totalBudget.toLocaleString()} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
+          </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>`;
+      });
+      html += `</div>`;
+    }
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load: ' + err.message + '</div>';
+  }
+}
+
+function openCreatePlanForm() {
+  const overlay = document.createElement('div');
+  overlay.id = 'createPlanOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:16px">New Planned Maintenance</h3>
+    <div id="cpError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Title *</label>
+    <input id="cp_title" placeholder="e.g. Annual Fire System Overhaul" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description</label>
+    <textarea id="cp_description" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Start</label><input id="cp_start" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+      <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target End</label><input id="cp_end" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button onclick="document.getElementById('createPlanOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="submitCreatePlan()" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Create</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitCreatePlan() {
+  const title = document.getElementById('cp_title').value.trim();
+  const errorBox = document.getElementById('cpError');
+  if (!title) { errorBox.textContent = 'Title is required.'; errorBox.style.display = 'block'; return; }
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entityType: 'plannedMaintenance',
+        title,
+        description: document.getElementById('cp_description').value.trim(),
+        targetStartDate: document.getElementById('cp_start').value,
+        targetEndDate: document.getElementById('cp_end').value,
+        budgetItems: [],
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create plan');
+    document.getElementById('createPlanOverlay').remove();
+    renderPlannedMaintenance();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+async function refreshPlanView(recordId) {
+  try {
+    const resp = await fetch('/api/get-assets?plannedmaintenance=true');
+    if (resp.ok) { const data = await resp.json(); lastPlans = data.plans || []; }
+  } catch (err) { console.error(err); }
+  if (recordId && lastPlans.find(p => p.recordId === recordId)) showPlanDetail(recordId);
+  else renderPlannedMaintenance();
+}
+
+function showPlanDetail(recordId) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  if (!p) return;
+  const container = document.getElementById('view-plannedmaintenance');
+  const totalPlanned = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
+  const totalActual = p.budgetItems.reduce((s,i) => s + (Number(i.actualCost)||0), 0);
+
+  let html = `<button class="back-btn" onclick="renderPlannedMaintenance()">← Back to Planned Maintenance</button>
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div><div class="detail-title">${p.title}</div><div class="detail-sub">${p.planId}</div></div>
+      <select onchange="updatePlanField('${p.recordId}', 'Plan Status', this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+        <option value="Planning" ${p.status==='Planning'?'selected':''}>Planning</option>
+        <option value="In Progress" ${p.status==='In Progress'?'selected':''}>In Progress</option>
+        <option value="Completed" ${p.status==='Completed'?'selected':''}>Completed</option>
+        <option value="On Hold" ${p.status==='On Hold'?'selected':''}>On Hold</option>
+      </select>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Overview</div>
+      ${p.description ? `<div style="font-size:13px;line-height:1.6;margin-bottom:12px">${p.description}</div>` : ''}
+      <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div class="detail-field"><div class="detail-field-label">Target Start</div><div class="detail-field-value">${p.targetStartDate || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Target End</div><div class="detail-field-value">${p.targetEndDate || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created By</div><div class="detail-field-value">${p.createdBy || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created</div><div class="detail-field-value">${p.createdDate || '—'}</div></div>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Budget</div>
+        <button onclick="addPlanBudgetItem('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add Item</button>
+      </div>
+      ${p.budgetItems.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No budget items yet.</div>' : `
+      <table style="width:100%;font-size:12.5px;border-collapse:collapse">
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Planned</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Actual</td></tr>
+        ${p.budgetItems.map((i,idx) => `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 0">${i.description}</td><td style="padding:6px 0;text-align:right">TZS ${Number(i.plannedCost||0).toLocaleString()}</td><td style="padding:6px 0;text-align:right">${i.actualCost ? 'TZS ' + Number(i.actualCost).toLocaleString() : `<button onclick="setPlanActualCost('${p.recordId}',${idx})" style="font-size:10.5px;color:var(--navy);background:none;border:none;cursor:pointer;text-decoration:underline">+ add actual</button>`}</td></tr>`).join('')}
+        <tr><td style="padding:8px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalPlanned.toLocaleString()}</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalActual.toLocaleString()}</td></tr>
+      </table>`}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Milestones</div>
+        <button onclick="addPlanMilestone('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add Milestone</button>
+      </div>
+      ${p.milestones.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No milestones yet.</div>' :
+        p.milestones.map((m,idx) => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${m.completed?'checked':''} onchange="togglePlanMilestone('${p.recordId}',${idx},this.checked)">
+          <span style="font-size:13px;${m.completed?'text-decoration:line-through;color:var(--muted)':''}">${m.title} <span style="color:var(--muted);font-size:11px">— ${m.targetDate||'no date'}</span></span>
+        </label>`).join('')}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Meeting Log</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="document.getElementById('planDocInput').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📎 Upload Doc</button>
+          <input type="file" id="planDocInput" style="display:none" onchange="uploadPlanDocument('${p.recordId}', this)">
+          <button onclick="addPlanMeeting('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Log Meeting</button>
+        </div>
+      </div>
+      ${p.meetingLog.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No meetings logged yet.</div>' :
+        p.meetingLog.slice().reverse().map(m => `<div style="padding:8px 10px;background:#F7F8FA;border-radius:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:600">${m.date}</div><div style="font-size:12.5px;margin-top:2px">${m.notes}</div>${m.attendees ? `<div style="font-size:10.5px;color:var(--muted);margin-top:2px">Attendees: ${m.attendees}</div>` : ''}</div>`).join('')}
+      ${p.documents.length > 0 ? `<div style="margin-top:10px">${p.documents.map(d => `<a href="${d.url}" target="_blank" style="display:block;font-size:12px;color:var(--navy);margin-bottom:4px">📄 ${d.filename}</a>`).join('')}</div>` : ''}
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Action Points</div>
+        <button onclick="addPlanActionPoint('${p.recordId}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add</button>
+      </div>
+      ${p.actionPoints.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No action points yet.</div>' :
+        p.actionPoints.map((a,idx) => `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${a.done?'checked':''} onchange="togglePlanActionPoint('${p.recordId}',${idx},this.checked)">
+          <span style="font-size:13px;${a.done?'text-decoration:line-through;color:var(--muted)':''}">${a.what} <span style="color:var(--muted);font-size:11px">— ${a.who}${a.dueDate ? ', due ' + a.dueDate : ''}</span></span>
+        </label>`).join('')}
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function updatePlanField(recordId, field, value) {
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'updatePlan', recordId, field, value }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    refreshPlanView(recordId);
+  } catch (err) {
+    alert('Could not save: ' + err.message);
+  }
+}
+
+function addPlanBudgetItem(recordId) {
+  const description = prompt('Item description:');
+  if (!description) return;
+  const plannedCost = Number(prompt('Planned cost (TZS):') || 0);
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const items = [...p.budgetItems, { description, plannedCost }];
+  updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
+}
+
+function setPlanActualCost(recordId, idx) {
+  const actualCost = Number(prompt('Actual cost (TZS):') || 0);
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const items = [...p.budgetItems];
+  items[idx] = { ...items[idx], actualCost };
+  updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
+}
+
+function addPlanMilestone(recordId) {
+  const title = prompt('Milestone:');
+  if (!title) return;
+  const targetDate = prompt('Target date (YYYY-MM-DD), optional:') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const milestones = [...p.milestones, { title, targetDate, completed: false }];
+  updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+}
+
+function togglePlanMilestone(recordId, idx, checked) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const milestones = [...p.milestones];
+  milestones[idx] = { ...milestones[idx], completed: checked };
+  updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+}
+
+function addPlanMeeting(recordId) {
+  const notes = prompt('What was discussed / decided?');
+  if (!notes) return;
+  const attendees = prompt('Attendees (optional):') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const meetingLog = [...p.meetingLog, { date: new Date().toISOString().split('T')[0], notes, attendees }];
+  updatePlanField(recordId, 'Meeting Log', JSON.stringify(meetingLog));
+}
+
+function addPlanActionPoint(recordId) {
+  const what = prompt('Action point:');
+  if (!what) return;
+  const who = prompt('Who is responsible?') || '';
+  const dueDate = prompt('Due date (optional):') || '';
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const actionPoints = [...p.actionPoints, { what, who, dueDate, done: false }];
+  updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+}
+
+function togglePlanActionPoint(recordId, idx, checked) {
+  const p = lastPlans.find(pl => pl.recordId === recordId);
+  const actionPoints = [...p.actionPoints];
+  actionPoints[idx] = { ...actionPoints[idx], done: checked };
+  updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+}
+
+async function uploadPlanDocument(recordId, inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert('File larger than 5MB.'); return; }
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'uploadPlanDocument', recordId, filename: file.name, contentType: file.type, fileBase64: base64 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+    refreshPlanView(recordId);
+  } catch (err) {
+    alert('Could not upload: ' + err.message);
+  }
 }
 
 let lastWorkOrders = [];
@@ -1988,6 +2516,24 @@ function renderFloorPlanImage(canManage) {
   }
 }
 
+async function markTechnicalReviewDone(recordId, idx) {
+  if (!confirm('Confirm this asset\'s classification has been checked and is correct?')) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clearTechnicalReview', recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not clear review flag');
+    await loadAssetsAndInit();
+    const newIdx = assets.findIndex(a => a.recordId === recordId);
+    if (newIdx >= 0) showDetail(newIdx);
+  } catch (err) {
+    alert('Could not mark reviewed: ' + err.message);
+  }
+}
+
 async function scheduleInspection(assetId, assetName) {
   if (!confirm(`Schedule an inspection for ${assetName} (${assetId})? This creates a new Inspection work order, separate from regular maintenance.`)) return;
   try {
@@ -2220,6 +2766,449 @@ async function submitDocumentUpload(recordId, inputEl) {
   }
 }
 
+async function openWorkOrderActivity(recordId, assetName) {
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  let log = [];
+  try { log = JSON.parse((wo && wo.activityLog) || "[]"); } catch { log = []; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'activityWOOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:500px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Activity: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every update here is timestamped and attributed — this is the real record of what happened.</div>
+    <div id="wo_activity_thread" style="flex:1;overflow-y:auto;margin-bottom:14px;padding-right:4px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="wo_activity_input" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWOActivity('${recordId}')">
+      <button onclick="submitWOActivity('${recordId}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+    </div>
+    <button onclick="document.getElementById('activityWOOverlay').remove()" style="margin-top:12px;width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  renderWOActivityThread(log);
+}
+
+function renderWOActivityThread(log) {
+  const thread = document.getElementById('wo_activity_thread');
+  if (!thread) return;
+  if (log.length === 0) {
+    thread.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:12px 0">No activity yet — the first update starts the record.</div>`;
+    return;
+  }
+  thread.innerHTML = log.map(entry => `
+    <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  `).join('');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function submitWOActivity(recordId) {
+  const input = document.getElementById('wo_activity_input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addActivityEntry: true, recordId, text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save update');
+
+    const wo = lastWorkOrders.find(o => o.id === recordId);
+    if (wo) wo.activityLog = JSON.stringify(data.log);
+
+    input.value = '';
+    renderWOActivityThread(data.log);
+  } catch (err) {
+    alert('Could not send update: ' + err.message);
+  } finally {
+    input.disabled = false;
+  }
+}
+
+// Re-fetches work order data and, if currently viewing a specific
+// work order's detail page, re-renders that same page in place —
+// rather than bouncing back to the list after every action.
+async function refreshWorkOrdersView(recordId) {
+  try {
+    const resp = await fetch('/api/work-orders');
+    if (resp.ok) {
+      const data = await resp.json();
+      lastWorkOrders = data.workOrders || [];
+    }
+  } catch (err) {
+    console.error('Could not refresh work orders:', err);
+  }
+  if (recordId && lastWorkOrders.find(w => w.id === recordId)) {
+    showWorkOrderDetail(recordId);
+  } else {
+    renderWorkOrders();
+  }
+}
+
+async function showWorkOrderDetail(recordId) {
+  const o = lastWorkOrders.find(w => w.id === recordId);
+  if (!o) return;
+  const container = document.getElementById('view-workorders');
+  const procStatus = o.procurementStatus || 'None';
+  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
+  const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
+  const statusClass = o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue';
+
+  let html = `<button class="back-btn" onclick="renderWorkOrders()">← Back to Work Orders</button>
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.status}</span>
+        <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
+        ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+        ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Report</div>
+      <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div class="detail-field"><div class="detail-field-label">Location</div><div class="detail-field-value">${o.location || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Created</div><div class="detail-field-value">${new Date(o.created).toLocaleString()}</div></div>
+      </div>
+      ${o.notes ? `<div style="margin-top:12px;padding:12px 14px;background:#F7F8FA;border-radius:8px;font-size:13px;line-height:1.6">${o.notes}</div>` : ''}
+      ${o.reporterContact ? `<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reporter contact: ${o.reporterContact}</div>` : ''}
+      ${o.reporterPhoto ? `<a href="${o.reporterPhoto}" target="_blank"><img src="${o.reporterPhoto}" style="margin-top:10px;max-width:200px;border-radius:8px;border:1px solid var(--border)"></a>` : ''}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">Before Photo</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">The technician confirms the problem is real before anything else happens.</div>
+      ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_before').click()" style="width:120px;height:120px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+      <input type="file" id="woDetailPhoto_before" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
+    </div>
+
+    <div id="woDetailProcurement" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
+
+    <div id="woDetailChecklist" style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
+      <div style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">After Photo</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">The evidence the routed role reviews before approving closure.</div>
+      ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_after').click()" style="width:120px;height:120px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+      <input type="file" id="woDetailPhoto_after" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
+      ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+      ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
+      ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
+      ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+          <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
+          <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
+          <option value="Ready for Review" ${o.status==='Ready for Review'?'selected':''}>Ready for Review</option>
+        </select>` : `<span class="badge badge-good">Completed</span>`}
+        ${o.status === 'Ready for Review' && currentUserPermissions && currentUserPermissions.reviewWorkOrderClosure ? `
+          <button onclick="approveWorkOrderClosure('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer">✓ Approve & Close</button>
+          <button onclick="rejectWorkOrderClosurePrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Send Back</button>
+        ` : ''}
+        ${o.status === 'Completed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
+        ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+      </div>
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+      <div id="woDetailActivityThread" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px">
+        <input id="woDetailActivityInput" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailActivity('${o.id}')">
+        <button onclick="submitWODetailActivity('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+      </div>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+
+  renderWODetailProcurement(o);
+  renderWODetailChecklist(o);
+  renderWODetailActivityThread(o);
+}
+
+function renderWODetailProcurement(o) {
+  const el = document.getElementById('woDetailProcurement');
+  if (!el) return;
+  const procStatus = o.procurementStatus || 'None';
+  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
+  let breakdown = [];
+  try { breakdown = JSON.parse(o.costBreakdown || '[]'); } catch { breakdown = []; }
+  const total = breakdown.reduce((s, i) => s + (Number(i.cost) || 0), 0);
+
+  let html = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Procurement</div>`;
+
+  if (procStatus === 'None') {
+    html += `<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Not requested for this work order.</div>
+      ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
+  } else {
+    const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
+    html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatus}</span>`;
+    if (breakdown.length > 0) {
+      html += `<table style="width:100%;margin-top:10px;font-size:12.5px;border-collapse:collapse">
+        <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Qty</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Unit Rate</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Total</td></tr>
+        ${breakdown.map(i => `<tr><td style="padding:4px 0;border-bottom:1px solid var(--border)">${i.description}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">${i.quantity !== undefined ? i.quantity : '—'}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">${i.unitRate !== undefined ? Number(i.unitRate).toLocaleString() : '—'}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">TZS ${Number(i.cost).toLocaleString()}</td></tr>`).join('')}
+        <tr><td colspan="3" style="padding:6px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:6px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${total.toLocaleString()}</td></tr>
+      </table>`;
+    }
+    if (procStatus === 'Rejected' && o.procurementRejectionReason) {
+      html += `<div style="font-size:12px;color:#991B1B;margin-top:8px">❌ ${o.procurementRejectionReason}</div>
+        <button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:8px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">Revise Request</button>`;
+    }
+    if (procStatus === 'Requested' && canApprove) {
+      html += `<div style="margin-top:10px;display:flex;gap:8px">
+        <button onclick="approveProcurement('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✓ Approve</button>
+        <button onclick="rejectProcurementPrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Reject</button>
+      </div>`;
+    }
+    if (procStatus === 'Approved') {
+      html += `<button onclick="fulfillProcurement('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+async function renderWODetailChecklist(o) {
+  const el = document.getElementById('woDetailChecklist');
+  if (!el) return;
+  const checklistClass = guessChecklistClass(o.assetName || '', o.system || '');
+  if (!checklistClass) {
+    el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No standard checklist mapped for this asset type.</div>`;
+    return;
+  }
+
+  let progress = {};
+  try { progress = JSON.parse(o.checklistProgress || '{}'); } catch { progress = {}; }
+
+  try {
+    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+    const data = await resp.json();
+    if (!data.items || data.items.length === 0) {
+      el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet for ${checklistClass}.</div>`;
+      return;
+    }
+    window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass, data, progress };
+
+    // Time-bound grouping — same pattern as the printable version, so
+    // this reads consistently whether viewed on screen or downloaded.
+    const freqGroups = {};
+    data.items.forEach((item, i) => {
+      const freq = item.frequency || 'Unscheduled';
+      (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
+    });
+    const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+    const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
+
+    const completedCount = data.items.filter((_, i) => progress[i] && progress[i].checked).length;
+
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${checklistClass}</div>
+      <button onclick="downloadWODetailChecklist()" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download PDF</button>
+    </div>
+    <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${completedCount} of ${data.items.length} completed — optional tracking, does not block closing this work order</div>`;
+
+    orderedFreqs.forEach(freq => {
+      html += `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--navy);background:#EEF1F5;padding:5px 10px;margin-top:10px">${freq}</div>`;
+      freqGroups[freq].forEach(item => {
+        const state = progress[item._index] || {};
+        const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+        html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this)" style="margin-top:2px">
+          <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+        </label>`;
+      });
+    });
+
+    el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load checklist: ${err.message}</div>`;
+  }
+}
+
+function downloadWODetailChecklist() {
+  const { workOrderId, assetName, checklistClass, data, progress } = window.currentWODetailChecklist;
+  const freqGroups = {};
+  data.items.forEach((item, i) => {
+    const freq = item.frequency || 'Unscheduled';
+    (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
+  });
+  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
+
+  let sectionsHtml = '';
+  orderedFreqs.forEach(freq => {
+    sectionsHtml += `<div class="freq-section"><div class="freq-title">${freq}</div><table class="items-table">
+      ${freqGroups[freq].map(item => {
+        const state = progress[item._index] || {};
+        return `<tr><td class="check-col">${state.checked ? '☑' : '☐'}</td><td>${item.task}${state.checked ? `<div style="font-size:10px;color:#16a34a">Checked by ${state.by} · ${state.at ? new Date(state.at).toLocaleDateString() : ''}</div>` : ''}</td></tr>`;
+      }).join('')}
+    </table></div>`;
+  });
+
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><head><title>Checklist — ${assetName}</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
+      .doc { max-width: 700px; margin: 0 auto; }
+      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#6B7280; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .freq-section { margin-bottom: 20px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .items-table { width:100%; border-collapse:collapse; }
+      .items-table tr { border-bottom: 1px solid #E5E7EB; }
+      .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
+      .check-col { width:24px; font-size:15px; color:#6B7280; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="doc">
+        <div class="header"><div class="title">Maintenance Checklist</div><div class="subtitle">${checklistClass} — ${assetName}</div></div>
+        <div class="standard-box"><strong>Reference Standard:</strong> ${data.sourceStandard || 'Not specified'}</div>
+        ${sectionsHtml}
+        <div style="margin-top:30px;font-size:10.5px;color:#9CA3AF;text-align:center">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+      </div>
+    </body></html>
+  `);
+  win.document.close();
+}
+
+function renderWODetailActivityThread(o) {
+  const el = document.getElementById('woDetailActivityThread');
+  if (!el) return;
+  let log = [];
+  try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
+  if (log.length === 0) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">No activity yet.</div>`;
+    return;
+  }
+  el.innerHTML = log.map(entry => `
+    <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  `).join('');
+}
+
+async function submitWODetailActivity(recordId) {
+  const input = document.getElementById('woDetailActivityInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addActivityEntry: true, recordId, text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save update');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) o.activityLog = JSON.stringify(data.log);
+    input.value = '';
+    renderWODetailActivityThread(o);
+  } catch (err) {
+    alert('Could not send update: ' + err.message);
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function openWorkOrderChecklist(recordId, assetName, system) {
+  const checklistClass = guessChecklistClass(assetName, system);
+  if (!checklistClass) return;
+
+  const wo = lastWorkOrders.find(o => o.id === recordId);
+  let progress = {};
+  try { progress = JSON.parse((wo && wo.checklistProgress) || "{}"); } catch { progress = {}; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'checklistWOOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Checklist: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Optional tracking — checking items off does not block closing this work order.</div>
+    <div id="wo_checklist_body" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+    <button onclick="document.getElementById('checklistWOOverlay').remove()" style="margin-top:16px;width:100%;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+    const data = await resp.json();
+    const body = document.getElementById('wo_checklist_body');
+    if (!data.items || data.items.length === 0) {
+      body.innerHTML = `<div>No checklist items defined yet for ${checklistClass}.</div>`;
+      return;
+    }
+    body.innerHTML = data.items.map((item, i) => {
+      const state = progress[i] || {};
+      const noteText = state.checked ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '';
+      return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this)" style="margin-top:2px">
+        <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ ${noteText}</div>` : ''}</span>
+      </label>`;
+    }).join('');
+  } catch (err) {
+    document.getElementById('wo_checklist_body').innerHTML = `<div style="color:var(--red)">Could not load checklist: ${err.message}</div>`;
+  }
+}
+
+async function toggleWOChecklistItem(recordId, itemId, checked, inputEl) {
+  inputEl.disabled = true;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checklistToggle: true, recordId, itemId, checked }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+
+    // Update local cache so re-opening the modal reflects the change
+    // immediately without needing a full work orders reload.
+    const wo = lastWorkOrders.find(o => o.id === recordId);
+    if (wo) wo.checklistProgress = JSON.stringify(data.progress);
+
+    const label = inputEl.closest('label');
+    const noteSpan = label.querySelector('span');
+    if (checked) {
+      const noteDiv = noteSpan.querySelector('div:last-child');
+      const noteHtml = `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ Checked by ${data.progress[itemId].by} · just now</div>`;
+      if (noteDiv && noteDiv.tagName === 'DIV' && noteDiv !== noteSpan.firstElementChild) {
+        noteDiv.outerHTML = noteHtml;
+      } else {
+        noteSpan.insertAdjacentHTML('beforeend', noteHtml);
+      }
+    }
+  } catch (err) {
+    inputEl.checked = !checked; // revert on failure
+    alert('Could not save checklist item: ' + err.message);
+  } finally {
+    inputEl.disabled = false;
+  }
+}
+
 function toggleFloorPlanUploadPanel() {
   const panel = document.getElementById('floorPlanUploadPanel');
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -2349,32 +3338,28 @@ async function renderWorkOrders() {
     if (orders.length === 0) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
     } else {
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="selectAllWO" onchange="toggleAllWorkOrders(this.checked)"> Select all open/in-progress</label>
-        <button id="bulkCloseBtn" onclick="bulkCloseWorkOrders()" disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer;opacity:0.5">Close Selected (0)</button>
-      </div>`;
       html += `<div class="asset-list">`;
       orders.forEach(o => {
         const closable = o.status !== 'Completed';
-        html += `<div class="asset-row" style="cursor:default">
-          ${closable ? `<input type="checkbox" class="wo-checkbox" data-id="${o.id}" onchange="updateBulkCloseButton()" style="margin-right:12px;flex-shrink:0">` : `<div style="width:28px;flex-shrink:0"></div>`}
+        const procStatus = o.procurementStatus || 'None';
+        const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
+        const idx = lastWorkOrders.indexOf(o);
+        html += `<button class="asset-row" onclick="showWorkOrderDetail('${o.id}')" style="text-align:left">
           <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
+              ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+              ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
+              ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
+            </div>
             <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
-            ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
-            ${o.cost !== null && o.cost !== undefined && o.costEditedBy ? `<div style="font-size:10.5px;color:var(--muted);margin-top:1px">Cost recorded by ${o.costEditedBy}${o.costEditedDate ? ' · ' + new Date(o.costEditedDate).toLocaleDateString() : ''}</div>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
-            ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
-            ${o.status === 'Completed' && currentUserPermissions && currentUserPermissions.enterWorkOrderCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
-            <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--navy)">
-              <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
-              <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
-              <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
-            </select>
+            <span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${o.status}</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
-        </div>`;
+        </button>`;
       });
       html += `</div>`;
     }
@@ -2392,6 +3377,221 @@ async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
     return;
   }
   updateWorkOrderStatus(recordId, newStatus);
+}
+
+async function submitWorkOrderPhoto(recordId, photoType, inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    alert("File is larger than 5MB — Airtable's direct upload limit. Try a smaller photo.");
+    return;
+  }
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/work-orders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadWorkOrderPhoto',
+        recordId, photoType,
+        filename: file.name,
+        contentType: file.type || 'image/jpeg',
+        fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not upload photo: ' + err.message);
+  }
+}
+
+let procurementLineItemCount = 0;
+
+function openProcurementRequestModal(recordId, assetName) {
+  procurementLineItemCount = 0;
+  const overlay = document.createElement('div');
+  overlay.id = 'procurementOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
+    <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Request Procurement: ${assetName}</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Add each item and its cost. This work order can't be closed until the request is approved and fulfilled.</div>
+    <div id="procLineItemsHeader" style="display:flex;gap:8px;margin-bottom:6px;font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">
+      <div style="flex:2">Description</div><div style="width:60px">Qty</div><div style="width:90px">Unit Rate</div><div style="width:90px">Line Total</div><div style="width:20px"></div>
+    </div>
+    <div id="procLineItems"></div>
+    <button onclick="addProcurementLineItem()" style="margin:8px 0 16px;padding:7px 14px;font-size:12px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;width:100%">+ Add Item</button>
+    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;color:var(--navy);padding-top:10px;border-top:1px solid var(--border);margin-bottom:16px">
+      <span>Total</span><span id="procTotal">TZS 0</span>
+    </div>
+    <div id="procRequestError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="document.getElementById('procurementOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+      <button onclick="submitProcurementRequest('${recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:#B45309;color:#fff;font-weight:600;cursor:pointer">Submit Request</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  addProcurementLineItem();
+}
+
+function addProcurementLineItem() {
+  const id = procurementLineItemCount++;
+  const container = document.getElementById('procLineItems');
+  const row = document.createElement('div');
+  row.id = `procItem_${id}`;
+  row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center';
+  row.innerHTML = `
+    <input placeholder="e.g. Pipe fitting" class="proc-item-desc" style="flex:2;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <input type="number" placeholder="1" class="proc-item-qty" value="1" min="0" oninput="updateLineTotal('${id}')" style="width:60px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <input type="number" placeholder="0" class="proc-item-rate" oninput="updateLineTotal('${id}')" style="width:90px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+    <div class="proc-item-linetotal" style="width:90px;font-size:13px;font-weight:600;color:var(--navy);text-align:right;padding-right:4px">0</div>
+    <button onclick="document.getElementById('procItem_${id}').remove();updateProcurementTotal()" style="width:20px;border:none;background:none;color:var(--red);cursor:pointer;font-size:16px;flex-shrink:0">×</button>
+  `;
+  container.appendChild(row);
+}
+
+function updateLineTotal(id) {
+  const row = document.getElementById(`procItem_${id}`);
+  const qty = Number(row.querySelector('.proc-item-qty').value) || 0;
+  const rate = Number(row.querySelector('.proc-item-rate').value) || 0;
+  const lineTotal = qty * rate;
+  row.querySelector('.proc-item-linetotal').textContent = lineTotal.toLocaleString();
+  updateProcurementTotal();
+}
+
+function updateProcurementTotal() {
+  const rows = document.querySelectorAll('#procLineItems > div');
+  let total = 0;
+  rows.forEach(row => {
+    const qty = Number(row.querySelector('.proc-item-qty')?.value) || 0;
+    const rate = Number(row.querySelector('.proc-item-rate')?.value) || 0;
+    total += qty * rate;
+  });
+  document.getElementById('procTotal').textContent = 'TZS ' + total.toLocaleString();
+}
+
+async function submitProcurementRequest(recordId) {
+  const rows = document.querySelectorAll('#procLineItems > div');
+  const lineItems = [];
+  rows.forEach(row => {
+    const desc = row.querySelector('.proc-item-desc').value.trim();
+    const quantity = Number(row.querySelector('.proc-item-qty').value) || 0;
+    const unitRate = Number(row.querySelector('.proc-item-rate').value) || 0;
+    if (desc) lineItems.push({ description: desc, quantity, unitRate, cost: quantity * unitRate });
+  });
+
+  const errorBox = document.getElementById('procRequestError');
+  if (lineItems.length === 0) {
+    errorBox.textContent = 'Add at least one item with a description.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestProcurement: true, recordId, lineItems }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
+    document.getElementById('procurementOverlay').remove();
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+async function approveWorkOrderClosure(recordId) {
+  if (!confirm('Approve this work and close the work order?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approveClosure: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not approve: ' + err.message);
+  }
+}
+
+async function rejectWorkOrderClosurePrompt(recordId) {
+  const reason = prompt('What still needs fixing before this can close?');
+  if (!reason) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejectClosure: true, recordId, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send back');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not send back: ' + err.message);
+  }
+}
+
+async function approveProcurement(recordId) {
+  if (!confirm('Approve this procurement request?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approveProcurement: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not approve: ' + err.message);
+  }
+}
+
+async function rejectProcurementPrompt(recordId) {
+  const reason = prompt('Why is this being rejected? (shown to whoever requested it)');
+  if (!reason) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejectProcurement: true, recordId, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reject');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not reject: ' + err.message);
+  }
+}
+
+async function fulfillProcurement(recordId) {
+  if (!confirm('Mark this procurement as fulfilled? This unblocks the work order for the technician to complete.')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fulfillProcurement: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark fulfilled');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not mark fulfilled: ' + err.message);
+  }
 }
 
 function openCostEntryModal(recordId, assetName, editMode, existingCost) {
@@ -2460,7 +3660,7 @@ async function updateWorkOrderStatus(recordId, status, cost) {
       const errorDetail = data.errors && data.errors.length ? data.errors[0] : (data.error || 'Unknown error');
       throw new Error(errorDetail);
     }
-    renderWorkOrders(); // refresh the summary counts
+    refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not update work order:\n\n' + err.message);
   }
@@ -2745,7 +3945,7 @@ function printMaintenancePlan(windowDays) {
     <body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <h1>Maintenance Plan — Next ${windowDays} Days</h1>
-      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
       ${filtered.length === 0 ? '<div class="empty">Nothing due for service within this window.</div>' : `
       <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
       <tbody>${rows}</tbody></table>`}
@@ -2757,53 +3957,83 @@ function printMaintenancePlan(windowDays) {
 
 // ---------------------------------------------------------------------
 
+// Shared builder for both Weekly and Monthly reports — genuinely one
+// page, not an unbounded event list. Caps the printed/PDF view to the
+// most recent events; CSV/XLSX exports (built separately) still carry
+// everything, since a spreadsheet has no "page" to overflow.
+function buildPeriodReportHtml(data, title, periodLabel) {
+  const MAX_SHOWN = 8;
+  const urgencyRows = Object.entries(data.byUrgency)
+    .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const shownEvents = data.events.slice(0, MAX_SHOWN);
+  const eventRows = shownEvents
+    .map(e => `<tr><td>${new Date(e.timestamp).toLocaleDateString()}</td><td>${e.assetName || e.assetId}</td><td>${e.system || '—'}</td><td>${e.urgency}</td></tr>`)
+    .join('');
+  const remaining = data.events.length - shownEvents.length;
+
+  return `
+    <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
+    <style>
+      @page { size: A4; margin: 16mm; }
+      body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 12px; }
+      h1 { color:#1A3566; font-size:19px; margin-bottom:2px; }
+      .sub { color:#6B7280; font-size:11.5px; margin-bottom:16px; }
+      .kpi-row { display:flex; gap:10px; margin-bottom:18px; }
+      .kpi { flex:1; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 14px; }
+      .kpi-val { font-size:20px; font-weight:700; color:#1A3566; }
+      .kpi-label { font-size:10.5px; color:#6B7280; }
+      h2 { color:#1A3566; font-size:12.5px; margin:14px 0 6px; }
+      table { width:100%; border-collapse:collapse; font-size:11px; }
+      th { background:#1A3566; color:#fff; text-align:left; padding:6px 8px; }
+      td { padding:6px 8px; border-bottom:1px solid #E2E6ED; }
+      tr:nth-child(even) { background:#F8FAFC; }
+      .empty { color:#6B7280; font-style:italic; padding:12px 0; }
+      .more-note { font-size:10.5px; color:#6B7280; margin-top:6px; font-style:italic; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <h1>${title}</h1>
+      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
+
+      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period. This report fills in as the system runs.</div>' : `
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts</div></div>
+        ${Object.entries(data.byUrgency).slice(0,3).map(([k,v]) => `<div class="kpi"><div class="kpi-val">${v}</div><div class="kpi-label">${k}</div></div>`).join('')}
+      </div>
+
+      <h2>Most Recent Activity</h2>
+      <table><thead><tr><th>Date</th><th>Asset</th><th>System</th><th>Urgency</th></tr></thead><tbody>${eventRows}</tbody></table>
+      ${remaining > 0 ? `<div class="more-note">+ ${remaining} more this period — full history available in the CSV/XLSX export.</div>` : ''}
+      `}
+    </body></html>
+  `;
+}
+
 async function generateMonthlyReport() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
     const data = await resp.json();
-
+    const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
     const win = window.open('', '_blank');
-    const urgencyRows = Object.entries(data.byUrgency)
-      .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-    const eventRows = data.events
-      .map(e => `<tr><td>${new Date(e.timestamp).toLocaleString()}</td><td>${e.assetId}</td><td>${e.assetName}</td><td>${e.system}</td><td>${e.urgency}</td><td>${e.channel}</td></tr>`)
-      .join('');
+    win.document.write(buildPeriodReportHtml(data, 'Monthly Report — Last 30 Days', periodLabel));
+    win.document.close();
+    win.focus();
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
 
-    win.document.write(`
-      <html><head><title>Monthly Report — ${CLIENT_CONFIG.clientName}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
-        h1 { color:#1A3566; font-size:20px; }
-        h2 { color:#1A3566; font-size:14px; margin-top:24px; margin-bottom:10px; }
-        .sub { color:#6B7280; font-size:12px; margin-bottom:20px; }
-        .kpi { display:inline-block; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:12px 20px; margin-right:12px; margin-bottom:16px; }
-        .kpi-val { font-size:22px; font-weight:700; color:#1A3566; }
-        .kpi-label { font-size:11px; color:#6B7280; }
-        table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:20px; }
-        th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
-        td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
-        tr:nth-child(even) { background:#F8FAFC; }
-        .empty { color:#6B7280; font-style:italic; padding:12px 0; }
-        .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
-        @media print { .download-btn { display:none; } }
-      </style></head>
-      <body>
-        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
-        <h1>Monthly Report — Last 30 Days</h1>
-        <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel} · ${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}</div>
-
-        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts Sent</div></div>
-
-        ${data.totalAlerts === 0 ? '<div class="empty">No alerts have been sent yet in this period. This report will populate as the system runs.</div>' : `
-        <h2>By Urgency</h2>
-        <table><thead><tr><th>Urgency</th><th>Count</th></tr></thead><tbody>${urgencyRows}</tbody></table>
-
-        <h2>Full Alert History</h2>
-        <table><thead><tr><th>Date/Time</th><th>Asset ID</th><th>Asset Name</th><th>System</th><th>Urgency</th><th>Channel</th></tr></thead><tbody>${eventRows}</tbody></table>
-        `}
-      </body></html>
-    `);
+async function generateWeeklyReport() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
+    const data = await resp.json();
+    const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
+    const win = window.open('', '_blank');
+    win.document.write(buildPeriodReportHtml(data, 'Weekly Report — Last 7 Days', periodLabel));
     win.document.close();
     win.focus();
   } catch (err) {
@@ -2813,7 +4043,7 @@ async function generateMonthlyReport() {
 
 async function exportMonthlyReportCSV() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
@@ -2827,9 +4057,25 @@ async function exportMonthlyReportCSV() {
   } catch (err) { alert('Could not export: ' + err.message); }
 }
 
+async function exportWeeklyReportCSV() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const header = 'Date/Time,Asset ID,Asset Name,System,Urgency,Channel';
+    const rows = data.events.map(e => `"${new Date(e.timestamp).toLocaleString()}","${e.assetId}","${e.assetName}","${e.system}","${e.urgency}","${e.channel}"`).join('\n');
+    const blob = new Blob([header + '\n' + rows], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `weekly-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
 async function exportMonthlyReportXLSX() {
   try {
-    const resp = await fetch('/api/monthly-report');
+    const resp = await fetch('/api/get-assets?monthlyreport=true');
     if (!resp.ok) throw new Error('Failed');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
@@ -2842,7 +4088,24 @@ async function exportMonthlyReportXLSX() {
   } catch (err) { alert('Could not export: ' + err.message); }
 }
 
+async function exportWeeklyReportXLSX() {
+  try {
+    const resp = await fetch('/api/get-assets?weeklyreport=true');
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) { alert('No alert data yet.'); return; }
+    const rows = [['Date/Time','Asset ID','Asset Name','System','Urgency','Channel']];
+    data.events.forEach(e => rows.push([new Date(e.timestamp).toLocaleString(), e.assetId, e.assetName, e.system, e.urgency, e.channel]));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Weekly Report');
+    XLSX.writeFile(wb, `weekly-report-${new Date().toISOString().split('T')[0]}.xlsx`);
+  } catch (err) { alert('Could not export: ' + err.message); }
+}
+
 function openAddAssetForm() {
+  userTouchedSystem = false;
+  userTouchedCriticality = false;
   const overlay = document.createElement('div');
   overlay.id = 'addAssetOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
@@ -2877,9 +4140,10 @@ function openAddAssetForm() {
       <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
-      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <input id="na_name" placeholder="e.g. Fire Pump — East Riser" oninput="applyAssetSuggestion(this.value)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+      <div id="na_suggestion_hint" style="font-size:10.5px;color:var(--green);margin-bottom:6px;display:none"></div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
-      <select id="na_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="na_system" onchange="userTouchedSystem=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
       </select>
 
@@ -2903,12 +4167,16 @@ function openAddAssetForm() {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Model</label>
       <input id="na_model" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Photograph the Nameplate (optional)</label>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Not sure about the technical details? Just take a clear photo of the equipment's label — an engineer can read it properly later.</div>
+      <input id="na_nameplate" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px">
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
       <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option>Good</option><option>Poor</option><option>Critical</option>
       </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
-      <select id="na_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="na_criticality" onchange="userTouchedCriticality=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
       </select>
 
@@ -2943,6 +4211,25 @@ const CATEGORY_PREFIXES = {
   "Land": "LND", "Buildings": "BLD", "Infrastructure": "INF", "Heritage": "HER", "Minerals & Other Resources": "MIN",
   "Computer Software": "SW", "Trademarks": "TM", "Licenses": "LIC", "Patent Rights": "PAT", "Right to Use": "RTU",
 };
+
+// Applies a live suggestion as the Name is typed — pre-fills System and
+// Criticality, shown as a visible hint so it's clear this is a
+// suggestion to confirm, not a silent auto-decision. Never overwrites a
+// value the person has already picked differently themselves.
+let userTouchedSystem = false, userTouchedCriticality = false;
+function applyAssetSuggestion(name) {
+  const guess = guessAssetDefaults(name);
+  const hint = document.getElementById('na_suggestion_hint');
+  if (!guess) { hint.style.display = 'none'; return; }
+
+  if (!userTouchedSystem) document.getElementById('na_system').value = guess.system;
+  if (!userTouchedCriticality) document.getElementById('na_criticality').value = guess.criticality;
+  const lifespanField = document.getElementById('na_lifespan');
+  if (lifespanField && lifespanField.value === '15') lifespanField.value = guess.lifespan; // only if still at default
+
+  hint.textContent = `Suggested: ${guess.system} · ${guess.criticality} criticality — check and adjust if needed`;
+  hint.style.display = 'block';
+}
 
 function onNatureChange() {
   const nature = document.getElementById('na_nature').value;
@@ -3004,6 +4291,17 @@ async function submitNewAsset() {
   const lifespanField = document.getElementById('na_lifespan');
 
   try {
+    const nameplateFile = document.getElementById('na_nameplate').files[0];
+    let nameplateBase64 = null;
+    if (nameplateFile) {
+      nameplateBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(nameplateFile);
+      });
+    }
+
     const resp = await fetch('/api/manage-asset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3018,6 +4316,9 @@ async function submitNewAsset() {
         criticality: document.getElementById('na_criticality').value,
         acquisitionCost: costField ? costField.value : undefined,
         lifespan: lifespanField ? lifespanField.value : undefined,
+        nameplatePhotoBase64: nameplateBase64,
+        nameplatePhotoFilename: nameplateFile ? nameplateFile.name : undefined,
+        nameplatePhotoContentType: nameplateFile ? nameplateFile.type : undefined,
       }),
     });
     const data = await resp.json();
@@ -3069,7 +4370,7 @@ async function loadAssetsAndInit() {
     const data = await assetsResp.json();
     assets = data.assets || [];
     currentUserRole = data.role || "engineer";
-    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.engineer;
+    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
     if (woResp.ok) {
@@ -3096,6 +4397,46 @@ async function logout() {
   await fetch('/api/login', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'logout'}) });
   window.location.href = '/login.html';
 }
+
+// Sidebar collapse state persists across sessions (real app, not a
+// claude.ai artifact — localStorage is the right tool here).
+function showSidebarTooltip(btnEl, label) {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar.classList.contains('collapsed')) return; // labels already visible when expanded
+  const tooltip = document.getElementById('sidebarTooltip');
+  const rect = btnEl.getBoundingClientRect();
+  tooltip.textContent = label;
+  tooltip.style.left = (rect.right + 10) + 'px';
+  tooltip.style.top = (rect.top + rect.height/2) + 'px';
+  tooltip.style.transform = 'translateY(-50%)';
+  tooltip.classList.add('visible');
+}
+function hideSidebarTooltip() {
+  document.getElementById('sidebarTooltip').classList.remove('visible');
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const collapsed = sidebar.classList.toggle('collapsed');
+  localStorage.setItem('fam_sidebar_collapsed', collapsed ? '1' : '0');
+}
+function restoreSidebarState() {
+  const sidebar = document.getElementById('sidebar');
+  const saved = localStorage.getItem('fam_sidebar_collapsed');
+
+  if (saved !== null) {
+    // A real, explicit choice was already made — respect it exactly,
+    // regardless of screen size. Manual preference always wins.
+    if (saved === '1') sidebar.classList.add('collapsed');
+  } else {
+    // No preference yet (first-ever visit) — default to collapsed on
+    // narrow screens so a phone doesn't start with half its width eaten
+    // by the sidebar. Nothing is hidden or removed, just starts compact;
+    // one tap still reaches everything.
+    if (window.innerWidth <= 700) sidebar.classList.add('collapsed');
+  }
+}
+restoreSidebarState();
 
 loadAssetsAndInit();
 
