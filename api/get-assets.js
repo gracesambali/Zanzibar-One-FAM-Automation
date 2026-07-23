@@ -346,6 +346,12 @@ async function buildPeriodReport(req, res, days) {
       .filter(r => new Date(r.fields["Timestamp"]) >= cutoff)
       .sort((a, b) => new Date(b.fields["Timestamp"]) - new Date(a.fields["Timestamp"]));
 
+    // Work order data — maintenance types worked and real status counts,
+    // not just raw alert events. This is what actually makes the report
+    // a summary of the period, not just a slice of recent alerts.
+    const allWorkOrders = await fetchAllWorkOrdersForReport();
+    const workOrdersInPeriod = allWorkOrders.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) >= cutoff);
+
     const summary = {
       totalAlerts: recent.length,
       byUrgency: countBy(recent, "Urgency"),
@@ -359,6 +365,16 @@ async function buildPeriodReport(req, res, days) {
         urgency: r.fields["Urgency"],
         channel: r.fields["Channel"],
       })),
+      maintenanceTypes: countBy(workOrdersInPeriod, "Maintenance Type"),
+      workOrderStatus: {
+        completed: allWorkOrders.filter(r => r.fields["Status"] === "Completed" && r.fields["Completed Date"] && new Date(r.fields["Completed Date"]) >= cutoff).length,
+        open: allWorkOrders.filter(r => r.fields["Status"] === "Open").length,
+        inProgress: allWorkOrders.filter(r => r.fields["Status"] === "In Progress").length,
+        readyForReview: allWorkOrders.filter(r => r.fields["Status"] === "Ready for Review").length,
+        overdue: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "OVERDUE").length,
+        urgent: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "URGENT").length,
+        upcoming: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "UPCOMING").length,
+      },
       periodStart: cutoff.toISOString(),
       periodEnd: new Date().toISOString(),
     };
@@ -368,6 +384,26 @@ async function buildPeriodReport(req, res, days) {
     console.error("period-report error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+async function fetchAllWorkOrdersForReport() {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  let records = [];
+  let offset;
+  do {
+    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+    url.searchParams.set("pageSize", "100");
+    if (offset) url.searchParams.set("offset", offset);
+    const resp = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error(`Work Orders fetch failed: ${resp.status}`);
+    const data = await resp.json();
+    records = records.concat(data.records || []);
+    offset = data.offset;
+  } while (offset);
+  return records;
 }
 
 async function fetchAllLogRecords() {
