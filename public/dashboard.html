@@ -4105,13 +4105,23 @@ function printMaintenancePlan(windowDays) {
 function buildPeriodReportHtml(data, title, periodLabel) {
   const ws = data.workOrderStatus || {};
   const maintItemsByType = data.maintenanceItemsByType || {};
-  const MAX_NAMES_PER_TYPE = 10;
+  const alertsByUrgency = (() => {
+    const grouped = {};
+    for (const a of (data.alerts || [])) {
+      const key = a.urgency || "Other";
+      (grouped[key] = grouped[key] || []).push(a.assetName);
+    }
+    return grouped;
+  })();
 
   return `
     <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
     <style>
       @page { size: A4; margin: 16mm; }
-      body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 12px; }
+      html, body { height: auto; overflow: visible; }
+      body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 12px; max-width: 674px; margin: 0 auto; }
+      .report-header { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+      .report-header img { width:40px; height:40px; object-fit:contain; }
       h1 { color:#1A3566; font-size:19px; margin-bottom:2px; }
       .sub { color:#6B7280; font-size:11.5px; margin-bottom:14px; }
       .kpi-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
@@ -4119,11 +4129,11 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       .kpi-val { font-size:17px; font-weight:700; color:#1A3566; }
       .kpi-label { font-size:9.5px; color:#6B7280; }
       h2 { color:#1A3566; font-size:12px; margin:12px 0 6px; }
-      .badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
-      .type-badge { background:#EEF1F5; border-radius:14px; padding:5px 12px; font-size:10.5px; color:#1A3566; font-weight:600; }
       .type-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:16px; margin-bottom:14px; }
       .type-col { border-left:2px solid #1A3566; padding-left:10px; }
+      .type-col.alert-col { border-left-color:#B0431E; }
       .type-col-label { font-size:10.5px; font-weight:700; color:#1A3566; margin-bottom:6px; }
+      .alert-col .type-col-label { color:#B0431E; }
       .type-col-list { list-style:none; margin:0; padding:0; font-size:10.5px; color:#374151; }
       .type-col-list li { padding:2px 0; border-bottom:1px solid #F0F2F6; }
       .type-col-more { font-size:9.5px; color:#6B7280; font-style:italic; margin-top:5px; padding-top:4px; border-top:1px dashed #D1D5DB; }
@@ -4136,8 +4146,13 @@ function buildPeriodReportHtml(data, title, periodLabel) {
     </style></head>
     <body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
-      <h1>${title}</h1>
-      <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
+      <div class="report-header">
+        <img src="/logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
+        <div>
+          <h1>${title}</h1>
+          <div class="sub" style="margin-bottom:0">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
+        </div>
+      </div>
 
       <h2>Work Orders</h2>
       <div class="kpi-row">
@@ -4157,22 +4172,66 @@ function buildPeriodReportHtml(data, title, periodLabel) {
 
       ${Object.keys(maintItemsByType).length > 0 ? `
       <h2>Maintenance Worked, By Type</h2>
-      <div class="type-grid">
-      ${Object.entries(maintItemsByType).map(([type, items]) => {
-        const shown = items.slice(0, MAX_NAMES_PER_TYPE);
-        const extra = items.length - shown.length;
-        return `<div class="type-col">
+      <div class="type-grid" id="maintTypeGrid">
+      ${Object.entries(maintItemsByType).map(([type, items]) => `<div class="type-col" data-full-count="${items.length}">
           <div class="type-col-label">${type} (${items.length})</div>
-          <ul class="type-col-list">${shown.map(name => `<li>${name}</li>`).join('')}</ul>
-          ${extra > 0 ? `<div class="type-col-more">+${extra} more — see full list in the Excel export</div>` : ''}
-        </div>`;
-      }).join('')}
+          <ul class="type-col-list">${items.map(name => `<li>${name}</li>`).join('')}</ul>
+          <div class="type-col-more" style="display:none"></div>
+        </div>`).join('')}
       </div>
       ` : '<div class="empty">No maintenance work recorded this period yet.</div>'}
 
       <h2>Alerts — ${data.totalAlerts} Total</h2>
-      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period.</div>' :
-        `<div class="badge-row">${Object.entries(data.byUrgency).map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>`}
+      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period.</div>' : `
+      <div class="type-grid" id="alertGrid">
+      ${Object.entries(alertsByUrgency).map(([urgency, items]) => `<div class="type-col alert-col" data-full-count="${items.length}">
+          <div class="type-col-label">${urgency} (${items.length})</div>
+          <ul class="type-col-list">${items.map(name => `<li>${name}</li>`).join('')}</ul>
+          <div class="type-col-more" style="display:none"></div>
+        </div>`).join('')}
+      </div>
+      `}
+
+      <script>
+        // The list fills naturally — nothing is capped by an arbitrary
+        // number. Only if the content actually would overflow past one
+        // printed page do we trim, and only the minimum needed, evenly
+        // across whichever columns currently have the most items left.
+        (function fitToOnePage() {
+          var PAGE_HEIGHT_PX = 970; // A4 minus 16mm margins ≈ 1001px at 96dpi, small safety margin
+          var body = document.body;
+          var allCols = [].slice.call(document.querySelectorAll('.type-col'));
+
+          function currentHeight() {
+            var contentEls = [].slice.call(document.body.children).filter(function(el) {
+              return el.tagName !== 'SCRIPT' && el.getBoundingClientRect().height > 0;
+            });
+            if (contentEls.length === 0) return 0;
+            var last = contentEls[contentEls.length - 1];
+            return last.getBoundingClientRect().bottom;
+          }
+
+          var guard = 0;
+          while (currentHeight() > PAGE_HEIGHT_PX && guard < 500) {
+            guard++;
+            // Find the column with the most items still showing, trim one from it.
+            var target = null, maxVisible = 0;
+            allCols.forEach(function(col) {
+              var list = col.querySelector('.type-col-list');
+              var visible = list.children.length;
+              if (visible > 1 && visible > maxVisible) { maxVisible = visible; target = col; }
+            });
+            if (!target) break;
+            var list = target.querySelector('.type-col-list');
+            list.removeChild(list.lastElementChild);
+            var fullCount = parseInt(target.getAttribute('data-full-count'), 10);
+            var remaining = fullCount - list.children.length;
+            var moreEl = target.querySelector('.type-col-more');
+            moreEl.style.display = 'block';
+            moreEl.textContent = '+' + remaining + ' more — see full list in the Excel export';
+          }
+        })();
+      <\/script>
     </body></html>
   `;
 }
@@ -4183,7 +4242,7 @@ async function generateMonthlyReport() {
     if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
     const data = await resp.json();
     const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
-    const win = window.open('', '_blank');
+    const win = window.open('', '_blank', 'width=800,height=1200');
     win.document.write(buildPeriodReportHtml(data, 'Monthly Report — Last 30 Days', periodLabel));
     win.document.close();
     win.focus();
@@ -4198,7 +4257,7 @@ async function generateWeeklyReport() {
     if (!resp.ok) throw new Error('Failed to load report data (' + resp.status + ')');
     const data = await resp.json();
     const periodLabel = `${new Date(data.periodStart).toLocaleDateString()} to ${new Date(data.periodEnd).toLocaleDateString()}`;
-    const win = window.open('', '_blank');
+    const win = window.open('', '_blank', 'width=800,height=1200');
     win.document.write(buildPeriodReportHtml(data, 'Weekly Report — Last 7 Days', periodLabel));
     win.document.close();
     win.focus();
