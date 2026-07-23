@@ -77,12 +77,12 @@ export default async function handler(req, res) {
     // System Admin only — nothing else needs to change when you do.
     const TEMP_SHOW_COST_TO_ALL = true;
 
-    const role = session.r || "engineer";
+    const role = session.r || "technician";
     if (!TEMP_SHOW_COST_TO_ALL && !can(role, "viewCostAndDepreciation")) {
       assets = assets.map(({ acquisitionCost, residualValue, currentValue, ...rest }) => rest);
     }
 
-    return res.status(200).json({ assets, count: assets.length, role });
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });
@@ -308,7 +308,7 @@ async function handleGetFloorPlan(req, res) {
 // this, the key would only exist invisibly in Vercel's env var settings,
 // which isn't practically usable day-to-day.
 async function handleGetApiKeyInfo(req, res, session) {
-  const role = session.r || "engineer";
+  const role = session.r || "technician";
   if (!can(role, "viewCostAndDepreciation")) {
     // Reusing the same trust boundary as financial data — issuing or
     // viewing an API key is at least as sensitive as seeing cost figures.
