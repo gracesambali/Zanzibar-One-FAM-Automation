@@ -8,6 +8,7 @@
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
+import { getContactForUsername } from "../lib/staffDirectory.js";
 
 export default async function handler(req, res) {
   // Public quick-view mode (for QR code scanning — no login needed)
@@ -82,7 +83,8 @@ export default async function handler(req, res) {
       assets = assets.map(({ acquisitionCost, residualValue, currentValue, ...rest }) => rest);
     }
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u });
+    const staffEntry = getContactForUsername(session.u);
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "" });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });
