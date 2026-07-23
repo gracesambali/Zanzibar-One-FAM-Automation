@@ -20,7 +20,7 @@ import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
-import { getContactsForRole } from "../lib/staffDirectory.js";
+import { getContactsForRole, getAllStaffDirectory } from "../lib/staffDirectory.js";
 
 const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Mechanical": "mechanical_engineer",
@@ -120,6 +120,7 @@ export default async function handler(req, res) {
     // morning," not a strict rolling 24-hour clock. Each work order is
     // escalated once, not re-notified every day it stays open.
     const escalatedCount = await checkAndEscalateStaleWorkOrders();
+    const deadlineAlertCount = await checkPlanDeadlines();
 
     await sendHeartbeat(records.length, results);
 
@@ -130,7 +131,7 @@ export default async function handler(req, res) {
     // accurate figure too, not something manually typed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, results });
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -424,6 +425,75 @@ function daysBetween(from, to) {
 // Finds work orders sitting open more than 24 hours and flags them to
 // a supervisor — once per work order, not repeated daily, so this
 // doesn't turn into noise for something already known to be stuck.
+// Finds Planned Maintenance records whose target end date is within 7
+// days and flags them once — same "escalate once, not every day"
+// principle as the work order escalation above.
+async function checkPlanDeadlines() {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const planTable = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+
+  try {
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${planTable}?pageSize=100`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) { console.error("Plan deadline check: could not fetch plans"); return 0; }
+    const data = await resp.json();
+
+    const now = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const dueSoon = (data.records || []).filter(r => {
+      const f = r.fields;
+      const endDate = f["Target End Date"] ? new Date(f["Target End Date"]).getTime() : null;
+      const isActive = f["Plan Status"] !== "Completed";
+      const alreadyAlerted = f["Deadline Alert Sent"] === true;
+      return endDate && isActive && !alreadyAlerted && endDate - now <= sevenDaysMs && endDate - now >= 0;
+    });
+
+    if (dueSoon.length === 0) return 0;
+
+    for (const r of dueSoon) {
+      const createdBy = r.fields["Created By"];
+      const planTitle = r.fields["Name"] || "Planned Maintenance";
+      const daysLeft = Math.ceil((new Date(r.fields["Target End Date"]).getTime() - now) / (24 * 60 * 60 * 1000));
+
+      const directory = getAllStaffDirectory();
+      const creatorEntry = directory.find(e => e.username === createdBy);
+      if (creatorEntry && creatorEntry.email) {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+            to: [creatorEntry.email],
+            subject: `${planTitle} — target end in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
+            html: `<p>${planTitle} is due to complete on ${r.fields["Target End Date"]} — ${daysLeft} day${daysLeft !== 1 ? "s" : ""} away.</p>`,
+          }),
+        }).catch(err => console.error("Plan deadline email error:", err));
+      }
+
+      await fetch(`https://api.airtable.com/v0/${base}/${planTable}/${r.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Deadline Alert Sent": true } }),
+      });
+
+      let log = [];
+      try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
+      log.push({ text: `⏰ 7-day countdown alert sent — target end ${r.fields["Target End Date"]}`, by: "system", at: new Date().toISOString() });
+      await fetch(`https://api.airtable.com/v0/${base}/${planTable}/${r.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+      });
+    }
+
+    return dueSoon.length;
+  } catch (err) {
+    console.error("checkPlanDeadlines error:", err);
+    return 0;
+  }
+}
+
 async function checkAndEscalateStaleWorkOrders() {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");

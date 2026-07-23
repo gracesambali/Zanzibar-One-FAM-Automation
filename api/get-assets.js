@@ -56,6 +56,12 @@ export default async function handler(req, res) {
     return handleGetPlannedMaintenance(req, res);
   }
 
+  // Staff performance — restricted to decision-makers, checked here
+  // server-side, not just hidden in the UI.
+  if (req.query.staffperformance === "true") {
+    return handleStaffPerformance(req, res);
+  }
+
   try {
     const allAssets = await fetchAllRecords();
     // Decommissioned assets are hidden from the live register by
@@ -476,12 +482,76 @@ async function handleGetPlannedMaintenance(req, res) {
         targetEndDate: f["Target End Date"] || "",
         budgetItems, milestones, meetingLog, actionPoints,
         documents: (f["Attachments"] || []).map(a => ({ url: a.url, filename: a.filename })),
+        activityLog: f["Activity Log"] || "[]",
       };
     });
 
     return res.status(200).json({ plans });
   } catch (err) {
     console.error("planned-maintenance GET error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Staff Performance — restricted to decision-makers. Built entirely
+// from real, clean fields already on Work Orders — no fragile parsing
+// of free-text activity log entries to guess at timestamps that were
+// never structured for this purpose.
+// ---------------------------------------------------------------------
+
+async function handleStaffPerformance(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in" });
+  if (!can(session.r, "viewStaffPerformance")) {
+    return res.status(403).json({ error: "Not permitted to view staff performance" });
+  }
+
+  try {
+    const workOrders = await fetchAllWorkOrdersForReport();
+
+    // Per-person: work orders closed, and average days from Created to
+    // Completed Date — a real, honest measure of turnaround speed.
+    const closedBy = {};
+    for (const r of workOrders) {
+      const person = r.fields["Closed By"];
+      if (!person || r.fields["Status"] !== "Completed") continue;
+      if (!closedBy[person]) closedBy[person] = { count: 0, totalDays: 0 };
+      closedBy[person].count += 1;
+      if (r.fields["Created"] && r.fields["Completed Date"]) {
+        const days = (new Date(r.fields["Completed Date"]) - new Date(r.fields["Created"])) / 86400000;
+        closedBy[person].totalDays += days;
+      }
+    }
+    const performance = Object.entries(closedBy).map(([person, d]) => ({
+      person,
+      workOrdersClosed: d.count,
+      avgDaysToClose: d.count > 0 ? Math.round((d.totalDays / d.count) * 10) / 10 : null,
+    }));
+
+    // Per-person: procurement requests made, and what fraction of those
+    // ended up rejected — a real signal on cost-estimating accuracy.
+    const requestedBy = {};
+    for (const r of workOrders) {
+      const person = r.fields["Procurement Requested By"];
+      if (!person) continue;
+      if (!requestedBy[person]) requestedBy[person] = { total: 0, rejected: 0 };
+      requestedBy[person].total += 1;
+      if (r.fields["Procurement Status"] === "Rejected") requestedBy[person].rejected += 1;
+    }
+    const procurement = Object.entries(requestedBy).map(([person, d]) => ({
+      person,
+      requestsMade: d.total,
+      rejectionRate: d.total > 0 ? Math.round((d.rejected / d.total) * 100) : 0,
+    }));
+
+    // Escalation frequency — tracked by routed role, not by individual
+    // person, since that's the granularity the data actually supports.
+    const escalationsByRole = countBy(workOrders.filter(r => r.fields["Escalation Sent"] === true), "Assigned Role");
+
+    return res.status(200).json({ performance, procurement, escalationsByRole });
+  } catch (err) {
+    console.error("staff-performance error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

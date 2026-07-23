@@ -13,6 +13,7 @@
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
+import { getAllStaffDirectory } from "../lib/staffDirectory.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -618,9 +619,20 @@ async function handleCreatePlan(req, res, createdBy) {
 // items, milestones, meeting log entries, action points. The caller
 // sends only the piece it's changing; everything else is read first
 // and preserved, same read-modify-write pattern used for Activity Log.
+const PLAN_FIELD_LABELS = {
+  "Plan Status": "Status",
+  "Description": "Description",
+  "Target Start Date": "Target start date",
+  "Target End Date": "Target end date",
+  "Budget Items": "Budget",
+  "Milestones": "Milestones",
+  "Meeting Log": "Meeting log",
+  "Action Points": "Action points",
+};
+
 async function handleUpdatePlan(req, res, editedBy) {
   const { recordId, field, value } = req.body || {};
-  const allowedFields = ["Plan Status", "Description", "Target Start Date", "Target End Date", "Budget Items", "Milestones", "Meeting Log", "Action Points"];
+  const allowedFields = Object.keys(PLAN_FIELD_LABELS);
   if (!recordId || !field || !allowedFields.includes(field)) {
     return res.status(400).json({ error: "recordId and a valid field are required" });
   }
@@ -636,10 +648,87 @@ async function handleUpdatePlan(req, res, editedBy) {
       body: JSON.stringify({ fields }),
     });
     if (!resp.ok) throw new Error(await resp.text());
+
+    const label = PLAN_FIELD_LABELS[field] || field;
+    await appendPlanActivityLog(recordId, `✎ ${label} updated by ${editedBy}`, editedBy);
+    await notifyPlanCreator(recordId, editedBy, `${label} was updated`);
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleUpdatePlan error:", err);
     return res.status(500).json({ error: err.message });
+  }
+}
+
+// Shared helper — appends one entry to a plan's Activity Log, same
+// read-modify-write pattern already used for Work Orders.
+async function appendPlanActivityLog(recordId, text, by) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendPlanActivityLog: could not read plan"); return; }
+  const planData = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(planData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  log.push({ text, by, at: new Date().toISOString() });
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) console.error("appendPlanActivityLog: could not save entry");
+}
+
+// Notifies the plan's creator whenever anything changes on it — the
+// confirmed requirement: they should hear about anything that comes in
+// between, not just find out by checking back later.
+async function notifyPlanCreator(recordId, editedBy, whatChanged) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+
+  try {
+    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!getResp.ok) return;
+    const planData = await getResp.json();
+    const createdBy = planData.fields["Created By"];
+    const planTitle = planData.fields["Name"] || "Planned Maintenance";
+    if (!createdBy || createdBy === editedBy) return; // don't notify people of their own edit
+
+    const directory = getAllStaffDirectory();
+    const creatorEntry = directory.find(e => e.username === createdBy);
+    if (!creatorEntry || !creatorEntry.email) return;
+
+    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Planned Maintenance Update</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${planTitle}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${whatChanged}, by ${editedBy}.</p>
+        </div>
+      </div>`;
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: [creatorEntry.email],
+        subject: `${planTitle} — ${whatChanged}`,
+        html,
+      }),
+    });
+  } catch (err) {
+    console.error("notifyPlanCreator error:", err);
   }
 }
 
@@ -660,6 +749,10 @@ async function handleUploadPlanDocument(req, res, uploadedBy) {
       }
     );
     if (!resp.ok) throw new Error(await resp.text());
+
+    await appendPlanActivityLog(recordId, `📎 Document uploaded: ${filename} (by ${uploadedBy})`, uploadedBy);
+    await notifyPlanCreator(recordId, uploadedBy, `A document was uploaded (${filename})`);
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleUploadPlanDocument error:", err);
