@@ -220,7 +220,7 @@ export default async function handler(req, res) {
 
     if (req.body && req.body.checklistToggle) {
       const { recordId, itemId, checked } = req.body;
-      if (!recordId || !itemId) return res.status(400).json({ error: "recordId and itemId required" });
+      if (!recordId || itemId === undefined || itemId === null) return res.status(400).json({ error: "recordId and itemId required" });
 
       try {
         const base = process.env.AIRTABLE_BASE_ID;
