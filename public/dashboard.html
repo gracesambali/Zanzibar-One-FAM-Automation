@@ -2883,6 +2883,13 @@ async function showWorkOrderDetail(recordId) {
       ${o.reporterPhoto ? `<a href="${o.reporterPhoto}" target="_blank"><img src="${o.reporterPhoto}" style="margin-top:10px;max-width:200px;border-radius:8px;border:1px solid var(--border)"></a>` : ''}
     </div>
 
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">Before Photo</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">The technician confirms the problem is real before anything else happens.</div>
+      ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_before').click()" style="width:120px;height:120px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+      <input type="file" id="woDetailPhoto_before" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
+    </div>
+
     <div id="woDetailProcurement" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
 
     <div id="woDetailChecklist" style="padding:20px 24px;border-bottom:1px solid var(--border)">
@@ -2891,31 +2898,13 @@ async function showWorkOrderDetail(recordId) {
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Photos</div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Before</div>
-          ${o.beforePhoto ? `<a href="${o.beforePhoto}" target="_blank"><img src="${o.beforePhoto}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_before').click()" style="width:100px;height:100px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
-          <input type="file" id="woDetailPhoto_before" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'before', this)">
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">After</div>
-          ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_after').click()" style="width:100px;height:100px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
-          <input type="file" id="woDetailPhoto_after" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
-        </div>
-      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">After Photo</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">The evidence the routed role reviews before approving closure.</div>
+      ${o.afterPhoto ? `<a href="${o.afterPhoto}" target="_blank"><img src="${o.afterPhoto}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>` : `<button onclick="document.getElementById('woDetailPhoto_after').click()" style="width:120px;height:120px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📷 Add</button>`}
+      <input type="file" id="woDetailPhoto_after" accept="image/*" style="display:none" onchange="submitWorkOrderPhoto('${o.id}', 'after', this)">
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
-      <div id="woDetailActivityThread" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px">
-        <input id="woDetailActivityInput" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailActivity('${o.id}')">
-        <button onclick="submitWODetailActivity('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
-      </div>
-    </div>
-
-    <div style="padding:20px 24px">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
       ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
       ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
@@ -2933,6 +2922,15 @@ async function showWorkOrderDetail(recordId) {
         ` : ''}
         ${o.status === 'Completed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
         ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+      </div>
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+      <div id="woDetailActivityThread" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px">
+        <input id="woDetailActivityInput" placeholder="Add an update…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailActivity('${o.id}')">
+        <button onclick="submitWODetailActivity('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
       </div>
     </div>
   </div>`;
@@ -3964,14 +3962,15 @@ function printMaintenancePlan(windowDays) {
 // most recent events; CSV/XLSX exports (built separately) still carry
 // everything, since a spreadsheet has no "page" to overflow.
 function buildPeriodReportHtml(data, title, periodLabel) {
-  const MAX_SHOWN = 8;
-  const urgencyRows = Object.entries(data.byUrgency)
-    .map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const MAX_SHOWN = 5;
   const shownEvents = data.events.slice(0, MAX_SHOWN);
   const eventRows = shownEvents
     .map(e => `<tr><td>${new Date(e.timestamp).toLocaleDateString()}</td><td>${e.assetName || e.assetId}</td><td>${e.system || '—'}</td><td>${e.urgency}</td></tr>`)
     .join('');
   const remaining = data.events.length - shownEvents.length;
+
+  const ws = data.workOrderStatus || {};
+  const maintTypeEntries = Object.entries(data.maintenanceTypes || {});
 
   return `
     <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
@@ -3979,19 +3978,21 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       @page { size: A4; margin: 16mm; }
       body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 12px; }
       h1 { color:#1A3566; font-size:19px; margin-bottom:2px; }
-      .sub { color:#6B7280; font-size:11.5px; margin-bottom:16px; }
-      .kpi-row { display:flex; gap:10px; margin-bottom:18px; }
-      .kpi { flex:1; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 14px; }
-      .kpi-val { font-size:20px; font-weight:700; color:#1A3566; }
-      .kpi-label { font-size:10.5px; color:#6B7280; }
-      h2 { color:#1A3566; font-size:12.5px; margin:14px 0 6px; }
+      .sub { color:#6B7280; font-size:11.5px; margin-bottom:14px; }
+      .kpi-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+      .kpi { flex:1; min-width:70px; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:8px 10px; }
+      .kpi-val { font-size:17px; font-weight:700; color:#1A3566; }
+      .kpi-label { font-size:9.5px; color:#6B7280; }
+      h2 { color:#1A3566; font-size:12px; margin:12px 0 6px; }
       table { width:100%; border-collapse:collapse; font-size:11px; }
-      th { background:#1A3566; color:#fff; text-align:left; padding:6px 8px; }
-      td { padding:6px 8px; border-bottom:1px solid #E2E6ED; }
+      th { background:#1A3566; color:#fff; text-align:left; padding:5px 8px; }
+      td { padding:5px 8px; border-bottom:1px solid #E2E6ED; }
       tr:nth-child(even) { background:#F8FAFC; }
-      .empty { color:#6B7280; font-style:italic; padding:12px 0; }
-      .more-note { font-size:10.5px; color:#6B7280; margin-top:6px; font-style:italic; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      .badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+      .type-badge { background:#EEF1F5; border-radius:14px; padding:5px 12px; font-size:10.5px; color:#1A3566; font-weight:600; }
+      .empty { color:#6B7280; font-style:italic; padding:8px 0; font-size:11px; }
+      .more-note { font-size:10px; color:#6B7280; margin-top:4px; font-style:italic; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:14px; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -3999,11 +4000,25 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       <h1>${title}</h1>
       <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
 
-      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period. This report fills in as the system runs.</div>' : `
+      <h2>Work Orders</h2>
       <div class="kpi-row">
-        <div class="kpi"><div class="kpi-val">${data.totalAlerts}</div><div class="kpi-label">Total Alerts</div></div>
-        ${Object.entries(data.byUrgency).slice(0,3).map(([k,v]) => `<div class="kpi"><div class="kpi-val">${v}</div><div class="kpi-label">${k}</div></div>`).join('')}
+        <div class="kpi"><div class="kpi-val">${ws.completed || 0}</div><div class="kpi-label">Completed</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.open || 0}</div><div class="kpi-label">Open</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.inProgress || 0}</div><div class="kpi-label">In Progress</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.readyForReview || 0}</div><div class="kpi-label">Ready for Review</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.overdue || 0}</div><div class="kpi-label">Overdue</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.urgent || 0}</div><div class="kpi-label">Urgent</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.upcoming || 0}</div><div class="kpi-label">Upcoming</div></div>
       </div>
+
+      ${maintTypeEntries.length > 0 ? `
+      <h2>Maintenance Types Worked</h2>
+      <div class="badge-row">${maintTypeEntries.map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>
+      ` : ''}
+
+      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period.</div>' : `
+      <h2>Alerts — ${data.totalAlerts} Total</h2>
+      <div class="badge-row">${Object.entries(data.byUrgency).map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>
 
       <h2>Most Recent Activity</h2>
       <table><thead><tr><th>Date</th><th>Asset</th><th>System</th><th>Urgency</th></tr></thead><tbody>${eventRows}</tbody></table>
