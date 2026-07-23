@@ -3333,14 +3333,24 @@ async function toggleWOChecklistItem(recordId, itemId, checked, inputEl, itemLab
 
     const label = inputEl.closest('label');
     const noteSpan = label.querySelector('span');
-    if (checked) {
-      const noteDiv = noteSpan.querySelector('div:last-child');
-      const noteHtml = `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ Checked by ${data.progress[itemId].by} · just now</div>`;
-      if (noteDiv && noteDiv.tagName === 'DIV' && noteDiv !== noteSpan.firstElementChild) {
-        noteDiv.outerHTML = noteHtml;
-      } else {
-        noteSpan.insertAdjacentHTML('beforeend', noteHtml);
-      }
+    const noteHtml = checked
+      ? `<div style="font-size:10.5px;color:var(--green);margin-top:2px">✓ Checked by ${data.progress[itemId].by} · just now</div>`
+      : `<div style="font-size:10.5px;color:var(--muted);margin-top:2px">○ Unchecked by ${data.progress[itemId].by} · just now</div>`;
+    const noteDiv = noteSpan.querySelector('div:last-child');
+    if (noteDiv && noteDiv !== noteSpan.firstElementChild) {
+      noteDiv.outerHTML = noteHtml;
+    } else {
+      noteSpan.insertAdjacentHTML('beforeend', noteHtml);
+    }
+
+    // Every check/uncheck belongs in the Activity thread at the bottom
+    // of the page too — not just the inline note next to the box.
+    if (wo && data.activityEntry) {
+      let log = [];
+      try { log = JSON.parse(wo.activityLog || '[]'); } catch { log = []; }
+      log.push(data.activityEntry);
+      wo.activityLog = JSON.stringify(log);
+      renderWODetailActivityThread(wo);
     }
   } catch (err) {
     inputEl.checked = !checked; // revert on failure
