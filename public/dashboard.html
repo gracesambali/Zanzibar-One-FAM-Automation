@@ -4103,15 +4103,9 @@ function printMaintenancePlan(windowDays) {
 // most recent events; CSV/XLSX exports (built separately) still carry
 // everything, since a spreadsheet has no "page" to overflow.
 function buildPeriodReportHtml(data, title, periodLabel) {
-  const MAX_SHOWN = 5;
-  const shownEvents = data.events.slice(0, MAX_SHOWN);
-  const eventRows = shownEvents
-    .map(e => `<tr><td>${new Date(e.timestamp).toLocaleDateString()}</td><td>${e.assetName || e.assetId}</td><td>${e.system || '—'}</td><td>${e.urgency}</td></tr>`)
-    .join('');
-  const remaining = data.events.length - shownEvents.length;
-
   const ws = data.workOrderStatus || {};
-  const maintTypeEntries = Object.entries(data.maintenanceTypes || {});
+  const maintItemsByType = data.maintenanceItemsByType || {};
+  const MAX_NAMES_PER_TYPE = 6;
 
   return `
     <html><head><title>${title} — ${CLIENT_CONFIG.clientName}</title>
@@ -4125,14 +4119,15 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       .kpi-val { font-size:17px; font-weight:700; color:#1A3566; }
       .kpi-label { font-size:9.5px; color:#6B7280; }
       h2 { color:#1A3566; font-size:12px; margin:12px 0 6px; }
-      table { width:100%; border-collapse:collapse; font-size:11px; }
-      th { background:#1A3566; color:#fff; text-align:left; padding:5px 8px; }
-      td { padding:5px 8px; border-bottom:1px solid #E2E6ED; }
-      tr:nth-child(even) { background:#F8FAFC; }
       .badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
       .type-badge { background:#EEF1F5; border-radius:14px; padding:5px 12px; font-size:10.5px; color:#1A3566; font-weight:600; }
+      .type-block { margin-bottom:8px; }
+      .type-block-label { font-size:10.5px; font-weight:700; color:#1A3566; margin-bottom:3px; }
+      .type-block-items { font-size:10.5px; color:#4B5563; line-height:1.5; }
+      .cost-highlight { background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 14px; margin-bottom:14px; }
+      .cost-val { font-size:20px; font-weight:700; color:#1A3566; }
+      .cost-label { font-size:10px; color:#6B7280; }
       .empty { color:#6B7280; font-style:italic; padding:8px 0; font-size:11px; }
-      .more-note { font-size:10px; color:#6B7280; margin-top:4px; font-style:italic; }
       .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:14px; }
       @media print { .download-btn { display:none; } }
     </style></head>
@@ -4152,19 +4147,26 @@ function buildPeriodReportHtml(data, title, periodLabel) {
         <div class="kpi"><div class="kpi-val">${ws.upcoming || 0}</div><div class="kpi-label">Upcoming</div></div>
       </div>
 
-      ${maintTypeEntries.length > 0 ? `
-      <h2>Maintenance Types Worked</h2>
-      <div class="badge-row">${maintTypeEntries.map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>
-      ` : ''}
+      <div class="cost-highlight">
+        <div class="cost-val">TZS ${(data.totalCost || 0).toLocaleString()}</div>
+        <div class="cost-label">Total maintenance cost this period</div>
+      </div>
 
-      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period.</div>' : `
+      ${Object.keys(maintItemsByType).length > 0 ? `
+      <h2>Maintenance Worked, By Type</h2>
+      ${Object.entries(maintItemsByType).map(([type, items]) => {
+        const shown = items.slice(0, MAX_NAMES_PER_TYPE);
+        const extra = items.length - shown.length;
+        return `<div class="type-block">
+          <div class="type-block-label">${type} (${items.length})</div>
+          <div class="type-block-items">${shown.join(', ')}${extra > 0 ? ` — +${extra} more` : ''}</div>
+        </div>`;
+      }).join('')}
+      ` : '<div class="empty">No maintenance work recorded this period yet.</div>'}
+
       <h2>Alerts — ${data.totalAlerts} Total</h2>
-      <div class="badge-row">${Object.entries(data.byUrgency).map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>
-
-      <h2>Most Recent Activity</h2>
-      <table><thead><tr><th>Date</th><th>Asset</th><th>System</th><th>Urgency</th></tr></thead><tbody>${eventRows}</tbody></table>
-      ${remaining > 0 ? `<div class="more-note">+ ${remaining} more this period — full history available in the CSV/XLSX export.</div>` : ''}
-      `}
+      ${data.totalAlerts === 0 ? '<div class="empty">No alerts in this period.</div>' :
+        `<div class="badge-row">${Object.entries(data.byUrgency).map(([k,v]) => `<span class="type-badge">${k}: ${v}</span>`).join('')}</div>`}
     </body></html>
   `;
 }
