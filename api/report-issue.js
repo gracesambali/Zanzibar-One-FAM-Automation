@@ -352,7 +352,7 @@ async function logAlert(description, location, recordId) {
         "Location": location,
         "Urgency": "REPORTED",
         "Channel": "Email + SMS (staff report)",
-        "Message": `Staff-reported issue: ${description}`,
+        "Messages": `Staff-reported issue: ${description}`,
       },
     }),
   });

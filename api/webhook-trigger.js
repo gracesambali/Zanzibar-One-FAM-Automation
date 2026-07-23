@@ -15,8 +15,6 @@
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
-import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
-import { getAssignedRole } from "../lib/routing.js";
 
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
@@ -51,9 +49,9 @@ export default async function handler(req, res) {
         return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
+      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
-      await Promise.all([sendEmail(f, urgency, daysUntil, null, message), sendSms(message)]);
+      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
 
       return res.status(200).json({ triggered: true, type: "initial", urgency, asset: f["Asset ID"], message, workOrder: woId });
@@ -70,9 +68,9 @@ export default async function handler(req, res) {
       }
 
       const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER - ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${dueDateRaw}.`;
+      const message = `[REMINDER — ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} — service due ${dueDateRaw}.`;
 
-      await Promise.all([sendEmail(f, urgency, daysUntil, existingWO.fields["WO ID"], message), sendSms(message)]);
+      await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
 
       return res.status(200).json({ triggered: true, type: "reminder", urgency, asset: f["Asset ID"], message, workOrder: existingWO.fields["WO ID"] });
@@ -124,7 +122,7 @@ async function logAlert(f, urgency, message) {
         "Location": f["Room/Zone"] || "",
         "Urgency": urgency,
         "Channel": "Email + SMS (instant webhook)",
-        "Message": message,
+        "Messages": message,
       },
     }),
   });
@@ -153,7 +151,6 @@ async function createWorkOrder(f, urgency) {
         "Created": new Date().toISOString(),
         "Last Reminder Sent": todayString(),
         "Notes": "",
-        "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
       },
     }),
   });
@@ -177,17 +174,9 @@ async function updateReminderTimestamp(recordId) {
   });
 }
 
-async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
+async function sendEmail(f, urgency, message) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
-
-  const html = buildFriendlyEmailHtml({
-    f,
-    urgency,
-    daysUntil,
-    existingWoId,
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
-  });
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -199,31 +188,17 @@ async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
-      html,
+      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.</p>`,
       text: `${message}\n\nSent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.`,
     }),
   });
   if (!resp.ok) console.error("Resend error:", await resp.text());
 }
 
-// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
-// punctuation - em/en dashes, curly quotes, ellipsis characters, etc. This
-// converts common offenders to their plain-ASCII equivalents, and strips
-// anything else non-ASCII as a safety net.
-function sanitizeForSms(text) {
-  return text
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/\u2026/g, "...")
-    .replace(/[^\x00-\x7F]/g, "");
-}
-
 async function sendSms(message) {
   const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
   if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
 
-  const cleanMessage = sanitizeForSms(message);
   const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
   const resp = await fetch("https://apisms.beem.africa/v1/send", {
     method: "POST",
@@ -235,14 +210,11 @@ async function sendSms(message) {
       source_addr: process.env.BEEM_SENDER_ID || "INFO",
       schedule_time: "",
       encoding: 0,
-      message: cleanMessage.slice(0, 160),
+      message: message.slice(0, 160),
       recipients: buildBeemRecipients(phoneList),
     }),
   });
-
-  const responseText = await resp.text();
-  console.log("Beem response:", resp.status, responseText);
-  if (!resp.ok) console.error("Beem HTTP error:", responseText);
+  if (!resp.ok) console.error("Beem error:", await resp.text());
 }
 
 function daysBetween(from, to) {

@@ -186,7 +186,7 @@ async function logAlert(f, urgency, message, alertType) {
         "Location": f["Room/Zone"] || "",
         "Urgency": `${alertType}: ${urgency}`,
         "Channel": "Email + SMS",
-        "Message": message,
+        "Messages": message,
       },
     }),
   });
