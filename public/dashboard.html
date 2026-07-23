@@ -350,7 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 let assets = []; // populated live from Airtable via /api/get-assets
-let currentUserRole = "engineer";
+let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
@@ -466,12 +466,15 @@ let dashboardWorkOrders = []; // populated live from /api/work-orders alongside 
 // Add/Decommission buttons etc). The API is the real enforcement; this
 // just avoids showing controls a role isn't allowed to use.
 const ROLE_PERMISSIONS = {
-  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
-  engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true },
-  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false },
-  office_admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false },
-  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
-  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true },
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  procurement: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
 };
 
 const levelDefs = [
@@ -2915,14 +2918,19 @@ async function showWorkOrderDetail(recordId) {
     <div style="padding:20px 24px">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
       ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+      ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
       ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
       ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+        ${o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
           <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
           <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
-          <option value="Completed" ${o.status==='Completed'?'selected':''}>Completed</option>
-        </select>
+          <option value="Ready for Review" ${o.status==='Ready for Review'?'selected':''}>Ready for Review</option>
+        </select>` : `<span class="badge badge-good">Completed</span>`}
+        ${o.status === 'Ready for Review' && currentUserPermissions && currentUserPermissions.reviewWorkOrderClosure ? `
+          <button onclick="approveWorkOrderClosure('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer">✓ Approve & Close</button>
+          <button onclick="rejectWorkOrderClosurePrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Send Back</button>
+        ` : ''}
         ${o.status === 'Completed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
         ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
       </div>
@@ -3503,6 +3511,39 @@ async function submitProcurementRequest(recordId) {
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
+  }
+}
+
+async function approveWorkOrderClosure(recordId) {
+  if (!confirm('Approve this work and close the work order?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approveClosure: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not approve: ' + err.message);
+  }
+}
+
+async function rejectWorkOrderClosurePrompt(recordId) {
+  const reason = prompt('What still needs fixing before this can close?');
+  if (!reason) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejectClosure: true, recordId, reason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send back');
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    alert('Could not send back: ' + err.message);
   }
 }
 
@@ -4331,7 +4372,7 @@ async function loadAssetsAndInit() {
     const data = await assetsResp.json();
     assets = data.assets || [];
     currentUserRole = data.role || "engineer";
-    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.engineer;
+    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
     if (woResp.ok) {
