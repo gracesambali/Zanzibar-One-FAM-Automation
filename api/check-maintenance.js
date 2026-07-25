@@ -252,6 +252,15 @@ async function createWorkOrder(f, urgency) {
     console.error("Work order creation failed:", errorText);
     return `FAILED: ${errorText}`;
   }
+
+  const created = await resp.json();
+  const openingLog = [{ text: `🆕 Work order opened — automated ${urgency.toLowerCase()} maintenance alert`, by: "system", at: new Date().toISOString() }];
+  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${created.id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(openingLog) } }),
+  }).catch(e => console.error("Opening log write failed (non-fatal):", e));
+
   return woId;
 }
 

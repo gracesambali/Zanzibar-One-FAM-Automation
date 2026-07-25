@@ -241,6 +241,17 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     throw new Error("Could not create the work order — please try again or contact the technical team directly.");
   }
   const created = await resp.json();
+
+  // The very first entry — every work order's story now genuinely
+  // starts here, not partway through once procurement or a photo
+  // happens to trigger the first log write.
+  const openingLog = [{ text: `🆕 Work order opened — reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}`, by: reporterName, at: new Date().toISOString() }];
+  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${created.id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(openingLog) } }),
+  }).catch(e => console.error("Opening log write failed (non-fatal):", e));
+
   return { woId, recordId: created.id };
 }
 
