@@ -601,11 +601,21 @@ async function handleStaffPerformance(req, res) {
       rejectionRate: d.total > 0 ? Math.round((d.rejected / d.total) * 100) : 0,
     }));
 
+    // Per-person: how many things are genuinely pending for them right
+    // now — the same real filter used in "For You Today," just run for
+    // every real person in the staff directory at once, not just the
+    // one currently logged in.
+    const directory = getAllStaffDirectory();
+    const pending = directory.map(entry => ({
+      person: entry.username,
+      pendingTasks: computePendingItems(workOrders, entry.role).length,
+    }));
+
     // Escalation frequency — tracked by routed role, not by individual
     // person, since that's the granularity the data actually supports.
     const escalationsByRole = countBy(workOrders.filter(r => r.fields["Escalation Sent"] === true), "Assigned Role");
 
-    return res.status(200).json({ performance, procurement, escalationsByRole });
+    return res.status(200).json({ performance, procurement, pending, escalationsByRole });
   } catch (err) {
     console.error("staff-performance error:", err);
     return res.status(500).json({ error: err.message });
@@ -625,6 +635,47 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING = {
   "Property Manager": "property_manager",
 };
 
+function computePendingItems(workOrders, role) {
+  const items = [];
+  const describe = (r, why) => ({
+    recordId: r.id,
+    woId: r.fields["WO ID"],
+    assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+    why,
+  });
+
+  if (role === "technician") {
+    for (const r of workOrders) {
+      if (r.fields["Status"] === "Open" || r.fields["Status"] === "In Progress") {
+        items.push(describe(r, r.fields["Status"] === "Open" ? "Needs to be started" : "In progress"));
+      }
+    }
+  } else if (["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(role)) {
+    const myLabel = Object.entries(ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING).find(([, v]) => v === role)?.[0];
+    for (const r of workOrders) {
+      if (r.fields["Status"] === "Ready for Review" && r.fields["Assigned Role"] === myLabel) {
+        items.push(describe(r, "Waiting on your review to close"));
+      }
+      if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.fields["Procurement Status"] === "Requested" && r.fields["Assigned Role"] === myLabel) {
+        items.push(describe(r, "Procurement request awaiting your approval"));
+      }
+    }
+  } else if (role === "procurement") {
+    for (const r of workOrders) {
+      if (r.fields["Procurement Status"] === "Approved") {
+        items.push(describe(r, "Approved — awaiting payment and fulfillment"));
+      }
+    }
+  } else if (role === "business_owner" || role === "system_admin") {
+    for (const r of workOrders) {
+      if (r.fields["Status"] === "Ready for Review") items.push(describe(r, `Waiting on ${r.fields["Assigned Role"] || "someone"}'s review`));
+      if (r.fields["Procurement Status"] === "Requested") items.push(describe(r, "Procurement awaiting approval"));
+      if (r.fields["Procurement Status"] === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
+    }
+  }
+  return items;
+}
+
 async function handlePendingForMe(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in" });
@@ -632,44 +683,7 @@ async function handlePendingForMe(req, res) {
   try {
     const workOrders = await fetchAllWorkOrdersForReport();
     const role = session.r;
-    const items = [];
-
-    const describe = (r, why) => ({
-      recordId: r.id,
-      woId: r.fields["WO ID"],
-      assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
-      why,
-    });
-
-    if (role === "technician") {
-      for (const r of workOrders) {
-        if (r.fields["Status"] === "Open" || r.fields["Status"] === "In Progress") {
-          items.push(describe(r, r.fields["Status"] === "Open" ? "Needs to be started" : "In progress"));
-        }
-      }
-    } else if (["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(role)) {
-      const myLabel = Object.entries(ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING).find(([, v]) => v === role)?.[0];
-      for (const r of workOrders) {
-        if (r.fields["Status"] === "Ready for Review" && r.fields["Assigned Role"] === myLabel) {
-          items.push(describe(r, "Waiting on your review to close"));
-        }
-        if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.fields["Procurement Status"] === "Requested") {
-          items.push(describe(r, "Procurement request awaiting your approval"));
-        }
-      }
-    } else if (role === "procurement") {
-      for (const r of workOrders) {
-        if (r.fields["Procurement Status"] === "Approved") {
-          items.push(describe(r, "Approved — awaiting payment and fulfillment"));
-        }
-      }
-    } else if (role === "business_owner" || role === "system_admin") {
-      for (const r of workOrders) {
-        if (r.fields["Status"] === "Ready for Review") items.push(describe(r, `Waiting on ${r.fields["Assigned Role"] || "someone"}'s review`));
-        if (r.fields["Procurement Status"] === "Requested") items.push(describe(r, "Procurement awaiting approval"));
-        if (r.fields["Procurement Status"] === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
-      }
-    }
+    const items = computePendingItems(workOrders, role);
 
     return res.status(200).json({ role, items });
   } catch (err) {
