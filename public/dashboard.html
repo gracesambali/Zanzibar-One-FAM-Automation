@@ -2935,18 +2935,20 @@ async function loadStaffPerformance() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Could not load');
 
-    if (data.performance.length === 0 && data.procurement.length === 0) {
+    if (data.performance.length === 0 && data.procurement.length === 0 && (data.pending || []).length === 0) {
       el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No completed work orders yet — this fills in as the system runs.</div>';
       return;
     }
 
     let rows = '';
-    const people = new Set([...data.performance.map(p=>p.person), ...data.procurement.map(p=>p.person)]);
+    const people = new Set([...data.performance.map(p=>p.person), ...data.procurement.map(p=>p.person), ...(data.pending || []).map(p=>p.person)]);
     for (const person of people) {
       const perf = data.performance.find(p => p.person === person) || {};
       const proc = data.procurement.find(p => p.person === person) || {};
+      const pend = (data.pending || []).find(p => p.person === person) || {};
       rows += `<div class="staff-perf-row">
         <div class="staff-perf-cell staff-perf-name">${person}</div>
+        <div class="staff-perf-cell"><span class="staff-perf-label">Pending</span><span class="staff-perf-val" style="${pend.pendingTasks > 0 ? 'color:var(--red);font-weight:700' : ''}">${pend.pendingTasks ?? 0}</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-label">Closed</span><span class="staff-perf-val">${perf.workOrdersClosed ?? '—'}</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-label">Avg. Days</span><span class="staff-perf-val">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-label">Procurement Reqs</span><span class="staff-perf-val">${proc.requestsMade ?? '—'}</span></div>
@@ -2959,6 +2961,7 @@ async function loadStaffPerformance() {
     el.innerHTML = `
       <div class="staff-perf-header">
         <div class="staff-perf-cell staff-perf-name">Person</div>
+        <div class="staff-perf-cell"><span class="staff-perf-val">Pending</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-val">Closed</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-val">Avg. Days</span></div>
         <div class="staff-perf-cell"><span class="staff-perf-val">Procurement Reqs</span></div>
