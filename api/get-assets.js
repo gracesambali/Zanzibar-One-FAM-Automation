@@ -8,7 +8,7 @@
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
-import { getContactForUsername } from "../lib/staffDirectory.js";
+import { getContactForUsername, getAllStaffDirectory } from "../lib/staffDirectory.js";
 
 export default async function handler(req, res) {
   // Public quick-view mode (for QR code scanning — no login needed)
@@ -61,6 +61,24 @@ export default async function handler(req, res) {
   // server-side, not just hidden in the UI.
   if (req.query.staffperformance === "true") {
     return handleStaffPerformance(req, res);
+  }
+
+  // "For You Today" — what actually needs THIS person's action right
+  // now, based on their specific role. Not a generic list they have to
+  // hunt through, the real filtered thing.
+  if (req.query.pendingforme === "true") {
+    return handlePendingForMe(req, res);
+  }
+
+  // Staff list — for populating "responsible party" pickers in Planned
+  // Maintenance (and anywhere else a person needs to be chosen from a
+  // real list instead of typed freely). No passwords, just enough to
+  // display and identify each person.
+  if (req.query.stafflist === "true") {
+    const directory = getAllStaffDirectory();
+    return res.status(200).json({
+      staff: directory.map(e => ({ username: e.username, displayName: e.displayName, role: e.role })),
+    });
   }
 
   try {
@@ -588,6 +606,72 @@ async function handleStaffPerformance(req, res) {
     return res.status(200).json({ performance, procurement, escalationsByRole });
   } catch (err) {
     console.error("staff-performance error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// "For You Today" — pending items filtered to exactly what the logged-
+// in person's role actually needs to act on. Same real data as the
+// Work Orders tab, just pre-filtered instead of making someone hunt.
+// ---------------------------------------------------------------------
+
+const ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING = {
+  "Mechanical": "mechanical_engineer",
+  "Electrical": "electrical_engineer",
+  "Admin": "admin",
+  "Property Manager": "property_manager",
+};
+
+async function handlePendingForMe(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in" });
+
+  try {
+    const workOrders = await fetchAllWorkOrdersForReport();
+    const role = session.r;
+    const items = [];
+
+    const describe = (r, why) => ({
+      recordId: r.id,
+      woId: r.fields["WO ID"],
+      assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+      why,
+    });
+
+    if (role === "technician") {
+      for (const r of workOrders) {
+        if (r.fields["Status"] === "Open" || r.fields["Status"] === "In Progress") {
+          items.push(describe(r, r.fields["Status"] === "Open" ? "Needs to be started" : "In progress"));
+        }
+      }
+    } else if (["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(role)) {
+      const myLabel = Object.entries(ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING).find(([, v]) => v === role)?.[0];
+      for (const r of workOrders) {
+        if (r.fields["Status"] === "Ready for Review" && r.fields["Assigned Role"] === myLabel) {
+          items.push(describe(r, "Waiting on your review to close"));
+        }
+        if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.fields["Procurement Status"] === "Requested") {
+          items.push(describe(r, "Procurement request awaiting your approval"));
+        }
+      }
+    } else if (role === "procurement") {
+      for (const r of workOrders) {
+        if (r.fields["Procurement Status"] === "Approved") {
+          items.push(describe(r, "Approved — awaiting payment and fulfillment"));
+        }
+      }
+    } else if (role === "business_owner" || role === "system_admin") {
+      for (const r of workOrders) {
+        if (r.fields["Status"] === "Ready for Review") items.push(describe(r, `Waiting on ${r.fields["Assigned Role"] || "someone"}'s review`));
+        if (r.fields["Procurement Status"] === "Requested") items.push(describe(r, "Procurement awaiting approval"));
+        if (r.fields["Procurement Status"] === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
+      }
+    }
+
+    return res.status(200).json({ role, items });
+  } catch (err) {
+    console.error("pending-for-me error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
