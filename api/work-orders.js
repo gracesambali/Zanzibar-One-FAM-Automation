@@ -16,6 +16,7 @@ import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklist } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
 import { getAssignedRole } from "../lib/routing.js";
+import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
 
 // "Assigned Role" on a work order is a display label (Mechanical,
 // Electrical, Admin, Property Manager). Login roles are the actual
@@ -109,6 +110,12 @@ export default async function handler(req, res) {
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
@@ -123,6 +130,7 @@ export default async function handler(req, res) {
         });
         if (!patchResp.ok) throw new Error("Could not save procurement request");
         await appendActivityLog(recordId, `🛒 Procurement requested — TZS ${total.toLocaleString()} (${lineItems.length} item${lineItems.length !== 1 ? "s" : ""})`, session.u, "procurement_request");
+        await notifyEngineerOfProcurementRequest(recordId, current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", current.fields["Assigned Role"], session.u, total);
         return res.status(200).json({ success: true, total });
       } catch (err) {
         console.error("requestProcurement error:", err);
@@ -137,6 +145,15 @@ export default async function handler(req, res) {
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+        let costBreakdown = [];
+        try { costBreakdown = JSON.parse(current.fields["Cost Breakdown"] || "[]"); } catch { costBreakdown = []; }
+        const total = costBreakdown.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
@@ -144,6 +161,7 @@ export default async function handler(req, res) {
         });
         if (!patchResp.ok) throw new Error("Could not approve procurement");
         await appendActivityLog(recordId, `✅ Procurement approved by ${session.u}`, session.u, "system");
+        await notifyProcurementOfApproval(current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", total, session.u);
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("approveProcurement error:", err);
@@ -178,13 +196,29 @@ export default async function handler(req, res) {
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+        let costBreakdown = [];
+        try { costBreakdown = JSON.parse(current.fields["Cost Breakdown"] || "[]"); } catch { costBreakdown = []; }
+        const total = costBreakdown.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+
+        // Cost is recorded here, the moment procurement is actually
+        // fulfilled — not left blank until someone closes the work
+        // order later.
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled" } }),
+          body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() } }),
         });
         if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
-        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — technician can now proceed`, session.u, "system");
+        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — TZS ${total.toLocaleString()} recorded, technician can now proceed`, session.u, "system");
+
+        const requestedBy = current.fields["Procurement Requested By"];
+        if (requestedBy) await notifyRequesterOfFulfillment(requestedBy, current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "");
+
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("fulfillProcurement error:", err);
@@ -617,6 +651,95 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 // marked Completed — the same link works whether it arrives by email
 // or SMS, since it's just a plain URL. Detects channel by presence of
 // "@" rather than asking the reporter to pick one.
+// Fires the moment procurement is requested — emails the specific
+// Engineer whose job it actually is to approve, matching the work
+// order's own routed role, not a generic list.
+async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, assignedRole, requestedBy, total) {
+  const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  const engineerRole = loginRole === "electrical_engineer" || loginRole === "mechanical_engineer" ? loginRole : null;
+  const directory = getAllStaffDirectory();
+  const toList = directory.filter(e => e.role === engineerRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
+  if (toList.length === 0) return;
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#B45309;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Procurement Request</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} requested by ${requestedBy}. Your approval is needed before this can proceed.</p>
+      </div>
+    </div>`;
+
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: toList,
+      subject: `Procurement approval needed — ${assetName} (${woId})`,
+      html,
+    }),
+  }).catch(err => console.error("notifyEngineerOfProcurementRequest error:", err));
+}
+
+// Fires the moment an Engineer approves — emails whoever holds the
+// Procurement role, since they're the ones who actually pay and
+// fulfill it next, not just an activity log entry nobody's watching.
+async function notifyProcurementOfApproval(woId, assetName, total, approvedBy) {
+  const directory = getAllStaffDirectory();
+  const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
+  if (toList.length === 0) return;
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Approved — Payment Needed</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} approved by ${approvedBy}. Ready for payment and fulfillment.</p>
+      </div>
+    </div>`;
+
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: toList,
+      subject: `Ready for payment — ${assetName} (${woId})`,
+      html,
+    }),
+  }).catch(err => console.error("notifyProcurementOfApproval error:", err));
+}
+
+// Fires the moment procurement is fulfilled — SMS to whoever actually
+// requested it (technician, engineer, admin, or property manager,
+// whoever it was), confirming they can proceed with the work.
+async function notifyRequesterOfFulfillment(requestedByUsername, assetName, woId) {
+  const contact = getContactForUsername(requestedByUsername);
+  if (!contact || !contact.phone) return;
+
+  const rawMessage = `Procurement approved and fulfilled for ${assetName} (${woId}). You can proceed with the work.`;
+  const cleanMessage = sanitizeForSmsWO(rawMessage);
+  const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+  await fetch("https://apisms.beem.africa/v1/send", {
+    method: "POST",
+    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_addr: process.env.BEEM_SENDER_ID || "INFO",
+      schedule_time: "",
+      encoding: 0,
+      message: cleanMessage.slice(0, 160),
+      recipients: [{ recipient_id: 1, dest_addr: contact.phone }],
+    }),
+  }).catch(err => console.error("notifyRequesterOfFulfillment error:", err));
+}
+
 async function sendSatisfactionRequest(contact, recordId, assetName) {
   const appUrl = process.env.APP_BASE_URL || "https://zanzibar-one-fam-automation.vercel.app";
   const yesLink = `${appUrl}/api/report-issue?satisfaction=yes&recordId=${recordId}`;
