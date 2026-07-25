@@ -32,8 +32,79 @@ export default async function handler(req, res) {
   setSessionCookie(res, session.u, session.r);
 
   if (req.method === "GET") return handleGetReadings(req, res);
-  if (req.method === "POST") return handleRunTest(req, res);
+  if (req.method === "POST") return handleRunTest(req, res, session.u);
+  if (req.method === "PATCH") return handleEditSensor(req, res, session.u);
   return res.status(405).json({ error: "Method not allowed" });
+}
+
+// ---------------------------------------------------------------------
+// PATCH - edit a sensor's Notes/Status/Assignee, logged the same way
+// every other activity in the system is — timestamped, attributed,
+// visible on the sensor's own detail view.
+// ---------------------------------------------------------------------
+
+async function handleEditSensor(req, res, editedBy) {
+  const { recordId, notes, status, assignee } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
+
+  try {
+    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!currentResp.ok) throw new Error("Could not read sensor");
+    const current = await currentResp.json();
+
+    const fields = {};
+    const changes = [];
+    if (notes !== undefined && notes !== current.fields["Notes"]) { fields["Notes"] = notes; changes.push(["Notes", current.fields["Notes"] || "", notes]); }
+    if (status !== undefined && status !== current.fields["Status"]) { fields["Status"] = status; changes.push(["Status", current.fields["Status"] || "", status]); }
+    if (assignee !== undefined && assignee !== current.fields["Assignee"]) { fields["Assignee"] = assignee; changes.push(["Assignee", current.fields["Assignee"] || "", assignee]); }
+
+    if (Object.keys(fields).length > 0) {
+      const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+      if (!patchResp.ok) throw new Error("Could not save sensor");
+    }
+
+    for (const [field, oldVal, newVal] of changes) {
+      await appendSensorActivity(recordId, `${field} changed from "${oldVal}" to "${newVal}"`, editedBy);
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleEditSensor error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Shared helper — same read-modify-write pattern as Work Orders and
+// Planned Maintenance, so a sensor's Activity Log works identically.
+async function appendSensorActivity(recordId, text, by) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendSensorActivity: could not read sensor"); return; }
+  const sensorData = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(sensorData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  log.push({ text, by, at: new Date().toISOString() });
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) console.error("appendSensorActivity: could not save entry");
 }
 
 // ---------------------------------------------------------------------
@@ -82,6 +153,7 @@ async function handleGetReadings(req, res) {
       }
 
       return {
+        recordId: s.id,
         sensorId: f["Sensor ID"] || "",
         sensorType,
         assetId,
@@ -92,6 +164,10 @@ async function handleGetReadings(req, res) {
         latestUnit: latest ? latest.fields["Unit"] : null,
         withinRange: latest ? latest.fields["Within Range"] : null,
         lastReadingAt: latest ? latest.fields["Timestamp"] : null,
+        notes: f["Notes"] || "",
+        status: f["Status"] || "",
+        assignee: f["Assignee"] ? (f["Assignee"].name || f["Assignee"].email || "") : "",
+        activityLog: f["Activity Log"] || "[]",
       };
     });
 
@@ -143,7 +219,7 @@ async function fetchAllComponents() {
 // POST - force a test breach (was run-sensor-test.js)
 // ---------------------------------------------------------------------
 
-async function handleRunTest(req, res) {
+async function handleRunTest(req, res, triggeredBy) {
   const { sensorId, value } = req.body || {};
   if (!sensorId) return res.status(400).json({ error: "sensorId is required" });
   if (value === undefined || value === null || value === "") {
@@ -179,6 +255,7 @@ async function handleRunTest(req, res) {
 
     const timestamp = new Date().toISOString();
     await createReading({ timestamp, sensorId, assetId, value: numericValue, unit, withinRange: withinRange === true });
+    await appendSensorActivity(sensor.id, `Test reading: ${numericValue}${unit} (${withinRange ? "within range" : "OUT OF RANGE"})`, triggeredBy);
 
     if (withinRange === false) {
       const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.fields["System"] });
