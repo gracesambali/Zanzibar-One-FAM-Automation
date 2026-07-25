@@ -122,6 +122,12 @@ export default async function handler(req, res) {
     const escalatedCount = await checkAndEscalateStaleWorkOrders();
     const deadlineAlertCount = await checkPlanDeadlines();
 
+    // One real Daily Summary, replacing what used to be two separate,
+    // overlapping emails to the same audience. Always sends, even on a
+    // quiet day — "nothing open, nothing triggered" is still a real,
+    // visible signal rather than silence someone has to interpret.
+    await sendDailySummary(results.length);
+
     await sendHeartbeat(records.length, results);
 
     // Sync "Current Value (TZS)" in Airtable to match the live depreciation
@@ -494,6 +500,87 @@ async function checkPlanDeadlines() {
   }
 }
 
+// The only two emails left in the whole system: this one, and the
+// heartbeat. Four things, each counted separately and kept brief —
+// work orders opened today, closed today, maintenance alerts, and
+// sensor alerts.
+async function sendDailySummary(maintenanceTriggeredToday) {
+  const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
+  if (toList.length === 0) return;
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+  try {
+    const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+    const woResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}?pageSize=100`, { headers });
+    let openedToday = 0, closedToday = 0, totalOpen = 0, overdue = 0, urgent = 0;
+    if (woResp.ok) {
+      const woData = await woResp.json();
+      (woData.records || []).forEach(r => {
+        const f = r.fields;
+        if (f["Status"] !== "Completed") {
+          totalOpen++;
+          if (f["Urgency"] === "OVERDUE") overdue++;
+          if (f["Urgency"] === "URGENT") urgent++;
+        }
+        if (f["Created"] && new Date(f["Created"]).getTime() >= cutoff) openedToday++;
+        if (f["Status"] === "Completed" && f["Completed Date"] && new Date(f["Completed Date"]).getTime() >= cutoff) closedToday++;
+      });
+    }
+
+    // Sensor alerts specifically — anything in Alert Log whose Channel
+    // mentions "sensor," within the last 24 hours, kept separate from
+    // the asset-due maintenance alerts counted above.
+    const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
+    const logResp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}?pageSize=100`, { headers });
+    let sensorAlertsToday = 0;
+    if (logResp.ok) {
+      const logData = await logResp.json();
+      (logData.records || []).forEach(r => {
+        const f = r.fields;
+        const isRecent = f["Timestamp"] && new Date(f["Timestamp"]).getTime() >= cutoff;
+        const isSensor = (f["Channel"] || "").toLowerCase().includes("sensor");
+        if (isRecent && isSensor) sensorAlertsToday++;
+      });
+    }
+
+    const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+    const anythingHappened = openedToday > 0 || closedToday > 0 || maintenanceTriggeredToday > 0 || sensorAlertsToday > 0;
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Daily Summary</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${dateLabel}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${openedToday}</strong> work order${openedToday !== 1 ? "s" : ""} opened today.</p>
+          <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${closedToday}</strong> work order${closedToday !== 1 ? "s" : ""} closed today.</p>
+          <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${maintenanceTriggeredToday}</strong> maintenance alert${maintenanceTriggeredToday !== 1 ? "s" : ""} triggered.</p>
+          <p style="margin:0;font-size:14px;color:#1A1A2E"><strong>${sensorAlertsToday}</strong> sensor alert${sensorAlertsToday !== 1 ? "s" : ""} triggered.</p>
+          <p style="margin:14px 0 0;font-size:12.5px;color:#6B7280">${totalOpen} work order${totalOpen !== 1 ? "s" : ""} currently open in total (${overdue} overdue, ${urgent} urgent).</p>
+          ${anythingHappened ? `<p style="margin:10px 0 0;font-size:12.5px;color:#6B7280">If any of this is yours, take a look — it won't be flagged again here until tomorrow.</p>` : ""}
+        </div>
+      </div>`;
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Daily Summary — ${openedToday} opened, ${closedToday} closed, ${maintenanceTriggeredToday + sensorAlertsToday} alerts (${new Date().toLocaleDateString("en-GB")})`,
+        html,
+      }),
+    });
+  } catch (err) {
+    console.error("sendDailySummary error:", err);
+  }
+}
+
 async function checkAndEscalateStaleWorkOrders() {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -516,54 +603,10 @@ async function checkAndEscalateStaleWorkOrders() {
 
     if (stale.length === 0) return 0;
 
-    // The existing generic supervisor email — unchanged, still fires.
-    const toList = parseEmailList(process.env.ESCALATION_EMAIL || process.env.ALERT_TO_EMAIL);
-    if (toList.length > 0) {
-      const rows = stale.map(r => `<li>${r.fields["Asset Name"] || r.fields["Asset ID"] || "Unknown"} (${r.fields["WO ID"]}) — open since ${new Date(r.fields["Created"]).toLocaleDateString()}, assigned to ${r.fields["Assigned Role"] || "unassigned"}</li>`).join("");
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
-          to: toList,
-          subject: `${stale.length} work order${stale.length !== 1 ? "s" : ""} open more than 24 hours`,
-          html: `<p>The following work orders have been open for more than 24 hours:</p><ul>${rows}</ul>`,
-        }),
-      });
-    }
-
-    // New — the specific routed role for each stale work order also
-    // gets notified directly, on top of the generic supervisor email
-    // above. Grouped by role, since different stale work orders can
-    // belong to different people.
-    const byRole = {};
-    for (const r of stale) {
-      const assignedRole = r.fields["Assigned Role"];
-      const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-      if (!loginRole) continue; // no matching role — nothing to notify beyond the generic email above
-      (byRole[loginRole] = byRole[loginRole] || []).push(r);
-    }
-
-    for (const [loginRole, records] of Object.entries(byRole)) {
-      const contacts = getContactsForRole(loginRole);
-      const roleEmails = contacts.map(c => c.email).filter(Boolean);
-      if (roleEmails.length === 0) continue;
-
-      const rows = records.map(r => `<li>${r.fields["Asset Name"] || r.fields["Asset ID"] || "Unknown"} (${r.fields["WO ID"]}) — open since ${new Date(r.fields["Created"]).toLocaleDateString()}</li>`).join("");
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
-          to: roleEmails,
-          subject: `${records.length} of your work order${records.length !== 1 ? "s" : ""} open more than 24 hours`,
-          html: `<p>The following work orders assigned to you have been open for more than 24 hours:</p><ul>${rows}</ul>`,
-        }),
-      }).catch(err => console.error("Routed-role escalation email error:", err));
-    }
-
-    // Mark each as escalated so it isn't re-sent tomorrow, and log it
-    // into the same conversation thread as everything else on that WO.
+    // No separate escalation email anymore — confirmed only two emails
+    // total should exist (Daily Summary + Heartbeat). Still flag each
+    // stale work order internally and log it to its own Activity
+    // thread, since that's silent record-keeping, not a notification.
     for (const r of stale) {
       await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${r.id}`, {
         method: "PATCH",
