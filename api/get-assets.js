@@ -290,13 +290,15 @@ async function handleGetFloorPlan(req, res) {
     let imageUrl = null;
     let uploadedBy = null;
     let uploadDate = null;
+    let activityLog = "[]";
     if (planResp.ok) {
       const planData = await planResp.json();
       const record = planData.records && planData.records[0];
       const attachment = record && record.fields["Image"] && record.fields["Image"][0];
       imageUrl = attachment ? attachment.url : null;
       uploadedBy = record ? record.fields["Uploaded By"] || null : null;
-      uploadDate = record ? record.fields["Upload Date"] || null : null;
+      uploadDate = record ? record.fields["Uploaded Date"] || null : null;
+      activityLog = record ? (record.fields["Activity Log"] || "[]") : "[]";
     }
 
     // 2. Find all saved marker positions for assets on this floor
@@ -316,7 +318,7 @@ async function handleGetFloorPlan(req, res) {
       }));
     }
 
-    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate });
+    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog });
   } catch (err) {
     console.error("handleGetFloorPlan error:", err);
     return res.status(500).json({ error: err.message });

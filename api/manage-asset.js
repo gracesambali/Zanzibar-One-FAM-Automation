@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   }
   if (req.method === "PUT") {
     const action = (req.body && req.body.action) || "relocate";
-    if (action === "savePosition") return handleSaveMarkerPosition(req, res);
+    if (action === "savePosition") return handleSaveMarkerPosition(req, res, session.u);
     if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u);
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u);
@@ -190,6 +190,28 @@ async function generateNextAssetId(prefix) {
   return `${prefix}-${String(next).padStart(3, "0")}`;
 }
 
+// Shared helper — every asset action logs through this one function, to
+// the same Edit Log table, so the asset detail page has one consistent
+// place to pull a complete activity history from.
+async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedBy) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
+  await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fields: {
+        "Asset ID": assetId,
+        "Field Changed": fieldLabel,
+        "Old Value": String(oldValue ?? ""),
+        "New Value": String(newValue ?? ""),
+        "Edited By": editedBy,
+        "Timestamp": new Date().toISOString(),
+      },
+    }),
+  }).catch(e => console.error("logAssetActivity write failed (non-fatal):", e));
+}
+
 async function handleDecommission(req, res, decommissionedBy) {
   const { recordId, reason } = req.body || {};
   if (!recordId) {
@@ -216,6 +238,16 @@ async function handleDecommission(req, res, decommissionedBy) {
     });
 
     if (!resp.ok) throw new Error(`Airtable update failed: ${resp.status} ${await resp.text()}`);
+
+    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (currentResp.ok) {
+      const current = await currentResp.json();
+      const assetId = current.fields["Asset ID"] || "";
+      await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy);
+    }
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("manage-asset PATCH error:", err);
@@ -282,6 +314,10 @@ async function handleRelocate(req, res, relocatedBy) {
         },
       }),
     }).catch(e => console.error("Relocation log write failed (non-fatal):", e));
+
+    const oldLocation = [oldFloor, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
+    const newLocation = [newFloor || oldFloor, newRoom || oldRoom, newBuilding || oldBuilding].filter(Boolean).join(" / ");
+    await logAssetActivity(assetId, "Location", oldLocation, newLocation, relocatedBy);
 
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -388,7 +424,7 @@ async function handleEditAsset(req, res, editedBy) {
 // Saves (or updates) where an asset's marker sits on its floor's plan image,
 // as a percentage position (0-100) so it stays correctly placed regardless
 // of the image's actual pixel dimensions or how it's displayed on screen.
-async function handleSaveMarkerPosition(req, res) {
+async function handleSaveMarkerPosition(req, res, movedBy) {
   const { assetId, floor, x, y } = req.body || {};
   if (!assetId || !floor || x === undefined || y === undefined) {
     return res.status(400).json({ error: "assetId, floor, x, and y are required" });
@@ -408,6 +444,7 @@ async function handleSaveMarkerPosition(req, res) {
     });
     const findData = findResp.ok ? await findResp.json() : { records: [] };
     const existing = findData.records && findData.records[0];
+    const isNewPlacement = !existing;
 
     const fields = { "Asset ID": assetId, "Floor": floor, "X%": Number(x), "Y%": Number(y) };
 
@@ -425,11 +462,63 @@ async function handleSaveMarkerPosition(req, res) {
       });
     }
 
+    const floorPlanRecordId = await findOrCreateFloorPlanRecord(floor);
+    await appendFloorPlanActivity(floorPlanRecordId, `📍 ${isNewPlacement ? "Placed" : "Moved"} marker for ${assetId}`, movedBy);
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleSaveMarkerPosition error:", err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+// Shared by marker placement and floor plan uploads — finds the Floor
+// Plans record for a given floor, or creates a blank one if this is the
+// very first activity recorded for that floor.
+async function findOrCreateFloorPlanRecord(floor) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+
+  const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  findUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
+  findUrl.searchParams.set("maxRecords", "1");
+  const findResp = await fetch(findUrl.toString(), {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  const findData = findResp.ok ? await findResp.json() : { records: [] };
+  if (findData.records && findData.records[0]) return findData.records[0].id;
+
+  const createResp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Floor": floor } }),
+  });
+  const createData = await createResp.json();
+  return createData.id;
+}
+
+// Same read-modify-write pattern as every other Activity Log in the
+// system — real time, timestamped, attributed.
+async function appendFloorPlanActivity(recordId, text, by) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendFloorPlanActivity: could not read record"); return; }
+  const data = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(data.fields["Activity Log"] || "[]"); } catch { log = []; }
+  log.push({ text, by, at: new Date().toISOString() });
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) console.error("appendFloorPlanActivity: could not save entry");
 }
 
 // Uploads a floor plan drawing directly from the dashboard — no need to
@@ -492,8 +581,10 @@ async function handleUploadFloorPlan(req, res, uploadedBy) {
     await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Uploaded By": uploadedBy, "Upload Date": new Date().toISOString() } }),
+      body: JSON.stringify({ fields: { "Uploaded By": uploadedBy, "Uploaded Date": new Date().toISOString() } }),
     });
+
+    await appendFloorPlanActivity(recordId, `📎 Floor plan image uploaded: ${filename}`, uploadedBy);
 
     return res.status(200).json({ success: true, floor, uploadedBy });
   } catch (err) {
@@ -543,6 +634,15 @@ async function handleUploadDocument(req, res, uploadedBy) {
       body: JSON.stringify({ fields: { "Documents Last Uploaded By": uploadedBy, "Documents Last Uploaded Date": new Date().toISOString() } }),
     });
 
+    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (currentResp.ok) {
+      const current = await currentResp.json();
+      const assetId = current.fields["Asset ID"] || "";
+      await logAssetActivity(assetId, "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy);
+    }
+
     return res.status(200).json({ success: true, filename, uploadedBy });
   } catch (err) {
     console.error("handleUploadDocument error:", err);
@@ -566,6 +666,16 @@ async function handleClearTechnicalReview(req, res, clearedBy) {
       body: JSON.stringify({ fields: { "Needs Technical Review": false } }),
     });
     if (!resp.ok) throw new Error("Could not clear review flag");
+
+    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (currentResp.ok) {
+      const current = await currentResp.json();
+      const assetId = current.fields["Asset ID"] || "";
+      await logAssetActivity(assetId, "Needs Technical Review", "Yes", "Cleared — reviewed", clearedBy);
+    }
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("clearTechnicalReview error:", err);
