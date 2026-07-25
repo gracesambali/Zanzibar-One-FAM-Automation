@@ -23,6 +23,27 @@ import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirecto
 // permission-checked identities (mechanical_engineer, etc). This maps
 // one to the other so closure sign-off can verify the specific person
 // reviewing is actually who the job was routed to.
+// Shared by closure review AND procurement approve/reject — Business
+// Owner / System Admin can act on any work order; every other routed
+// role must match the specific role this work order was actually
+// assigned to. Returns null if allowed, or an error message if not.
+async function checkRoutedRoleMatch(session, recordId) {
+  if (session.r === "business_owner" || session.r === "system_admin") return null;
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!checkResp.ok) return null; // fail open on a read error — the actual action's own logic will fail safely if the record truly doesn't exist
+  const checkData = await checkResp.json();
+  const assignedRole = checkData.fields["Assigned Role"];
+  const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  if (expectedLoginRole && session.r !== expectedLoginRole) {
+    return `Only ${assignedRole} can act on this work order.`;
+  }
+  return null;
+}
+
 const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Mechanical": "mechanical_engineer",
   "Electrical": "electrical_engineer",
@@ -142,6 +163,8 @@ export default async function handler(req, res) {
       if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to approve procurement" });
       const { recordId } = req.body;
       if (!recordId) return res.status(400).json({ error: "recordId required" });
+      const roleError = await checkRoutedRoleMatch(session, recordId);
+      if (roleError) return res.status(403).json({ error: roleError });
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -173,6 +196,8 @@ export default async function handler(req, res) {
       if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to reject procurement" });
       const { recordId, reason } = req.body;
       if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
+      const roleError = await checkRoutedRoleMatch(session, recordId);
+      if (roleError) return res.status(403).json({ error: roleError });
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -214,10 +239,8 @@ export default async function handler(req, res) {
           body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() } }),
         });
         if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
-        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — TZS ${total.toLocaleString()} recorded, technician can now proceed`, session.u, "system");
-
-        const requestedBy = current.fields["Procurement Requested By"];
-        if (requestedBy) await notifyRequesterOfFulfillment(requestedBy, current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "");
+        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — TZS ${total.toLocaleString()} recorded, routed role notified`, session.u, "system");
+        await notifyRoutedRoleOfFulfillment(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
 
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -243,21 +266,8 @@ export default async function handler(req, res) {
       // Business Owner / System Admin can act on any work order. Every
       // other routed role must match the specific role this work order
       // was actually assigned to.
-      if (session.r !== "business_owner" && session.r !== "system_admin") {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (checkResp.ok) {
-          const checkData = await checkResp.json();
-          const assignedRole = checkData.fields["Assigned Role"];
-          const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-          if (expectedLoginRole && session.r !== expectedLoginRole) {
-            return res.status(403).json({ error: `Only ${assignedRole} can review this work order's closure.` });
-          }
-        }
-      }
+      const roleError = await checkRoutedRoleMatch(session, recordId);
+      if (roleError) return res.status(403).json({ error: roleError });
 
       if (req.body.approveClosure) return handleApproveClosure(req, res, session.u);
       return handleRejectClosure(req, res, session.u);
@@ -652,13 +662,14 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 // or SMS, since it's just a plain URL. Detects channel by presence of
 // "@" rather than asking the reporter to pick one.
 // Fires the moment procurement is requested — emails the specific
-// Engineer whose job it actually is to approve, matching the work
-// order's own routed role, not a generic list.
+// person whose job it actually is to approve, matching the work
+// order's own routed role (Electrical/Mechanical Engineer, Admin, or
+// Property Manager — whichever discipline this job actually belongs
+// to), not funneled to Engineers only.
 async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, assignedRole, requestedBy, total) {
-  const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-  const engineerRole = loginRole === "electrical_engineer" || loginRole === "mechanical_engineer" ? loginRole : null;
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   const directory = getAllStaffDirectory();
-  const toList = directory.filter(e => e.role === engineerRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
+  const toList = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
   if (toList.length === 0) return;
 
   const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
@@ -717,27 +728,38 @@ async function notifyProcurementOfApproval(woId, assetName, total, approvedBy) {
   }).catch(err => console.error("notifyProcurementOfApproval error:", err));
 }
 
-// Fires the moment procurement is fulfilled — SMS to whoever actually
-// requested it (technician, engineer, admin, or property manager,
-// whoever it was), confirming they can proceed with the work.
-async function notifyRequesterOfFulfillment(requestedByUsername, assetName, woId) {
-  const contact = getContactForUsername(requestedByUsername);
-  if (!contact || !contact.phone) return;
+// Fires the moment procurement is fulfilled — emails the routed role
+// (Engineer, Admin, or Property Manager — whoever owns this job), not
+// the technician directly. The routed role is the one who then tells
+// the technician to proceed; the system doesn't SMS the technician.
+async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, total) {
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  const directory = getAllStaffDirectory();
+  const toList = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
+  if (toList.length === 0) return;
 
-  const rawMessage = `Procurement approved and fulfilled for ${assetName} (${woId}). You can proceed with the work.`;
-  const cleanMessage = sanitizeForSmsWO(rawMessage);
-  const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  await fetch("https://apisms.beem.africa/v1/send", {
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Procurement Fulfilled</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Let the technician know they can proceed.</p>
+      </div>
+    </div>`;
+
+  await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      source_addr: process.env.BEEM_SENDER_ID || "INFO",
-      schedule_time: "",
-      encoding: 0,
-      message: cleanMessage.slice(0, 160),
-      recipients: [{ recipient_id: 1, dest_addr: contact.phone }],
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: toList,
+      subject: `Fulfilled — technician can proceed: ${assetName} (${woId})`,
+      html,
     }),
-  }).catch(err => console.error("notifyRequesterOfFulfillment error:", err));
+  }).catch(err => console.error("notifyRoutedRoleOfFulfillment error:", err));
 }
 
 async function sendSatisfactionRequest(contact, recordId, assetName) {
