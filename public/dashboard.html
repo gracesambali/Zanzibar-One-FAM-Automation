@@ -2661,7 +2661,11 @@ async function renderFloorPlan() {
     <div style="font-size:11px;color:var(--muted);margin-top:8px">Max 5MB. This replaces the conceptual placeholder for the selected floor — your name and today's date are recorded automatically.</div>
     <div id="fp_uploadError" style="display:none;color:var(--red);font-size:12px;margin-top:8px"></div>
   </div>
-  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>`;
+  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>
+  <div style="padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:10px;margin-top:16px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+    <div id="floorPlanActivityLog" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
 
   container.innerHTML = html;
 
@@ -2673,6 +2677,22 @@ async function renderFloorPlan() {
   try {
     const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
     const data = await resp.json();
+
+    const activityEl = document.getElementById('floorPlanActivityLog');
+    if (activityEl) {
+      let log = [];
+      try { log = JSON.parse(data.activityLog || '[]'); } catch { log = []; }
+      if (log.length === 0) {
+        activityEl.innerHTML = '<div style="font-size:12px;color:var(--muted)">No activity yet for this floor.</div>';
+      } else {
+        activityEl.innerHTML = log.slice().reverse().map(entry => `
+          <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+            <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+          </div>
+        `).join('');
+      }
+    }
 
     // Fall back to the built-in conceptual defaults if Airtable has no image
     // or positions yet for this floor — Airtable always wins once populated.
