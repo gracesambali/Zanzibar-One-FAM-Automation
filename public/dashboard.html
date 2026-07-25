@@ -640,6 +640,11 @@ function renderDashboard() {
 
   let html = '';
 
+  // "For You Today" — loads async, right at the top, before anything
+  // generic. This is the answer to "what do I actually need to do" —
+  // not something to hunt for further down the page.
+  html += `<div id="pendingForMePanel" style="margin-bottom:18px"></div>`;
+
   // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
@@ -811,6 +816,7 @@ function renderDashboard() {
   }
 
   document.getElementById('view-dashboard').innerHTML = html;
+  loadPendingForMe();
   if (canSeeApiKey) loadCostOverview();
   if (currentUserPermissions && currentUserPermissions.viewStaffPerformance) loadStaffPerformance();
 
@@ -1415,7 +1421,7 @@ async function renderSensorMonitor(isRefresh) {
         const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
         const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
         const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
-        listHtml += `<div class="asset-row" style="cursor:default">
+        listHtml += `<button class="asset-row" onclick="showSensorDetail('${s.recordId}')" style="text-align:left">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
             <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
@@ -1427,9 +1433,10 @@ async function renderSensorMonitor(isRefresh) {
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <span class="badge ${badgeClass}">${badgeLabel}</span>
           </div>
-        </div>`;
+        </button>`;
       });
       listHtml += `</div>`;
+      window.lastSensors = sensors;
       listHtml += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 5 minutes</div>`;
     }
 
@@ -1448,6 +1455,71 @@ async function renderSensorMonitor(isRefresh) {
     const activeTab = document.querySelector('.tab-btn.active');
     if (activeTab && activeTab.dataset.tab === 'sensors') renderSensorMonitor(true);
   }, 5 * 60 * 1000);
+}
+
+function showSensorDetail(recordId) {
+  const s = (window.lastSensors || []).find(x => x.recordId === recordId);
+  if (!s) return;
+  const container = document.getElementById('view-sensors');
+  const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
+
+  let log = [];
+  try { log = JSON.parse(s.activityLog || '[]'); } catch { log = []; }
+
+  container.innerHTML = `
+    <button onclick="renderSensorMonitor(false)" style="margin-bottom:14px;padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">← Back to Sensors</button>
+    <div class="detail-panel">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">${s.assetName} — ${s.sensorId}</div>
+        <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <div class="detail-field"><div class="detail-field-label">Sensor Type</div><div class="detail-field-value">${s.sensorType}</div></div>
+          <div class="detail-field"><div class="detail-field-label">Location</div><div class="detail-field-value">${s.location || '—'}</div></div>
+          <div class="detail-field"><div class="detail-field-label">Target Range</div><div class="detail-field-value">${s.targetRange || 'not set'}</div></div>
+          <div class="detail-field"><div class="detail-field-label">Latest Reading</div><div class="detail-field-value">${valueDisplay}</div></div>
+        </div>
+      </div>
+
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Notes & Status</div>
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
+        <select id="sensorEditStatus" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
+          ${['Active','Needs Attention','Offline','Under Repair'].map(opt => `<option value="${opt}" ${s.status===opt?'selected':''}>${opt}</option>`).join('')}
+        </select>
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
+        <textarea id="sensorEditNotes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-height:70px;margin-bottom:10px">${s.notes || ''}</textarea>
+        <button onclick="saveSensorEdit('${recordId}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Save Changes</button>
+      </div>
+
+      <div style="padding:20px 24px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+        ${log.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No activity yet.</div>' :
+          log.slice().reverse().map(entry => `
+            <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+              <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+              <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function saveSensorEdit(recordId) {
+  const notes = document.getElementById('sensorEditNotes').value;
+  const status = document.getElementById('sensorEditStatus').value;
+  try {
+    const resp = await fetch('/api/sensors', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId, notes, status }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    await renderSensorMonitor(false);
+    showSensorDetail(recordId);
+  } catch (err) {
+    alert('Could not save: ' + err.message);
+  }
 }
 
 function updateSensorTestHint() {
@@ -1889,13 +1961,71 @@ function setPlanActualCost(recordId, idx) {
   updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
 }
 
-function addPlanMilestone(recordId) {
-  const title = prompt('Milestone:');
-  if (!title) return;
-  const targetDate = prompt('Target date (YYYY-MM-DD), optional:') || '';
-  const p = lastPlans.find(pl => pl.recordId === recordId);
-  const milestones = [...p.milestones, { title, targetDate, completed: false }];
-  updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+let cachedStaffList = null;
+async function loadStaffList() {
+  if (cachedStaffList) return cachedStaffList;
+  try {
+    const resp = await fetch('/api/get-assets?stafflist=true');
+    const data = await resp.json();
+    cachedStaffList = data.staff || [];
+  } catch {
+    cachedStaffList = [];
+  }
+  return cachedStaffList;
+}
+
+function closePlanModal() {
+  const el = document.getElementById('planModalOverlay');
+  if (el) el.remove();
+}
+
+function openPlanModal(title, bodyHtml, onSave) {
+  closePlanModal();
+  const overlay = document.createElement('div');
+  overlay.id = 'planModalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">${title}</div>
+      <div id="planModalBody">${bodyHtml}</div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button onclick="closePlanModal()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="planModalSaveBtn" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('planModalSaveBtn').onclick = onSave;
+}
+
+function staffCheckboxList(idPrefix, staff) {
+  if (staff.length === 0) return '<div style="font-size:12px;color:var(--muted)">No staff configured yet.</div>';
+  return staff.map((s, i) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">
+      <input type="checkbox" id="${idPrefix}_${i}" value="${s.displayName}">
+      <span style="font-size:13px">${s.displayName} <span style="color:var(--muted);font-size:11px">(${ROLE_LABELS[s.role] || s.role})</span></span>
+    </label>`).join('');
+}
+
+function getCheckedStaffNames(idPrefix, staff) {
+  return staff.filter((s, i) => document.getElementById(`${idPrefix}_${i}`)?.checked).map(s => s.displayName);
+}
+
+async function addPlanMilestone(recordId) {
+  const staff = await loadStaffList();
+  openPlanModal('Add Milestone', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Milestone *</label>
+    <input id="pm_title" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Date (optional)</label>
+    <input id="pm_date" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+  `, () => {
+    const title = document.getElementById('pm_title').value.trim();
+    if (!title) { alert('Milestone name is required.'); return; }
+    const targetDate = document.getElementById('pm_date').value || '';
+    const p = lastPlans.find(pl => pl.recordId === recordId);
+    const milestones = [...p.milestones, { title, targetDate, completed: false }];
+    updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
+    closePlanModal();
+  });
 }
 
 function togglePlanMilestone(recordId, idx, checked) {
@@ -1905,23 +2035,43 @@ function togglePlanMilestone(recordId, idx, checked) {
   updatePlanField(recordId, 'Milestones', JSON.stringify(milestones));
 }
 
-function addPlanMeeting(recordId) {
-  const notes = prompt('What was discussed / decided?');
-  if (!notes) return;
-  const attendees = prompt('Attendees (optional):') || '';
-  const p = lastPlans.find(pl => pl.recordId === recordId);
-  const meetingLog = [...p.meetingLog, { date: new Date().toISOString().split('T')[0], notes, attendees }];
-  updatePlanField(recordId, 'Meeting Log', JSON.stringify(meetingLog));
+async function addPlanMeeting(recordId) {
+  const staff = await loadStaffList();
+  openPlanModal('Log a Meeting', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What was discussed / decided? *</label>
+    <textarea id="pmt_notes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-height:60px;margin-bottom:12px"></textarea>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">Attendees (optional, choose any)</label>
+    <div style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px">${staffCheckboxList('pmt_att', staff)}</div>
+  `, () => {
+    const notes = document.getElementById('pmt_notes').value.trim();
+    if (!notes) { alert('Meeting notes are required.'); return; }
+    const attendees = getCheckedStaffNames('pmt_att', staff).join(', ');
+    const p = lastPlans.find(pl => pl.recordId === recordId);
+    const meetingLog = [...p.meetingLog, { date: new Date().toISOString().split('T')[0], notes, attendees }];
+    updatePlanField(recordId, 'Meeting Log', JSON.stringify(meetingLog));
+    closePlanModal();
+  });
 }
 
-function addPlanActionPoint(recordId) {
-  const what = prompt('Action point:');
-  if (!what) return;
-  const who = prompt('Who is responsible?') || '';
-  const dueDate = prompt('Due date (optional):') || '';
-  const p = lastPlans.find(pl => pl.recordId === recordId);
-  const actionPoints = [...p.actionPoints, { what, who, dueDate, done: false }];
-  updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+async function addPlanActionPoint(recordId) {
+  const staff = await loadStaffList();
+  openPlanModal('Add Action Point', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Action Point *</label>
+    <input id="pap_what" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">Responsible (optional, choose any)</label>
+    <div style="max-height:130px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px">${staffCheckboxList('pap_who', staff)}</div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Due Date (optional)</label>
+    <input id="pap_due" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+  `, () => {
+    const what = document.getElementById('pap_what').value.trim();
+    if (!what) { alert('Action point is required.'); return; }
+    const who = getCheckedStaffNames('pap_who', staff).join(', ');
+    const dueDate = document.getElementById('pap_due').value || '';
+    const p = lastPlans.find(pl => pl.recordId === recordId);
+    const actionPoints = [...p.actionPoints, { what, who, dueDate, done: false }];
+    updatePlanField(recordId, 'Action Points', JSON.stringify(actionPoints));
+    closePlanModal();
+  });
 }
 
 function togglePlanActionPoint(recordId, idx, checked) {
@@ -2725,6 +2875,36 @@ function downloadMaintenanceChecklist() {
   win.document.write(buildChecklistDocumentHtml());
   win.document.close();
   setTimeout(() => win.print(), 400);
+}
+
+async function loadPendingForMe() {
+  const el = document.getElementById('pendingForMePanel');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/get-assets?pendingforme=true');
+    if (!resp.ok) throw new Error('Could not load');
+    const data = await resp.json();
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      el.innerHTML = `<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:14px 18px;font-size:13px;color:#166534">✓ Nothing pending for you right now.</div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">For You Today (${items.length})</div>
+        ${items.map(i => `
+          <button onclick="switchTab('workorders');setTimeout(()=>showWorkOrderDetail('${i.recordId}'),300)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:9px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer">
+            <span style="font-size:13px;color:var(--text)"><strong>${i.assetName}</strong> <span style="color:var(--muted)">(${i.woId})</span></span>
+            <span style="font-size:11.5px;color:var(--navy);font-weight:600">${i.why} →</span>
+          </button>
+        `).join('')}
+      </div>`;
+  } catch (err) {
+    el.innerHTML = '';
+    console.error('loadPendingForMe error:', err);
+  }
 }
 
 async function loadStaffPerformance() {
