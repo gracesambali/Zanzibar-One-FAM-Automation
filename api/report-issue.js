@@ -198,29 +198,11 @@ export default async function handler(req, res) {
   }
 }
 
-// Same role-label -> login-role mapping used in work-orders.js — kept
-// as its own small copy here rather than a shared import, since it's
-// four lines and these are separate serverless functions.
-const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
-  "Mechanical": "mechanical_engineer",
-  "Electrical": "electrical_engineer",
-  "Admin": "admin",
-  "Property Manager": "property_manager",
-};
-
 async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
-
-  // Auto-include by routing: whoever currently holds the role this
-  // report was routed to is in its chat from the moment it's created —
-  // same rule as reassignment in work-orders.js. The reporter
-  // themselves isn't a participant; they have no login, and are
-  // reached by Reporter Contact instead, same as always.
-  const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-  const holders = loginRole ? getAllStaffDirectory().filter(e => e.role === loginRole).map(e => e.username) : [];
 
   const baseFields = {
     "WO ID": woId,
@@ -236,7 +218,6 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
     "Reporter Contact": reporterContact || "",
     "Satisfaction Status": "Pending",
-    "Chat Participants": JSON.stringify(holders),
   };
 
   let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
