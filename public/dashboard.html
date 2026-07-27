@@ -570,7 +570,13 @@ function populateLoggedInUserBadge(username, role, photoUrl, displayName) {
 }
 
 const ROLE_PERMISSIONS = {
-  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  // simplifiedNav restricts the sidebar to Work Orders, Level View, and
+  // Floor Plan only — confirmed with the facility manager: technicians
+  // shouldn't have to navigate the full asset-management surface just
+  // to see what's outstanding and do their job. Any role could get this
+  // treatment later by flipping this one flag, without touching the
+  // sidebar code itself.
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false, simplifiedNav: true },
   electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
@@ -631,7 +637,25 @@ function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(-
 function fmt(n) { return n.toLocaleString(); }
 function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date()) / 86400000); }
 
+// Hides the sidebar items a simplifiedNav role shouldn't see at all —
+// not just gating actions inside a view (the existing pattern for
+// things like viewCostAndDepreciation), but the nav entry itself,
+// since the whole point is fewer places to have to look.
+const SIMPLIFIED_NAV_HIDDEN_TABS = ['dashboard', 'assets', 'sensors', 'systems', 'maintenance', 'plannedmaintenance'];
+function applySimplifiedNavIfNeeded() {
+  if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
+  SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
+    const btn = document.querySelector(`.tab-btn[data-tab="${t}"]`);
+    if (btn) btn.style.display = 'none';
+  });
+}
+
+const SIMPLIFIED_NAV_ALLOWED_TABS = ['workorders', 'levelview', 'floorplan'];
+
 function switchTab(tab) {
+  if (currentUserPermissions && currentUserPermissions.simplifiedNav && !SIMPLIFIED_NAV_ALLOWED_TABS.includes(tab)) {
+    tab = 'workorders'; // defense in depth — the nav buttons are hidden too, but never trust that alone
+  }
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-'+tab).classList.add('active');
@@ -3929,7 +3953,12 @@ async function renderWorkOrders() {
     const inProgress = orders.filter(o => o.status === 'In Progress').length;
     const completed = orders.filter(o => o.status === 'Completed').length;
 
-    let html = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+    const isSimplified = currentUserPermissions && currentUserPermissions.simplifiedNav;
+
+    let html = '';
+
+    if (!isSimplified) {
+      html += `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -3939,13 +3968,44 @@ async function renderWorkOrders() {
         <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
       </div>
       <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
-    </div>
-    <div class="summary-grid">
+    </div>`;
+    }
+
+    if (isSimplified) {
+      // "Your Tickets" — real personal attribution, not aggregate counts.
+      // A work order counts as theirs if they've actually done something
+      // to it (any Activity Log entry with by === them): changed its
+      // status, ticked a checklist item, posted an update, requested
+      // procurement, uploaded a photo. Confirmed with the facility
+      // manager: this should be accounted to the technician personally,
+      // not a shared system-wide number.
+      const myOrders = orders.filter(o => {
+        let log = [];
+        try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
+        return log.some(e => e.by === currentUsername);
+      });
+      const myOpen = myOrders.filter(o => o.status === 'Open').length;
+      const myInProgress = myOrders.filter(o => o.status === 'In Progress').length;
+      const myReadyForReview = myOrders.filter(o => o.status === 'Ready for Review').length;
+      const myCompleted = myOrders.filter(o => o.status === 'Completed').length;
+
+      html += `<div style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets</div>
+        <div class="summary-grid">
+          <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myOpen}</div><div class="summary-label">Open</div></div>
+          <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${myInProgress}</div><div class="summary-label">In Progress</div></div>
+          <div class="summary-card"><div class="summary-val" style="color:var(--blue)">${myReadyForReview}</div><div class="summary-label">Ready for Review</div></div>
+          <div class="summary-card"><div class="summary-val" style="color:var(--green)">${myCompleted}</div><div class="summary-label">Completed</div></div>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="summary-grid">
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
     </div>`;
+    }
 
     if (orders.length === 0) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
@@ -5081,7 +5141,12 @@ async function loadAssetsAndInit() {
 
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.content').style.display = 'block';
-    renderDashboard();
+    applySimplifiedNavIfNeeded();
+    if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
+      switchTab('workorders');
+    } else {
+      renderDashboard();
+    }
   } catch (err) {
     if (loadingEl) {
       loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
