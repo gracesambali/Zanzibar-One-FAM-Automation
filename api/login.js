@@ -20,6 +20,7 @@ import { setSessionCookie } from "../lib/auth.js";
 import { ROLES } from "../lib/roles.js";
 import {
   findUserByUsername,
+  findUserByEmail,
   findUserByResetToken,
   updateUserFields,
   verifyPassword,
@@ -101,25 +102,26 @@ export default async function handler(req, res) {
 }
 
 // Step 1 of the set/reset flow. Deliberately generic in every response
-// — never confirms or denies whether a username exists, so this can't
-// be used to probe for valid accounts. Covers both "I forgot my
+// — never confirms or denies whether an email is registered, so this
+// can't be used to probe for valid accounts. Covers both "I forgot my
 // password" and "I'm a freshly migrated account with no password yet"
-// with the same link.
+// with the same link. Email rather than username, since it's what
+// someone locked out can actually still access.
 async function handleRequestPasswordReset(req, res) {
-  const { username } = req.body || {};
-  const GENERIC = { success: true, message: "If that account exists, an email with a link to set your password has been sent." };
-  if (!username) return res.status(400).json({ error: "Username required" });
+  const { email } = req.body || {};
+  const GENERIC = { success: true, message: "If that email is registered, a link to set your password has been sent to it." };
+  if (!email) return res.status(400).json({ error: "Email required" });
 
   try {
-    const user = await findUserByUsername(username);
-    if (!user || !user.fields["Email"]) {
+    const user = await findUserByEmail(email);
+    if (!user) {
       return res.status(200).json(GENERIC);
     }
 
     const token = generateResetToken();
     const expires = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000).toISOString();
     await updateUserFields(user.id, { "Reset Token": token, "Reset Token Expires": expires });
-    await sendResetEmail(user.fields["Email"], user.fields["Display Name"] || username, token);
+    await sendResetEmail(user.fields["Email"], user.fields["Display Name"] || user.fields["Username"], token);
 
     return res.status(200).json(GENERIC);
   } catch (err) {
