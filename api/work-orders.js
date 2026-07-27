@@ -751,6 +751,16 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     return { ok: false, recordId, error: errText };
   }
 
+  // Every status move is now a real, attributed Activity Log entry —
+  // this used to be silent. Status changes are the single most common
+  // thing a technician actually does to a job, so leaving them
+  // unlogged meant "who's actually working this" could only be
+  // inferred from comments, checklist ticks, or procurement actions —
+  // missing the most basic signal entirely.
+  if (closedByUsername) {
+    await appendActivityLog(recordId, `📍 Status changed to ${status}`, closedByUsername, "system");
+  }
+
   return { ok: true, recordId };
 }
 
