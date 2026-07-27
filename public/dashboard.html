@@ -3274,9 +3274,9 @@ function openReassignModal(recordId) {
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reassign');
-      Object.assign(o, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact, chatParticipants: JSON.stringify(data.chatParticipants) });
+      Object.assign(o, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact });
       const dashCopy = dashboardWorkOrders.find(w => w.id === recordId);
-      if (dashCopy) Object.assign(dashCopy, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact, chatParticipants: JSON.stringify(data.chatParticipants) });
+      if (dashCopy) Object.assign(dashCopy, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact });
       closePlanModal();
       showWorkOrderDetail(recordId);
     } catch (err) {
@@ -3378,9 +3378,9 @@ async function showWorkOrderDetail(recordId) {
   <div class="detail-panel">
     <div style="padding:18px 20px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">💬 Work Order Chat</div>
-      <div style="font-size:11px;color:var(--muted)">Everyone who's acted on this job is in automatically — separate from the Activity record.</div>
+      <div style="font-size:11px;color:var(--muted)">Visible to anyone logged in — separate from the Activity record.</div>
     </div>
-    <div id="woDetailChatParticipants" style="padding:12px 20px 0"></div>
+    <div id="woDetailChatParticipants"></div>
     <div id="woDetailChatBody" style="padding:12px 20px 18px"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
   </div>
   </div>
@@ -3589,32 +3589,22 @@ async function submitWODetailActivity(recordId) {
 }
 
 // Work Order Chat — a separate discussion thread from the Activity
-// record above. Only people in `chatParticipants` (plus Business
-// Owner / System Admin, for oversight) can see or post in it, so
-// showing it is a three-way branch: not-yet-a-participant sees a
-// "join" prompt, a participant sees the thread, and everything falls
-// back gracefully while the staff directory is still loading.
+// record above. Open to anyone logged in who can see the work order;
+// what's personal is only whether you've read it (tracked below).
 function chatParticipantLabel(username, staff) {
   const match = (staff || []).find(s => s.username === username);
   return (match && match.displayName) || username;
 }
 
 // Unread is personal, like a WhatsApp group — computed entirely from
-// data already on the work order object, no extra fetch. Someone not
-// in a chat gets 0 (they can't see it to begin with); Business Owner
-// / System Admin get counted across every chat, joined or not — the
-// one deliberate exception to "personal only," for oversight. A
-// person's own messages never count as unread for themselves.
+// data already on the work order object, no extra fetch. Everyone can
+// see every work order's chat now, so what's personal is purely
+// whether YOU'VE read it — not membership. A person's own messages
+// never count as unread for themselves.
 function getWOUnreadCount(o) {
   let chatLog = [];
   try { chatLog = JSON.parse(o.chatLog || '[]'); } catch { chatLog = []; }
   if (chatLog.length === 0) return 0;
-
-  let participants = [];
-  try { participants = JSON.parse(o.chatParticipants || '[]'); } catch { participants = []; }
-
-  const isOverseer = currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
-  if (!isOverseer && !participants.includes(currentUsername)) return 0;
 
   let receipts = {};
   try { receipts = JSON.parse(o.chatReadReceipts || '{}'); } catch { receipts = {}; }
@@ -3645,40 +3635,18 @@ async function renderWODetailChat(o) {
   const bodyEl = document.getElementById('woDetailChatBody');
   if (!participantsEl || !bodyEl) return;
 
-  let participants = [];
-  try { participants = JSON.parse(o.chatParticipants || '[]'); } catch { participants = []; }
+  participantsEl.innerHTML = '';
 
   const staff = await loadStaffList();
-
-  participantsEl.innerHTML = participants.length === 0
-    ? '<div style="font-size:11.5px;color:var(--muted)">Nobody\u2019s in this chat yet.</div>'
-    : participants.map(u => `<span style="display:inline-block;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;background:#EEF1F6;color:var(--navy);margin:0 6px 6px 0">${chatParticipantLabel(u, staff)}</span>`).join('');
-
-  const isOverseer = currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
-  const isIn = participants.includes(currentUsername);
-
-  if (!isIn && !isOverseer) {
-    bodyEl.innerHTML = `<button onclick="joinWorkOrderChat('${o.id}')" style="width:100%;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">+ Watch this job's chat</button><div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:6px">You'll join automatically the moment you act on this work order — this is only for watching without acting.</div>`;
-    return;
-  }
-
   let chatLog = [];
   try { chatLog = JSON.parse(o.chatLog || '[]'); } catch { chatLog = []; }
 
-  const recipientOptions = staff.filter(s => (s.username || s.displayName) !== currentUsername)
-    .map(s => `<option value="${s.username || s.displayName}">${s.displayName}</option>`).join('');
-
   bodyEl.innerHTML = `
     <div id="woDetailChatThread" style="overflow-y:auto;margin-bottom:10px;padding-right:4px"></div>
-    <select id="woDetailChatMention" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;color:var(--muted);margin-bottom:6px">
-      <option value="">General message (no specific recipient)</option>
-      ${recipientOptions}
-    </select>
     <div style="display:flex;gap:8px">
       <input id="woDetailChatInput" placeholder="Message about this work order…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailChatMessage('${o.id}')">
       <button onclick="submitWODetailChatMessage('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
-    </div>
-    <div style="font-size:10px;color:var(--muted);margin-top:5px">Naming someone here adds them to this chat if they're not already in it — like starting a message to them directly.</div>`;
+    </div>`;
 
   renderWODetailChatThread(chatLog, staff);
   markWorkOrderChatRead(o);
@@ -3727,54 +3695,35 @@ async function markWorkOrderChatRead(o) {
   }
 }
 
-async function joinWorkOrderChat(recordId) {
-  try {
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addChatParticipants: true, recordId, usernames: [currentUsername] }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not join chat');
-    const o = lastWorkOrders.find(w => w.id === recordId);
-    if (o) { o.chatParticipants = JSON.stringify(data.chatParticipants); renderWODetailChat(o); }
-  } catch (err) {
-    alert('Could not join chat: ' + err.message);
-  }
-}
-
 async function submitWODetailChatMessage(recordId) {
   const input = document.getElementById('woDetailChatInput');
-  const mentionEl = document.getElementById('woDetailChatMention');
   const text = input.value.trim();
   if (!text) return;
-  const mentionUsername = mentionEl && mentionEl.value ? mentionEl.value : undefined;
   input.disabled = true;
 
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addChatMessage: true, recordId, text, mentionUsername }),
+      body: JSON.stringify({ addChatMessage: true, recordId, text }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send message');
 
     const o = lastWorkOrders.find(w => w.id === recordId);
-    if (o) { o.chatLog = JSON.stringify(data.chatLog); o.chatReadReceipts = JSON.stringify(data.chatReadReceipts || {}); o.chatParticipants = JSON.stringify(data.chatParticipants || []); }
+    if (o) { o.chatLog = JSON.stringify(data.chatLog); o.chatReadReceipts = JSON.stringify(data.chatReadReceipts || {}); }
     const dashCopy = dashboardWorkOrders.find(w => w.id === recordId);
-    if (dashCopy) { dashCopy.chatLog = JSON.stringify(data.chatLog); dashCopy.chatReadReceipts = JSON.stringify(data.chatReadReceipts || {}); dashCopy.chatParticipants = JSON.stringify(data.chatParticipants || []); }
+    if (dashCopy) { dashCopy.chatLog = JSON.stringify(data.chatLog); dashCopy.chatReadReceipts = JSON.stringify(data.chatReadReceipts || {}); }
     updateWOUnreadBadges();
 
     input.value = '';
-    if (mentionEl) mentionEl.value = '';
     const staff = await loadStaffList();
-    if (o) { await renderWODetailChat(o); document.getElementById('woDetailChatInput')?.focus(); }
-    else renderWODetailChatThread(data.chatLog, staff);
+    renderWODetailChatThread(data.chatLog, staff);
   } catch (err) {
     alert('Could not send message: ' + err.message);
   } finally {
     input.disabled = false;
+    input.focus();
   }
 }
 
