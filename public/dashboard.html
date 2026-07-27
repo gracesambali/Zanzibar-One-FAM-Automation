@@ -1164,32 +1164,32 @@ function showDetail(idx) {
       if (el) el.textContent = 'Could not load edit history.';
     });
 
-  // Load ISO maintenance checklist — auto-matched from the asset's name/system
+  // Load ISO maintenance checklist — auto-matched from the asset's name/system,
+  // with a generic discipline-level fallback (derived from System, same
+  // routing logic used for work orders) whenever no precise class matches.
   const checklistClass = guessChecklistClass(a.name, a.system);
-  if (!checklistClass) {
-    document.getElementById('checklistContent').innerHTML = `<div>No standard checklist mapping found for this asset type yet.</div>`;
-  } else {
-    fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass))
-      .then(r => r.json())
-      .then(data => {
-        const el = document.getElementById('checklistContent');
-        if (!data.items || data.items.length === 0) {
-          el.innerHTML = `<div>No checklist items defined yet for <strong>${checklistClass}</strong>. Structure exists — content needs sourcing.</div>`;
-          return;
-        }
-        window.currentAssetChecklist = { asset: a, checklistClass, data };
-        el.innerHTML = `
-          <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${checklistClass}</strong> — ${data.items.length} items, sourced from:</div>
-          <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>
-          <div style="display:flex;gap:8px">
-            <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
-            <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
-          </div>`;
-      })
-      .catch(() => {
-        document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
-      });
-  }
+  fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&system=' + encodeURIComponent(a.system || '') + '&assetName=' + encodeURIComponent(a.name || ''))
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('checklistContent');
+      if (!data.items || data.items.length === 0) {
+        el.innerHTML = `<div>No checklist items defined yet.</div>`;
+        return;
+      }
+      window.currentAssetChecklist = { asset: a, checklistClass: data.class, data };
+      el.innerHTML = `
+        <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${data.class}</strong> — ${data.items.length} items${data.generic ? '' : ', sourced from:'}</div>
+        ${data.generic
+          ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:12px">General checklist — no asset-specific standard mapped yet</div>`
+          : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>`}
+        <div style="display:flex;gap:8px">
+          <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
+          <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
+        </div>`;
+    })
+    .catch(() => {
+      document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
+    });
 }
 
 // --- Relocation form + API call ---
@@ -2878,7 +2878,7 @@ function buildChecklistDocumentHtml() {
     const freq = item.frequency || 'Unscheduled';
     (freqGroups[freq] = freqGroups[freq] || []).push(item);
   });
-  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const freqOrder = ['Every occurrence','Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
   const orderedFreqs = Object.keys(freqGroups).sort((x,y) => {
     const ix = freqOrder.indexOf(x), iy = freqOrder.indexOf(y);
     return (ix<0?99:ix) - (iy<0?99:iy);
@@ -3463,22 +3463,18 @@ async function renderWODetailChecklist(o) {
   const el = document.getElementById('woDetailChecklist');
   if (!el) return;
   const checklistClass = guessChecklistClass(o.assetName || '', o.system || '');
-  if (!checklistClass) {
-    el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No standard checklist mapped for this asset type.</div>`;
-    return;
-  }
 
   let progress = {};
   try { progress = JSON.parse(o.checklistProgress || '{}'); } catch { progress = {}; }
 
   try {
-    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&assignedRole=' + encodeURIComponent(o.assignedRole || ''));
     const data = await resp.json();
     if (!data.items || data.items.length === 0) {
-      el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet for ${checklistClass}.</div>`;
+      el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet.</div>`;
       return;
     }
-    window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass, data, progress };
+    window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass: data.class, data, progress };
 
     // Time-bound grouping — same pattern as the printable version, so
     // this reads consistently whether viewed on screen or downloaded.
@@ -3487,16 +3483,18 @@ async function renderWODetailChecklist(o) {
       const freq = item.frequency || 'Unscheduled';
       (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
     });
-    const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+    const freqOrder = ['Every occurrence','Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
     const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
 
     const completedCount = data.items.filter((_, i) => progress[i] && progress[i].checked).length;
 
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${checklistClass}</div>
+      <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${data.class}</div>
       <button onclick="downloadWODetailChecklist()" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download PDF</button>
     </div>
-    <div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>
+    ${data.generic
+      ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:2px">General checklist — no asset-specific standard mapped yet</div>`
+      : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>`}
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${completedCount} of ${data.items.length} completed — optional tracking, does not block closing this work order</div>`;
 
     orderedFreqs.forEach(freq => {
@@ -3526,7 +3524,7 @@ function downloadWODetailChecklist() {
     const freq = item.frequency || 'Unscheduled';
     (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
   });
-  const freqOrder = ['Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const freqOrder = ['Every occurrence','Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
   const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
 
   let sectionsHtml = '';
