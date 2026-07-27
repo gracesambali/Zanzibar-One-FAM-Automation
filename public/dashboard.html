@@ -98,6 +98,23 @@ button { font-family: inherit; cursor: pointer; }
   .asset-row { flex-direction: column; align-items: stretch; gap: 10px; }
   .asset-row > div:last-child { align-self: flex-start; }
 }
+
+/* Work order detail: main record on the left, chat pinned on the right
+   so it stays visible while the record itself scrolls. Below 900px
+   there's no room for two columns, so it drops to a normal stacked
+   layout and the chat scrolls with everything else, ordered first so
+   it's not buried at the bottom of a long record. */
+.wo-layout { display: flex; align-items: flex-start; gap: 16px; }
+.wo-main { flex: 1; min-width: 0; }
+.wo-chat-col { width: 340px; flex-shrink: 0; position: sticky; top: 16px; max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+.wo-chat-col .detail-panel { display: flex; flex-direction: column; min-height: 0; }
+#woDetailChatBody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#woDetailChatThread { flex: 1; min-height: 120px; }
+@media (max-width: 900px) {
+  .wo-layout { flex-direction: column; }
+  .wo-chat-col { width: 100%; position: static; max-height: none; order: -1; }
+  #woDetailChatThread { max-height: 280px; }
+}
 .asset-name { font-weight: 600; font-size: 14px; }
 .asset-id { font-size: 11px; color: var(--muted); font-family: monospace; }
 .asset-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -390,6 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let assets = []; // populated live from Airtable via /api/get-assets
 let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
+let currentUsername = ""; // the actual login identity chat participation is checked against — never the display name
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
 // TEMPORARY (Grace, July 2026): showing cost/depreciation data to every role
@@ -2010,6 +2028,14 @@ function getCheckedStaffNames(idPrefix, staff) {
   return staff.filter((s, i) => document.getElementById(`${idPrefix}_${i}`)?.checked).map(s => s.displayName);
 }
 
+// Same checked-box lookup as getCheckedStaffNames, but returns the
+// login username — needed anywhere the value has to match session.u
+// server-side (like chat participants), not just be a display string.
+// Falls back to displayName if a staff entry has no username field.
+function getCheckedStaffUsernames(idPrefix, staff) {
+  return staff.filter((s, i) => document.getElementById(`${idPrefix}_${i}`)?.checked).map(s => s.username || s.displayName);
+}
+
 async function addPlanMilestone(recordId) {
   const staff = await loadStaffList();
   openPlanModal('Add Milestone', `
@@ -3201,6 +3227,8 @@ async function showWorkOrderDetail(recordId) {
   const statusClass = o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue';
 
   let html = `<button class="back-btn" onclick="renderWorkOrders()">← Back to Work Orders</button>
+  <div class="wo-layout">
+  <div class="wo-main">
   <div class="detail-panel">
     <div class="detail-header">
       <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
@@ -3273,6 +3301,22 @@ async function showWorkOrderDetail(recordId) {
         <button onclick="submitWODetailActivity('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
       </div>
     </div>
+  </div>
+  </div>
+
+  <div class="wo-chat-col">
+  <div class="detail-panel">
+    <div style="padding:18px 20px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">💬 Work Order Chat</div>
+        <button onclick="openAddChatParticipantsModal('${o.id}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">+ Add people</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">Just for people on this job — separate from the Activity record.</div>
+    </div>
+    <div id="woDetailChatParticipants" style="padding:12px 20px 0"></div>
+    <div id="woDetailChatBody" style="padding:12px 20px 18px"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
+  </div>
+  </div>
   </div>`;
 
   container.innerHTML = html;
@@ -3280,6 +3324,7 @@ async function showWorkOrderDetail(recordId) {
   renderWODetailProcurement(o);
   renderWODetailChecklist(o);
   renderWODetailActivityThread(o);
+  renderWODetailChat(o);
 }
 
 function renderWODetailProcurement(o) {
@@ -3474,6 +3519,139 @@ async function submitWODetailActivity(recordId) {
   } finally {
     input.disabled = false;
   }
+}
+
+// Work Order Chat — a separate discussion thread from the Activity
+// record above. Only people in `chatParticipants` (plus Business
+// Owner / System Admin, for oversight) can see or post in it, so
+// showing it is a three-way branch: not-yet-a-participant sees a
+// "join" prompt, a participant sees the thread, and everything falls
+// back gracefully while the staff directory is still loading.
+function chatParticipantLabel(username, staff) {
+  const match = (staff || []).find(s => s.username === username);
+  return (match && match.displayName) || username;
+}
+
+async function renderWODetailChat(o) {
+  const participantsEl = document.getElementById('woDetailChatParticipants');
+  const bodyEl = document.getElementById('woDetailChatBody');
+  if (!participantsEl || !bodyEl) return;
+
+  let participants = [];
+  try { participants = JSON.parse(o.chatParticipants || '[]'); } catch { participants = []; }
+
+  const staff = await loadStaffList();
+
+  participantsEl.innerHTML = participants.length === 0
+    ? '<div style="font-size:11.5px;color:var(--muted)">Nobody\u2019s in this chat yet.</div>'
+    : participants.map(u => `<span style="display:inline-block;font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;background:#EEF1F6;color:var(--navy);margin:0 6px 6px 0">${chatParticipantLabel(u, staff)}</span>`).join('');
+
+  const isOverseer = currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+  const isIn = participants.includes(currentUsername);
+
+  if (!isIn && !isOverseer) {
+    bodyEl.innerHTML = `<button onclick="joinWorkOrderChat('${o.id}')" style="width:100%;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">+ Join this chat</button>`;
+    return;
+  }
+
+  let chatLog = [];
+  try { chatLog = JSON.parse(o.chatLog || '[]'); } catch { chatLog = []; }
+
+  bodyEl.innerHTML = `
+    <div id="woDetailChatThread" style="overflow-y:auto;margin-bottom:10px;padding-right:4px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="woDetailChatInput" placeholder="Message about this work order…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitWODetailChatMessage('${o.id}')">
+      <button onclick="submitWODetailChatMessage('${o.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+    </div>`;
+
+  renderWODetailChatThread(chatLog, staff);
+}
+
+function renderWODetailChatThread(chatLog, staff) {
+  const thread = document.getElementById('woDetailChatThread');
+  if (!thread) return;
+  if (chatLog.length === 0) {
+    thread.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:12px 0">No messages yet — say something about this job.</div>`;
+    return;
+  }
+  thread.innerHTML = chatLog.map(m => `
+    <div style="padding:8px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;color:var(--navy)">${chatParticipantLabel(m.by, staff)}</div>
+      <div style="font-size:13px;color:var(--text);margin-top:2px">${m.text}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${new Date(m.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  `).join('');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function joinWorkOrderChat(recordId) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addChatParticipants: true, recordId, usernames: [currentUsername] }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not join chat');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) { o.chatParticipants = JSON.stringify(data.chatParticipants); renderWODetailChat(o); }
+  } catch (err) {
+    alert('Could not join chat: ' + err.message);
+  }
+}
+
+async function submitWODetailChatMessage(recordId) {
+  const input = document.getElementById('woDetailChatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addChatMessage: true, recordId, text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send message');
+
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) o.chatLog = JSON.stringify(data.chatLog);
+
+    input.value = '';
+    const staff = await loadStaffList();
+    renderWODetailChatThread(data.chatLog, staff);
+  } catch (err) {
+    alert('Could not send message: ' + err.message);
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+async function openAddChatParticipantsModal(recordId) {
+  const staff = await loadStaffList();
+  openPlanModal('Add People to This Chat', `
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">They'll be able to read and post in this work order's chat.</div>
+    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px">${staffCheckboxList('wo_chat_add', staff)}</div>
+  `, async () => {
+    const usernames = getCheckedStaffUsernames('wo_chat_add', staff);
+    if (usernames.length === 0) { alert('Choose at least one person.'); return; }
+    try {
+      const resp = await fetch('/api/work-orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addChatParticipants: true, recordId, usernames }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add people');
+      const o = lastWorkOrders.find(w => w.id === recordId);
+      if (o) { o.chatParticipants = JSON.stringify(data.chatParticipants); renderWODetailChat(o); }
+      closePlanModal();
+    } catch (err) {
+      alert('Could not add people: ' + err.message);
+    }
+  });
 }
 
 async function openWorkOrderChecklist(recordId, assetName, system) {
@@ -4807,6 +4985,7 @@ async function loadAssetsAndInit() {
     assets = data.assets || [];
     currentUserRole = data.role || "technician";
     currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
+    currentUsername = data.username || "";
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
