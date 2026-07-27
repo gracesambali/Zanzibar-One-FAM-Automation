@@ -13,7 +13,7 @@
 // page reload between each one.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
-import { getChecklist } from "../lib/checklists.js";
+import { getChecklistForWorkOrder } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
@@ -80,9 +80,21 @@ export default async function handler(req, res) {
   if (req.method === "GET" && req.query.report === "true") {
     return handleMaintenanceReport(req, res);
   }
-  if (req.method === "GET" && req.query.checklist) {
-    const cl = getChecklist(req.query.checklist);
-    return res.status(200).json({ class: req.query.checklist, ...cl });
+  // checklist may be an empty string — that's the normal case when no
+  // asset-class keyword matched client-side. The tiered resolver below
+  // still returns something: assignedRole (work orders) or a
+  // system/assetName-derived discipline (Asset Register, which has no
+  // Assigned Role of its own) falls back to a generic discipline
+  // checklist, and the universal fallback covers everything else. This
+  // is what guarantees every work order and every asset shows SOME
+  // checklist, never nothing.
+  if (req.method === "GET" && req.query.checklist !== undefined) {
+    let assignedRole = req.query.assignedRole || null;
+    if (!assignedRole && req.query.system) {
+      assignedRole = getAssignedRole(req.query.system, req.query.assetName || "") || null;
+    }
+    const result = getChecklistForWorkOrder(req.query.checklist || null, assignedRole);
+    return res.status(200).json(result);
   }
 
   if (req.method === "GET") {
