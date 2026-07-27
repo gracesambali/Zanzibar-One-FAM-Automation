@@ -297,10 +297,18 @@ export default async function handler(req, res) {
           at: new Date().toISOString(),
         });
 
+        // Posting an update on a work order is a real action on it —
+        // same auto-join rule as everything else below: doing anything
+        // to a work order puts you in its chat, no manual step needed.
+        let participants = [];
+        try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+        const fields = { "Activity Log": JSON.stringify(log) };
+        if (!participants.includes(session.u)) fields["Chat Participants"] = JSON.stringify([...participants, session.u]);
+
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+          body: JSON.stringify({ fields }),
         });
         if (!patchResp.ok) throw new Error("Could not save activity entry");
 
@@ -406,16 +414,17 @@ export default async function handler(req, res) {
       }
     }
 
-    // Adding people to a work order's chat. Self-add is always allowed
-    // for any logged-in user — that's how someone "watches" a job they
-    // care about. Adding SOMEONE ELSE requires already being in the
-    // chat (or being Business Owner / System Admin), so the group can
-    // only grow by people already in it looping others in — never a
-    // stranger adding a stranger.
+    // Joining a work order's chat yourself — for watching a job you
+    // haven't actually acted on yet (like being curious about how it's
+    // going). Everything else is automatic: doing anything real to a
+    // work order (see appendActivityLog above) already puts you in its
+    // chat, so there's no "add someone else" path anymore — nobody's
+    // job is to sit there managing chat membership for people who are
+    // already doing the work.
     if (req.body && req.body.addChatParticipants) {
       const { recordId, usernames } = req.body;
-      if (!recordId || !Array.isArray(usernames) || usernames.length === 0) {
-        return res.status(400).json({ error: "recordId and at least one username required" });
+      if (!recordId || !Array.isArray(usernames) || usernames.length !== 1 || usernames[0] !== session.u) {
+        return res.status(400).json({ error: "You can only join a work order's chat for yourself." });
       }
 
       try {
@@ -431,15 +440,10 @@ export default async function handler(req, res) {
         let participants = [];
         try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
 
-        const isOverseer = session.r === "business_owner" || session.r === "system_admin";
-        const isAlreadyIn = participants.includes(session.u);
-        const onlyAddingSelf = usernames.length === 1 && usernames[0] === session.u;
-
-        if (!isOverseer && !isAlreadyIn && !onlyAddingSelf) {
-          return res.status(403).json({ error: "Join this chat yourself first before adding others." });
+        if (participants.includes(session.u)) {
+          return res.status(200).json({ success: true, chatParticipants: participants });
         }
-
-        const merged = Array.from(new Set([...participants, ...usernames]));
+        const merged = [...participants, session.u];
 
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
@@ -447,14 +451,6 @@ export default async function handler(req, res) {
           body: JSON.stringify({ fields: { "Chat Participants": JSON.stringify(merged) } }),
         });
         if (!patchResp.ok) throw new Error("Could not update chat participants");
-
-        // Newly added people are recorded in the Activity Log too —
-        // "who can see this conversation" is itself part of the real
-        // accountability record for the job.
-        const newlyAdded = usernames.filter(u => !participants.includes(u));
-        if (newlyAdded.length > 0) {
-          await appendActivityLog(recordId, `💬 Added to work order chat: ${newlyAdded.join(", ")}`, session.u, "system");
-        }
 
         return res.status(200).json({ success: true, chatParticipants: merged });
       } catch (err) {
@@ -512,19 +508,33 @@ export default async function handler(req, res) {
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        // Read first so editing a cost can also auto-join the editor
+        // into this work order's chat — same rule as every other real
+        // action on it.
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        let participants = [];
+        if (getResp.ok) {
+          const current = await getResp.json();
+          try { participants = JSON.parse(current.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+        }
+
+        const fields = {
+          "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
+          // Pulled from the verified session — same as Closed By,
+          // Added By, etc. elsewhere in the system. Cannot be typed
+          // in or faked by whoever's making the edit.
+          "Cost Edited By": session.u,
+          "Cost Edited Date": new Date().toISOString(),
+        };
+        if (!participants.includes(session.u)) fields["Chat Participants"] = JSON.stringify([...participants, session.u]);
+
         const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fields: {
-              "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
-              // Pulled from the verified session — same as Closed By,
-              // Added By, etc. elsewhere in the system. Cannot be typed
-              // in or faked by whoever's making the edit.
-              "Cost Edited By": session.u,
-              "Cost Edited Date": new Date().toISOString(),
-            },
-          }),
+          body: JSON.stringify({ fields }),
         });
         if (!resp.ok) throw new Error(await resp.text());
         return res.status(200).json({ success: true });
@@ -572,8 +582,18 @@ export default async function handler(req, res) {
 }
 
 // Shared helper — appends one entry to a work order's Activity Log,
-// used by the procurement actions above. Read-modify-write, same
-// pattern as the inline addActivityEntry handler.
+// used by the procurement, checklist, closure, and photo-upload
+// actions below. Read-modify-write, same pattern as the inline
+// addActivityEntry handler.
+//
+// It also auto-joins `by` to the work order's Chat Participants in the
+// same write. This is the actual join mechanism for the whole chat
+// feature: there's no manual "add people" step anymore — doing
+// anything real to a work order (changing its status, approving
+// procurement, ticking a checklist, closing it out) is what puts you
+// in its conversation. The technician working the job and the
+// engineer routed to review it end up in the chat because they did
+// the job, not because someone remembered to add them.
 async function appendActivityLog(recordId, text, by, type) {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -589,10 +609,15 @@ async function appendActivityLog(recordId, text, by, type) {
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
+  let participants = [];
+  try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+  const fields = { "Activity Log": JSON.stringify(log) };
+  if (by && !participants.includes(by)) fields["Chat Participants"] = JSON.stringify([...participants, by]);
+
   const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+    body: JSON.stringify({ fields }),
   });
   if (!patchResp.ok) { console.error("appendActivityLog: could not save entry"); return null; }
   return entry;
@@ -677,32 +702,36 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     };
   }
 
+  // Single read up front — used for the Ready for Review gate below,
+  // AND to auto-join whoever's making this change into the work
+  // order's chat, in the same write as the status change itself.
+  // Fails open on a read error, same as the gate check always has:
+  // a status change should never get blocked by this.
+  const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  const checkData = checkResp.ok ? await checkResp.json() : null;
+
   // A work order needs a routed role before it can ever reach Ready for
   // Review — confirmed requirement, no silent exceptions. Without a
   // routed role, there's nobody whose job it is to sign off on it.
-  if (status === "Ready for Review") {
-    const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (checkResp.ok) {
-      const checkData = await checkResp.json();
-      if (!checkData.fields["Assigned Role"]) {
-        return {
-          ok: false,
-          recordId,
-          error: "This work order has no routed role assigned yet — it can't be marked Ready for Review until it does.",
-        };
-      }
-      const procStatus = checkData.fields["Procurement Status"];
-      if (procStatus === "Requested" || procStatus === "Rejected") {
-        return {
-          ok: false,
-          recordId,
-          error: procStatus === "Requested"
-            ? "This work order can't be marked Ready for Review yet — procurement is still awaiting approval."
-            : `This work order can't be marked Ready for Review yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
-        };
-      }
+  if (status === "Ready for Review" && checkData) {
+    if (!checkData.fields["Assigned Role"]) {
+      return {
+        ok: false,
+        recordId,
+        error: "This work order has no routed role assigned yet — it can't be marked Ready for Review until it does.",
+      };
+    }
+    const procStatus = checkData.fields["Procurement Status"];
+    if (procStatus === "Requested" || procStatus === "Rejected") {
+      return {
+        ok: false,
+        recordId,
+        error: procStatus === "Requested"
+          ? "This work order can't be marked Ready for Review yet — procurement is still awaiting approval."
+          : `This work order can't be marked Ready for Review yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
+      };
     }
   }
 
@@ -712,6 +741,12 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     fields["Cost (TZS)"] = Number(cost);
     fields["Cost Edited By"] = closedByUsername;
     fields["Cost Edited Date"] = new Date().toISOString();
+  }
+
+  if (checkData && closedByUsername) {
+    let participants = [];
+    try { participants = JSON.parse(checkData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+    if (!participants.includes(closedByUsername)) fields["Chat Participants"] = JSON.stringify([...participants, closedByUsername]);
   }
 
   const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
