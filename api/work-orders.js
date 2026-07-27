@@ -19,10 +19,10 @@ import { getAssignedRole } from "../lib/routing.js";
 import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
 
 // "Assigned Role" on a work order is a display label (Mechanical,
-// Electrical, Admin, Property Manager). Login roles are the actual
-// permission-checked identities (mechanical_engineer, etc). This maps
-// one to the other so closure sign-off can verify the specific person
-// reviewing is actually who the job was routed to.
+// Electrical, Admin, Property Manager, or External). Login roles are
+// the actual permission-checked identities (mechanical_engineer,
+// etc). This maps one to the other so closure sign-off can verify the
+// specific person reviewing is actually who the job was routed to.
 // Shared by closure review AND procurement approve/reject — Business
 // Owner / System Admin can act on any work order; every other routed
 // role must match the specific role this work order was actually
@@ -34,11 +34,29 @@ async function checkRoutedRoleMatch(session, recordId) {
   const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
     headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
   });
-  if (!checkResp.ok) return null; // fail open on a read error — the actual action's own logic will fail safely if the record truly doesn't exist
+  if (!checkResp.ok) return null; // fail open ONLY on a read error — a network/API failure, not a routing gap
   const checkData = await checkResp.json();
   const assignedRole = checkData.fields["Assigned Role"];
+
+  // External has no matching login role at all — there's nobody to
+  // check permissions against except whoever actually arranged the
+  // handoff, recorded at the moment it was assigned. Confirmed:
+  // that person specifically, not "any Admin," gets to sign off.
+  if (assignedRole === "External") {
+    const handledBy = checkData.fields["Assigned Role Set By"];
+    if (handledBy && session.u === handledBy) return null;
+    return `Only ${handledBy || "whoever arranged the external handoff"} can act on this work order.`;
+  }
+
   const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-  if (expectedLoginRole && session.r !== expectedLoginRole) {
+  // Fail CLOSED on anything unmapped (missing, unrecognized, or a
+  // stray value) — an unrouted work order should never silently let
+  // just anyone through. Previously this fell through to "allowed,"
+  // which was a real gap.
+  if (!expectedLoginRole) {
+    return "This work order has no recognized routed role — it can't be acted on until it's assigned.";
+  }
+  if (session.r !== expectedLoginRole) {
     return `Only ${assignedRole} can act on this work order.`;
   }
   return null;
@@ -84,7 +102,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -327,7 +345,7 @@ export default async function handler(req, res) {
     // only to whoever is actually in it. Never broadcast to everyone
     // with dashboard access.
     if (req.body && req.body.addChatMessage) {
-      const { recordId, text } = req.body;
+      const { recordId, text, mentionUsername } = req.body;
       if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
 
       try {
@@ -346,15 +364,19 @@ export default async function handler(req, res) {
         // Business Owner / System Admin can always see and post — same
         // standing-override pattern used for closure/procurement — so
         // problems can actually be assessed even in a chat they weren't
-        // manually added to. Everyone else must be a participant.
+        // in yet. Everyone else must be a participant already — which
+        // happens automatically from acting on the work order, or by
+        // being named as a recipient in someone else's message (below).
         const isOverseer = session.r === "business_owner" || session.r === "system_admin";
         if (!isOverseer && !participants.includes(session.u)) {
-          return res.status(403).json({ error: "You're not part of this work order's chat. Ask someone already in it to add you." });
+          return res.status(403).json({ error: "You're not part of this work order's chat yet. Acting on this work order, or being messaged directly by someone who is, adds you automatically." });
         }
 
         let chatLog = [];
         try { chatLog = JSON.parse(woData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
-        chatLog.push({ text, by: session.u, at: new Date().toISOString() });
+        const entry = { text, by: session.u, at: new Date().toISOString() };
+        if (mentionUsername) entry.mention = mentionUsername; // who this message was specifically addressed to, if anyone
+        chatLog.push(entry);
 
         // Sending a message means you've obviously seen everything up
         // to that point — stamp your own read receipt in the same
@@ -363,10 +385,20 @@ export default async function handler(req, res) {
         try { readReceipts = JSON.parse(woData.fields["Chat Read Receipts"] || "{}"); } catch { readReceipts = {}; }
         readReceipts[session.u] = new Date().toISOString();
 
+        const fields = { "Chat Log": JSON.stringify(chatLog), "Chat Read Receipts": JSON.stringify(readReceipts) };
+
+        // Naming someone as this message's recipient is itself the
+        // invite — like starting a WhatsApp DM by picking who it's to.
+        // No separate "add people" step; sending IS the join.
+        if (mentionUsername && !participants.includes(mentionUsername)) {
+          participants = [...participants, mentionUsername];
+          fields["Chat Participants"] = JSON.stringify(participants);
+        }
+
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog), "Chat Read Receipts": JSON.stringify(readReceipts) } }),
+          body: JSON.stringify({ fields }),
         });
         if (!patchResp.ok) throw new Error("Could not save chat message");
 
@@ -455,6 +487,88 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, chatParticipants: merged });
       } catch (err) {
         console.error("addChatParticipants error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Reassigning a work order's routed role — this control didn't
+    // exist before: Assigned Role was only ever set once, automatically,
+    // at creation. Confirmed use cases: Admin correcting a "Not sure"
+    // report that landed on the wrong discipline, an engineer handing
+    // off a job that isn't actually theirs, or routing out to an
+    // external maintenance company entirely. Just an edit to the field
+    // — no separate reassignment history table.
+    //
+    // Permission: Business Owner / System Admin / Admin always; beyond
+    // that, only whoever CURRENTLY holds the routed role can hand their
+    // own job to someone else — a technician or an unrelated engineer
+    // can't reroute a job that was never theirs.
+    if (req.body && req.body.reassignWorkOrder) {
+      const { recordId, assignedRole, externalName, externalContact } = req.body;
+      const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager", "External"];
+      if (!recordId || !assignedRole || !VALID_ROLES.includes(assignedRole)) {
+        return res.status(400).json({ error: "recordId and a valid assignedRole are required" });
+      }
+      if (assignedRole === "External" && !externalName) {
+        return res.status(400).json({ error: "External assignee name is required" });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+        const currentAssignedRole = woData.fields["Assigned Role"] || "";
+
+        const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+        const currentLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[currentAssignedRole];
+        const isCurrentHolder = !!currentLoginRole && session.r === currentLoginRole;
+        const canReassign = isOverseer || session.r === "admin" || isCurrentHolder;
+
+        if (!canReassign) {
+          return res.status(403).json({ error: "Not permitted to reassign this work order." });
+        }
+
+        const fields = {
+          "Assigned Role": assignedRole,
+          "Assigned Role Set By": session.u,
+        };
+        if (assignedRole === "External") {
+          fields["External Assignee Name"] = externalName;
+          fields["External Assignee Contact"] = externalContact || "";
+        } else {
+          // Clear stale external contact info when routing back internally.
+          fields["External Assignee Name"] = "";
+          fields["External Assignee Contact"] = "";
+        }
+
+        // Auto-include by routing: whoever currently holds the newly
+        // assigned role is in the chat immediately, not only once they
+        // happen to act on it. Folded into the same write.
+        let participants = [];
+        try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+        const newLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+        const holders = newLoginRole ? getAllStaffDirectory().filter(e => e.role === newLoginRole).map(e => e.username) : [];
+        participants = Array.from(new Set([...participants, session.u, ...holders]));
+        fields["Chat Participants"] = JSON.stringify(participants);
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save reassignment");
+
+        const label = assignedRole === "External" ? `External — ${externalName}` : assignedRole;
+        await appendActivityLog(recordId, `🔀 Reassigned from ${currentAssignedRole || "Unassigned"} to ${label}`, session.u, "system");
+
+        return res.status(200).json({ success: true, assignedRole, externalAssigneeName: fields["External Assignee Name"], externalAssigneeContact: fields["External Assignee Contact"], chatParticipants: participants });
+      } catch (err) {
+        console.error("reassignWorkOrder error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -1074,7 +1188,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
@@ -1131,6 +1245,12 @@ async function handleScheduleInspection(req, res, scheduledBy) {
     const f = record.fields;
 
     const woId = `WO-${Date.now()}`;
+    const routedRole = getAssignedRole(f["System"], f["Name"]) || undefined;
+    // Whoever scheduled it, plus whoever currently holds the routed
+    // role, start out in the chat — auto-include by routing, same rule
+    // as reassignment. Nobody has to be added by hand.
+    const routedLoginRole = routedRole ? ASSIGNED_ROLE_TO_LOGIN_ROLE[routedRole] : null;
+    const routedHolders = routedLoginRole ? getAllStaffDirectory().filter(e => e.role === routedLoginRole).map(e => e.username) : [];
     const baseFields = {
       "WO ID": woId,
       "Asset ID": f["Asset ID"] || assetId,
@@ -1141,10 +1261,8 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       "Urgency": "SCHEDULED",
       "Created": new Date().toISOString(),
       "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
-      "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
-      // Whoever scheduled it starts out watching its chat — everyone
-      // else has to be added deliberately.
-      "Chat Participants": JSON.stringify([scheduledBy]),
+      "Assigned Role": routedRole,
+      "Chat Participants": JSON.stringify(Array.from(new Set([scheduledBy, ...routedHolders]))),
     };
 
     let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
