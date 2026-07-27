@@ -2045,14 +2045,6 @@ function getCheckedStaffNames(idPrefix, staff) {
   return staff.filter((s, i) => document.getElementById(`${idPrefix}_${i}`)?.checked).map(s => s.displayName);
 }
 
-// Same checked-box lookup as getCheckedStaffNames, but returns the
-// login username — needed anywhere the value has to match session.u
-// server-side (like chat participants), not just be a display string.
-// Falls back to displayName if a staff entry has no username field.
-function getCheckedStaffUsernames(idPrefix, staff) {
-  return staff.filter((s, i) => document.getElementById(`${idPrefix}_${i}`)?.checked).map(s => s.username || s.displayName);
-}
-
 async function addPlanMilestone(recordId) {
   const staff = await loadStaffList();
   openPlanModal('Add Milestone', `
@@ -3325,11 +3317,8 @@ async function showWorkOrderDetail(recordId) {
   <div class="wo-chat-col">
   <div class="detail-panel">
     <div style="padding:18px 20px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-size:12px;font-weight:700;color:var(--navy)">💬 Work Order Chat</div>
-        <button onclick="openAddChatParticipantsModal('${o.id}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">+ Add people</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted)">Just for people on this job — separate from the Activity record.</div>
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">💬 Work Order Chat</div>
+      <div style="font-size:11px;color:var(--muted)">Everyone who's acted on this job is in automatically — separate from the Activity record.</div>
     </div>
     <div id="woDetailChatParticipants" style="padding:12px 20px 0"></div>
     <div id="woDetailChatBody" style="padding:12px 20px 18px"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
@@ -3609,7 +3598,7 @@ async function renderWODetailChat(o) {
   const isIn = participants.includes(currentUsername);
 
   if (!isIn && !isOverseer) {
-    bodyEl.innerHTML = `<button onclick="joinWorkOrderChat('${o.id}')" style="width:100%;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">+ Join this chat</button>`;
+    bodyEl.innerHTML = `<button onclick="joinWorkOrderChat('${o.id}')" style="width:100%;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">+ Watch this job's chat</button><div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:6px">You'll join automatically the moment you act on this work order — this is only for watching without acting.</div>`;
     return;
   }
 
@@ -3716,31 +3705,6 @@ async function submitWODetailChatMessage(recordId) {
     input.disabled = false;
     input.focus();
   }
-}
-
-async function openAddChatParticipantsModal(recordId) {
-  const staff = await loadStaffList();
-  openPlanModal('Add People to This Chat', `
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">They'll be able to read and post in this work order's chat.</div>
-    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px">${staffCheckboxList('wo_chat_add', staff)}</div>
-  `, async () => {
-    const usernames = getCheckedStaffUsernames('wo_chat_add', staff);
-    if (usernames.length === 0) { alert('Choose at least one person.'); return; }
-    try {
-      const resp = await fetch('/api/work-orders', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ addChatParticipants: true, recordId, usernames }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add people');
-      const o = lastWorkOrders.find(w => w.id === recordId);
-      if (o) { o.chatParticipants = JSON.stringify(data.chatParticipants); renderWODetailChat(o); }
-      closePlanModal();
-    } catch (err) {
-      alert('Could not add people: ' + err.message);
-    }
-  });
 }
 
 async function openWorkOrderChecklist(recordId, assetName, system) {
