@@ -1043,6 +1043,7 @@ function showDetail(idx) {
   const pct = Math.min((age/a.lifespan)*100, 100);
   const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
+  const canRequestProcurement = currentUserPermissions && currentUserPermissions.requestProcurement;
   const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
@@ -1052,6 +1053,7 @@ function showDetail(idx) {
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
+    ${canRequestProcurement ? `<button onclick="orderSparePart('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Order a Spare Part</button>` : ""}
     ${canManage && a.needsTechnicalReview ? `<button onclick="markTechnicalReviewDone('${a.recordId}', ${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #92400E;border-radius:8px;background:#FEF3C7;color:#92400E;cursor:pointer">⚠ Mark Reviewed</button>` : ""}
     ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
     ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
@@ -2871,6 +2873,27 @@ async function scheduleInspection(assetId, assetName) {
   }
 }
 
+// Ordering a spare part directly from an asset — no breakdown, no
+// reported issue needed. Creates a lightweight work order (tagged
+// Maintenance Type "Procurement" so it's clearly not repair work),
+// then opens the exact same procurement-request modal a real breakdown
+// uses — same approve/fulfill pipeline, no separate workflow.
+async function orderSparePart(assetId, assetName) {
+  if (!confirm(`Order a spare part for ${assetName} (${assetId})? This creates a Procurement work order, separate from a breakdown or scheduled maintenance.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetId, orderSparePart: true }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to create spare part order');
+    openProcurementRequestModal(data.recordId, assetName);
+  } catch (err) {
+    alert('Could not order spare part: ' + err.message);
+  }
+}
+
 function buildChecklistDocumentHtml() {
   const { asset: a, checklistClass, data } = window.currentAssetChecklist;
   const freqGroups = {};
@@ -3328,7 +3351,7 @@ async function showWorkOrderDetail(recordId) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.status}</span>
         <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
-        ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+        ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
       </div>
@@ -3939,7 +3962,7 @@ function renderWORowHtml(o) {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
-          ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+          ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
           ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : ''}
           ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
         </div>
@@ -3978,6 +4001,14 @@ function buildWorkOrdersHtml(orders) {
   }
 
   if (isSimplified) {
+    // Procurement-type work orders (spare parts ordered directly from
+    // an asset, no breakdown involved) are deliberately excluded from
+    // the technician's view entirely — confirmed with Grace: it's not
+    // something a technician needs to go fix, so counting it toward
+    // "Open" would make that number less honest. Visible to engineers,
+    // procurement, and Business Owner instead.
+    const techOrders = orders.filter(o => o.maintenanceType !== 'Procurement');
+
     // Personal attribution, not aggregate counts. A work order counts
     // as theirs if they've actually done something to it (any
     // Activity Log entry with by === them) — including status moves,
@@ -3986,7 +4017,7 @@ function buildWorkOrdersHtml(orders) {
     // Open/In Progress/Ready for Review into one number (anything not
     // yet Completed that's theirs), and Completed becomes their
     // personal performance count, not a shared system-wide figure.
-    const myOrders = orders.filter(o => {
+    const myOrders = techOrders.filter(o => {
       let log = [];
       try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
       return log.some(e => e.by === currentUsername);
@@ -3998,7 +4029,7 @@ function buildWorkOrdersHtml(orders) {
     // discoverable queue. Without this, a brand-new untouched ticket
     // would be invisible to everyone, since "My Tickets" only shows
     // what's already been acted on.
-    const available = orders.filter(o => o.status !== 'Completed' && !myOrderIds.has(o.id));
+    const available = techOrders.filter(o => o.status !== 'Completed' && !myOrderIds.has(o.id));
 
     html += `<div style="margin-bottom:16px">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets & Performance</div>
