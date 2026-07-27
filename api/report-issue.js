@@ -144,13 +144,18 @@ async function sendUnsatisfactionAlert(assetName, reason) {
   }
 }
 
+// Exactly four options now, confirmed with the client — no "Not sure"
+// escape hatch, since every report has to land on one of the four
+// people who actually work these buildings. Fire is deliberately kept
+// split rather than folded into one bucket: fire DETECTION (alarms,
+// smoke detectors) is electrical work, fire PROTECTION (sprinklers,
+// suppression) is mechanical work — same split routing.js already
+// uses for System-based routing elsewhere, kept consistent here.
 const CATEGORY_TO_ROLE = {
   "Electrical": "Electrical",
-  "Plumbing": "Mechanical",
-  "HVAC": "Mechanical",
-  "Fire": "Electrical",
-  "General": "Admin",
-  "NotSure": "Admin", // confirmed default — an unclear report goes to Admin, not left unrouted
+  "Mechanical": "Mechanical",
+  "NonTechnical": "Admin",
+  "TenantRelated": "Property Manager",
 };
 
 export default async function handler(req, res) {
