@@ -3934,6 +3934,120 @@ async function handleFloorPlanClick(event) {
   }
 }
 
+function renderWORowHtml(o) {
+  const procStatus = o.procurementStatus || 'None';
+  const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
+  return `<button class="asset-row" onclick="showWorkOrderDetail('${o.id}')" style="text-align:left">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
+          ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
+          ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : ''}
+          ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
+        </div>
+        <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        ${getWOUnreadCount(o) > 0 ? `<span class="wo-row-unread-dot" title="Unread chat">${getWOUnreadCount(o) > 9 ? '9+' : getWOUnreadCount(o)}</span>` : ''}
+        <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
+        <span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${o.status}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </button>`;
+}
+
+function buildWorkOrdersHtml(orders) {
+  const open = orders.filter(o => o.status === 'Open').length;
+  const inProgress = orders.filter(o => o.status === 'In Progress').length;
+  const completed = orders.filter(o => o.status === 'Completed').length;
+
+  const isSimplified = currentUserPermissions && currentUserPermissions.simplifiedNav;
+
+  let html = '';
+
+  if (!isSimplified) {
+    html += `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="testAssetId" value="TEST-001" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:120px">
+      <button onclick="runRealTest('OVERDUE')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test Overdue</button>
+      <button onclick="runRealTest('URGENT')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--amber);color:#fff;cursor:pointer">Test Urgent</button>
+      <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
+    </div>
+    <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
+  </div>`;
+  }
+
+  if (isSimplified) {
+    // Personal attribution, not aggregate counts. A work order counts
+    // as theirs if they've actually done something to it (any
+    // Activity Log entry with by === them) — including status moves,
+    // which used to be silent and are now logged specifically so this
+    // works. Confirmed with the facility manager: "Open" collapses
+    // Open/In Progress/Ready for Review into one number (anything not
+    // yet Completed that's theirs), and Completed becomes their
+    // personal performance count, not a shared system-wide figure.
+    const myOrders = orders.filter(o => {
+      let log = [];
+      try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
+      return log.some(e => e.by === currentUsername);
+    });
+    const myOrderIds = new Set(myOrders.map(o => o.id));
+    const myActive = myOrders.filter(o => o.status !== 'Completed');
+    const myCompletedCount = myOrders.filter(o => o.status === 'Completed').length;
+    // Available = not yet Completed, and not already theirs — the
+    // discoverable queue. Without this, a brand-new untouched ticket
+    // would be invisible to everyone, since "My Tickets" only shows
+    // what's already been acted on.
+    const available = orders.filter(o => o.status !== 'Completed' && !myOrderIds.has(o.id));
+
+    html += `<div style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets & Performance</div>
+      <div class="summary-grid">
+        <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myActive.length}</div><div class="summary-label">Open — not yet completed</div></div>
+        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${myCompletedCount}</div><div class="summary-label">Completed (Your Performance)</div></div>
+      </div>
+    </div>`;
+
+    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">My Tickets</div>`;
+    if (myActive.length === 0) {
+      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic;margin-bottom:20px">Nothing of yours in progress right now — check Available below.</div>`;
+    } else {
+      html += `<div class="asset-list" style="margin-bottom:20px">${myActive.map(renderWORowHtml).join('')}</div>`;
+    }
+
+    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Available</div>`;
+    if (available.length === 0) {
+      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing waiting to be picked up right now.</div>`;
+    } else {
+      html += `<div class="asset-list">${available.map(renderWORowHtml).join('')}</div>`;
+    }
+  } else {
+    html += `<div class="summary-grid">
+    <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
+  </div>`;
+
+    if (orders.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
+    } else {
+      html += `<div class="asset-list">${orders.map(renderWORowHtml).join('')}</div>`;
+    }
+  }
+
+  return html;
+}
+
+// Tracks the last-seen work order data so the background poll (below)
+// can tell whether anything actually changed — and do nothing at all,
+// not even touch the DOM, when it hasn't. This is what makes the
+// refresh quiet: most polls find no changes and are a complete no-op
+// from the person's point of view.
+let lastWOSignature = null;
+
 async function renderWorkOrders() {
   currentWODetailId = null;
   const container = document.getElementById('view-workorders');
@@ -3948,96 +4062,9 @@ async function renderWorkOrders() {
     lastWorkOrders = orders; // cache for generateCertificate() to reference
     dashboardWorkOrders = orders; // same fetch covers the sidebar unread badge — no reason to keep two stale copies
     updateWOUnreadBadges();
+    lastWOSignature = JSON.stringify(orders);
 
-    const open = orders.filter(o => o.status === 'Open').length;
-    const inProgress = orders.filter(o => o.status === 'In Progress').length;
-    const completed = orders.filter(o => o.status === 'Completed').length;
-
-    const isSimplified = currentUserPermissions && currentUserPermissions.simplifiedNav;
-
-    let html = '';
-
-    if (!isSimplified) {
-      html += `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input id="testAssetId" value="TEST-001" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:120px">
-        <button onclick="runRealTest('OVERDUE')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test Overdue</button>
-        <button onclick="runRealTest('URGENT')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--amber);color:#fff;cursor:pointer">Test Urgent</button>
-        <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
-      </div>
-      <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
-    </div>`;
-    }
-
-    if (isSimplified) {
-      // "Your Tickets" — real personal attribution, not aggregate counts.
-      // A work order counts as theirs if they've actually done something
-      // to it (any Activity Log entry with by === them): changed its
-      // status, ticked a checklist item, posted an update, requested
-      // procurement, uploaded a photo. Confirmed with the facility
-      // manager: this should be accounted to the technician personally,
-      // not a shared system-wide number.
-      const myOrders = orders.filter(o => {
-        let log = [];
-        try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
-        return log.some(e => e.by === currentUsername);
-      });
-      const myOpen = myOrders.filter(o => o.status === 'Open').length;
-      const myInProgress = myOrders.filter(o => o.status === 'In Progress').length;
-      const myReadyForReview = myOrders.filter(o => o.status === 'Ready for Review').length;
-      const myCompleted = myOrders.filter(o => o.status === 'Completed').length;
-
-      html += `<div style="margin-bottom:16px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets</div>
-        <div class="summary-grid">
-          <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myOpen}</div><div class="summary-label">Open</div></div>
-          <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${myInProgress}</div><div class="summary-label">In Progress</div></div>
-          <div class="summary-card"><div class="summary-val" style="color:var(--blue)">${myReadyForReview}</div><div class="summary-label">Ready for Review</div></div>
-          <div class="summary-card"><div class="summary-val" style="color:var(--green)">${myCompleted}</div><div class="summary-label">Completed</div></div>
-        </div>
-      </div>`;
-    } else {
-      html += `<div class="summary-grid">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
-    </div>`;
-    }
-
-    if (orders.length === 0) {
-      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
-    } else {
-      html += `<div class="asset-list">`;
-      orders.forEach(o => {
-        const closable = o.status !== 'Completed';
-        const procStatus = o.procurementStatus || 'None';
-        const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
-        const idx = lastWorkOrders.indexOf(o);
-        html += `<button class="asset-row" onclick="showWorkOrderDetail('${o.id}')" style="text-align:left">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
-              ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
-              ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : ''}
-              ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
-            </div>
-            <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-            ${getWOUnreadCount(o) > 0 ? `<span class="wo-row-unread-dot" title="Unread chat">${getWOUnreadCount(o) > 9 ? '9+' : getWOUnreadCount(o)}</span>` : ''}
-            <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
-            <span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${o.status}</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-          </div>
-        </button>`;
-      });
-      html += `</div>`;
-    }
-
-    container.innerHTML = html;
+    container.innerHTML = buildWorkOrdersHtml(orders);
   } catch (err) {
     container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load work orders: ' + err.message + '</div>';
   }
@@ -5161,6 +5188,15 @@ async function loadAssetsAndInit() {
 // work-orders endpoint the rest of the app already uses, on a timer.
 // Guarded so loadAssetsAndInit() being called again later (e.g. after
 // adding an asset) never stacks up a second interval.
+//
+// This is deliberately quiet: badges update silently every poll (cheap,
+// invisible), but the visible list/detail is only touched at all when
+// the data has genuinely changed (compared via lastWOSignature) — most
+// polls find nothing new and don't touch the DOM whatsoever. When
+// something HAS changed, it updates in place using the data already in
+// hand (no re-fetch, no "Loading…" flash) and restores scroll position
+// afterward, rather than the previous behavior of unconditionally
+// rebuilding the whole view from scratch every 45 seconds.
 let woChatPollingStarted = false;
 function startWorkOrderChatPolling() {
   if (woChatPollingStarted) return;
@@ -5170,24 +5206,39 @@ function startWorkOrderChatPolling() {
       const resp = await fetch('/api/work-orders');
       if (!resp.ok) return;
       const data = await resp.json();
-      dashboardWorkOrders = data.workOrders || [];
-      updateWOUnreadBadges();
+      const orders = data.workOrders || [];
+      const signature = JSON.stringify(orders);
+
+      dashboardWorkOrders = orders;
+      updateWOUnreadBadges(); // silent and cheap — fine to always run
+
+      if (signature === lastWOSignature) return; // nothing changed — leave the screen exactly as it is
+      lastWOSignature = signature;
+      lastWorkOrders = orders;
 
       const activeTab = document.querySelector('.tab-btn.active');
-      if (activeTab && activeTab.dataset.tab === 'workorders') {
+      if (!activeTab || activeTab.dataset.tab !== 'workorders') return;
+
+      const scrollY = window.scrollY;
+
+      if (currentWODetailId) {
         // Someone's inside a specific work order — refresh it in place
         // (this also picks up new chat messages) rather than yanking
-        // them back to the list. Otherwise just refresh the list/dots.
-        if (currentWODetailId) {
-          lastWorkOrders = dashboardWorkOrders;
-          const chatDraft = document.getElementById('woDetailChatInput');
-          const activityDraft = document.getElementById('woDetailActivityInput');
-          const isTyping = (chatDraft && chatDraft.value.trim()) || (activityDraft && activityDraft.value.trim());
-          if (!isTyping && lastWorkOrders.find(w => w.id === currentWODetailId)) {
-            showWorkOrderDetail(currentWODetailId);
-          }
-        } else {
-          renderWorkOrders();
+        // them back to the list.
+        const chatDraft = document.getElementById('woDetailChatInput');
+        const activityDraft = document.getElementById('woDetailActivityInput');
+        const isTyping = (chatDraft && chatDraft.value.trim()) || (activityDraft && activityDraft.value.trim());
+        if (!isTyping && lastWorkOrders.find(w => w.id === currentWODetailId)) {
+          showWorkOrderDetail(currentWODetailId);
+          window.scrollTo(0, scrollY);
+        }
+      } else {
+        // Update the list directly from data already in hand — no
+        // second fetch, no loading spinner replacing what's on screen.
+        const container = document.getElementById('view-workorders');
+        if (container) {
+          container.innerHTML = buildWorkOrdersHtml(orders);
+          window.scrollTo(0, scrollY);
         }
       }
     } catch (err) {
