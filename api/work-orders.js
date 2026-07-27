@@ -84,7 +84,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -307,6 +307,114 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, log });
       } catch (err) {
         console.error("activity log error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Work Order Chat — deliberately separate from Activity Log above.
+    // Activity Log is the system's own timestamped record of what
+    // changed (status moves, checklist ticks, procurement events).
+    // Chat is people talking to each other about this specific job —
+    // a WhatsApp-group-style thread scoped to one work order, visible
+    // only to whoever is actually in it. Never broadcast to everyone
+    // with dashboard access.
+    if (req.body && req.body.addChatMessage) {
+      const { recordId, text } = req.body;
+      if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        let participants = [];
+        try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+
+        // Business Owner / System Admin can always see and post — same
+        // standing-override pattern used for closure/procurement — so
+        // problems can actually be assessed even in a chat they weren't
+        // manually added to. Everyone else must be a participant.
+        const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+        if (!isOverseer && !participants.includes(session.u)) {
+          return res.status(403).json({ error: "You're not part of this work order's chat. Ask someone already in it to add you." });
+        }
+
+        let chatLog = [];
+        try { chatLog = JSON.parse(woData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
+        chatLog.push({ text, by: session.u, at: new Date().toISOString() });
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog) } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save chat message");
+
+        return res.status(200).json({ success: true, chatLog, chatParticipants: participants });
+      } catch (err) {
+        console.error("addChatMessage error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Adding people to a work order's chat. Self-add is always allowed
+    // for any logged-in user — that's how someone "watches" a job they
+    // care about. Adding SOMEONE ELSE requires already being in the
+    // chat (or being Business Owner / System Admin), so the group can
+    // only grow by people already in it looping others in — never a
+    // stranger adding a stranger.
+    if (req.body && req.body.addChatParticipants) {
+      const { recordId, usernames } = req.body;
+      if (!recordId || !Array.isArray(usernames) || usernames.length === 0) {
+        return res.status(400).json({ error: "recordId and at least one username required" });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        let participants = [];
+        try { participants = JSON.parse(woData.fields["Chat Participants"] || "[]"); } catch { participants = []; }
+
+        const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+        const isAlreadyIn = participants.includes(session.u);
+        const onlyAddingSelf = usernames.length === 1 && usernames[0] === session.u;
+
+        if (!isOverseer && !isAlreadyIn && !onlyAddingSelf) {
+          return res.status(403).json({ error: "Join this chat yourself first before adding others." });
+        }
+
+        const merged = Array.from(new Set([...participants, ...usernames]));
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Chat Participants": JSON.stringify(merged) } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not update chat participants");
+
+        // Newly added people are recorded in the Activity Log too —
+        // "who can see this conversation" is itself part of the real
+        // accountability record for the job.
+        const newlyAdded = usernames.filter(u => !participants.includes(u));
+        if (newlyAdded.length > 0) {
+          await appendActivityLog(recordId, `💬 Added to work order chat: ${newlyAdded.join(", ")}`, session.u, "system");
+        }
+
+        return res.status(200).json({ success: true, chatParticipants: merged });
+      } catch (err) {
+        console.error("addChatParticipants error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -887,7 +995,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", assignedRole: r.fields["Assigned Role"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
@@ -955,6 +1063,9 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       "Created": new Date().toISOString(),
       "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
       "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
+      // Whoever scheduled it starts out watching its chat — everyone
+      // else has to be added deliberately.
+      "Chat Participants": JSON.stringify([scheduledBy]),
     };
 
     let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
