@@ -125,6 +125,10 @@ export default async function handler(req, res) {
     }
   }
 
+  if (req.method === "POST" && req.body && req.body.orderSparePart) {
+    return handleOrderSparePart(req, res, session.u);
+  }
+
   if (req.method === "POST") {
     return handleScheduleInspection(req, res, session.u);
   }
@@ -1174,9 +1178,91 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       throw new Error("Failed to create inspection work order: " + createResp.status + " " + errText);
     }
 
-    return res.status(200).json({ success: true, woId });
+    const created = await createResp.json();
+    return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
     console.error("handleScheduleInspection error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Spare-part ordering directly from an asset — no breakdown, no
+// reported issue required. Confirmed with Grace: a work order isn't
+// only a breakdown anymore, it's the general container for anything
+// that needs acting on for an asset, including a proactive parts
+// order. This creates a lightweight shell work order, tagged with its
+// own Maintenance Type ("Procurement") so it's clearly distinguishable
+// from real repair work — then the caller immediately opens the
+// EXISTING procurement-request flow on it (openProcurementRequestModal
+// on the frontend). Same request -> approve -> fulfill pipeline as
+// every other procurement request. No second workflow.
+async function handleOrderSparePart(req, res, orderedBy) {
+  const { assetId } = req.body || {};
+  if (!assetId) {
+    return res.status(400).json({ error: "assetId required" });
+  }
+
+  const base = process.env.AIRTABLE_BASE_ID;
+  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+  try {
+    // Look up the asset so the work order has real Name/System/Location, same as every other WO type
+    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
+    findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+    findUrl.searchParams.set("maxRecords", "1");
+    const findResp = await fetch(findUrl.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!findResp.ok) throw new Error("Could not look up asset");
+    const findData = await findResp.json();
+    const record = findData.records && findData.records[0];
+    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
+    const f = record.fields;
+
+    const woId = `WO-${Date.now()}`;
+    const baseFields = {
+      "WO ID": woId,
+      "Asset ID": f["Asset ID"] || assetId,
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Status": "Open",
+      "Urgency": "SCHEDULED",
+      "Created": new Date().toISOString(),
+      "Notes": `Spare part order initiated by ${orderedBy} for ${f["Name"] || assetId}`,
+      "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
+    };
+
+    let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Procurement" } }),
+    });
+
+    if (!createResp.ok) {
+      const firstErr = await createResp.text();
+      // "Procurement" needs adding as a choice on the Maintenance Type
+      // singleSelect field in Airtable — same one-time manual step as
+      // adding "External" to Assigned Role earlier. Falls back to no
+      // type in the meantime rather than failing the whole request.
+      console.error("Spare-part WO creation with Maintenance Type failed, retrying without it — add \"Procurement\" as a Maintenance Type choice in Airtable to fix permanently:", firstErr);
+      createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: baseFields }),
+      });
+    }
+
+    if (!createResp.ok) {
+      const errText = await createResp.text();
+      throw new Error("Failed to create spare-part work order: " + createResp.status + " " + errText);
+    }
+
+    const created = await createResp.json();
+    return res.status(200).json({ success: true, woId, recordId: created.id });
+  } catch (err) {
+    console.error("handleOrderSparePart error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
