@@ -250,6 +250,7 @@ export default async function handler(req, res) {
     }
 
     if (req.body && req.body.fulfillProcurement) {
+      if (!can(session.r, "fulfillProcurement")) return res.status(403).json({ error: "Not permitted to fulfill procurement" });
       const { recordId } = req.body;
       if (!recordId) return res.status(400).json({ error: "recordId required" });
       try {
