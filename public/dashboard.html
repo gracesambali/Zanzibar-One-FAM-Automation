@@ -2132,8 +2132,19 @@ function setPlanActualCost(recordId, idx) {
 // Confirmed rules: every status counts as long as a cost is entered
 // (not just Completed), but a Rejected procurement request is excluded
 // since that money was never actually spent.
+//
+// Costs with no Asset ID split into two honest buckets rather than
+// being silently dropped from every total: unattributedCostCache is
+// money confirmed NOT tied to a registered asset (a chair, a fixture
+// — deliberately confirmed, not just unknown); pendingIdCostCache is
+// money still awaiting someone to actually attach the real asset.
+// Keeping these separate is the whole point — "we don't know yet" and
+// "we checked, there's nothing to track" must never look the same in
+// a cost summary.
 let assetCostSummaryCache = null;
 let assetCostSummaryLoading = null;
+let unattributedCostCache = 0;
+let pendingIdCostCache = 0;
 async function loadAssetCostSummaries() {
   if (assetCostSummaryLoading) return assetCostSummaryLoading;
   assetCostSummaryLoading = (async () => {
@@ -2143,17 +2154,24 @@ async function loadAssetCostSummaries() {
       const data = await resp.json();
       const orders = data.workOrders || [];
       const map = {};
+      let unattributed = 0, pendingId = 0;
       const TYPES = ['Preventive', 'Corrective', 'Inspection', 'Procurement'];
       orders.forEach(o => {
         const cost = Number(o.cost) || 0;
-        if (!o.assetId || !cost) return;
-        if (o.procurementStatus === 'Rejected') return;
+        if (!cost || o.procurementStatus === 'Rejected') return;
+        if (!o.assetId) {
+          if (o.nonAssetConfirmed) unattributed += cost;
+          else pendingId += cost;
+          return;
+        }
         if (!map[o.assetId]) map[o.assetId] = { Preventive: 0, Corrective: 0, Inspection: 0, Procurement: 0, Other: 0, total: 0 };
         const type = TYPES.includes(o.maintenanceType) ? o.maintenanceType : 'Other';
         map[o.assetId][type] += cost;
         map[o.assetId].total += cost;
       });
       assetCostSummaryCache = map;
+      unattributedCostCache = unattributed;
+      pendingIdCostCache = pendingId;
       return map;
     } catch (err) {
       console.error('loadAssetCostSummaries error:', err);
@@ -3267,6 +3285,23 @@ async function loadCostOverview() {
       </div>`;
     }
 
+    // Costs with no Asset ID never just vanish from this total — they
+    // split into two honest, distinct lines instead of one vague one.
+    // "Pending" still needs someone to actually attach the real asset;
+    // "Confirmed non-asset" has already been deliberately resolved.
+    if (pendingIdCostCache > 0 || unattributedCostCache > 0) {
+      html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        ${pendingIdCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+          <span style="color:#92400E;font-weight:600">⚠ Pending Asset Identification</span>
+          <span style="color:#92400E;font-weight:600">TZS ${Math.round(pendingIdCostCache).toLocaleString()}</span>
+        </div>` : ''}
+        ${unattributedCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+          <span style="color:var(--muted)">Unattributed / Non-Asset Costs</span>
+          <span style="color:var(--muted);font-weight:600">TZS ${Math.round(unattributedCostCache).toLocaleString()}</span>
+        </div>` : ''}
+      </div>`;
+    }
+
     panel.innerHTML = html;
   } catch (err) {
     panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
@@ -3516,6 +3551,8 @@ async function showWorkOrderDetail(recordId) {
       </div>
     </div>
 
+    <div id="woDetailAssetLink" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
+
     <div id="woDetailTechAssignment" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
@@ -3596,6 +3633,7 @@ async function showWorkOrderDetail(recordId) {
 
   container.innerHTML = html;
 
+  renderWODetailAssetLink(o);
   renderWODetailTechAssignment(o);
   renderWODetailProcurement(o);
   renderWODetailChecklist(o);
@@ -3612,6 +3650,145 @@ async function showWorkOrderDetail(recordId) {
 function canAssignTechnician() {
   const CORE = ['electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'business_owner', 'system_admin'];
   return CORE.includes(currentUserRole);
+}
+
+// Three states, never blurred together: Undetermined (no assetId, not
+// confirmed non-asset — the default for a fresh reported breakdown),
+// Attached (a real assetId is set), and Confirmed Not a Registered
+// Asset (assetId still empty, but nonAssetConfirmed is explicitly
+// true). The distinction matters for cost accuracy — "nobody's
+// checked yet" and "checked, genuinely not an asset" must never look
+// the same in a cost summary. Anyone with system access can resolve
+// either way, confirmed — no role restriction here.
+function renderWODetailAssetLink(o) {
+  const el = document.getElementById('woDetailAssetLink');
+  if (!el) return;
+
+  let html = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Asset</div>`;
+
+  if (o.assetId) {
+    html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:13px;font-weight:600;color:var(--text)">${o.assetId} — ${o.assetName || ''}</span>
+      <button onclick="openAssetLinkModal('${o.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Change</button>
+    </div>`;
+  } else if (o.nonAssetConfirmed) {
+    html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:13px;color:var(--muted);font-style:italic">Confirmed — not a registered asset${o.assetIdSetBy ? ' (by ' + o.assetIdSetBy + ')' : ''}</span>
+      <button onclick="openAssetLinkModal('${o.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Change</button>
+    </div>`;
+  } else {
+    html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#FEF3C7;color:#92400E">⚠ Asset ID needed</span>
+      <button onclick="openAssetLinkModal('${o.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔗 Attach Asset ID</button>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+async function openAssetLinkModal(recordId) {
+  const o = lastWorkOrders.find(w => w.id === recordId) || dashboardWorkOrders.find(w => w.id === recordId);
+  if (!o) return;
+
+  // The report form only ever gives floor and room/zone as one
+  // combined string ("Floor — Room/Zone") — split it back apart to
+  // pre-fill the search, so the picker opens already narrowed to
+  // roughly the right physical area rather than all 87 assets.
+  const locationParts = (o.location || '').split(' — ');
+  const prefill = locationParts.join(' ').trim();
+
+  const systems = ['All', ...systemDefs.map(s => s.name)];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'assetLinkModalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Attach Asset ID</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input id="al_search" value="${prefill.replace(/"/g,'&quot;')}" placeholder="Search by name, ID, floor, room…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" oninput="renderAssetLinkResults()">
+        <select id="al_system" onchange="renderAssetLinkResults()" style="padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          ${systems.map(s => `<option value="${s}">${s === 'All' ? 'All Systems' : s}</option>`).join('')}
+        </select>
+      </div>
+      <div id="al_results" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+      <button onclick="submitConfirmNotRegisteredAsset('${recordId}')" style="width:100%;margin-top:12px;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);font-weight:600;font-size:12.5px;cursor:pointer">Not a Registered Asset</button>
+      <button onclick="closeAssetLinkModal()" style="width:100%;margin-top:8px;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  window._alRecordId = recordId;
+  renderAssetLinkResults();
+}
+
+function closeAssetLinkModal() {
+  document.getElementById('assetLinkModalOverlay')?.remove();
+}
+
+function renderAssetLinkResults() {
+  const q = (document.getElementById('al_search')?.value || '').toLowerCase();
+  const sys = document.getElementById('al_system')?.value || 'All';
+  const container = document.getElementById('al_results');
+  if (!container) return;
+
+  const matches = assets.filter(a => {
+    if (sys !== 'All' && a.system !== sys) return false;
+    if (!q) return true;
+    const hay = (a.id+" "+a.name+" "+displayRoom(a.room)+" "+displayFloor(a.floor)+" "+a.manufacturer+" "+a.model).toLowerCase();
+    return hay.includes(q);
+  }).slice(0, 30);
+
+  if (matches.length === 0) {
+    container.innerHTML = `<div style="padding:16px;font-size:12.5px;color:var(--muted);text-align:center">No matching assets — try a different search, or confirm this isn't a registered asset below.</div>`;
+    return;
+  }
+
+  container.innerHTML = matches.map(a => `
+    <button onclick="submitAttachAssetId('${window._alRecordId}', '${a.id}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${a.name} <span style="color:var(--muted);font-weight:400">— ${a.id}</span></div>
+      <div style="font-size:11px;color:var(--muted)">${displayFloor(a.floor) || '—'} · ${displayRoom(a.room) || '—'} · ${a.system || '—'}</div>
+    </button>
+  `).join('');
+}
+
+async function submitAttachAssetId(recordId, assetId) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attachAssetId: true, recordId, assetId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not attach asset');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) Object.assign(o, { assetId: data.assetId, assetName: data.assetName, system: data.system, nonAssetConfirmed: false });
+    const dashCopy = dashboardWorkOrders.find(w => w.id === recordId);
+    if (dashCopy) Object.assign(dashCopy, { assetId: data.assetId, assetName: data.assetName, system: data.system, nonAssetConfirmed: false });
+    closeAssetLinkModal();
+    renderWODetailAssetLink(o || { id: recordId, assetId: data.assetId, assetName: data.assetName });
+  } catch (err) {
+    alert('Could not attach asset: ' + err.message);
+  }
+}
+
+async function submitConfirmNotRegisteredAsset(recordId) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmNotRegisteredAsset: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not confirm');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) o.nonAssetConfirmed = true;
+    const dashCopy = dashboardWorkOrders.find(w => w.id === recordId);
+    if (dashCopy) dashCopy.nonAssetConfirmed = true;
+    closeAssetLinkModal();
+    renderWODetailAssetLink(o || { id: recordId, nonAssetConfirmed: true });
+  } catch (err) {
+    alert('Could not confirm: ' + err.message);
+  }
 }
 
 async function renderWODetailTechAssignment(o) {
@@ -4264,10 +4441,12 @@ function renderWORowHtml(o, staff) {
   const procStatus = o.procurementStatus || 'None';
   const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
   const techLabel = o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : '';
+  const needsAssetId = !o.assetId && !o.nonAssetConfirmed;
   return `<button class="asset-row" onclick="showWorkOrderDetail('${o.id}')" style="text-align:left">
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
+          ${needsAssetId ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Asset ID needed</span>` : ''}
           ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
           ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
           ${techLabel ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignmentStatus==='Confirmed'?'#DCFCE7':'#FEF3C7'};color:${o.assignmentStatus==='Confirmed'?'#166534':'#92400E'}">👷 ${techLabel}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</span>` : ''}
