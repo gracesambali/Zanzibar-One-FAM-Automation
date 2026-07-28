@@ -614,8 +614,8 @@ export default async function handler(req, res) {
         const assetName = woData.fields["Asset Name"] || "";
         if (assignedBy) {
           const assignerContact = getContactForUsername(assignedBy);
-          if (assignerContact && assignerContact.email) {
-            await notifyAssignerOfDecline(assignerContact.email, session.u, reason.trim(), woId, assetName);
+          if (assignerContact && (assignerContact.email || assignerContact.phone)) {
+            await notifyAssignerOfDecline(assignerContact, session.u, reason.trim(), woId, assetName);
           }
         }
 
@@ -1154,29 +1154,53 @@ async function notifyAssignerConfirmation(assignerUsername, technicianUsername, 
 }
 
 // Fires when a technician declines — the assigner needs to know
-// promptly since the job is now sitting unassigned again.
-async function notifyAssignerOfDecline(assignerEmail, technicianUsername, reason, woId, assetName) {
+// promptly since the job is now sitting unassigned again. Email + SMS,
+// same as the original assignment notification — confirmed: both
+// directions get both channels for now, can be trimmed back later
+// once real usage shows whether that's more than actually needed.
+async function notifyAssignerOfDecline(assignerContact, technicianUsername, reason, woId, assetName) {
   const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-      <div style="background:#991B1B;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Assignment Declined</div>
-        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
-      </div>
-      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${technicianUsername} declined this assignment: "${reason}". Please assign someone else.</p>
-      </div>
-    </div>`;
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
-      to: [assignerEmail],
-      subject: `Declined — ${assetName} (${woId}) needs reassignment`,
-      html,
-    }),
-  }).catch(err => console.error("notifyAssignerOfDecline error:", err));
+  if (assignerContact.email) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#991B1B;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Assignment Declined</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${technicianUsername} declined this assignment: "${reason}". Please assign someone else.</p>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: [assignerContact.email],
+        subject: `Declined — ${assetName} (${woId}) needs reassignment`,
+        html,
+      }),
+    }).catch(err => console.error("notifyAssignerOfDecline email error:", err));
+  }
+  if (assignerContact.phone) {
+    try {
+      const message = sanitizeForSmsWO(`${technicianUsername} declined ${woId} - ${assetName}: ${reason}. Please assign someone else.`);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: message.slice(0, 300),
+          recipients: [{ recipient_id: 1, dest_addr: assignerContact.phone }],
+        }),
+      });
+    } catch (err) {
+      console.error("notifyAssignerOfDecline SMS error:", err);
+    }
+  }
 }
 
 async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, assignedRole, requestedBy, total) {
