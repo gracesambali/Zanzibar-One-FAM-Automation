@@ -273,7 +273,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() } }),
         });
         if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
-        await appendActivityLog(recordId, `📦 Procurement fulfilled by ${session.u} — TZS ${total.toLocaleString()} recorded, routed role notified`, session.u, "system");
+        await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, routed role notified`, session.u, "system");
         await notifyRoutedRoleOfFulfillment(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
 
         return res.status(200).json({ success: true });
@@ -1162,7 +1162,7 @@ async function notifyProcurementOfApproval(woId, assetName, total, approvedBy) {
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} approved by ${approvedBy}. Ready for payment and fulfillment.</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} approved by ${approvedBy}. Ready for payment.</p>
       </div>
     </div>`;
 
@@ -1192,11 +1192,11 @@ async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, tota
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Procurement Fulfilled</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Payment Processed</div>
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Let the technician know they can proceed.</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} payment processed. Let the technician know they can proceed.</p>
       </div>
     </div>`;
 
@@ -1206,7 +1206,7 @@ async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, tota
     body: JSON.stringify({
       from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `Fulfilled — technician can proceed: ${assetName} (${woId})`,
+      subject: `Payment processed — technician can proceed: ${assetName} (${woId})`,
       html,
     }),
   }).catch(err => console.error("notifyRoutedRoleOfFulfillment error:", err));
