@@ -104,7 +104,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", nonAssetConfirmed: r.fields["Non-Asset Confirmed"] || false, assetIdSetBy: r.fields["Asset ID Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -622,6 +622,91 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, assignedTechnician: "", assignmentStatus: "" });
       } catch (err) {
         console.error("declineAssignment error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Attaching a real Asset ID to a work order that didn't start with
+    // one — mainly reported breakdowns, which never carry an asset
+    // since the reporter usually doesn't know which registered item is
+    // actually involved. Confirmed with Grace: anyone with system
+    // access can do this, no role restriction. Also pulls the real
+    // System from the asset record onto the work order — improves
+    // checklist matching — but deliberately does NOT touch Assigned
+    // Role; the job stays with whoever it was already routed to.
+    if (req.body && req.body.attachAssetId) {
+      const { recordId, assetId } = req.body;
+      if (!recordId || !assetId) {
+        return res.status(400).json({ error: "recordId and assetId required" });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+        const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
+        findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+        findUrl.searchParams.set("maxRecords", "1");
+        const findResp = await fetch(findUrl.toString(), {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!findResp.ok) throw new Error("Could not look up asset");
+        const findData = await findResp.json();
+        const assetRecord = findData.records && findData.records[0];
+        if (!assetRecord) return res.status(404).json({ error: `Asset "${assetId}" not found in the register.` });
+        const af = assetRecord.fields;
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: {
+            "Asset ID": af["Asset ID"] || assetId,
+            "Asset Name": af["Name"] || "",
+            "System": af["System"] || "",
+            "Asset ID Set By": session.u,
+            "Non-Asset Confirmed": false,
+          } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not attach asset");
+
+        await appendActivityLog(recordId, `🔗 Linked to asset ${af["Asset ID"] || assetId} (${af["Name"] || ""}) by ${session.u}`, session.u, "system");
+
+        return res.status(200).json({ success: true, assetId: af["Asset ID"] || assetId, assetName: af["Name"] || "", system: af["System"] || "" });
+      } catch (err) {
+        console.error("attachAssetId error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // The other resolution path: someone's actually looked and this
+    // genuinely isn't a registered asset (a chair, a fixture). A
+    // deliberate action, never automatic — that's what distinguishes
+    // "confirmed non-asset" from "nobody's checked yet," so cost
+    // summaries can tell the two apart instead of silently merging them.
+    if (req.body && req.body.confirmNotRegisteredAsset) {
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: {
+            "Non-Asset Confirmed": true,
+            "Asset ID Set By": session.u,
+          } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not confirm");
+
+        await appendActivityLog(recordId, `✔ Confirmed not a registered asset — by ${session.u}`, session.u, "system");
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("confirmNotRegisteredAsset error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -1315,7 +1400,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", nonAssetConfirmed: r.fields["Non-Asset Confirmed"] || false, assetIdSetBy: r.fields["Asset ID Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
