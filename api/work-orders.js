@@ -419,29 +419,36 @@ export default async function handler(req, res) {
       }
     }
 
-    // Reassigning a work order's routed role — this control didn't
-    // exist before: Assigned Role was only ever set once, automatically,
-    // at creation. Confirmed use cases: Admin correcting a "Not sure"
-    // report that landed on the wrong discipline, an engineer handing
-    // off a job that isn't actually theirs, or routing out to an
-    // external maintenance company entirely. Just an edit to the field
-    // — no separate reassignment history table.
-    //
-    // Permission: Business Owner / System Admin / Admin always; beyond
-    // that, only whoever CURRENTLY holds the routed role can hand their
-    // own job to someone else — a technician or an unrelated engineer
-    // can't reroute a job that was never theirs.
-    //
+    // Reassigning a work order's routed role. Confirmed use cases:
+    // correcting a "Not sure" report that landed on the wrong
+    // discipline, or a core role realizing a job belongs to a
+    // different discipline than it's currently routed to. Just an
+    // edit to the field — no separate reassignment history table.
     // Only the four internal disciplines are valid here — External is
     // deliberately NOT a reassignment option. Engaging an outside
     // vendor happens through a normal procurement request made by one
     // of the four core roles, same pipeline as any other purchase, not
-    // by changing who a work order is routed to. Confirmed.
+    // by changing who a work order is routed to.
+    //
+    // Reassignment (discipline-level) — broadened to match technician
+    // assignment exactly: any of the four core roles can reassign any
+    // work order's routing, regardless of who currently holds it.
+    // Confirmed: this covers both directions — a Property Manager
+    // realizing an issue is actually electrical and routing it to the
+    // Electrical Engineer, or any core role correcting a
+    // misrouted "Not sure" report — without needing Admin or the
+    // current holder specifically to be the one who fixes it.
     if (req.body && req.body.reassignWorkOrder) {
       const { recordId, assignedRole } = req.body;
       const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager"];
       if (!recordId || !assignedRole || !VALID_ROLES.includes(assignedRole)) {
         return res.status(400).json({ error: "recordId and a valid assignedRole are required" });
+      }
+
+      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"];
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && !CORE_ROLES.includes(session.r)) {
+        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Admin, or Property Manager can reassign a work order." });
       }
 
       try {
@@ -454,15 +461,6 @@ export default async function handler(req, res) {
         if (!getResp.ok) throw new Error("Could not read work order");
         const woData = await getResp.json();
         const currentAssignedRole = woData.fields["Assigned Role"] || "";
-
-        const isOverseer = session.r === "business_owner" || session.r === "system_admin";
-        const currentLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[currentAssignedRole];
-        const isCurrentHolder = !!currentLoginRole && session.r === currentLoginRole;
-        const canReassign = isOverseer || session.r === "admin" || isCurrentHolder;
-
-        if (!canReassign) {
-          return res.status(403).json({ error: "Not permitted to reassign this work order." });
-        }
 
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
