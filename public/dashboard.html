@@ -4219,6 +4219,17 @@ async function buildWorkOrdersHtml(orders) {
     }, 0);
 
     // Completion stat — one card, a selector chooses which window it
+    // Open comes first — his own count of what's still active, shown
+    // as its own full stat card, not buried as a subtitle under
+    // something else.
+    html += `<div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Open</div>
+      <div class="summary-grid">
+        <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myActive.length}</div><div class="summary-label">Open — not yet completed</div></div>
+      </div>
+    </div>`;
+
+    // Completed — one card, a selector chooses which window it
     // reflects. All four numbers are already computed above; switching
     // is instant, no refetch.
     html += `<div style="margin-bottom:20px">
@@ -4232,7 +4243,7 @@ async function buildWorkOrdersHtml(orders) {
         </select>
       </div>
       <div class="summary-grid">
-        <div class="summary-card"><div class="summary-val" id="techCompletedStatVal" style="color:var(--green)">${completedThisWeek}</div><div class="summary-label">Open — ${myActive.length} not yet completed</div></div>
+        <div class="summary-card"><div class="summary-val" id="techCompletedStatVal" style="color:var(--green)">${completedThisWeek}</div><div class="summary-label">Completed in selected period</div></div>
       </div>
     </div>`;
 
@@ -4267,14 +4278,16 @@ async function buildWorkOrdersHtml(orders) {
       html += `<div class="asset-list" style="margin-bottom:20px">${available.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
     }
 
-    // All Work Orders — everything of his, open or completed, replacing
-    // the earlier My Tickets / History split with one unified list.
+    // All Work Orders — the true full mixture: unclaimed, his own
+    // active, and completed, all together. The stats and Staff
+    // Performance above are there to help him find what he's looking
+    // for — this list itself is everything, unfiltered by assignment.
     html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">All Work Orders</div>`;
-    const allMine = [...myActive, ...myCompleted];
-    if (allMine.length === 0) {
+    const allTechOrders = techOrders.slice().sort((a, b) => new Date(b.created) - new Date(a.created));
+    if (allTechOrders.length === 0) {
       html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing here yet.</div>`;
     } else {
-      html += `<div class="asset-list">${allMine.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
+      html += `<div class="asset-list">${allTechOrders.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
     }
   } else {
     html += `<div class="summary-grid">
