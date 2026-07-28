@@ -4167,7 +4167,26 @@ async function buildWorkOrdersHtml(orders) {
     });
     const myOrderIds = new Set(myOrders.map(o => o.id));
     const myActive = myOrders.filter(o => o.status !== 'Completed');
-    const myCompletedCount = myOrders.filter(o => o.status === 'Completed').length;
+    const myCompleted = myOrders.filter(o => o.status === 'Completed')
+      .sort((a, b) => new Date(b.completedDate || b.created) - new Date(a.completedDate || a.created));
+
+    // Recency buckets — how many he's closed today / this week / this
+    // month / this year, counted from a rolling window ending now, not
+    // calendar boundaries. Cumulative on purpose (this week's count
+    // naturally includes today's) — matches how someone actually asks
+    // "how am I doing lately." Turnaround-time (how FAST each one was
+    // resolved) is a separate metric that belongs on the manager-facing
+    // Staff Performance view, not here.
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const sinceCompleted = (o) => {
+      const d = o.completedDate ? new Date(o.completedDate).getTime() : null;
+      return d ? now - d : Infinity;
+    };
+    const completedToday = myCompleted.filter(o => sinceCompleted(o) <= 1 * DAY).length;
+    const completedThisWeek = myCompleted.filter(o => sinceCompleted(o) <= 7 * DAY).length;
+    const completedThisMonth = myCompleted.filter(o => sinceCompleted(o) <= 30 * DAY).length;
+    const completedThisYear = myCompleted.filter(o => sinceCompleted(o) <= 365 * DAY).length;
 
     // Open to Claim: genuinely untouched work only — no Assigned
     // Technician set, AND no technician (any technician, not just me)
@@ -4186,7 +4205,10 @@ async function buildWorkOrdersHtml(orders) {
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets & Performance</div>
       <div class="summary-grid">
         <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myActive.length}</div><div class="summary-label">Open — not yet completed</div></div>
-        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${myCompletedCount}</div><div class="summary-label">Completed (Your Performance)</div></div>
+        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedToday}</div><div class="summary-label">Completed today</div></div>
+        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisWeek}</div><div class="summary-label">Completed this week</div></div>
+        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisMonth}</div><div class="summary-label">Completed this month</div></div>
+        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisYear}</div><div class="summary-label">Completed this year</div></div>
       </div>
     </div>`;
 
@@ -4199,9 +4221,18 @@ async function buildWorkOrdersHtml(orders) {
 
     html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Open to Claim</div>`;
     if (available.length === 0) {
-      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing waiting to be picked up right now.</div>`;
+      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic;margin-bottom:20px">Nothing waiting to be picked up right now.</div>`;
     } else {
-      html += `<div class="asset-list">${available.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
+      html += `<div class="asset-list" style="margin-bottom:20px">${available.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
+    }
+
+    // History — every one of his tickets that's actually finished, not
+    // just a count. Sits at the very bottom, below what's still active.
+    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">History</div>`;
+    if (myCompleted.length === 0) {
+      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing completed yet.</div>`;
+    } else {
+      html += `<div class="asset-list">${myCompleted.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
     }
   } else {
     html += `<div class="summary-grid">
