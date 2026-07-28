@@ -3295,35 +3295,26 @@ function canReassignWorkOrder(o) {
 function openReassignModal(recordId) {
   const o = lastWorkOrders.find(w => w.id === recordId) || dashboardWorkOrders.find(w => w.id === recordId);
   if (!o) return;
-  const roles = ['Mechanical', 'Electrical', 'Admin', 'Property Manager', 'External'];
+  const roles = ['Mechanical', 'Electrical', 'Admin', 'Property Manager'];
   openPlanModal('Reassign This Work Order', `
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Route to *</label>
-    <select id="ra_role" onchange="document.getElementById('ra_external_fields').style.display = this.value === 'External' ? 'block' : 'none'" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
-      ${roles.map(r => `<option value="${r}" ${o.assignedRole === r ? 'selected' : ''}>${r === 'External' ? 'External — outside maintenance company' : r}</option>`).join('')}
+    <select id="ra_role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
+      ${roles.map(r => `<option value="${r}" ${o.assignedRole === r ? 'selected' : ''}>${r}</option>`).join('')}
     </select>
-    <div id="ra_external_fields" style="display:${o.assignedRole === 'External' ? 'block' : 'none'}">
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Company / Contractor Name *</label>
-      <input id="ra_ext_name" value="${o.externalAssigneeName || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Phone or Email</label>
-      <input id="ra_ext_contact" value="${o.externalAssigneeContact || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Handled entirely outside the app — phone/email only, same as how the original reporter is contacted. They won't have chat access.</div>
-    </div>
+    <div style="font-size:11px;color:var(--muted)">Need an outside vendor instead? That's a procurement request from within the work order, not a reassignment — the four core roles can request it directly.</div>
   `, async () => {
     const assignedRole = document.getElementById('ra_role').value;
-    const externalName = document.getElementById('ra_ext_name')?.value.trim();
-    const externalContact = document.getElementById('ra_ext_contact')?.value.trim();
-    if (assignedRole === 'External' && !externalName) { alert('Company or contractor name is required.'); return; }
     try {
       const resp = await fetch('/api/work-orders', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reassignWorkOrder: true, recordId, assignedRole, externalName, externalContact }),
+        body: JSON.stringify({ reassignWorkOrder: true, recordId, assignedRole }),
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reassign');
-      Object.assign(o, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact });
+      Object.assign(o, { assignedRole: data.assignedRole });
       const dashCopy = dashboardWorkOrders.find(w => w.id === recordId);
-      if (dashCopy) Object.assign(dashCopy, { assignedRole: data.assignedRole, externalAssigneeName: data.externalAssigneeName, externalAssigneeContact: data.externalAssigneeContact });
+      if (dashCopy) Object.assign(dashCopy, { assignedRole: data.assignedRole });
       closePlanModal();
       showWorkOrderDetail(recordId);
     } catch (err) {
@@ -3352,7 +3343,7 @@ async function showWorkOrderDetail(recordId) {
         <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.status}</span>
         <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
-        ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
+        ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
       </div>
     </div>
@@ -4110,7 +4101,7 @@ function renderWORowHtml(o, staff) {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="asset-name">${o.assetName}</span><span class="asset-id">${o.woId}</span>
           ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
-          ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : ''}
+          ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
           ${techLabel ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignmentStatus==='Confirmed'?'#DCFCE7':'#FEF3C7'};color:${o.assignmentStatus==='Confirmed'?'#166534':'#92400E'}">👷 ${techLabel}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</span>` : ''}
           ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatusLabel(procStatus)}</span>` : ''}
         </div>
