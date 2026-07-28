@@ -3283,13 +3283,12 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Property Manager": "property_manager",
 };
 
-// Business Owner / System Admin / Admin can always reassign. Beyond
-// that, only whoever currently holds the routed role can hand off
-// their own job — same rule the backend enforces.
+// Any of the four core roles can reassign any work order's routing,
+// regardless of who currently holds it — same rule the backend
+// enforces, and the same rule technician assignment already uses.
 function canReassignWorkOrder(o) {
-  if (currentUserRole === 'business_owner' || currentUserRole === 'system_admin' || currentUserRole === 'admin') return true;
-  const currentLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[o.assignedRole];
-  return !!currentLoginRole && currentUserRole === currentLoginRole;
+  const CORE = ['electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'business_owner', 'system_admin'];
+  return CORE.includes(currentUserRole);
 }
 
 function openReassignModal(recordId) {
