@@ -114,7 +114,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -500,6 +500,154 @@ export default async function handler(req, res) {
       }
     }
 
+    // Assigning a specific technician to a work order — a second,
+    // separate layer beneath Assigned Role (the discipline). Any of
+    // the four core roles can do this on any work order, regardless of
+    // which discipline it's actually routed to (confirmed — this is
+    // deliberately broader than the discipline-reassignment
+    // permission). Setting this always puts the assignment in
+    // "Pending" status — the technician still has to confirm before
+    // it's real, see confirmAssignment/declineAssignment below.
+    if (req.body && req.body.assignTechnician) {
+      const { recordId, technicianUsername } = req.body;
+      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"];
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && !CORE_ROLES.includes(session.r)) {
+        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Admin, or Property Manager can assign a technician." });
+      }
+      if (!recordId || !technicianUsername) {
+        return res.status(400).json({ error: "recordId and technicianUsername required" });
+      }
+
+      const technicianContact = getContactForUsername(technicianUsername);
+      if (!technicianContact || technicianContact.role !== "technician") {
+        return res.status(400).json({ error: `"${technicianUsername}" is not a configured technician.` });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: {
+            "Assigned Technician": technicianUsername,
+            "Assigned Technician Set By": session.u,
+            "Assignment Status": "Pending",
+          } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save technician assignment");
+
+        await appendActivityLog(recordId, `👷 Assigned to ${technicianUsername} by ${session.u}`, session.u, "system");
+
+        const woId = woData.fields["WO ID"] || "";
+        const assetName = woData.fields["Asset Name"] || "";
+        await notifyTechnicianOfAssignment(technicianContact, woId, assetName);
+        await notifyAssignerConfirmation(session.u, technicianUsername, woId, assetName);
+
+        return res.status(200).json({ success: true, assignedTechnician: technicianUsername, assignmentStatus: "Pending" });
+      } catch (err) {
+        console.error("assignTechnician error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // The technician's own handshake — confirming they've actually
+    // seen and accepted the job. Only the assigned technician
+    // themselves can confirm (or decline) their own assignment.
+    if (req.body && req.body.confirmAssignment) {
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        if (woData.fields["Assigned Technician"] !== session.u) {
+          return res.status(403).json({ error: "This job isn't assigned to you." });
+        }
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Assignment Status": "Confirmed" } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not confirm assignment");
+
+        await appendActivityLog(recordId, `✅ Assignment confirmed by ${session.u}`, session.u, "system");
+
+        return res.status(200).json({ success: true, assignmentStatus: "Confirmed" });
+      } catch (err) {
+        console.error("confirmAssignment error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Declining clears the assignment entirely (back to unassigned,
+    // same as it was before anyone was picked) rather than leaving a
+    // stale "Declined" state sitting on the work order — a reason is
+    // required, and it's permanently recorded in the Activity Log, and
+    // whoever made the original assignment is emailed so they know to
+    // pick someone else. Confirmed: a reason is mandatory, not optional.
+    if (req.body && req.body.declineAssignment) {
+      const { recordId, reason } = req.body;
+      if (!recordId || !reason || !reason.trim()) {
+        return res.status(400).json({ error: "A reason is required to decline an assignment." });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read work order");
+        const woData = await getResp.json();
+
+        if (woData.fields["Assigned Technician"] !== session.u) {
+          return res.status(403).json({ error: "This job isn't assigned to you." });
+        }
+        const assignedBy = woData.fields["Assigned Technician Set By"] || "";
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Assigned Technician": "", "Assignment Status": "" } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not decline assignment");
+
+        await appendActivityLog(recordId, `❌ Assignment declined by ${session.u}: ${reason.trim()}`, session.u, "system");
+
+        const woId = woData.fields["WO ID"] || "";
+        const assetName = woData.fields["Asset Name"] || "";
+        if (assignedBy) {
+          const assignerContact = getContactForUsername(assignedBy);
+          if (assignerContact && assignerContact.email) {
+            await notifyAssignerOfDecline(assignerContact.email, session.u, reason.trim(), woId, assetName);
+          }
+        }
+
+        return res.status(200).json({ success: true, assignedTechnician: "", assignmentStatus: "" });
+      } catch (err) {
+        console.error("declineAssignment error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.checklistToggle) {
       const { recordId, itemId, checked } = req.body;
       if (!recordId || itemId === undefined || itemId === null) return res.status(400).json({ error: "recordId and itemId required" });
@@ -866,6 +1014,108 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 // order's own routed role (Electrical/Mechanical Engineer, Admin, or
 // Property Manager — whichever discipline this job actually belongs
 // to), not funneled to Engineers only.
+// Fires when a core role assigns a specific technician — both email
+// and SMS, since this is the "go do this job" moment and shouldn't
+// depend on someone happening to check their inbox.
+async function notifyTechnicianOfAssignment(technicianContact, woId, assetName) {
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  if (technicianContact.email) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">You've Been Assigned</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">Please confirm or decline this assignment in the app before starting work.</p>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: [technicianContact.email],
+        subject: `You've been assigned — ${assetName} (${woId})`,
+        html,
+      }),
+    }).catch(err => console.error("notifyTechnicianOfAssignment email error:", err));
+  }
+  if (technicianContact.phone) {
+    try {
+      const message = sanitizeForSmsWO(`You've been assigned ${woId} - ${assetName}. Confirm or decline in the app.`);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: message.slice(0, 300),
+          recipients: [{ recipient_id: 1, dest_addr: technicianContact.phone }],
+        }),
+      });
+    } catch (err) {
+      console.error("notifyTechnicianOfAssignment SMS error:", err);
+    }
+  }
+}
+
+// A short confirmation email back to whoever did the assigning — "yes,
+// this went through." Not urgent enough for SMS.
+async function notifyAssignerConfirmation(assignerUsername, technicianUsername, woId, assetName) {
+  const assignerContact = getContactForUsername(assignerUsername);
+  if (!assignerContact || !assignerContact.email) return;
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Assignment Confirmation</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">You assigned ${technicianUsername} to this job. They've been notified and asked to confirm.</p>
+      </div>
+    </div>`;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: [assignerContact.email],
+      subject: `Assigned ${technicianUsername} — ${assetName} (${woId})`,
+      html,
+    }),
+  }).catch(err => console.error("notifyAssignerConfirmation error:", err));
+}
+
+// Fires when a technician declines — the assigner needs to know
+// promptly since the job is now sitting unassigned again.
+async function notifyAssignerOfDecline(assignerEmail, technicianUsername, reason, woId, assetName) {
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#991B1B;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Assignment Declined</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${technicianUsername} declined this assignment: "${reason}". Please assign someone else.</p>
+      </div>
+    </div>`;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: [assignerEmail],
+      subject: `Declined — ${assetName} (${woId}) needs reassignment`,
+      html,
+    }),
+  }).catch(err => console.error("notifyAssignerOfDecline error:", err));
+}
+
 async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, assignedRole, requestedBy, total) {
   const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   const directory = getAllStaffDirectory();
@@ -1087,7 +1337,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
