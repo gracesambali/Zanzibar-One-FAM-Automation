@@ -3241,6 +3241,32 @@ async function loadCostOverview() {
       html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
     }
 
+    // By Asset — which specific Asset IDs actually made up that total.
+    // Reuses the exact same cost-summary function and rules already
+    // built for the Asset Register (every status counts, rejected
+    // procurement excluded), so this always agrees with what each
+    // asset's own page shows — no separate logic to drift out of sync.
+    const costSummaries = await loadAssetCostSummaries();
+    const assetRows = Object.entries(costSummaries)
+      .map(([assetId, s]) => {
+        const asset = assets.find(a => a.id === assetId);
+        return { assetId, name: asset ? asset.name : '(asset not found in register)', total: s.total };
+      })
+      .filter(r => r.total > 0)
+      .sort((a, b) => b.total - a.total);
+
+    if (assetRows.length > 0) {
+      const shown = assetRows.slice(0, 10);
+      html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">By Asset</div>
+        ${shown.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+          <span><span style="font-weight:600;color:var(--text)">${r.assetId}</span> <span style="color:var(--muted)">— ${r.name}</span></span>
+          <span style="color:var(--navy);font-weight:600">TZS ${Math.round(r.total).toLocaleString()}</span>
+        </div>`).join('')}
+        ${assetRows.length > 10 ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">+${assetRows.length - 10} more — see Asset Register, sorted by Maintenance Cost Ratio, for the full list.</div>` : ''}
+      </div>`;
+    }
+
     panel.innerHTML = html;
   } catch (err) {
     panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
