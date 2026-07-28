@@ -19,7 +19,7 @@ import { getAssignedRole } from "../lib/routing.js";
 import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
 
 // "Assigned Role" on a work order is a display label (Mechanical,
-// Electrical, Admin, Property Manager, or External). Login roles are
+// Electrical, Admin, Property Manager). Login roles are
 // the actual permission-checked identities (mechanical_engineer,
 // etc). This maps one to the other so closure sign-off can verify the
 // specific person reviewing is actually who the job was routed to.
@@ -38,21 +38,11 @@ async function checkRoutedRoleMatch(session, recordId) {
   const checkData = await checkResp.json();
   const assignedRole = checkData.fields["Assigned Role"];
 
-  // External has no matching login role at all — there's nobody to
-  // check permissions against except whoever actually arranged the
-  // handoff, recorded at the moment it was assigned. Confirmed:
-  // that person specifically, not "any Admin," gets to sign off.
-  if (assignedRole === "External") {
-    const handledBy = checkData.fields["Assigned Role Set By"];
-    if (handledBy && session.u === handledBy) return null;
-    return `Only ${handledBy || "whoever arranged the external handoff"} can act on this work order.`;
-  }
-
   const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   // Fail CLOSED on anything unmapped (missing, unrecognized, or a
-  // stray value) — an unrouted work order should never silently let
-  // just anyone through. Previously this fell through to "allowed,"
-  // which was a real gap.
+  // stray value — including any leftover "External" from before this
+  // was removed as a routing option entirely) — an unrouted work order
+  // should never silently let just anyone through.
   if (!expectedLoginRole) {
     return "This work order has no recognized routed role — it can't be acted on until it's assigned.";
   }
@@ -114,7 +104,7 @@ export default async function handler(req, res) {
           created: r.fields["Created"] || "",
           completedDate: r.fields["Completed Date"] || "",
           closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
           notes: r.fields["Notes"] || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
@@ -441,14 +431,17 @@ export default async function handler(req, res) {
     // that, only whoever CURRENTLY holds the routed role can hand their
     // own job to someone else — a technician or an unrelated engineer
     // can't reroute a job that was never theirs.
+    //
+    // Only the four internal disciplines are valid here — External is
+    // deliberately NOT a reassignment option. Engaging an outside
+    // vendor happens through a normal procurement request made by one
+    // of the four core roles, same pipeline as any other purchase, not
+    // by changing who a work order is routed to. Confirmed.
     if (req.body && req.body.reassignWorkOrder) {
-      const { recordId, assignedRole, externalName, externalContact } = req.body;
-      const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager", "External"];
+      const { recordId, assignedRole } = req.body;
+      const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager"];
       if (!recordId || !assignedRole || !VALID_ROLES.includes(assignedRole)) {
         return res.status(400).json({ error: "recordId and a valid assignedRole are required" });
-      }
-      if (assignedRole === "External" && !externalName) {
-        return res.status(400).json({ error: "External assignee name is required" });
       }
 
       try {
@@ -471,30 +464,16 @@ export default async function handler(req, res) {
           return res.status(403).json({ error: "Not permitted to reassign this work order." });
         }
 
-        const fields = {
-          "Assigned Role": assignedRole,
-          "Assigned Role Set By": session.u,
-        };
-        if (assignedRole === "External") {
-          fields["External Assignee Name"] = externalName;
-          fields["External Assignee Contact"] = externalContact || "";
-        } else {
-          // Clear stale external contact info when routing back internally.
-          fields["External Assignee Name"] = "";
-          fields["External Assignee Contact"] = "";
-        }
-
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields }),
+          body: JSON.stringify({ fields: { "Assigned Role": assignedRole, "Assigned Role Set By": session.u } }),
         });
         if (!patchResp.ok) throw new Error("Could not save reassignment");
 
-        const label = assignedRole === "External" ? `External — ${externalName}` : assignedRole;
-        await appendActivityLog(recordId, `🔀 Reassigned from ${currentAssignedRole || "Unassigned"} to ${label}`, session.u, "system");
+        await appendActivityLog(recordId, `🔀 Reassigned from ${currentAssignedRole || "Unassigned"} to ${assignedRole}`, session.u, "system");
 
-        return res.status(200).json({ success: true, assignedRole, externalAssigneeName: fields["External Assignee Name"], externalAssigneeContact: fields["External Assignee Contact"] });
+        return res.status(200).json({ success: true, assignedRole });
       } catch (err) {
         console.error("reassignWorkOrder error:", err);
         return res.status(500).json({ error: err.message });
@@ -1338,7 +1317,7 @@ async function handleMaintenanceReport(req, res) {
       location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
       urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
       completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", externalAssigneeName: r.fields["External Assignee Name"] || "", externalAssigneeContact: r.fields["External Assignee Contact"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
+      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
       notes: r.fields["Notes"] || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
