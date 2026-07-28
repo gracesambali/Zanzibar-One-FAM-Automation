@@ -1057,12 +1057,11 @@ function renderAssets() {
   document.getElementById('view-assets').innerHTML = html;
   renderAssetResults(); // populate the results container on initial/full render
 
-  // Cost summaries load in the background — the list renders
-  // immediately without waiting, then quietly re-renders once ready so
-  // the maintenance-cost badges/sort option appear without a flash.
-  if (!assetCostSummaryCache) {
-    loadAssetCostSummaries().then(() => renderAssetResults());
-  }
+  // Cost summaries load in the background every time this tab renders
+  // — the list shows immediately without waiting, then quietly
+  // re-renders once fresh data is in, so newly entered costs (from a
+  // work order, procurement fulfillment, etc.) never show stale.
+  loadAssetCostSummaries().then(() => renderAssetResults());
 }
 
 // Renders ONLY the result count + asset list — called on every
@@ -2107,21 +2106,27 @@ function setPlanActualCost(recordId, idx) {
   updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
 }
 
-// Per-asset maintenance cost summary — one work-orders fetch, cached,
+// Per-asset maintenance cost summary — one work-orders fetch per call,
 // reused by both the Asset Register list (for the ratio badge/sort)
 // and each asset's own detail page (for the full by-type breakdown).
+// Deliberately NOT cached across the session — costs get entered from
+// several places (cost edits, procurement fulfillment, spare-part
+// orders), and a stale snapshot showing outdated numbers is worse than
+// one extra fetch each time this tab is opened. assetCostSummaryCache
+// still exists as a variable so getMaintenanceCostRatio() (used
+// per-row during sort/badge rendering) can read whatever was loaded
+// most recently without needing to be async itself.
 // Confirmed rules: every status counts as long as a cost is entered
 // (not just Completed), but a Rejected procurement request is excluded
 // since that money was never actually spent.
 let assetCostSummaryCache = null;
 let assetCostSummaryLoading = null;
 async function loadAssetCostSummaries() {
-  if (assetCostSummaryCache) return assetCostSummaryCache;
   if (assetCostSummaryLoading) return assetCostSummaryLoading;
   assetCostSummaryLoading = (async () => {
     try {
       const resp = await fetch('/api/work-orders');
-      if (!resp.ok) return {};
+      if (!resp.ok) return assetCostSummaryCache || {};
       const data = await resp.json();
       const orders = data.workOrders || [];
       const map = {};
@@ -2139,7 +2144,7 @@ async function loadAssetCostSummaries() {
       return map;
     } catch (err) {
       console.error('loadAssetCostSummaries error:', err);
-      return {};
+      return assetCostSummaryCache || {};
     } finally {
       assetCostSummaryLoading = null;
     }
