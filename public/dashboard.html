@@ -3576,6 +3576,14 @@ function openDeclineAssignmentModal(recordId) {
   });
 }
 
+// The stored Procurement Status value stays "Fulfilled" in Airtable —
+// no schema change, no migration of existing records. Only what's
+// actually shown to people changes, to "Payment Processed", which is
+// what procurement staff are really doing at that step.
+function procStatusLabel(status) {
+  return status === 'Fulfilled' ? 'Payment Processed' : status;
+}
+
 function renderWODetailProcurement(o) {
   const el = document.getElementById('woDetailProcurement');
   if (!el) return;
@@ -3593,7 +3601,7 @@ function renderWODetailProcurement(o) {
       ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
   } else {
     const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
-    html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatus}</span>`;
+    html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatusLabel(procStatus)}</span>`;
     if (breakdown.length > 0) {
       html += `<table style="width:100%;margin-top:10px;font-size:12.5px;border-collapse:collapse">
         <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Qty</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Unit Rate</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Total</td></tr>
@@ -3612,9 +3620,9 @@ function renderWODetailProcurement(o) {
       </div>`;
     }
     if (procStatus === 'Approved' && canFulfill) {
-      html += `<button onclick="fulfillProcurement('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>`;
+      html += `<button onclick="fulfillProcurement('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Payment Processed</button>`;
     } else if (procStatus === 'Approved') {
-      html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">✅ Approved — waiting on Procurement to fulfill</div>`;
+      html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">✅ Approved — waiting on Procurement to process payment</div>`;
     }
   }
   el.innerHTML = html;
@@ -4104,7 +4112,7 @@ function renderWORowHtml(o, staff) {
           ${o.maintenanceType ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
           ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignedRole==='External'?'#FEF3C7':'#E0E7FF'};color:${o.assignedRole==='External'?'#92400E':'#3730A3'}">→ ${o.assignedRole === 'External' ? 'External — ' + (o.externalAssigneeName || 'unnamed') : o.assignedRole}</span>` : ''}
           ${techLabel ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignmentStatus==='Confirmed'?'#DCFCE7':'#FEF3C7'};color:${o.assignmentStatus==='Confirmed'?'#166534':'#92400E'}">👷 ${techLabel}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</span>` : ''}
-          ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatus}</span>` : ''}
+          ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatusLabel(procStatus)}</span>` : ''}
         </div>
         <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
       </div>
