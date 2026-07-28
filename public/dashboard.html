@@ -628,6 +628,7 @@ let currentFloorFilter = "All";
 let currentCriticalityFilter = "All";
 let currentRoomFilter = "All";
 let currentStatusFilter = "All";
+let currentSortBy = "default";
 let currentSearch = "";
 
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
@@ -885,8 +886,17 @@ function renderDashboard() {
   }, 50);
 }
 
+// Maintenance-cost-to-acquisition-cost ratio, as a plain 0-100+ number
+// (or null if there's no acquisition cost to compare against). Used
+// for both the sort option and the warning badge on flagged rows.
+function getMaintenanceCostRatio(a) {
+  const summary = assetCostSummaryCache && assetCostSummaryCache[a.id];
+  if (!summary || !a.acquisitionCost) return null;
+  return (summary.total / a.acquisitionCost) * 100;
+}
+
 function getFilteredAssets() {
-  return assets.filter(a => {
+  let result = assets.filter(a => {
     if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
     if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
     if(currentCriticalityFilter!=="All" && a.criticality!==currentCriticalityFilter) return false;
@@ -902,6 +912,53 @@ function getFilteredAssets() {
     }
     return true;
   });
+  if (currentSortBy === 'costRatio') {
+    result = result.slice().sort((a, b) => (getMaintenanceCostRatio(b) ?? -1) - (getMaintenanceCostRatio(a) ?? -1));
+  }
+  return result;
+}
+
+// Maintenance Cost Summary for one asset — direct TZS totals by type
+// first (the actual numbers), with the acquisition-cost comparison as
+// a small line underneath, not the headline. Confirmed with Grace:
+// "numbers are direct, ratios are complex" — so the ratio is context,
+// not the star of the display.
+async function renderMaintCostSection(a) {
+  const el = document.getElementById('maintCostContent');
+  if (!el) return;
+  const summaries = await loadAssetCostSummaries();
+  const s = summaries[a.id];
+
+  if (!s || !s.total) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No maintenance costs recorded yet for this asset.</div>`;
+    return;
+  }
+
+  const types = [
+    ['Preventive', s.Preventive], ['Corrective', s.Corrective],
+    ['Inspection', s.Inspection], ['Procurement', s.Procurement], ['Other', s.Other],
+  ].filter(([, v]) => v > 0);
+
+  let html = `<div style="font-size:26px;font-weight:700;color:var(--navy);margin-bottom:2px">TZS ${Math.round(s.total).toLocaleString()}</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Total maintenance spend recorded for this asset</div>`;
+
+  if (types.length > 0) {
+    html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      ${types.map(([label, v]) => `<div style="background:#F7F8FA;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:110px">
+        <div style="font-size:10.5px;color:var(--muted)">${label}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">TZS ${Math.round(v).toLocaleString()}</div>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  if (a.acquisitionCost) {
+    const ratio = (s.total / a.acquisitionCost) * 100;
+    const color = ratio >= 75 ? 'var(--red)' : ratio >= 50 ? 'var(--amber)' : 'var(--muted)';
+    const note = ratio >= 75 ? ' — consider replacement' : ratio >= 50 ? ' — high maintenance cost' : '';
+    html += `<div style="font-size:11.5px;color:${color}">Maintenance cost is ${ratio.toFixed(0)}% of acquisition cost (TZS ${Number(a.acquisitionCost).toLocaleString()})${note}, automatically calculated.</div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 function renderAssets() {
@@ -925,6 +982,10 @@ function renderAssets() {
   // and recreated.
   html += `<div class="filter-row">
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
+    <select class="filter-select" onchange="currentSortBy=this.value;renderAssetResults()">
+      <option value="default"${currentSortBy==='default'?' selected':''}>Default order</option>
+      <option value="costRatio"${currentSortBy==='costRatio'?' selected':''}>Maintenance cost ratio, highest first</option>
+    </select>
     <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
       <option value="All">All Status</option>
       <option value="Good"${currentStatusFilter==='Good'?' selected':''}>Good</option>
@@ -995,6 +1056,13 @@ function renderAssets() {
 
   document.getElementById('view-assets').innerHTML = html;
   renderAssetResults(); // populate the results container on initial/full render
+
+  // Cost summaries load in the background — the list renders
+  // immediately without waiting, then quietly re-renders once ready so
+  // the maintenance-cost badges/sort option appear without a flash.
+  if (!assetCostSummaryCache) {
+    loadAssetCostSummaries().then(() => renderAssetResults());
+  }
 }
 
 // Renders ONLY the result count + asset list — called on every
@@ -1024,8 +1092,12 @@ function renderAssetResults() {
         <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? 'TZS ' + Number(a.currentValue).toLocaleString() : '—'}</div>
         ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
       </div>` : '';
+    const costRatio = getMaintenanceCostRatio(a);
+    const costRatioBadge = (canSeeCost && costRatio !== null && costRatio >= 50)
+      ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${costRatio >= 75 ? '#FEE2E2' : '#FEF3C7'};color:${costRatio >= 75 ? '#991B1B' : '#92400E'}">⚠ ${Math.round(costRatio)}% of acquisition cost in maintenance</span>`
+      : '';
     html += `<button class="asset-row" onclick="showDetail(${idx})">
-      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span>${a.needsTechnicalReview ? '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}</div>
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span>${a.needsTechnicalReview ? '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}${costRatioBadge}</div>
       <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
       <span class="asset-class">${a.category}</span></div>
       ${valueBlock}
@@ -1102,6 +1174,17 @@ function showDetail(idx) {
   }
   html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
 
+  // Maintenance Cost Summary — direct totals first (the actual TZS
+  // spent, by type), with the acquisition-cost comparison as a small
+  // supporting line underneath, not the headline. Confirmed: numbers
+  // are the primary thing, the ratio is just context.
+  if (canSeeCost) {
+    html += `<div id="maintCostSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Cost Summary</div>
+      <div id="maintCostContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+  }
+
   // ISO Maintenance Checklist — auto-matched to this asset's type from its name
   html += `<div id="checklistSection" style="padding:16px 24px;border-top:1px solid var(--border)">
     <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
@@ -1145,6 +1228,8 @@ function showDetail(idx) {
 
   html += `</div>`; // close detail-panel
   document.getElementById('view-assets').innerHTML = html;
+
+  if (canSeeCost) renderMaintCostSection(a);
 
   // Load edit log
   fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(a.id))
@@ -2020,6 +2105,46 @@ function setPlanActualCost(recordId, idx) {
   const items = [...p.budgetItems];
   items[idx] = { ...items[idx], actualCost };
   updatePlanField(recordId, 'Budget Items', JSON.stringify(items));
+}
+
+// Per-asset maintenance cost summary — one work-orders fetch, cached,
+// reused by both the Asset Register list (for the ratio badge/sort)
+// and each asset's own detail page (for the full by-type breakdown).
+// Confirmed rules: every status counts as long as a cost is entered
+// (not just Completed), but a Rejected procurement request is excluded
+// since that money was never actually spent.
+let assetCostSummaryCache = null;
+let assetCostSummaryLoading = null;
+async function loadAssetCostSummaries() {
+  if (assetCostSummaryCache) return assetCostSummaryCache;
+  if (assetCostSummaryLoading) return assetCostSummaryLoading;
+  assetCostSummaryLoading = (async () => {
+    try {
+      const resp = await fetch('/api/work-orders');
+      if (!resp.ok) return {};
+      const data = await resp.json();
+      const orders = data.workOrders || [];
+      const map = {};
+      const TYPES = ['Preventive', 'Corrective', 'Inspection', 'Procurement'];
+      orders.forEach(o => {
+        const cost = Number(o.cost) || 0;
+        if (!o.assetId || !cost) return;
+        if (o.procurementStatus === 'Rejected') return;
+        if (!map[o.assetId]) map[o.assetId] = { Preventive: 0, Corrective: 0, Inspection: 0, Procurement: 0, Other: 0, total: 0 };
+        const type = TYPES.includes(o.maintenanceType) ? o.maintenanceType : 'Other';
+        map[o.assetId][type] += cost;
+        map[o.assetId].total += cost;
+      });
+      assetCostSummaryCache = map;
+      return map;
+    } catch (err) {
+      console.error('loadAssetCostSummaries error:', err);
+      return {};
+    } finally {
+      assetCostSummaryLoading = null;
+    }
+  })();
+  return assetCostSummaryLoading;
 }
 
 let cachedStaffList = null;
