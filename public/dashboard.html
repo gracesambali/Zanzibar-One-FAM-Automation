@@ -995,9 +995,9 @@ function renderAssets() {
   html += `<div class="filter-row">
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
     <select class="filter-select" onchange="currentSortBy=this.value;renderAssetResults()">
-      <option value="default"${currentSortBy==='default'?' selected':''}>Default order</option>
-      <option value="costRatioDesc"${currentSortBy==='costRatioDesc'?' selected':''}>Maintenance Cost Ratio — Highest First</option>
-      <option value="costRatioAsc"${currentSortBy==='costRatioAsc'?' selected':''}>Maintenance Cost Ratio — Lowest First</option>
+      <option value="default"${currentSortBy==='default'?' selected':''}>Maintenance Cost Ratio</option>
+      <option value="costRatioDesc"${currentSortBy==='costRatioDesc'?' selected':''}>Highest first</option>
+      <option value="costRatioAsc"${currentSortBy==='costRatioAsc'?' selected':''}>Lowest first</option>
     </select>
     <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
       <option value="All">All Status</option>
