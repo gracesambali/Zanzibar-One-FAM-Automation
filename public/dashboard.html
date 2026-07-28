@@ -912,8 +912,20 @@ function getFilteredAssets() {
     }
     return true;
   });
-  if (currentSortBy === 'costRatio') {
+  if (currentSortBy === 'costRatioDesc') {
     result = result.slice().sort((a, b) => (getMaintenanceCostRatio(b) ?? -1) - (getMaintenanceCostRatio(a) ?? -1));
+  } else if (currentSortBy === 'costRatioAsc') {
+    // Assets with no ratio at all (no acquisition cost, or no maintenance
+    // recorded yet) sort to the end here too, rather than falsely
+    // appearing as "lowest cost" ahead of assets that actually have a
+    // real, low ratio.
+    result = result.slice().sort((a, b) => {
+      const ra = getMaintenanceCostRatio(a), rb = getMaintenanceCostRatio(b);
+      if (ra === null && rb === null) return 0;
+      if (ra === null) return 1;
+      if (rb === null) return -1;
+      return ra - rb;
+    });
   }
   return result;
 }
@@ -984,7 +996,8 @@ function renderAssets() {
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
     <select class="filter-select" onchange="currentSortBy=this.value;renderAssetResults()">
       <option value="default"${currentSortBy==='default'?' selected':''}>Default order</option>
-      <option value="costRatio"${currentSortBy==='costRatio'?' selected':''}>Maintenance cost ratio, highest first</option>
+      <option value="costRatioDesc"${currentSortBy==='costRatioDesc'?' selected':''}>Maintenance Cost Ratio — Highest First</option>
+      <option value="costRatioAsc"${currentSortBy==='costRatioAsc'?' selected':''}>Maintenance Cost Ratio — Lowest First</option>
     </select>
     <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
       <option value="All">All Status</option>
