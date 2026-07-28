@@ -151,6 +151,75 @@ async function sendUnsatisfactionAlert(assetName, reason) {
 // smoke detectors) is electrical work, fire PROTECTION (sprinklers,
 // suppression) is mechanical work — same split routing.js already
 // uses for System-based routing elsewhere, kept consistent here.
+// Same relabeling logic dashboard.html uses for display — duplicated
+// here rather than shared, since this is a separate serverless
+// function with no access to the frontend's JS. Keeping the exact same
+// transformation on both sides is the whole point: it's what makes a
+// reporter's dropdown selection match an asset's stored floor/room
+// later, without any fuzzy text matching required.
+function displayFloor(floor) {
+  if (!floor) return "";
+  const m = floor.match(/^L(\d+)$/i);
+  if (!m) return floor;
+  const n = parseInt(m[1], 10);
+  return n === 1 ? "GF" : `F${n - 1}`;
+}
+function displayRoom(room) {
+  if (!room) return "";
+  let out = room;
+  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "Ground Floor" : `Floor ${n - 1}`;
+  });
+  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "GF" : `F${n - 1}`;
+  });
+  return out;
+}
+
+async function handleGetLocations(req, res) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+
+    let allRecords = [];
+    let offset = null;
+    do {
+      const url = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
+      url.searchParams.set("fields[]", "Floor/Level");
+      url.searchParams.append("fields[]", "Room/Zone");
+      if (offset) url.searchParams.set("offset", offset);
+      const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+      if (!resp.ok) throw new Error("Could not load locations");
+      const data = await resp.json();
+      allRecords = allRecords.concat(data.records || []);
+      offset = data.offset || null;
+    } while (offset);
+
+    // Floor -> Set of rooms, using the same friendly labels the Asset
+    // Register itself displays, deduplicated.
+    const floorMap = {};
+    allRecords.forEach(r => {
+      const floorLabel = displayFloor(r.fields["Floor/Level"] || "");
+      const roomLabel = displayRoom(r.fields["Room/Zone"] || "");
+      if (!floorLabel) return;
+      if (!floorMap[floorLabel]) floorMap[floorLabel] = new Set();
+      if (roomLabel) floorMap[floorLabel].add(roomLabel);
+    });
+
+    const floors = Object.keys(floorMap).sort().map(floor => ({
+      floor,
+      rooms: Array.from(floorMap[floor]).sort(),
+    }));
+
+    return res.status(200).json({ floors });
+  } catch (err) {
+    console.error("handleGetLocations error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 const CATEGORY_TO_ROLE = {
   "Electrical": "Electrical",
   "Mechanical": "Mechanical",
@@ -165,6 +234,15 @@ export default async function handler(req, res) {
   // reopens the work order instead of leaving a dead end.
   if (req.method === "GET" && req.query.satisfaction) {
     return handleSatisfactionResponse(req, res);
+  }
+
+  // Real floor/room list, public — no login, matching the report form
+  // itself. Confirmed with Grace: the report form's Floor and Room/Zone
+  // fields need to be dropdowns sourced from the actual Asset Register,
+  // not free text, so whatever a reporter picks EXACTLY matches what's
+  // in the register later — no fuzzy text matching needed downstream.
+  if (req.method === "GET" && req.query.locations) {
+    return handleGetLocations(req, res);
   }
 
   if (req.method !== "POST") {
