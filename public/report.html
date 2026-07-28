@@ -49,12 +49,18 @@
 
       <div class="row2">
         <div>
-          <label for="floor">Floor *</label>
-          <input id="floor" type="text" placeholder="e.g. Level 3" required>
+          <label for="floorSelect">Floor *</label>
+          <select id="floorSelect" required onchange="onFloorChange()">
+            <option value="" disabled selected>Loading floors…</option>
+          </select>
+          <input id="floorOther" type="text" placeholder="Type the floor" style="display:none;margin-top:6px">
         </div>
         <div>
-          <label for="roomZone">Room / Zone</label>
-          <input id="roomZone" type="text" placeholder="e.g. Ward B, Room 12">
+          <label for="roomSelect">Room / Zone</label>
+          <select id="roomSelect" onchange="onRoomChange()" disabled>
+            <option value="" selected>Choose a floor first…</option>
+          </select>
+          <input id="roomOther" type="text" placeholder="Type the room/zone" style="display:none;margin-top:6px">
         </div>
       </div>
 
@@ -100,6 +106,66 @@ function handlePhotoSelected(e) {
 document.getElementById('photoCamera').addEventListener('change', handlePhotoSelected);
 document.getElementById('photoFile').addEventListener('change', handlePhotoSelected);
 
+// Real floors/rooms from the Asset Register — dropdowns instead of
+// free text, so whatever a reporter picks EXACTLY matches an asset's
+// stored location later, no fuzzy text matching needed. "Other" stays
+// available on both, since not every physical space necessarily has a
+// registered asset yet — this shouldn't block a genuine report.
+let locationData = { floors: [] };
+
+async function loadLocations() {
+  const floorSelect = document.getElementById('floorSelect');
+  try {
+    const resp = await fetch('/api/report-issue?locations=true');
+    const data = await resp.json();
+    locationData = data.floors ? data : { floors: [] };
+  } catch (err) {
+    locationData = { floors: [] };
+  }
+  floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
+    ${locationData.floors.map(f => `<option value="${f.floor}">${f.floor}</option>`).join('')}
+    <option value="__other__">Other (not listed)</option>`;
+}
+loadLocations();
+
+function onFloorChange() {
+  const floorVal = document.getElementById('floorSelect').value;
+  const floorOther = document.getElementById('floorOther');
+  const roomSelect = document.getElementById('roomSelect');
+  const roomOther = document.getElementById('roomOther');
+
+  floorOther.style.display = floorVal === '__other__' ? 'block' : 'none';
+  roomOther.style.display = 'none';
+  roomOther.value = '';
+
+  if (floorVal === '__other__') {
+    roomSelect.innerHTML = `<option value="" selected>—</option><option value="__other__">Other (not listed)</option>`;
+    roomSelect.disabled = false;
+    return;
+  }
+
+  const floorEntry = locationData.floors.find(f => f.floor === floorVal);
+  const rooms = floorEntry ? floorEntry.rooms : [];
+  roomSelect.innerHTML = `<option value="" selected>Choose one… (optional)</option>
+    ${rooms.map(r => `<option value="${r}">${r}</option>`).join('')}
+    <option value="__other__">Other (not listed)</option>`;
+  roomSelect.disabled = false;
+}
+
+function onRoomChange() {
+  const roomVal = document.getElementById('roomSelect').value;
+  document.getElementById('roomOther').style.display = roomVal === '__other__' ? 'block' : 'none';
+}
+
+function getFloorValue() {
+  const sel = document.getElementById('floorSelect').value;
+  return sel === '__other__' ? document.getElementById('floorOther').value.trim() : sel;
+}
+function getRoomValue() {
+  const sel = document.getElementById('roomSelect').value;
+  return sel === '__other__' ? document.getElementById('roomOther').value.trim() : sel;
+}
+
 document.getElementById('reportForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
@@ -108,11 +174,17 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
   const reporterName = document.getElementById('reporterName').value.trim();
   const reporterRole = document.getElementById('reporterRole').value.trim();
   const reporterContact = document.getElementById('reporterContact').value.trim();
-  const floor = document.getElementById('floor').value.trim();
-  const roomZone = document.getElementById('roomZone').value.trim();
+  const floor = getFloorValue();
+  const roomZone = getRoomValue();
   const category = document.getElementById('category').value;
   const description = document.getElementById('description').value.trim();
   const photoFile = selectedPhotoFile;
+
+  if (!floor) {
+    result.className = 'result error show';
+    result.textContent = 'Please choose a floor (or select "Other" and type it in).';
+    return;
+  }
 
   btn.disabled = true;
   btn.textContent = 'Submitting…';
@@ -144,6 +216,10 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
       document.getElementById('reportForm').reset();
       selectedPhotoFile = null;
       document.getElementById('photoPreviewName').textContent = '';
+      document.getElementById('floorOther').style.display = 'none';
+      document.getElementById('roomOther').style.display = 'none';
+      document.getElementById('roomSelect').innerHTML = '<option value="" selected>Choose a floor first…</option>';
+      document.getElementById('roomSelect').disabled = true;
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';

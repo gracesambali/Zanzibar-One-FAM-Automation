@@ -3726,16 +3726,24 @@ function closeAssetLinkModal() {
 }
 
 function renderAssetLinkResults() {
-  const q = (document.getElementById('al_search')?.value || '').toLowerCase();
+  const q = (document.getElementById('al_search')?.value || '').toLowerCase().trim();
   const sys = document.getElementById('al_system')?.value || 'All';
   const container = document.getElementById('al_results');
   if (!container) return;
 
+  // Token-based matching, not one exact phrase — a reporter's free-text
+  // floor/room ("Ground Floor Reception") won't reliably appear as a
+  // single contiguous substring of an asset's own fields, especially
+  // once coded floor labels (GF, F3) get involved. Every word in the
+  // search has to appear SOMEWHERE in the asset's combined text, in any
+  // order — much more forgiving, and correctly matches regardless of
+  // which order floor/room happen to appear in either string.
+  const words = q.split(/\s+/).filter(Boolean);
   const matches = assets.filter(a => {
     if (sys !== 'All' && a.system !== sys) return false;
-    if (!q) return true;
-    const hay = (a.id+" "+a.name+" "+displayRoom(a.room)+" "+displayFloor(a.floor)+" "+a.manufacturer+" "+a.model).toLowerCase();
-    return hay.includes(q);
+    if (words.length === 0) return true;
+    const hay = (a.id+" "+a.name+" "+displayFloor(a.floor)+" "+displayRoom(a.room)+" "+a.manufacturer+" "+a.model).toLowerCase();
+    return words.every(w => hay.includes(w));
   }).slice(0, 30);
 
   if (matches.length === 0) {
