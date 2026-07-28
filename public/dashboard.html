@@ -4170,13 +4170,10 @@ async function buildWorkOrdersHtml(orders) {
     const myCompleted = myOrders.filter(o => o.status === 'Completed')
       .sort((a, b) => new Date(b.completedDate || b.created) - new Date(a.completedDate || a.created));
 
-    // Recency buckets — how many he's closed today / this week / this
-    // month / this year, counted from a rolling window ending now, not
-    // calendar boundaries. Cumulative on purpose (this week's count
-    // naturally includes today's) — matches how someone actually asks
-    // "how am I doing lately." Turnaround-time (how FAST each one was
-    // resolved) is a separate metric that belongs on the manager-facing
-    // Staff Performance view, not here.
+    // Recency windows — cumulative rolling windows ending now, not
+    // calendar boundaries, so "this week" naturally includes today's
+    // count. All four are computed up front; the selector below just
+    // swaps which one is displayed, entirely client-side, no refetch.
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
     const sinceCompleted = (o) => {
@@ -4188,11 +4185,11 @@ async function buildWorkOrdersHtml(orders) {
     const completedThisMonth = myCompleted.filter(o => sinceCompleted(o) <= 30 * DAY).length;
     const completedThisYear = myCompleted.filter(o => sinceCompleted(o) <= 365 * DAY).length;
 
-    // Open to Claim: genuinely untouched work only — no Assigned
-    // Technician set, AND no technician (any technician, not just me)
-    // has acted on it yet. The moment either happens it drops out of
-    // this shared pool, so two technicians never end up duplicating
-    // the same job.
+    // Open to Claim (relabeled "Open Tickets") — genuinely untouched
+    // work only — no Assigned Technician set, AND no technician (any
+    // technician, not just me) has acted on it yet. The moment either
+    // happens it drops out of this shared pool, so two technicians
+    // never end up duplicating the same job.
     const available = techOrders.filter(o => {
       if (o.status === 'Completed' || myOrderIds.has(o.id)) return false;
       if (o.assignedTechnician) return false;
@@ -4201,38 +4198,83 @@ async function buildWorkOrdersHtml(orders) {
       return !log.some(e => technicianUsernames.has(e.by));
     });
 
-    html += `<div style="margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Your Tickets & Performance</div>
+    // Turnaround time — average days from creation to completion,
+    // across his own completed tickets. This is the actual performance
+    // metric; the recency counts above are activity volume, not speed.
+    const turnaroundDays = myCompleted
+      .map(o => {
+        const created = o.created ? new Date(o.created).getTime() : null;
+        const done = o.completedDate ? new Date(o.completedDate).getTime() : null;
+        return (created && done) ? (done - created) / DAY : null;
+      })
+      .filter(d => d !== null);
+    const avgDays = turnaroundDays.length ? (turnaroundDays.reduce((a, b) => a + b, 0) / turnaroundDays.length).toFixed(1) : null;
+
+    // Same simple text-match convention appendActivityLog already uses
+    // elsewhere on this page for reading past entries back out.
+    const procurementReqCount = myOrders.reduce((sum, o) => {
+      let log = [];
+      try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
+      return sum + log.filter(e => e.by === currentUsername && e.type === 'procurement_request').length;
+    }, 0);
+
+    // Completion stat — one card, a selector chooses which window it
+    // reflects. All four numbers are already computed above; switching
+    // is instant, no refetch.
+    html += `<div style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">Completed</div>
+        <select onchange="document.getElementById('techCompletedStatVal').textContent = this.value" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;color:var(--text)">
+          <option value="${completedToday}">Today</option>
+          <option value="${completedThisWeek}" selected>This Week</option>
+          <option value="${completedThisMonth}">This Month</option>
+          <option value="${completedThisYear}">This Year</option>
+        </select>
+      </div>
       <div class="summary-grid">
-        <div class="summary-card"><div class="summary-val" style="color:var(--red)">${myActive.length}</div><div class="summary-label">Open — not yet completed</div></div>
-        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedToday}</div><div class="summary-label">Completed today</div></div>
-        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisWeek}</div><div class="summary-label">Completed this week</div></div>
-        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisMonth}</div><div class="summary-label">Completed this month</div></div>
-        <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completedThisYear}</div><div class="summary-label">Completed this year</div></div>
+        <div class="summary-card"><div class="summary-val" id="techCompletedStatVal" style="color:var(--green)">${completedThisWeek}</div><div class="summary-label">Open — ${myActive.length} not yet completed</div></div>
       </div>
     </div>`;
 
-    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">My Tickets</div>`;
-    if (myActive.length === 0) {
-      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic;margin-bottom:20px">Nothing of yours in progress right now — check Open to Claim below.</div>`;
-    } else {
-      html += `<div class="asset-list" style="margin-bottom:20px">${myActive.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
-    }
+    // Staff Performance — same visual format as the manager-facing
+    // version at the bottom of the main Dashboard, just his own row.
+    // Avg. Days is turnaround time — the actual speed-of-resolution
+    // metric, distinct from the recency counts above.
+    html += `<div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Staff Performance</div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--white)">
+        <div class="staff-perf-header">
+          <div class="staff-perf-cell staff-perf-name">Person</div>
+          <div class="staff-perf-cell"><span class="staff-perf-val">Pending</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-val">Closed</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-val">Avg. Days</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-val">Procurement Reqs</span></div>
+        </div>
+        <div class="staff-perf-body"><div class="staff-perf-row">
+          <div class="staff-perf-cell staff-perf-name">${chatParticipantLabel(currentUsername, staff)}</div>
+          <div class="staff-perf-cell"><span class="staff-perf-label">Pending</span><span class="staff-perf-val" style="${myActive.length > 0 ? 'color:var(--red);font-weight:700' : ''}">${myActive.length}</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-label">Closed</span><span class="staff-perf-val">${myCompleted.length}</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-label">Avg. Days</span><span class="staff-perf-val">${avgDays != null ? avgDays + 'd' : '—'}</span></div>
+          <div class="staff-perf-cell"><span class="staff-perf-label">Procurement Reqs</span><span class="staff-perf-val">${procurementReqCount}</span></div>
+        </div></div>
+      </div>
+    </div>`;
 
-    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Open to Claim</div>`;
+    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Open Tickets</div>`;
     if (available.length === 0) {
       html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic;margin-bottom:20px">Nothing waiting to be picked up right now.</div>`;
     } else {
       html += `<div class="asset-list" style="margin-bottom:20px">${available.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
     }
 
-    // History — every one of his tickets that's actually finished, not
-    // just a count. Sits at the very bottom, below what's still active.
-    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">History</div>`;
-    if (myCompleted.length === 0) {
-      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing completed yet.</div>`;
+    // All Work Orders — everything of his, open or completed, replacing
+    // the earlier My Tickets / History split with one unified list.
+    html += `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">All Work Orders</div>`;
+    const allMine = [...myActive, ...myCompleted];
+    if (allMine.length === 0) {
+      html += `<div style="text-align:center;padding:24px 20px;color:var(--muted);font-style:italic">Nothing here yet.</div>`;
     } else {
-      html += `<div class="asset-list">${myCompleted.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
+      html += `<div class="asset-list">${allMine.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
     }
   } else {
     html += `<div class="summary-grid">
