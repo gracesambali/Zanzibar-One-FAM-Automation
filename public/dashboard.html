@@ -381,6 +381,10 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
     <span class="tab-label">Planned Maintenance</span>
   </button>
+  <button class="tab-btn" data-tab="units" data-label="Tenant Units" id="unitsNavBtn" onclick="switchTab('units')" onmouseenter="showSidebarTooltip(this, 'Tenant Units')" onmouseleave="hideSidebarTooltip()" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
+    <span class="tab-label">Tenant Units</span>
+  </button>
   </div>
 </div>
 </div>
@@ -401,6 +405,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-floorplan" class="view"></div>
   <div id="view-workorders" class="view"></div>
   <div id="view-plannedmaintenance" class="view"></div>
+  <div id="view-units" class="view"></div>
 </div>
 </div>
 
@@ -742,6 +747,12 @@ function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date())
 // since the whole point is fewer places to have to look.
 const SIMPLIFIED_NAV_HIDDEN_TABS = ['dashboard', 'assets', 'sensors', 'systems', 'maintenance', 'plannedmaintenance'];
 function applySimplifiedNavIfNeeded() {
+  // Units tab — visible to everyone except Technician, confirmed
+  // simple rule, not a nuanced permission. Hidden by default in the
+  // HTML; revealed here for every other role.
+  const unitsBtn = document.getElementById('unitsNavBtn');
+  if (unitsBtn && currentUserRole !== 'technician') unitsBtn.style.display = '';
+
   if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
   SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
     const btn = document.querySelector(`.tab-btn[data-tab="${t}"]`);
@@ -755,6 +766,9 @@ function switchTab(tab) {
   if (currentUserPermissions && currentUserPermissions.simplifiedNav && !SIMPLIFIED_NAV_ALLOWED_TABS.includes(tab)) {
     tab = 'workorders'; // defense in depth — the nav buttons are hidden too, but never trust that alone
   }
+  if (tab === 'units' && currentUserRole === 'technician') {
+    tab = 'workorders'; // same defense-in-depth principle — never trust hidden-button alone
+  }
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-'+tab).classList.add('active');
@@ -767,6 +781,7 @@ function switchTab(tab) {
   if(tab==='floorplan') renderFloorPlan();
   if(tab==='workorders') renderWorkOrders();
   if(tab==='plannedmaintenance') renderPlannedMaintenance();
+  if(tab==='units') renderUnits();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -1294,6 +1309,20 @@ function showDetail(idx) {
     html += `<div class="detail-alert" style="background:${statusBg(a.status)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span><strong>Note:</strong> ${a.note}</span></div>`;
   }
   html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
+
+  // Tenant Unit — same access rule as the Units tab itself (everyone
+  // except Technician). Independent of Room/Zone; shows here so
+  // tagging an asset to its unit doesn't require leaving the asset's
+  // own page.
+  if (currentUserRole !== 'technician') {
+    html += `<div style="padding:16px 24px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Tenant Unit</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:13px;color:${a.unit ? 'var(--text)' : 'var(--muted)'}">${a.unit || 'Not assigned to a unit'}</span>
+        <button onclick="openAssignUnitModal('${a.recordId}', '${a.building || ''}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${a.unit ? 'Change' : 'Assign'}</button>
+      </div>
+    </div>`;
+  }
 
   // Maintenance Cost Summary — direct totals first (the actual TZS
   // spent, by type), with the acquisition-cost comparison as a small
@@ -1997,6 +2026,182 @@ function renderLevelView() {
 }
 
 let lastPlans = [];
+
+// Tenant Units — Facility/Building/PM/BO/SysAdmin (everyone except
+// Technician, confirmed simple rule). Filtered by the exact same
+// global Building/Facility switcher as everywhere else — units carry
+// a .building field, so filterByBuilding works here unchanged.
+async function renderUnits() {
+  const container = document.getElementById('view-units');
+  if (!container) return;
+  container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">Loading units…</div>`;
+
+  try {
+    const resp = await fetch('/api/get-assets?units=true');
+    const data = await resp.json();
+    const allUnits = data.units || [];
+    const units = filterByBuilding(allUnits);
+
+    let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Units</div>
+        <div style="font-size:12px;color:var(--muted)">Each unit's assets are pulled live from the Asset Register — nothing duplicated here.</div>
+      </div>
+      <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
+    </div>`;
+
+    if (units.length === 0) {
+      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No units yet${currentBuildingFilter !== '__all__' || currentFacilityFilter !== '__all__' ? ' in this selection' : ''}.</div>`;
+      container.innerHTML = html;
+      return;
+    }
+
+    const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
+
+    html += `<div class="asset-list">` + units.map(u => {
+      const unitAssets = assets.filter(a => a.unit === u.name);
+      const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
+      return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:14px;font-weight:700;color:var(--text)">${u.name}</span>
+              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
+              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">${u.building}${u.tenantName ? ' · ' + u.tenantName : ''}${u.tenantContact ? ' · ' + u.tenantContact : ''}</div>
+          </div>
+          <div style="font-size:12px;color:var(--navy);font-weight:600">${unitAssets.length} asset${unitAssets.length !== 1 ? 's' : ''}</div>
+        </div>
+        ${unitAssets.length > 0 ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px">
+          ${unitAssets.map(a => `<span style="font-size:11px;padding:3px 9px;border-radius:10px;background:#F7F8FA;color:var(--text)">${a.id} — ${a.name}</span>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('') + `</div>`;
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load units: ${err.message}</div>`;
+  }
+}
+
+function openAddUnitModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addUnitOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  const allBuildings = [...new Set(facilitiesData.flatMap(f => f.buildings))].sort();
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add a Tenant Unit</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Name *</label>
+      <input id="au_name" placeholder="e.g. Shop 12, Suite 3B" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
+      <select id="au_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${allBuildings.map(b => `<option value="${b}">${b}</option>`).join('')}
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Type</label>
+      <select id="au_type" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Shop">Shop</option><option value="Office">Office</option><option value="House">House</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Name</label>
+      <input id="au_tenant" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Contact</label>
+      <input id="au_contact" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Lease Status</label>
+      <select id="au_lease" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+        <option value="Occupied">Occupied</option><option value="Vacant">Vacant</option><option value="Notice Given">Notice Given</option>
+      </select>
+      <div id="au_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addUnitOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="au_submit" onclick="submitAddUnit()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Unit</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddUnit() {
+  const unitName = document.getElementById('au_name').value.trim();
+  const building = document.getElementById('au_building').value;
+  const unitType = document.getElementById('au_type').value;
+  const tenantName = document.getElementById('au_tenant').value.trim();
+  const tenantContact = document.getElementById('au_contact').value.trim();
+  const leaseStatus = document.getElementById('au_lease').value;
+  const errorBox = document.getElementById('au_error');
+  const btn = document.getElementById('au_submit');
+  errorBox.style.display = 'none';
+  if (!unitName) { errorBox.textContent = 'Unit name is required.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addUnit: true, unitName, building, unitType, tenantName, tenantContact, leaseStatus }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add unit');
+    document.getElementById('addUnitOverlay')?.remove();
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Unit';
+  }
+}
+
+async function openAssignUnitModal(assetRecordId, building) {
+  const overlay = document.createElement('div');
+  overlay.id = 'assignUnitOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Assign to a Unit</div>
+      <div id="au_pick_list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px"><div style="padding:16px;font-size:12px;color:var(--muted)">Loading units in ${building || 'this building'}…</div></div>
+      <button onclick="submitAssignUnit('${assetRecordId}', '')" style="width:100%;margin-bottom:8px;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);font-weight:600;font-size:12.5px;cursor:pointer">Clear Assignment</button>
+      <button onclick="document.getElementById('assignUnitOverlay').remove()" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/get-assets?units=true');
+    const data = await resp.json();
+    const matches = (data.units || []).filter(u => u.building === building);
+    const listEl = document.getElementById('au_pick_list');
+    if (!listEl) return;
+    if (matches.length === 0) {
+      listEl.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No units set up in ${building || 'this building'} yet — add one from the Tenant Units tab first.</div>`;
+      return;
+    }
+    listEl.innerHTML = matches.map(u => `
+      <button onclick="submitAssignUnit('${assetRecordId}', '${u.name}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${u.name}</div>
+        <div style="font-size:11px;color:var(--muted)">${u.unitType || ''}${u.tenantName ? ' — ' + u.tenantName : ''}</div>
+      </button>`).join('');
+  } catch (err) {
+    const listEl = document.getElementById('au_pick_list');
+    if (listEl) listEl.innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">Could not load units: ${err.message}</div>`;
+  }
+}
+
+async function submitAssignUnit(assetRecordId, unitName) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignAssetToUnit: true, assetRecordId, unitName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not assign unit');
+    const asset = assets.find(a => a.recordId === assetRecordId);
+    if (asset) asset.unit = unitName;
+    document.getElementById('assignUnitOverlay')?.remove();
+    const idx = assets.findIndex(a => a.recordId === assetRecordId);
+    if (idx >= 0) showDetail(idx);
+  } catch (err) {
+    alert('Could not assign unit: ' + err.message);
+  }
+}
 
 async function renderPlannedMaintenance() {
   const container = document.getElementById('view-plannedmaintenance');
