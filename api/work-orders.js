@@ -87,6 +87,12 @@ export default async function handler(req, res) {
     return res.status(200).json(result);
   }
 
+  // Vendor directory — the foundation the whole new procurement flow
+  // sits on. Simple list, no pagination needed at this scale.
+  if (req.method === "GET" && req.query.vendors === "true") {
+    return handleGetVendors(req, res);
+  }
+
   if (req.method === "GET") {
     try {
       const records = await fetchAllWorkOrders();
@@ -707,6 +713,55 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("confirmNotRegisteredAsset error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Adding a vendor — Procurement only, confirmed. This is the
+    // foundation the new procurement workflow sits on: vendors have to
+    // actually exist in the system before quotes/invoices can be
+    // attached against them.
+    if (req.body && req.body.addVendor) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can add a vendor." });
+      }
+      const { name, email, phone, categories } = req.body;
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: "Vendor name is required" });
+      }
+
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const vendorsTable = encodeURIComponent(process.env.AIRTABLE_VENDORS_TABLE || "Vendors");
+
+        const resp = await fetch(`https://api.airtable.com/v0/${base}/${vendorsTable}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: {
+              "Vendor Name": name.trim(),
+              "Email": (email || "").trim(),
+              "Phone": (phone || "").trim(),
+              "Category/System": Array.isArray(categories) ? categories : [],
+              "Active": true,
+              "Added By": session.u,
+            },
+            typecast: true, // lets a new category value be added on the fly without a manual Airtable step each time
+          }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const created = await resp.json();
+
+        return res.status(200).json({ success: true, vendor: {
+          id: created.id,
+          name: created.fields["Vendor Name"] || "",
+          email: created.fields["Email"] || "",
+          phone: created.fields["Phone"] || "",
+          categories: created.fields["Category/System"] || [],
+        } });
+      } catch (err) {
+        console.error("addVendor error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -1407,6 +1462,39 @@ async function advanceAssetNextService(assetId) {
       },
     }),
   });
+}
+
+async function handleGetVendors(req, res) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const vendorsTable = encodeURIComponent(process.env.AIRTABLE_VENDORS_TABLE || "Vendors");
+
+    let allRecords = [];
+    let offset = null;
+    do {
+      const url = new URL(`https://api.airtable.com/v0/${base}/${vendorsTable}`);
+      url.searchParams.set("filterByFormula", "{Active} = TRUE()");
+      if (offset) url.searchParams.set("offset", offset);
+      const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+      if (!resp.ok) throw new Error("Could not load vendors");
+      const data = await resp.json();
+      allRecords = allRecords.concat(data.records || []);
+      offset = data.offset || null;
+    } while (offset);
+
+    const vendors = allRecords.map(r => ({
+      id: r.id,
+      name: r.fields["Vendor Name"] || "",
+      email: r.fields["Email"] || "",
+      phone: r.fields["Phone"] || "",
+      categories: r.fields["Category/System"] || [],
+    })).sort((a, b) => a.name.localeCompare(b.name));
+
+    return res.status(200).json({ vendors });
+  } catch (err) {
+    console.error("handleGetVendors error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 async function handleMaintenanceReport(req, res) {
