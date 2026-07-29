@@ -221,6 +221,137 @@ async function handleGetUnitPortal(req, res) {
 
 // A tenant sending a message — no login, so senderName is typed in
 // each time, same principle as the report form's "Your Name" field.
+// A real complaint/issue from a tenant — genuinely different from
+// ordinary chat. Creates a real Work Order using the exact same
+// routing principle as the main Report a Breakdown form, simplified
+// to the three categories relevant here. Notifies the specifically
+// routed role directly (not a fixed broadcast list), since "Electrical
+// -> EE, Mechanical -> ME, Non-technical -> PM" only means something if
+// the right person actually gets told.
+const UNIT_PORTAL_CATEGORY_TO_ROLE = {
+  "Electrical": "Electrical",
+  "Mechanical": "Mechanical",
+  "NonTechnical": "Property Manager",
+};
+const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
+  "Electrical": "electrical_engineer",
+  "Mechanical": "mechanical_engineer",
+  "Property Manager": "property_manager",
+};
+
+// Same convention as the Work Orders activity log, scoped to Units —
+// duplicated here rather than imported since each Vercel function file
+// runs isolated; matches work-orders.js's own appendUnitActivityLog.
+async function appendUnitActivityLog(unitId, text, by, type) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendUnitActivityLog: could not read unit"); return null; }
+  const unitData = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
+  log.push(entry);
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
+  return entry;
+}
+
+async function handleUnitPortalReportIssue(req, res) {
+  const { unitId, senderName, category, description, password } = req.body || {};
+  if (!unitId || !senderName || !senderName.trim() || !category || !description || !description.trim()) {
+    return res.status(400).json({ error: "Your name, a category, and a description are required" });
+  }
+  const assignedRole = UNIT_PORTAL_CATEGORY_TO_ROLE[category];
+  if (!assignedRole) return res.status(400).json({ error: "Invalid category" });
+
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!getResp.ok) return res.status(404).json({ error: "Unit not found" });
+    const unitData = await getResp.json();
+    const f = unitData.fields;
+
+    const storedPassword = f["Portal Password"] || "";
+    if (!storedPassword || password !== storedPassword) {
+      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    }
+
+    const unitName = f["Unit Name"] || "";
+    const building = f["Building"] || "";
+
+    const { woId, recordId } = await createReportedWorkOrder(
+      senderName.trim(), "Tenant", "", building || unitName, unitName,
+      description.trim(), assignedRole, building, unitName
+    );
+
+    await appendUnitActivityLog(unitId, `🛠️ Issue reported by ${senderName.trim()} — ${category} — opened ${woId}`, senderName.trim(), "system");
+
+    const directory = getAllStaffDirectory();
+    const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+    const recipients = directory.filter(e => e.role === loginRole || e.role === "business_owner" || e.role === "system_admin");
+    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+
+    const toList = recipients.map(e => e.email).filter(Boolean);
+    if (toList.length > 0) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Tenant-Reported Issue — ${category}</div>
+            <div style="font-size:18px;font-weight:700;margin-top:4px">${unitName}</div>
+          </div>
+          <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+            <p style="margin:0 0 8px;color:#1A1A2E;font-size:14px;line-height:1.6">${description.trim()}</p>
+            <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${senderName.trim()} — ${woId}</p>
+          </div>
+        </div>`;
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`, to: toList, subject: `Tenant issue — ${unitName} (${category})`, html }),
+      }).catch(err => console.error("unitPortalReportIssue email error:", err));
+    }
+
+    const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+    if (phones.length > 0) {
+      try {
+        const smsMessage = sanitizeForSms(`Tenant issue - ${unitName} (${category}): ${description.trim()}`).slice(0, 300);
+        const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+        await fetch("https://apisms.beem.africa/v1/send", {
+          method: "POST",
+          headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_addr: process.env.BEEM_SENDER_ID || "INFO",
+            schedule_time: "",
+            encoding: 0,
+            message: smsMessage,
+            recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+          }),
+        });
+      } catch (err) {
+        console.error("unitPortalReportIssue SMS error:", err);
+      }
+    }
+
+    return res.status(200).json({ success: true, woId });
+  } catch (err) {
+    console.error("handleUnitPortalReportIssue error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleUnitPortalMessage(req, res) {
   const { unitId, senderName, message, password } = req.body || {};
   if (!unitId || !senderName || !senderName.trim() || !message || !message.trim()) {
@@ -253,59 +384,17 @@ async function handleUnitPortalMessage(req, res) {
     });
     if (!patchResp.ok) throw new Error("Could not save message");
 
-    await notifyPMOfTenantMessage(f["Unit Name"] || "", senderName.trim(), message.trim());
+    // Deliberately no email/SMS here — confirmed, per-message
+    // notifications for ordinary chat were flagged as chaotic. Staff
+    // see new messages via the unread indicator on the unit's row in
+    // the dashboard instead. Genuine issues (handleUnitPortalReportIssue)
+    // still notify immediately, since those are the events that
+    // actually need someone's attention right away.
 
     return res.status(200).json({ success: true, chatLog });
   } catch (err) {
     console.error("handleUnitPortalMessage error:", err);
     return res.status(500).json({ error: err.message });
-  }
-}
-
-async function notifyPMOfTenantMessage(unitName, senderName, message) {
-  const directory = getAllStaffDirectory();
-  const recipients = directory.filter(e => e.role === "property_manager" || e.role === "business_owner" || e.role === "system_admin");
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
-
-  const toList = recipients.map(e => e.email).filter(Boolean);
-  if (toList.length > 0) {
-    const html = `
-      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-        <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Tenant Message</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px">${unitName}</div>
-        </div>
-        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-          <p style="margin:0 0 8px;color:#1A1A2E;font-size:13px"><strong>${senderName}</strong> wrote:</p>
-          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${message}</p>
-        </div>
-      </div>`;
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`, to: toList, subject: `Tenant message — ${unitName}`, html }),
-    }).catch(err => console.error("notifyPMOfTenantMessage email error:", err));
-  }
-
-  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
-  if (phones.length > 0) {
-    try {
-      const smsMessage = `Tenant message - ${unitName} (${senderName}): ${message}`.slice(0, 300);
-      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-      await fetch("https://apisms.beem.africa/v1/send", {
-        method: "POST",
-        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_addr: process.env.BEEM_SENDER_ID || "INFO",
-          schedule_time: "",
-          encoding: 0,
-          message: smsMessage,
-          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
-        }),
-      });
-    } catch (err) {
-      console.error("notifyPMOfTenantMessage SMS error:", err);
-    }
   }
 }
 
@@ -388,6 +477,10 @@ export default async function handler(req, res) {
     return handleUnitPortalMessage(req, res);
   }
 
+  if (req.method === "POST" && req.body && req.body.unitPortalReportIssue) {
+    return handleUnitPortalReportIssue(req, res);
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -424,7 +517,7 @@ export default async function handler(req, res) {
   }
 }
 
-async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole) {
+async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit) {
   const base = process.env.AIRTABLE_BASE_ID;
   const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
   const woId = `WO-${Date.now()}`;
@@ -445,6 +538,8 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     "Reporter Contact": reporterContact || "",
     "Satisfaction Status": "Pending",
   };
+  if (building) baseFields["Building"] = building;
+  if (unit) baseFields["Unit"] = unit;
 
   let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
     method: "POST",
