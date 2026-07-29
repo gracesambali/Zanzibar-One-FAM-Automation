@@ -764,7 +764,7 @@ export default async function handler(req, res) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to edit a unit." });
       }
-      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, portalPassword } = req.body;
+      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
       if (!unitId) return res.status(400).json({ error: "unitId required" });
       try {
         const base = process.env.AIRTABLE_BASE_ID;
@@ -782,7 +782,6 @@ export default async function handler(req, res) {
         if (tenantEmail !== undefined && tenantEmail !== (before["Tenant Email"] || "")) { fields["Tenant Email"] = tenantEmail; changes.push(`Email: "${before["Tenant Email"] || ""}" → "${tenantEmail}"`); }
         if (tenantPhone !== undefined && tenantPhone !== (before["Tenant Phone"] || "")) { fields["Tenant Phone"] = tenantPhone; changes.push(`Phone: "${before["Tenant Phone"] || ""}" → "${tenantPhone}"`); }
         if (leaseStatus !== undefined && leaseStatus !== (before["Lease Status"] || "")) { fields["Lease Status"] = leaseStatus; changes.push(`Lease Status: "${before["Lease Status"] || ""}" → "${leaseStatus}"`); }
-        if (portalPassword !== undefined && portalPassword !== (before["Portal Password"] || "")) { fields["Portal Password"] = portalPassword; changes.push(`Portal password updated`); }
 
         if (Object.keys(fields).length > 0) {
           const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {

@@ -178,13 +178,22 @@ function displayRoom(room) {
   return out;
 }
 
+// Strips formatting so "+255 712 345 678", "0712345678", and
+// "255712345678" all compare equal — a tenant typing their own phone
+// number shouldn't fail login over spacing or a leading +/0.
+function normalizePhone(s) {
+  return (s || "").replace(/[^\d]/g, "").replace(/^255/, "").replace(/^0/, "");
+}
+
 // Public-safe unit info + chat history — no login in the account
-// sense, but a real password gate: the link alone is deliberately NOT
-// sufficient access, since a link can be forwarded or guessed at.
+// sense, but a real gate: verified against the tenant's own phone
+// number already on file (Tenant Phone), not a separately-set
+// password nobody was actually setting. The link alone is deliberately
+// NOT sufficient access, since a link can be forwarded or guessed at.
 // Never returns lease financials, the signed contract, or anything
-// about other units regardless of password correctness.
+// about other units regardless of verification.
 async function handleGetUnitPortal(req, res) {
-  const { unitId, password } = req.body || {};
+  const { unitId, phone } = req.body || {};
   if (!unitId) return res.status(400).json({ error: "unitId required" });
   try {
     const base = process.env.AIRTABLE_BASE_ID;
@@ -196,11 +205,11 @@ async function handleGetUnitPortal(req, res) {
     const data = await resp.json();
     const f = data.fields;
 
-    const storedPassword = f["Portal Password"] || "";
-    // Fail closed: no password set yet on this unit means no access,
-    // not open access — the tenant needs to get it from staff first.
-    if (!storedPassword || password !== storedPassword) {
-      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    // Fail closed: no phone on file yet means no access, not open
+    // access — staff need to add the tenant's phone number first.
+    if (!storedPhone || normalizePhone(phone) !== storedPhone) {
+      return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
     let chatLog = [];
@@ -267,7 +276,7 @@ async function appendUnitActivityLog(unitId, text, by, type) {
 }
 
 async function handleUnitPortalReportIssue(req, res) {
-  const { unitId, senderName, category, description, password } = req.body || {};
+  const { unitId, senderName, category, description, phone } = req.body || {};
   if (!unitId || !senderName || !senderName.trim() || !category || !description || !description.trim()) {
     return res.status(400).json({ error: "Your name, a category, and a description are required" });
   }
@@ -284,9 +293,9 @@ async function handleUnitPortalReportIssue(req, res) {
     const unitData = await getResp.json();
     const f = unitData.fields;
 
-    const storedPassword = f["Portal Password"] || "";
-    if (!storedPassword || password !== storedPassword) {
-      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    if (!storedPhone || normalizePhone(phone) !== storedPhone) {
+      return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
     const unitName = f["Unit Name"] || "";
@@ -359,7 +368,7 @@ async function handleUnitPortalReportIssue(req, res) {
 }
 
 async function handleUnitPortalMessage(req, res) {
-  const { unitId, senderName, message, password } = req.body || {};
+  const { unitId, senderName, message, phone } = req.body || {};
   if (!unitId || !senderName || !senderName.trim() || !message || !message.trim()) {
     return res.status(400).json({ error: "unitId, senderName, and message are required" });
   }
@@ -374,9 +383,9 @@ async function handleUnitPortalMessage(req, res) {
     const unitData = await getResp.json();
     const f = unitData.fields;
 
-    const storedPassword = f["Portal Password"] || "";
-    if (!storedPassword || password !== storedPassword) {
-      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    if (!storedPhone || normalizePhone(phone) !== storedPhone) {
+      return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
     let chatLog = [];

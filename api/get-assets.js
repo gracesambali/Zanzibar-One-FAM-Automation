@@ -249,7 +249,6 @@ async function handleGetUnits(req, res) {
         tenantEmail: r.fields["Tenant Email"] || "",
         tenantPhone: r.fields["Tenant Phone"] || "",
         leaseStatus: r.fields["Lease Status"] || "",
-        portalPassword: r.fields["Portal Password"] || "",
         contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
         contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
         activityLog,
