@@ -162,6 +162,7 @@ function normalizeRecord(record) {
     floor: f["Floor/Level"] || "",
     room: f["Room/Zone"] || "",
     building: f["Building"] || "",
+    facility: f["Facility"] || "",
     manufacturer: f["Manufacturer"] || "",
     model: f["Model"] || "",
     installDate: f["Install Date"] || "",
