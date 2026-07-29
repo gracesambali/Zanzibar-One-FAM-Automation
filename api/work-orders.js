@@ -889,6 +889,36 @@ export default async function handler(req, res) {
       }
     }
 
+    // Procurement flagging a delay — a short remark that notifies
+    // whoever's waiting (the routed role and the technician), so a
+    // hold-up on sourcing doesn't just sit silent until someone asks.
+    if (req.body && req.body.sendProcurementDelayNotice) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can send a delay notice." });
+      }
+      const { recordId, message } = req.body;
+      if (!recordId || !message || !message.trim()) {
+        return res.status(400).json({ error: "recordId and message are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+
+        await appendActivityLog(recordId, `⏳ Procurement delay: ${message.trim()} — ${session.u}`, session.u, "procurement_request");
+        await notifyOfProcurementDelay(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", message.trim(), current.fields["Assigned Technician"]);
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("sendProcurementDelayNotice error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.checklistToggle) {
       const { recordId, itemId, checked } = req.body;
       if (!recordId || itemId === undefined || itemId === null) return res.status(400).json({ error: "recordId and itemId required" });
@@ -1384,6 +1414,65 @@ async function notifyAssignerOfDecline(assignerContact, technicianUsername, reas
 // Fires the moment a request is submitted — goes straight to
 // Procurement now, not the engineer. No approval gate exists anymore;
 // Procurement can act on this immediately.
+// Reaches the routed role AND the specifically assigned technician (if
+// one exists) — a delay affects both "who's waiting on this to plan
+// around it" and "who's literally standing there unable to proceed."
+async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, assignedTechnicianUsername) {
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  const directory = getAllStaffDirectory();
+  const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
+  if (assignedTechnicianUsername) {
+    const tech = getContactForUsername(assignedTechnicianUsername);
+    if (tech && !recipients.some(r => r.username === tech.username)) recipients.push(tech);
+  }
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const toList = recipients.map(e => e.email).filter(Boolean);
+  if (toList.length > 0) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#B45309;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Procurement Delay</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${message}</p>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Delay — ${assetName} (${woId})`,
+        html,
+      }),
+    }).catch(err => console.error("notifyOfProcurementDelay email error:", err));
+  }
+
+  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+  if (phones.length > 0) {
+    try {
+      const smsMessage = sanitizeForSmsWO(`Procurement delay - ${woId} ${assetName}: ${message}`);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: smsMessage.slice(0, 300),
+          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+        }),
+      });
+    } catch (err) {
+      console.error("notifyOfProcurementDelay SMS error:", err);
+    }
+  }
+}
+
 async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
   const directory = getAllStaffDirectory();
   const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
@@ -1421,31 +1510,54 @@ async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
 async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, total) {
   const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   const directory = getAllStaffDirectory();
-  const toList = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
-  if (toList.length === 0) return;
+  const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
+  const toList = recipients.map(e => e.email).filter(Boolean);
 
   const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-      <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Delivery Note — Please Confirm</div>
-        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
-      </div>
-      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Please confirm the delivery in the app once it's arrived, so the technician can proceed.</p>
-      </div>
-    </div>`;
+  if (toList.length > 0) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Delivery Note — Please Confirm</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Please confirm the delivery in the app once it's arrived, so the technician can proceed.</p>
+        </div>
+      </div>`;
 
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
-      to: toList,
-      subject: `Confirm delivery — ${assetName} (${woId})`,
-      html,
-    }),
-  }).catch(err => console.error("notifyRoutedRoleOfDeliveryArrival error:", err));
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Confirm delivery — ${assetName} (${woId})`,
+        html,
+      }),
+    }).catch(err => console.error("notifyRoutedRoleOfDeliveryArrival email error:", err));
+  }
+
+  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+  if (phones.length > 0) {
+    try {
+      const message = sanitizeForSmsWO(`Delivery note - ${woId} ${assetName}: TZS ${total.toLocaleString()} paid. Confirm delivery in the app.`);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: message.slice(0, 300),
+          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+        }),
+      });
+    } catch (err) {
+      console.error("notifyRoutedRoleOfDeliveryArrival SMS error:", err);
+    }
+  }
 }
 
 async function sendSatisfactionRequest(contact, recordId, assetName) {
