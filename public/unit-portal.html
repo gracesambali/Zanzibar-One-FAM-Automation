@@ -57,9 +57,6 @@
     </div>
     <button id="logoutBtn" onclick="logout()">Log Out</button>
   </div>
-  <div style="background:#fff;border-bottom:1px solid #E2E6ED;padding:12px 20px;text-align:center">
-    <div style="font-size:12px;color:#6B7280;max-width:480px;margin:0 auto;line-height:1.5">This is your unit's direct line to your Property Manager, powered by GVC Facility Asset Manager — the same system used to track and maintain every asset in this facility.</div>
-  </div>
 
   <div id="loginCard" class="identify-card" style="display:none">
     <h2>Sign in to your unit</h2>
@@ -76,13 +73,19 @@
     <div class="main-col">
       <div class="panel">
         <div class="panel-title">Unit Details</div>
-        <div class="detail-grid">
-          <div class="detail-item"><div class="label">Type</div><div class="value" id="detailType">—</div></div>
-          <div class="detail-item"><div class="label">Lease Status</div><div class="value" id="detailLease">—</div></div>
-          <div class="detail-item"><div class="label">Tenant</div><div class="value" id="detailTenantName">—</div></div>
-          <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
-          <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
-          <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          <div class="detail-grid" style="flex:1;min-width:240px">
+            <div class="detail-item"><div class="label">Type</div><div class="value" id="detailType">—</div></div>
+            <div class="detail-item"><div class="label">Lease Status</div><div class="value" id="detailLease">—</div></div>
+            <div class="detail-item"><div class="label">Tenant</div><div class="value" id="detailTenantName">—</div></div>
+            <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
+            <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
+            <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+          </div>
+          <div style="width:170px;flex-shrink:0;text-align:center">
+            <img id="unitPortalQrImg" src="" alt="QR code to this portal" style="width:110px;height:110px;border-radius:6px;border:1px solid #E2E6ED">
+            <div style="font-size:10.5px;color:#6B7280;margin-top:6px;line-height:1.4">This is your unit's direct line to your Property Manager, powered by GVC Facility Asset Manager.</div>
+          </div>
         </div>
       </div>
 
@@ -143,6 +146,10 @@
   let senderName = sessionStorage.getItem('tenantPortalName') || '';
   let tenantPhone = sessionStorage.getItem('tenantPortalPhone') || '';
   let pollTimer = null;
+
+  if (unitId) {
+    document.getElementById('unitPortalQrImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.href.split('?')[0] + '?unit=' + unitId)}`;
+  }
 
   if (!unitId) {
     showError('This link is missing its unit reference — please use the exact link you were given.');
