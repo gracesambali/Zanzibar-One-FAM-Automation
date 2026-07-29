@@ -93,6 +93,14 @@ export default async function handler(req, res) {
     return handleGetVendors(req, res);
   }
 
+  // Vendor quotes for one work order — the actual "compare and choose
+  // the lowest bidder" data. Scoped by WO ID via filterByFormula rather
+  // than fetching everything, since this table will grow with every
+  // procurement request across every work order.
+  if (req.method === "GET" && req.query.procurementResponses) {
+    return handleGetProcurementResponses(req, res, req.query.procurementResponses);
+  }
+
   if (req.method === "GET") {
     try {
       const records = await fetchAllWorkOrders();
@@ -749,6 +757,134 @@ export default async function handler(req, res) {
         } });
       } catch (err) {
         console.error("addVendor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Starting a new vendor quote against a work order — Procurement
+    // only, confirmed (they're the ones sending POs and collecting
+    // responses; nobody else in this flow touches vendor quotes at
+    // all). Two-step with the upload action below: create the row
+    // first, then attach the file to the real record it returns —
+    // Airtable's upload endpoint needs an existing record to attach to.
+    if (req.body && req.body.addProcurementResponse) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can add a vendor quote." });
+      }
+      const { woId, vendorName } = req.body;
+      if (!woId || !vendorName || !vendorName.trim()) {
+        return res.status(400).json({ error: "woId and vendorName are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
+
+        const resp = await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "WO ID": woId, "Vendor Name": vendorName.trim(), "Chosen": false } }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const created = await resp.json();
+
+        return res.status(200).json({ success: true, responseId: created.id });
+      } catch (err) {
+        console.error("addProcurementResponse error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Attaching the actual proforma file to a response row already
+    // created above. Uploading here is what triggers Airtable's AI
+    // fields on this table to actually analyze it.
+    if (req.body && req.body.uploadProcurementResponseAttachment) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can attach a vendor quote." });
+      }
+      const { responseId, filename, contentType, fileBase64 } = req.body;
+      if (!responseId || !filename || !fileBase64) {
+        return res.status(400).json({ error: "responseId, filename, and fileBase64 are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const uploadResp = await fetch(
+          `https://content.airtable.com/v0/${base}/${responseId}/${encodeURIComponent("Proforma Attachment")}/uploadAttachment`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
+          }
+        );
+        if (!uploadResp.ok) throw new Error(await uploadResp.text());
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadProcurementResponseAttachment error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Marking the winning quote — single-select in effect: choosing one
+    // un-chooses any other response already marked for the same work
+    // order, so "Chosen" always means exactly one vendor, never zero or
+    // several at once.
+    if (req.body && req.body.chooseProcurementResponse) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can choose a vendor quote." });
+      }
+      const { responseId, woId } = req.body;
+      if (!responseId || !woId) return res.status(400).json({ error: "responseId and woId are required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
+
+        const listUrl = new URL(`https://api.airtable.com/v0/${base}/${responsesTable}`);
+        listUrl.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
+        const listResp = await fetch(listUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+        if (!listResp.ok) throw new Error("Could not look up existing quotes");
+        const listData = await listResp.json();
+        const others = (listData.records || []).filter(r => r.id !== responseId && r.fields["Chosen"]);
+
+        if (others.length > 0) {
+          await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}`, {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ records: others.map(r => ({ id: r.id, fields: { "Chosen": false } })) }),
+          });
+        }
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}/${responseId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Chosen": true } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not mark quote as chosen");
+
+        // Best-effort activity log on the actual work order — woId here
+        // is the plain-text "WO-..." value, not an Airtable record ID,
+        // so it has to be looked up first. Not fatal if this part fails;
+        // the quote is already chosen either way.
+        try {
+          const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+          const woUrl = new URL(`https://api.airtable.com/v0/${base}/${woTable}`);
+          woUrl.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
+          woUrl.searchParams.set("maxRecords", "1");
+          const woResp = await fetch(woUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+          const woData = woResp.ok ? await woResp.json() : { records: [] };
+          const woRecord = woData.records && woData.records[0];
+          const chosenVendor = (listData.records || []).find(r => r.id === responseId);
+          if (woRecord) {
+            await appendActivityLog(woRecord.id, `🏆 Vendor quote chosen: ${chosenVendor ? chosenVendor.fields["Vendor Name"] : responseId} — by ${session.u}`, session.u, "system");
+          }
+        } catch (logErr) {
+          console.error("chooseProcurementResponse activity log error:", logErr);
+        }
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("chooseProcurementResponse error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -1420,6 +1556,35 @@ async function advanceAssetNextService(assetId) {
       },
     }),
   });
+}
+
+async function handleGetProcurementResponses(req, res, woId) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
+
+    const url = new URL(`https://api.airtable.com/v0/${base}/${responsesTable}`);
+    url.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
+    const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+    if (!resp.ok) throw new Error("Could not load vendor quotes");
+    const data = await resp.json();
+
+    const responses = (data.records || []).map(r => ({
+      id: r.id,
+      vendorName: r.fields["Vendor Name"] || "",
+      attachmentUrl: (r.fields["Proforma Attachment"] || [])[0] ? r.fields["Proforma Attachment"][0].url : null,
+      attachmentFilename: (r.fields["Proforma Attachment"] || [])[0] ? r.fields["Proforma Attachment"][0].filename : null,
+      totalCost: r.fields["Total Cost (AI)"] ?? null,
+      vatStatus: r.fields["VAT Status (AI)"] || "",
+      summary: r.fields["Summary (AI)"] || "",
+      chosen: !!r.fields["Chosen"],
+    })).sort((a, b) => (a.totalCost ?? Infinity) - (b.totalCost ?? Infinity));
+
+    return res.status(200).json({ responses });
+  } catch (err) {
+    console.error("handleGetProcurementResponses error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 async function handleGetVendors(req, res) {
