@@ -191,11 +191,10 @@ function normalizePhone(s) {
 // password nobody was actually setting. The link alone is deliberately
 // NOT sufficient access, since a link can be forwarded or guessed at.
 //
-// Returns everything reasonable for a tenant to see about their OWN
-// unit — lease status, their own contact details, their signed
-// contract, the assets covered under it — but deliberately never the
-// Activity Log (that's an internal staff audit trail, not tenant-
-// facing) and never anything about any other unit.
+// Returns everything about their OWN unit, matching what the Property
+// Manager sees — lease status, contact details, signed contract,
+// assets covered, and the full Activity Log — confirmed full parity.
+// Never anything about any other unit, regardless of verification.
 async function handleGetUnitPortal(req, res) {
   const { unitId, phone } = req.body || {};
   if (!unitId) return res.status(400).json({ error: "unitId required" });
@@ -218,6 +217,11 @@ async function handleGetUnitPortal(req, res) {
 
     let chatLog = [];
     try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+
+    // Confirmed: full parity with what the Property Manager sees —
+    // the tenant sees every activity recorded on their own unit too.
+    let activityLog = [];
+    try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
 
     const unitName = f["Unit Name"] || "";
 
@@ -254,6 +258,7 @@ async function handleGetUnitPortal(req, res) {
       contractFilename: (f["Signed Contract"] || [])[0] ? f["Signed Contract"][0].filename : null,
       assets: unitAssets,
       chatLog,
+      activityLog,
     });
   } catch (err) {
     console.error("handleGetUnitPortal error:", err);
