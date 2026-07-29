@@ -3574,6 +3574,8 @@ async function showWorkOrderDetail(recordId) {
 
     <div id="woDetailProcurement" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
 
+    <div id="woDetailProcurementResponses" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
+
     <div id="woDetailChecklist" style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
       <div style="font-size:12px;color:var(--muted)">Loading…</div>
@@ -3635,6 +3637,7 @@ async function showWorkOrderDetail(recordId) {
   renderWODetailAssetLink(o);
   renderWODetailTechAssignment(o);
   renderWODetailProcurement(o);
+  renderWODetailProcurementResponses(o);
   renderWODetailChecklist(o);
   renderWODetailActivityThread(o);
   renderWODetailChat(o);
@@ -4069,6 +4072,161 @@ function renderWODetailProcurement(o) {
     }
   }
   el.innerHTML = html;
+}
+
+// Vendor Quotes — the actual "compare and choose the lowest bidder"
+// view. Shown whenever a procurement request exists at all (not just
+// while still Requested), so the comparison stays visible as a record
+// even after one's been chosen and fulfilled. Sorted cheapest first by
+// the backend, matching the "same specs, lowest bidder" logic from the
+// original workflow.
+async function renderWODetailProcurementResponses(o) {
+  const el = document.getElementById('woDetailProcurementResponses');
+  if (!el) return;
+  const procStatus = o.procurementStatus || 'None';
+  if (procStatus === 'None') { el.innerHTML = ''; return; }
+
+  const canManage = currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+  const stillOpen = procStatus === 'Requested';
+
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy)">Vendor Quotes</div>
+    ${canManage && stillOpen ? `<button onclick="openAddProcurementResponseModal('${o.id}', '${o.woId}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Vendor Quote</button>` : ''}
+  </div>
+  <div id="procurementResponsesList" style="font-size:12px;color:var(--muted)">Loading…</div>`;
+  el.innerHTML = html;
+
+  try {
+    const resp = await fetch('/api/work-orders?procurementResponses=' + encodeURIComponent(o.woId));
+    const data = await resp.json();
+    const responses = data.responses || [];
+    const listEl = document.getElementById('procurementResponsesList');
+    if (!listEl) return;
+
+    if (responses.length === 0) {
+      listEl.innerHTML = `<div style="font-style:italic">No vendor quotes yet.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = responses.map(r => `
+      <div style="border:1px solid ${r.chosen ? 'var(--green)' : 'var(--border)'};background:${r.chosen ? '#F0FDF4' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}</div>
+            ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">TZS ${Number(r.totalCost).toLocaleString()}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
+            ${r.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${r.vatStatus}</div>` : ''}
+            ${r.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${r.summary}</div>` : ''}
+            ${r.attachmentUrl ? `<a href="${r.attachmentUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">View proforma${r.attachmentFilename ? ' — ' + r.attachmentFilename : ''}</a>` : `<div style="font-size:11px;color:var(--muted);font-style:italic">No file attached yet</div>`}
+          </div>
+          ${canManage && stillOpen && !r.chosen ? `<button onclick="chooseProcurementResponse('${o.id}', '${o.woId}', '${r.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Choose</button>` : ''}
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    const listEl = document.getElementById('procurementResponsesList');
+    if (listEl) listEl.innerHTML = `<div style="color:var(--red)">Could not load vendor quotes: ${err.message}</div>`;
+  }
+}
+
+async function openAddProcurementResponseModal(recordId, woId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'addQuoteOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+
+  let vendorOptions = '';
+  try {
+    const vResp = await fetch('/api/work-orders?vendors=true');
+    const vData = await vResp.json();
+    vendorOptions = (vData.vendors || []).map(v => `<option value="${v.name}">`).join('');
+  } catch { /* datalist just stays empty if this fails — free text still works */ }
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Vendor Quote</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor Name *</label>
+      <input id="aq_vendor" list="aq_vendor_list" placeholder="Pick an existing vendor or type a new one" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <datalist id="aq_vendor_list">${vendorOptions}</datalist>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Proforma Invoice</label>
+      <input id="aq_file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Optional here — can be attached after, but the AI cost/VAT extraction only runs once a file's attached.</div>
+      <div id="aq_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addQuoteOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="aq_submit" onclick="submitAddProcurementResponse('${recordId}', '${woId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Quote</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddProcurementResponse(recordId, woId) {
+  const vendorName = document.getElementById('aq_vendor').value.trim();
+  const file = document.getElementById('aq_file').files[0];
+  const errorBox = document.getElementById('aq_error');
+  const btn = document.getElementById('aq_submit');
+  errorBox.style.display = 'none';
+
+  if (!vendorName) { errorBox.textContent = 'Vendor name is required.'; errorBox.style.display = 'block'; return; }
+  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addProcurementResponse: true, woId, vendorName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add vendor quote');
+
+    if (file) {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const uploadResp = await fetch('/api/work-orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uploadProcurementResponseAttachment: true,
+          responseId: data.responseId,
+          filename: file.name,
+          contentType: file.type || 'application/pdf',
+          fileBase64: base64,
+        }),
+      });
+      const uploadData = await uploadResp.json();
+      if (!uploadResp.ok || !uploadData.success) throw new Error(uploadData.error || 'Quote added, but the file upload failed — try attaching it again.');
+    }
+
+    document.getElementById('addQuoteOverlay')?.remove();
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) renderWODetailProcurementResponses(o);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Add Quote';
+  }
+}
+
+async function chooseProcurementResponse(recordId, woId, responseId) {
+  if (!confirm('Choose this vendor as the winning quote?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chooseProcurementResponse: true, responseId, woId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not choose this quote');
+    const o = lastWorkOrders.find(w => w.id === recordId);
+    if (o) renderWODetailProcurementResponses(o);
+  } catch (err) {
+    alert('Could not choose this quote: ' + err.message);
+  }
 }
 
 async function renderWODetailChecklist(o) {
