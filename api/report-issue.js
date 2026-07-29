@@ -301,7 +301,13 @@ async function handleUnitPortalReportIssue(req, res) {
 
     const directory = getAllStaffDirectory();
     const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-    const recipients = directory.filter(e => e.role === loginRole || e.role === "business_owner" || e.role === "system_admin");
+    // PM sees every tenant-reported issue regardless of category — they
+    // manage the tenant relationship and need awareness across all of
+    // it, even for issues they're not the one actioning. This is about
+    // who's notified, not who's responsible — Assigned Role above still
+    // correctly stays EE/ME for technical issues; PM doesn't do the
+    // electrical or mechanical work, just needs to know it's happening.
+    const recipients = directory.filter(e => e.role === loginRole || e.role === "property_manager" || e.role === "business_owner" || e.role === "system_admin");
     const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
 
     const toList = recipients.map(e => e.email).filter(Boolean);
