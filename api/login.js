@@ -102,18 +102,27 @@ export default async function handler(req, res) {
 }
 
 // Step 1 of the set/reset flow. Deliberately generic in every response
-// — never confirms or denies whether an email is registered, so this
+// — never confirms or denies whether an account is registered, so this
 // can't be used to probe for valid accounts. Covers both "I forgot my
 // password" and "I'm a freshly migrated account with no password yet"
-// with the same link. Email rather than username, since it's what
-// someone locked out can actually still access.
+// with the same link.
+//
+// Accepts EITHER username or email — username takes priority when both
+// are present. Email alone was the original design ("it's what someone
+// locked out can actually still access"), but that breaks down whenever
+// multiple accounts share one email address — exactly the case for
+// Grace's own test accounts (TE/EE/ME/AD/PM/PR/BO/SA), which all point
+// at the same inbox by design. Username uniquely identifies exactly one
+// account no matter how many share an email, so it's the more reliable
+// identifier whenever it's known — email stays supported as a fallback
+// for a real person who genuinely doesn't remember their username.
 async function handleRequestPasswordReset(req, res) {
-  const { email } = req.body || {};
-  const GENERIC = { success: true, message: "If that email is registered, a link to set your password has been sent to it." };
-  if (!email) return res.status(400).json({ error: "Email required" });
+  const { username, email } = req.body || {};
+  const GENERIC = { success: true, message: "If that account is registered, a link to set your password has been sent to it." };
+  if (!username && !email) return res.status(400).json({ error: "Username or email required" });
 
   try {
-    const user = await findUserByEmail(email);
+    const user = username ? await findUserByUsername(username) : await findUserByEmail(email);
     if (!user) {
       return res.status(200).json(GENERIC);
     }
