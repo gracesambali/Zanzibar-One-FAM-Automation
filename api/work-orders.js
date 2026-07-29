@@ -152,12 +152,17 @@ export default async function handler(req, res) {
     // order from being closed until an Engineer+ approves the cost
     // breakdown AND it's marked fulfilled. Rejection sends it back for
     // revision rather than a dead end.
+    // Procurement request — description + quantity only, confirmed.
+    // Whoever requests it genuinely cannot price anything, so there's
+    // nothing to enter beyond what's needed. Goes straight to
+    // Procurement — no engineer approval gate exists anymore; the
+    // engineer's only remaining involvement is specifying this, and
+    // confirming delivery at the very end (confirmDelivery, below).
     if (req.body && req.body.requestProcurement) {
-      const { recordId, lineItems } = req.body;
-      if (!recordId || !Array.isArray(lineItems) || lineItems.length === 0) {
-        return res.status(400).json({ error: "recordId and at least one line item required" });
+      const { recordId, description, quantity, unit } = req.body;
+      if (!recordId || !description || !description.trim() || !quantity) {
+        return res.status(400).json({ error: "recordId, description, and quantity are required" });
       }
-      const total = lineItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -166,6 +171,8 @@ export default async function handler(req, res) {
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
         });
         const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+
+        const spec = { description: description.trim(), quantity, unit: (unit || "").trim() };
 
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
@@ -173,82 +180,38 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             fields: {
               "Procurement Status": "Requested",
-              "Cost Breakdown": JSON.stringify(lineItems),
+              // Reusing the existing Cost Breakdown field for the new,
+              // simpler spec shape — no new Airtable field needed. It
+              // no longer holds pricing, just what's actually needed.
+              "Cost Breakdown": JSON.stringify([spec]),
               "Procurement Requested By": session.u,
               "Procurement Rejection Reason": "",
             },
           }),
         });
         if (!patchResp.ok) throw new Error("Could not save procurement request");
-        await appendActivityLog(recordId, `🛒 Procurement requested — TZS ${total.toLocaleString()} (${lineItems.length} item${lineItems.length !== 1 ? "s" : ""})`, session.u, "procurement_request");
-        await notifyEngineerOfProcurementRequest(recordId, current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", current.fields["Assigned Role"], session.u, total);
-        return res.status(200).json({ success: true, total });
+        await appendActivityLog(recordId, `🛒 Procurement requested — ${spec.description} (${spec.quantity}${spec.unit ? " " + spec.unit : ""})`, session.u, "procurement_request");
+        await notifyProcurementOfRequest(current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", session.u, spec);
+        return res.status(200).json({ success: true });
       } catch (err) {
         console.error("requestProcurement error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
 
-    if (req.body && req.body.approveProcurement) {
-      if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to approve procurement" });
-      const { recordId } = req.body;
-      if (!recordId) return res.status(400).json({ error: "recordId required" });
-      const roleError = await checkRoutedRoleMatch(session, recordId);
-      if (roleError) return res.status(403).json({ error: roleError });
-      try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-
-        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
-        let costBreakdown = [];
-        try { costBreakdown = JSON.parse(current.fields["Cost Breakdown"] || "[]"); } catch { costBreakdown = []; }
-        const total = costBreakdown.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
-
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Procurement Status": "Approved", "Procurement Approved By": session.u } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not approve procurement");
-        await appendActivityLog(recordId, `✅ Procurement approved by ${session.u}`, session.u, "system");
-        await notifyProcurementOfApproval(current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", total, session.u);
-        return res.status(200).json({ success: true });
-      } catch (err) {
-        console.error("approveProcurement error:", err);
-        return res.status(500).json({ error: err.message });
-      }
-    }
-
-    if (req.body && req.body.rejectProcurement) {
-      if (!can(session.r, "approveProcurement")) return res.status(403).json({ error: "Not permitted to reject procurement" });
-      const { recordId, reason } = req.body;
-      if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
-      const roleError = await checkRoutedRoleMatch(session, recordId);
-      if (roleError) return res.status(403).json({ error: roleError });
-      try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Procurement Status": "Rejected", "Procurement Rejection Reason": reason } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not reject procurement");
-        await appendActivityLog(recordId, `❌ Procurement rejected by ${session.u} — ${reason}`, session.u, "system");
-        return res.status(200).json({ success: true });
-      } catch (err) {
-        console.error("rejectProcurement error:", err);
-        return res.status(500).json({ error: err.message });
-      }
-    }
-
+    // Procurement fulfilling a request — enters the final cost
+    // themselves now, since the requester never priced anything.
+    // Interim: once vendor quotes (Procurement Responses) are wired
+    // in, this can pull the Chosen quote's AI-extracted cost
+    // automatically instead of a manual number — not built yet, so
+    // this asks for it directly rather than assuming data that doesn't
+    // exist.
     if (req.body && req.body.fulfillProcurement) {
       if (!can(session.r, "fulfillProcurement")) return res.status(403).json({ error: "Not permitted to fulfill procurement" });
-      const { recordId } = req.body;
-      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      const { recordId, finalCost } = req.body;
+      if (!recordId || finalCost === undefined || finalCost === null || finalCost === "") {
+        return res.status(400).json({ error: "recordId and finalCost are required" });
+      }
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
@@ -257,25 +220,49 @@ export default async function handler(req, res) {
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
         });
         const current = currentResp.ok ? await currentResp.json() : { fields: {} };
-        let costBreakdown = [];
-        try { costBreakdown = JSON.parse(current.fields["Cost Breakdown"] || "[]"); } catch { costBreakdown = []; }
-        const total = costBreakdown.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const total = Number(finalCost) || 0;
 
-        // Cost is recorded here, the moment procurement is actually
-        // fulfilled — not left blank until someone closes the work
-        // order later.
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() } }),
         });
         if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
-        await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, routed role notified`, session.u, "system");
-        await notifyRoutedRoleOfFulfillment(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
+        await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, delivery note sent to routed role`, session.u, "system");
+        await notifyRoutedRoleOfDeliveryArrival(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
 
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("fulfillProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Delivery confirmation — the new replacement for the old approval
+    // gate, but at the END of the flow instead of the beginning, and
+    // it confirms receipt rather than authorizing spend. Not a hard
+    // block on the technician completing the job — same "visible,
+    // logged, not a wall" principle used elsewhere in this system.
+    // Reuses the existing "Procurement Approved By" field to record who
+    // confirmed — same field, repurposed meaning, no new Airtable field.
+    if (req.body && req.body.confirmDelivery) {
+      const { recordId } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      const roleError = await checkRoutedRoleMatch(session, recordId);
+      if (roleError) return res.status(403).json({ error: roleError });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Procurement Status": "Delivered", "Procurement Approved By": session.u } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not confirm delivery");
+        await appendActivityLog(recordId, `📬 Delivery confirmed by ${session.u}`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("confirmDelivery error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -1258,10 +1245,12 @@ async function notifyAssignerOfDecline(assignerContact, technicianUsername, reas
   }
 }
 
-async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, assignedRole, requestedBy, total) {
-  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+// Fires the moment a request is submitted — goes straight to
+// Procurement now, not the engineer. No approval gate exists anymore;
+// Procurement can act on this immediately.
+async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
   const directory = getAllStaffDirectory();
-  const toList = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
+  const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
   if (toList.length === 0) return;
 
   const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
@@ -1272,7 +1261,7 @@ async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, ass
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} requested by ${requestedBy}. Your approval is needed before this can proceed.</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">Requested by ${requestedBy}: <strong>${spec.description}</strong> — quantity ${spec.quantity}${spec.unit ? " " + spec.unit : ""}.</p>
       </div>
     </div>`;
 
@@ -1282,49 +1271,18 @@ async function notifyEngineerOfProcurementRequest(recordId, woId, assetName, ass
     body: JSON.stringify({
       from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `Procurement approval needed — ${assetName} (${woId})`,
+      subject: `New procurement request — ${assetName} (${woId})`,
       html,
     }),
-  }).catch(err => console.error("notifyEngineerOfProcurementRequest error:", err));
+  }).catch(err => console.error("notifyProcurementOfRequest error:", err));
 }
 
-// Fires the moment an Engineer approves — emails whoever holds the
-// Procurement role, since they're the ones who actually pay and
-// fulfill it next, not just an activity log entry nobody's watching.
-async function notifyProcurementOfApproval(woId, assetName, total, approvedBy) {
-  const directory = getAllStaffDirectory();
-  const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
-  if (toList.length === 0) return;
-
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-      <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Approved — Payment Needed</div>
-        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
-      </div>
-      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} approved by ${approvedBy}. Ready for payment.</p>
-      </div>
-    </div>`;
-
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
-      to: toList,
-      subject: `Ready for payment — ${assetName} (${woId})`,
-      html,
-    }),
-  }).catch(err => console.error("notifyProcurementOfApproval error:", err));
-}
-
-// Fires the moment procurement is fulfilled — emails the routed role
-// (Engineer, Admin, or Property Manager — whoever owns this job), not
-// the technician directly. The routed role is the one who then tells
-// the technician to proceed; the system doesn't SMS the technician.
-async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, total) {
+// Fires the moment Procurement fulfills — emails the routed role
+// (Engineer, Admin, or Property Manager — whoever owns this job),
+// asking them to confirm the delivery arrived correctly. This is the
+// new replacement for the old approval-of-spend step — it confirms
+// receipt, it doesn't authorize the purchase (that already happened).
+async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, total) {
   const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   const directory = getAllStaffDirectory();
   const toList = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin").map(e => e.email).filter(Boolean);
@@ -1334,11 +1292,11 @@ async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, tota
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Payment Processed</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Delivery Note — Please Confirm</div>
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} payment processed. Let the technician know they can proceed.</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Please confirm the delivery in the app once it's arrived, so the technician can proceed.</p>
       </div>
     </div>`;
 
@@ -1348,10 +1306,10 @@ async function notifyRoutedRoleOfFulfillment(assignedRole, assetName, woId, tota
     body: JSON.stringify({
       from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `Payment processed — technician can proceed: ${assetName} (${woId})`,
+      subject: `Confirm delivery — ${assetName} (${woId})`,
       html,
     }),
-  }).catch(err => console.error("notifyRoutedRoleOfFulfillment error:", err));
+  }).catch(err => console.error("notifyRoutedRoleOfDeliveryArrival error:", err));
 }
 
 async function sendSatisfactionRequest(contact, recordId, assetName) {
