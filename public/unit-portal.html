@@ -19,7 +19,10 @@
   .identify-card p { font-size:13px; color:#6B7280; margin-bottom:18px; line-height:1.5; }
   .identify-card input { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; margin-bottom:12px; }
   .identify-card button { width:100%; padding:12px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
-  .page-wrap { max-width:600px; width:100%; margin:0 auto; padding:16px; }
+  .page-wrap { max-width:920px; width:100%; margin:0 auto; padding:16px; display:flex; gap:16px; align-items:flex-start; }
+  .main-col { flex:1; min-width:0; }
+  .side-col { width:340px; flex-shrink:0; position:sticky; top:16px; }
+  @media (max-width:760px) { .page-wrap { flex-direction:column; } .side-col { width:100%; position:static; } }
   .panel { background:#fff; border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
   .panel-title { font-size:12px; font-weight:700; color:#1A3566; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
   .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; }
@@ -27,8 +30,10 @@
   .detail-item .value { font-size:13.5px; color:#1A1A2E; font-weight:600; margin-top:2px; }
   .badge { display:inline-block; font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:10px; }
   .asset-chip { display:inline-block; font-size:11.5px; padding:4px 10px; border-radius:10px; background:#F7F8FA; color:#1A1A2E; margin:0 6px 6px 0; }
+  .activity-item { font-size:12.5px; color:#1A1A2E; padding-left:10px; border-left:2px solid #E2E6ED; margin-bottom:10px; line-height:1.5; }
+  .activity-item .meta { color:#9CA3AF; font-size:11px; display:block; margin-bottom:2px; }
   .chat-panel { display:flex; flex-direction:column; }
-  .messages { max-height:340px; overflow-y:auto; padding:4px 0; display:flex; flex-direction:column; gap:10px; }
+  .messages { max-height:420px; overflow-y:auto; padding:4px 0; display:flex; flex-direction:column; gap:10px; }
   .msg { max-width:78%; padding:10px 14px; border-radius:14px; font-size:13.5px; line-height:1.4; }
   .msg.tenant { align-self:flex-end; background:#1A3566; color:#fff; border-bottom-right-radius:4px; }
   .msg.pm { align-self:flex-start; background:#F7F8FA; color:#1A1A2E; border:1px solid #E2E6ED; border-bottom-left-radius:4px; }
@@ -68,31 +73,40 @@
 
   <div id="pageWrap" class="page-wrap" style="display:none">
 
-    <div class="panel">
-      <div class="panel-title">Unit Details</div>
-      <div class="detail-grid">
-        <div class="detail-item"><div class="label">Type</div><div class="value" id="detailType">—</div></div>
-        <div class="detail-item"><div class="label">Lease Status</div><div class="value" id="detailLease">—</div></div>
-        <div class="detail-item"><div class="label">Tenant</div><div class="value" id="detailTenantName">—</div></div>
-        <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
-        <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
-        <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+    <div class="main-col">
+      <div class="panel">
+        <div class="panel-title">Unit Details</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="label">Type</div><div class="value" id="detailType">—</div></div>
+          <div class="detail-item"><div class="label">Lease Status</div><div class="value" id="detailLease">—</div></div>
+          <div class="detail-item"><div class="label">Tenant</div><div class="value" id="detailTenantName">—</div></div>
+          <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
+          <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
+          <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Assets Covered</div>
+        <div id="assetsList"><div class="empty-state" style="padding:0">Loading…</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Activity</div>
+        <div id="activityList"><div class="empty-state" style="padding:0">Loading…</div></div>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-title">Assets Covered</div>
-      <div id="assetsList"><div class="empty-state" style="padding:0">Loading…</div></div>
-    </div>
-
-    <div class="panel chat-panel">
-      <div class="panel-title">Chat</div>
-      <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:8px">⚠ Report an Issue</button>
-      <div style="font-size:11.5px;color:#991B1B;text-align:center;margin-bottom:8px;line-height:1.4">Breakdowns and complaints are not handled in chat below — use "Report an Issue" above so the right team is actually notified.</div>
-      <div id="messages" class="messages"></div>
-      <div class="input-row">
-        <input id="messageInput" placeholder="General questions only — use Report an Issue for breakdowns" onkeydown="if(event.key==='Enter')sendMessage()">
-        <button id="sendBtn" onclick="sendMessage()">Send</button>
+    <div class="side-col">
+      <div class="panel chat-panel">
+        <div class="panel-title">Chat</div>
+        <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:8px">⚠ Report an Issue</button>
+        <div style="font-size:11.5px;color:#991B1B;text-align:center;margin-bottom:8px;line-height:1.4">Breakdowns and complaints are not handled in chat below — use "Report an Issue" above so the right team is actually notified.</div>
+        <div id="messages" class="messages"></div>
+        <div class="input-row">
+          <input id="messageInput" placeholder="General questions only — use Report an Issue for breakdowns" onkeydown="if(event.key==='Enter')sendMessage()">
+          <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
       </div>
     </div>
 
@@ -181,6 +195,11 @@
         ? assets.map(a => `<span class="asset-chip">${escapeHtml(a.id)} — ${escapeHtml(a.name)}</span>`).join('')
         : `<div class="empty-state" style="padding:0">No assets assigned to this unit yet.</div>`;
 
+      const activity = data.activityLog || [];
+      document.getElementById('activityList').innerHTML = activity.length > 0
+        ? activity.slice().reverse().map(e => `<div class="activity-item"><span class="meta">${new Date(e.at).toLocaleString()} — ${escapeHtml(e.by || '')}</span>${escapeHtml(e.text || '')}</div>`).join('')
+        : `<div class="empty-state" style="padding:0">Nothing recorded yet.</div>`;
+
       renderMessages(data.chatLog || []);
       document.getElementById('loginCard').style.display = 'none';
       document.getElementById('pageWrap').style.display = 'block';
@@ -227,7 +246,13 @@
         body: JSON.stringify({ unitPortalLogin: true, unitId, phone: tenantPhone }),
       });
       const data = await resp.json();
-      if (resp.ok) renderMessages(data.chatLog || []);
+      if (resp.ok) {
+        renderMessages(data.chatLog || []);
+        const activity = data.activityLog || [];
+        document.getElementById('activityList').innerHTML = activity.length > 0
+          ? activity.slice().reverse().map(e => `<div class="activity-item"><span class="meta">${new Date(e.at).toLocaleString()} — ${escapeHtml(e.by || '')}</span>${escapeHtml(e.text || '')}</div>`).join('')
+          : `<div class="empty-state" style="padding:0">Nothing recorded yet.</div>`;
+      }
     } catch { /* quiet retry next interval */ }
   }
 
