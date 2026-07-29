@@ -103,7 +103,10 @@
         <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:8px">⚠ Report an Issue</button>
         <div style="font-size:11.5px;color:#991B1B;text-align:center;margin-bottom:8px;line-height:1.4">Breakdowns and complaints are not handled in chat below — use "Report an Issue" above so the right team is actually notified.</div>
         <div id="messages" class="messages"></div>
+        <div id="chatAttachPreview" style="display:none;font-size:11px;color:#1A3566;background:#F7F8FA;padding:5px 10px;border-radius:8px;margin-top:8px"></div>
         <div class="input-row">
+          <input type="file" id="chatFile" accept="image/*,.pdf,.doc,.docx" style="display:none" onchange="onChatFileSelected()">
+          <button onclick="document.getElementById('chatFile').click()" title="Attach a file" style="flex-shrink:0;background:#fff;border:1px solid #E2E6ED;color:#1A3566;border-radius:20px;padding:11px 14px">📎</button>
           <input id="messageInput" placeholder="General questions only — use Report an Issue for breakdowns" onkeydown="if(event.key==='Enter')sendMessage()">
           <button id="sendBtn" onclick="sendMessage()">Send</button>
         </div>
@@ -265,9 +268,19 @@
     el.innerHTML = chatLog.map(m => `
       <div class="msg ${m.from === 'tenant' ? 'tenant' : 'pm'}">
         <div class="meta">${m.senderName || (m.from === 'pm' ? 'Property Manager' : '')} · ${new Date(m.at).toLocaleString()}</div>
-        ${escapeHtml(m.message)}
+        ${escapeHtml(m.message || '')}
+        ${renderAttachment(m)}
       </div>`).join('');
     el.scrollTop = el.scrollHeight;
+  }
+
+  function renderAttachment(m) {
+    if (!m.attachmentUrl) return '';
+    const isImage = (m.attachmentType || '').startsWith('image/');
+    if (isImage) {
+      return `<a href="${m.attachmentUrl}" target="_blank" rel="noopener"><img src="${m.attachmentUrl}" style="max-width:100%;border-radius:8px;margin-top:6px;display:block"></a>`;
+    }
+    return `<a href="${m.attachmentUrl}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;background:rgba(0,0,0,0.08);border-radius:8px;font-size:11.5px;color:inherit;text-decoration:none">📄 ${escapeHtml(m.attachmentFilename || 'Download file')}</a>`;
   }
 
   function escapeHtml(s) {
@@ -276,21 +289,49 @@
     return d.innerHTML;
   }
 
+  let chatPendingFile = null;
+
+  function onChatFileSelected() {
+    const fileInput = document.getElementById('chatFile');
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { alert("File is larger than 5MB — the direct upload limit."); fileInput.value = ''; return; }
+    chatPendingFile = file;
+    const preview = document.getElementById('chatAttachPreview');
+    preview.textContent = `📎 ${file.name} — ready to send`;
+    preview.style.display = 'block';
+  }
+
   async function sendMessage() {
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
-    if (!message) return;
+    if (!message && !chatPendingFile) return;
     const btn = document.getElementById('sendBtn');
     btn.disabled = true;
     try {
+      const body = { unitPortalMessage: true, unitId, senderName, message, phone: tenantPhone };
+      if (chatPendingFile) {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(chatPendingFile);
+        });
+        body.attachmentBase64 = base64;
+        body.attachmentFilename = chatPendingFile.name;
+        body.attachmentContentType = chatPendingFile.type || 'application/octet-stream';
+      }
       const resp = await fetch('/api/report-issue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ unitPortalMessage: true, unitId, senderName, message, phone: tenantPhone }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send message');
       input.value = '';
+      chatPendingFile = null;
+      document.getElementById('chatAttachPreview').style.display = 'none';
+      document.getElementById('chatFile').value = '';
       renderMessages(data.chatLog || []);
     } catch (err) {
       alert('Could not send: ' + err.message);
