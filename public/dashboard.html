@@ -661,6 +661,7 @@ function rerenderActiveTab() {
   if (tab === 'workorders') renderWorkOrders();
   else if (tab === 'dashboard') renderDashboard();
   else if (tab === 'assets') renderAssets();
+  else if (tab === 'units') renderUnits();
 }
 
 // Changing Facility resets Building back to "all buildings within that
@@ -2077,17 +2078,109 @@ async function renderUnits() {
                 : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:3px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
             </div>
           </div>
-          <div style="font-size:12px;color:var(--navy);font-weight:600">${unitAssets.length} asset${unitAssets.length !== 1 ? 's' : ''}</div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:12px;color:var(--navy);font-weight:600;margin-bottom:6px">${unitAssets.length} asset${unitAssets.length !== 1 ? 's' : ''}</div>
+            <button onclick="openManageUnitAssetsModal('${u.id}', '${u.name}', '${u.building}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Assets</button>
+          </div>
         </div>
         ${unitAssets.length > 0 ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px">
           ${unitAssets.map(a => `<span style="font-size:11px;padding:3px 9px;border-radius:10px;background:#F7F8FA;color:var(--text)">${a.id} — ${a.name}</span>`).join('')}
         </div>` : ''}
+        ${(u.activityLog && u.activityLog.length > 0) ? `<details style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <summary style="font-size:11.5px;font-weight:600;color:var(--navy);cursor:pointer">Activity (${u.activityLog.length})</summary>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+            ${u.activityLog.slice().reverse().map(e => `<div style="font-size:11.5px;color:var(--text);padding-left:10px;border-left:2px solid var(--border)">
+              <span style="color:var(--muted)">${new Date(e.at).toLocaleString()} — ${e.by}</span><br>${e.text}
+            </div>`).join('')}
+          </div>
+        </details>` : ''}
       </div>`;
     }).join('') + `</div>`;
 
     container.innerHTML = html;
   } catch (err) {
     container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load units: ${err.message}</div>`;
+  }
+}
+
+function openManageUnitAssetsModal(unitId, unitName, building) {
+  const overlay = document.createElement('div');
+  overlay.id = 'manageUnitAssetsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+
+  // Every asset in this unit's building — whether already assigned to
+  // this unit, unassigned entirely, or (shown but flagged) assigned to
+  // a different unit, since picking it here would move it.
+  const buildingAssets = assets.filter(a => a.building === building);
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Manage Assets — ${unitName}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Check every asset that belongs to this unit. Assets already in a different unit are flagged — checking them moves them here.</div>
+      <div id="mua_list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+        ${buildingAssets.length === 0 ? `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No assets tagged to ${building} yet.</div>` : buildingAssets.map(a => `
+          <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer">
+            <input type="checkbox" class="mua-check" value="${a.recordId}" ${a.unit === unitName ? 'checked' : ''} style="flex-shrink:0">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12.5px;font-weight:600;color:var(--text)">${a.id} — ${a.name}</div>
+              ${a.unit && a.unit !== unitName ? `<div style="font-size:10.5px;color:#92400E">Currently in: ${a.unit}</div>` : ''}
+            </div>
+          </label>`).join('')}
+      </div>
+      <div id="mua_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('manageUnitAssetsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="mua_submit" onclick="submitManageUnitAssets('${unitId}', '${unitName}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitManageUnitAssets(unitId, unitName) {
+  const btn = document.getElementById('mua_submit');
+  const errorBox = document.getElementById('mua_error');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  // Only touch assets whose checked-state actually needs to change —
+  // no need to re-write ones already correctly assigned or already
+  // correctly unassigned.
+  const checkboxes = [...document.querySelectorAll('.mua-check')];
+  const toAssign = checkboxes.filter(c => c.checked).map(c => c.value);
+  const toClear = checkboxes.filter(c => !c.checked).map(c => c.value)
+    .filter(recordId => { const a = assets.find(x => x.recordId === recordId); return a && a.unit === unitName; });
+
+  try {
+    for (const recordId of toAssign) {
+      const a = assets.find(x => x.recordId === recordId);
+      if (a && a.unit === unitName) continue; // already correct, skip
+      const assetLabel = a ? `${a.id} — ${a.name}` : recordId;
+      const resp = await fetch('/api/work-orders', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignAssetToUnit: true, assetRecordId: recordId, unitName, unitId, assetLabel }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update an asset');
+      if (a) a.unit = unitName;
+    }
+    for (const recordId of toClear) {
+      const a0 = assets.find(x => x.recordId === recordId);
+      const assetLabel = a0 ? `${a0.id} — ${a0.name}` : recordId;
+      const resp = await fetch('/api/work-orders', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignAssetToUnit: true, assetRecordId: recordId, unitName: '', unitId, assetLabel }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update an asset');
+      const a = assets.find(x => x.recordId === recordId);
+      if (a) a.unit = '';
+    }
+    document.getElementById('manageUnitAssetsOverlay')?.remove();
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
   }
 }
 
@@ -2253,7 +2346,7 @@ async function openAssignUnitModal(assetRecordId, building) {
       return;
     }
     listEl.innerHTML = matches.map(u => `
-      <button onclick="submitAssignUnit('${assetRecordId}', '${u.name}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer">
+      <button onclick="submitAssignUnit('${assetRecordId}', '${u.name}', '${u.id}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer">
         <div style="font-size:13px;font-weight:600;color:var(--text)">${u.name}</div>
         <div style="font-size:11px;color:var(--muted)">${u.unitType || ''}${u.tenantName ? ' — ' + u.tenantName : ''}</div>
       </button>`).join('');
@@ -2263,16 +2356,17 @@ async function openAssignUnitModal(assetRecordId, building) {
   }
 }
 
-async function submitAssignUnit(assetRecordId, unitName) {
+async function submitAssignUnit(assetRecordId, unitName, unitId) {
   try {
+    const asset = assets.find(a => a.recordId === assetRecordId);
+    const assetLabel = asset ? `${asset.id} — ${asset.name}` : assetRecordId;
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assignAssetToUnit: true, assetRecordId, unitName }),
+      body: JSON.stringify({ assignAssetToUnit: true, assetRecordId, unitName, unitId, assetLabel }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not assign unit');
-    const asset = assets.find(a => a.recordId === assetRecordId);
     if (asset) asset.unit = unitName;
     document.getElementById('assignUnitOverlay')?.remove();
     const idx = assets.findIndex(a => a.recordId === assetRecordId);
