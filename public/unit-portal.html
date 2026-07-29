@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant Portal — GVC Facility Asset Manager</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; display:flex; flex-direction:column; }
+  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; gap:12px; flex-shrink:0; }
+  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  .header h1 { font-size:15px; font-weight:700; }
+  .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
+  .identify-card { max-width:400px; margin:60px auto; background:#fff; border-radius:16px; padding:28px; box-shadow:0 4px 24px rgba(0,0,0,.08); text-align:center; }
+  .identify-card h2 { font-size:16px; color:#1A3566; margin-bottom:8px; }
+  .identify-card p { font-size:13px; color:#6B7280; margin-bottom:18px; line-height:1.5; }
+  .identify-card input { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; margin-bottom:12px; }
+  .identify-card button { width:100%; padding:12px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
+  .chat-wrap { flex:1; display:flex; flex-direction:column; max-width:600px; width:100%; margin:0 auto; padding:0 16px; overflow:hidden; }
+  .messages { flex:1; overflow-y:auto; padding:20px 0; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:78%; padding:10px 14px; border-radius:14px; font-size:13.5px; line-height:1.4; }
+  .msg.tenant { align-self:flex-end; background:#1A3566; color:#fff; border-bottom-right-radius:4px; }
+  .msg.pm { align-self:flex-start; background:#fff; color:#1A1A2E; border:1px solid #E2E6ED; border-bottom-left-radius:4px; }
+  .msg .meta { font-size:10.5px; opacity:0.7; margin-bottom:3px; }
+  .empty-state { text-align:center; color:#9CA3AF; font-size:13px; margin-top:40px; }
+  .input-row { display:flex; gap:8px; padding:14px 0; border-top:1px solid #E2E6ED; flex-shrink:0; }
+  .input-row input { flex:1; padding:11px 14px; border:1px solid #E2E6ED; border-radius:20px; font-size:14px; }
+  .input-row button { padding:11px 20px; border:none; border-radius:20px; background:#1A3566; color:#fff; font-size:13.5px; font-weight:600; cursor:pointer; }
+  .input-row button:disabled { opacity:.6; cursor:wait; }
+  .error-banner { max-width:400px; margin:60px auto; text-align:center; color:#991B1B; font-size:14px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo"><img src="/logo.png" alt="GVC"></div>
+    <div>
+      <h1 id="unitHeaderName">Tenant Portal</h1>
+      <div class="sub" id="unitHeaderSub">Loading…</div>
+    </div>
+  </div>
+
+  <div id="loginCard" class="identify-card" style="display:none">
+    <h2>Sign in to your unit</h2>
+    <p>Your name and the password given to you by your Property Manager.</p>
+    <input id="senderNameInput" placeholder="Your name">
+    <input id="passwordInput" type="password" placeholder="Password">
+    <button id="loginBtn" onclick="login()">Sign In</button>
+    <div id="loginError" style="color:#991B1B;font-size:12.5px;margin-top:10px;display:none"></div>
+  </div>
+
+  <div id="chatWrap" class="chat-wrap" style="display:none">
+    <div id="messages" class="messages"></div>
+    <div class="input-row">
+      <input id="messageInput" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendMessage()">
+      <button id="sendBtn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <div id="errorBanner" class="error-banner" style="display:none"></div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const unitId = params.get('unit');
+  let senderName = sessionStorage.getItem('tenantPortalName') || '';
+  let portalPassword = sessionStorage.getItem('tenantPortalPassword') || '';
+  let pollTimer = null;
+
+  if (!unitId) {
+    showError('This link is missing its unit reference — please use the exact link you were given.');
+  } else if (senderName && portalPassword) {
+    attemptLogin(); // already signed in this session — verify silently and go straight to chat
+  } else {
+    document.getElementById('unitHeaderSub').textContent = 'Sign in required';
+    document.getElementById('loginCard').style.display = 'block';
+  }
+
+  async function login() {
+    const name = document.getElementById('senderNameInput').value.trim();
+    const pw = document.getElementById('passwordInput').value;
+    const errBox = document.getElementById('loginError');
+    errBox.style.display = 'none';
+    if (!name || !pw) { errBox.textContent = 'Enter your name and password.'; errBox.style.display = 'block'; return; }
+    senderName = name;
+    portalPassword = pw;
+    await attemptLogin();
+  }
+
+  async function attemptLogin() {
+    const btn = document.getElementById('loginBtn');
+    const errBox = document.getElementById('loginError');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    try {
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unitPortalLogin: true, unitId, password: portalPassword }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Could not sign in.');
+
+      sessionStorage.setItem('tenantPortalName', senderName);
+      sessionStorage.setItem('tenantPortalPassword', portalPassword);
+
+      document.getElementById('unitHeaderName').textContent = data.unitName || 'Tenant Portal';
+      document.getElementById('unitHeaderSub').textContent = [data.building, data.unitType].filter(Boolean).join(' · ');
+      document.title = (data.unitName || 'Tenant Portal') + ' — GVC Facility Asset Manager';
+
+      renderMessages(data.chatLog || []);
+      document.getElementById('loginCard').style.display = 'none';
+      document.getElementById('chatWrap').style.display = 'flex';
+
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(refreshMessages, 45000);
+    } catch (err) {
+      // Wrong password on a remembered session — clear it and force a
+      // real re-entry rather than looping silently.
+      sessionStorage.removeItem('tenantPortalPassword');
+      portalPassword = '';
+      if (document.getElementById('loginCard').style.display === 'none') {
+        document.getElementById('chatWrap').style.display = 'none';
+        document.getElementById('loginCard').style.display = 'block';
+      }
+      errBox.textContent = err.message;
+      errBox.style.display = 'block';
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+    }
+  }
+
+  async function refreshMessages() {
+    try {
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unitPortalLogin: true, unitId, password: portalPassword }),
+      });
+      const data = await resp.json();
+      if (resp.ok) renderMessages(data.chatLog || []);
+    } catch { /* quiet retry next interval */ }
+  }
+
+  function renderMessages(chatLog) {
+    const el = document.getElementById('messages');
+    if (chatLog.length === 0) {
+      el.innerHTML = '<div class="empty-state">No messages yet — say hello.</div>';
+      return;
+    }
+    el.innerHTML = chatLog.map(m => `
+      <div class="msg ${m.from === 'tenant' ? 'tenant' : 'pm'}">
+        <div class="meta">${m.senderName || (m.from === 'pm' ? 'Property Manager' : '')} · ${new Date(m.at).toLocaleString()}</div>
+        ${escapeHtml(m.message)}
+      </div>`).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('messageInput');
+    const message = input.value.trim();
+    if (!message) return;
+    const btn = document.getElementById('sendBtn');
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unitPortalMessage: true, unitId, senderName, message, password: portalPassword }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send message');
+      input.value = '';
+      renderMessages(data.chatLog || []);
+    } catch (err) {
+      alert('Could not send: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function showError(msg) {
+    document.getElementById('errorBanner').textContent = msg;
+    document.getElementById('errorBanner').style.display = 'block';
+    document.getElementById('unitHeaderSub').textContent = 'Unavailable';
+  }
+</script>
+</body>
+</html>

@@ -2066,11 +2066,16 @@ async function showUnitDetail(unitId) {
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Tenant</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Tenant</div>
+        <button onclick="openEditUnitModal('${u.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
+      </div>
       <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <div class="detail-field"><div class="detail-field-label">Name</div><div class="detail-field-value">${u.tenantName || '—'}</div></div>
         <div class="detail-field"><div class="detail-field-label">Email</div><div class="detail-field-value">${u.tenantEmail || '—'}</div></div>
         <div class="detail-field"><div class="detail-field-label">Phone</div><div class="detail-field-value">${u.tenantPhone || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Lease Status</div><div class="detail-field-value">${u.leaseStatus || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Portal Password</div><div class="detail-field-value">${u.portalPassword || '— not set, tenant cannot log in yet —'}</div></div>
       </div>
     </div>
 
@@ -2093,14 +2098,10 @@ async function showUnitDetail(unitId) {
 
     <div style="padding:20px 24px">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
-      <div style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;flex-direction:column;gap:8px">
         ${(u.activityLog && u.activityLog.length > 0) ? u.activityLog.slice().reverse().map(e => `<div style="font-size:12.5px;color:var(--text);padding-left:10px;border-left:2px solid var(--border)">
           <span style="color:var(--muted)">${new Date(e.at).toLocaleString()} — ${e.by}</span><br>${e.text}
         </div>`).join('') : `<div style="font-size:12.5px;color:var(--muted);font-style:italic">Nothing recorded yet.</div>`}
-      </div>
-      <div style="display:flex;gap:8px">
-        <input id="unitDetailActivityInput" placeholder="Add a note — a call, a complaint, anything worth keeping on record…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitUnitDetailNote('${u.id}')">
-        <button onclick="submitUnitDetailNote('${u.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Add</button>
       </div>
     </div>
   </div>
@@ -2121,7 +2122,7 @@ async function showUnitDetail(unitId) {
           </div>`).join('') : `<div style="font-size:12px;color:var(--muted);text-align:center;padding:16px">No messages yet.</div>`}
       </div>
       <div style="display:flex;gap:8px">
-        <input id="unitDetailChatInput" placeholder="Reply as staff…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitUnitDetailChat('${u.id}')">
+        <input id="unitDetailChatInput" placeholder="Type a message…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitUnitDetailChat('${u.id}')">
         <button onclick="submitUnitDetailChat('${u.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
       </div>
     </div>
@@ -2130,23 +2131,6 @@ async function showUnitDetail(unitId) {
   </div>`;
 
   container.innerHTML = html;
-}
-
-async function submitUnitDetailNote(unitId) {
-  const input = document.getElementById('unitDetailActivityInput');
-  const note = input.value.trim();
-  if (!note) return;
-  try {
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addUnitNote: true, unitId, note }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add note');
-    showUnitDetail(unitId);
-  } catch (err) {
-    alert('Could not add note: ' + err.message);
-  }
 }
 
 async function submitUnitDetailChat(unitId) {
@@ -2299,6 +2283,65 @@ async function submitManageUnitAssets(unitId, unitName) {
     }
     document.getElementById('manageUnitAssetsOverlay')?.remove();
     renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+function openEditUnitModal(unitId) {
+  const u = lastUnits.find(x => x.id === unitId);
+  if (!u) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'editUnitOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Tenant — ${u.name}</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Name</label>
+      <input id="eu_tenant" value="${u.tenantName || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Email</label>
+      <input id="eu_email" type="email" value="${u.tenantEmail || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Phone</label>
+      <input id="eu_phone" value="${u.tenantPhone || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Lease Status</label>
+      <select id="eu_lease" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Occupied" ${u.leaseStatus==='Occupied'?'selected':''}>Occupied</option>
+        <option value="Vacant" ${u.leaseStatus==='Vacant'?'selected':''}>Vacant</option>
+        <option value="Notice Given" ${u.leaseStatus==='Notice Given'?'selected':''}>Notice Given</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Portal Password</label>
+      <input id="eu_password" value="${u.portalPassword || ''}" placeholder="Set a password before sharing the portal link" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Required for the tenant to actually get into their portal — the link alone isn't enough access.</div>
+      <div id="eu_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editUnitOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="eu_submit" onclick="submitEditUnit('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditUnit(unitId) {
+  const tenantName = document.getElementById('eu_tenant').value.trim();
+  const tenantEmail = document.getElementById('eu_email').value.trim();
+  const tenantPhone = document.getElementById('eu_phone').value.trim();
+  const leaseStatus = document.getElementById('eu_lease').value;
+  const portalPassword = document.getElementById('eu_password').value.trim();
+  const errorBox = document.getElementById('eu_error');
+  const btn = document.getElementById('eu_submit');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editUnit: true, unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, portalPassword }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    document.getElementById('editUnitOverlay')?.remove();
+    showUnitDetail(unitId);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
