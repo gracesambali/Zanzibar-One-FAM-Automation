@@ -27,6 +27,13 @@ export default async function handler(req, res) {
     return handleEditLog(req, res);
   }
 
+  // Facility -> Building hierarchy, feeding the single global building
+  // switcher in the nav. One selection here scopes everything — the
+  // whole point is that it's never a per-tab filter.
+  if (req.query.facilities === "true") {
+    return handleGetFacilities(req, res);
+  }
+
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
     return handleGetFloorPlan(req, res);
@@ -154,6 +161,7 @@ function normalizeRecord(record) {
     system: f["System"] || "",
     floor: f["Floor/Level"] || "",
     room: f["Room/Zone"] || "",
+    building: f["Building"] || "",
     manufacturer: f["Manufacturer"] || "",
     model: f["Model"] || "",
     installDate: f["Install Date"] || "",
@@ -207,6 +215,28 @@ function normalizeRecord(record) {
 // A QR sticker is physically stuck on equipment where anyone can scan it,
 // so financial data never belongs here regardless of what's shown
 // internally in the dashboard.
+async function handleGetFacilities(req, res) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_FACILITIES_TABLE || "Facilities");
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error("Could not load facilities");
+    const data = await resp.json();
+
+    const facilities = (data.records || []).map(r => ({
+      name: r.fields["Name"] || "",
+      buildings: (r.fields["Building"] || []).map(b => (typeof b === "string" ? b : b.name || "")),
+    })).filter(f => f.name);
+
+    return res.status(200).json({ facilities });
+  } catch (err) {
+    console.error("handleGetFacilities error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handlePublicQuickview(req, res) {
   const assetId = req.query.id;
   try {
