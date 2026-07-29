@@ -315,6 +315,9 @@ button { font-family: inherit; cursor: pointer; }
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:16px">
+    <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
+      <option value="__all__">All Buildings</option>
+    </select>
     <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
     <div id="loggedInUserBadge" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px 4px 4px">
       <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:#1A3566;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden"></div>
@@ -631,6 +634,46 @@ let currentStatusFilter = "All";
 let currentSortBy = "default";
 let currentSearch = "";
 
+// Global, persistent Building filter — chosen once in the header,
+// carried across every tab until changed, same idea as the logged-in
+// session itself. "__all__" (the default) means portfolio-wide, no
+// filtering. Confirmed: full switcher for everyone, no role
+// restrictions on who gets to use it.
+let currentBuildingFilter = "__all__";
+
+function setBuildingFilter(value) {
+  currentBuildingFilter = value;
+  // Re-render whichever tab is currently open, so the change is felt
+  // immediately rather than only on next navigation.
+  const active = document.querySelector('.tab-btn.active');
+  const tab = active ? active.dataset.tab : null;
+  if (tab === 'workorders') renderWorkOrders();
+  else if (tab === 'dashboard') renderDashboard();
+  else if (tab === 'assets') renderAssets();
+}
+
+// Populates the switcher's real options from whatever Building values
+// actually exist on real work orders — deliberately not sourced from
+// the separate Facilities/Buildings planning table, since what matters
+// here is what's actually tagged on real data, not what's been
+// proposed for a future client.
+function refreshBuildingSwitcherOptions(orders) {
+  const sel = document.getElementById('buildingSwitcher');
+  if (!sel) return;
+  const buildings = [...new Set((orders || []).map(o => o.building).filter(Boolean))].sort();
+  const current = sel.value || "__all__";
+  sel.innerHTML = `<option value="__all__">All Buildings</option>` +
+    buildings.map(b => `<option value="${b}">${b}</option>`).join('');
+  if (buildings.includes(current) || current === "__all__") sel.value = current;
+}
+
+// Filters an already-fetched work orders array by the current building
+// selection. "__all__" is a no-op — the whole point of the default.
+function filterByBuilding(orders) {
+  if (currentBuildingFilter === "__all__") return orders;
+  return (orders || []).filter(o => o.building === currentBuildingFilter);
+}
+
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
 function statusBg(s) { return s==="Good"?"var(--green-bg)":s==="Poor"?"var(--amber-bg)":"var(--red-bg)"; }
@@ -689,14 +732,24 @@ function drawDonut(canvas, segments, size) {
 
 function renderDashboard() {
   const windowDays = parseInt(currentDashboardWindow || 30);
-  const total = assets.length;
-  const operational = assets.filter(a=>a.status==="Good").length;
-  const schedMaint = assets.filter(a=>a.status==="Poor").length;
-  const needsAttn = assets.filter(a=>a.status==="Critical").length;
+  // filterByBuilding works on assets too — both assets and work orders
+  // carry the same .building field now, so one shared helper covers
+  // both without needing a second, parallel function.
+  const dashAssets = filterByBuilding(assets);
+  const total = dashAssets.length;
+  const operational = dashAssets.filter(a=>a.status==="Good").length;
+  const schedMaint = dashAssets.filter(a=>a.status==="Poor").length;
+  const needsAttn = dashAssets.filter(a=>a.status==="Critical").length;
   const opPct = Math.round((operational/total)*100);
   const attnPct = Math.round((needsAttn/total)*100);
-  const criticalAlerts = assets.filter(a=>a.criticality==="High" && a.status!=="Operational").length;
-  const plannedNext30 = assets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
+  const criticalAlerts = dashAssets.filter(a=>a.criticality==="High" && a.status!=="Operational").length;
+  const plannedNext30 = dashAssets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
+
+  // Building-filtered for this render only — the global dashboardWorkOrders
+  // and assets arrays stay unfiltered, since other code (record lookups,
+  // unread badges, Asset Register) depends on them having everything.
+  const dashWOs = filterByBuilding(dashboardWorkOrders);
+  refreshBuildingSwitcherOptions(dashboardWorkOrders);
 
   let html = '';
 
@@ -735,7 +788,7 @@ function renderDashboard() {
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const mKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
-    const monthWOs = dashboardWorkOrders.filter(w => (w.created||'').startsWith(mKey));
+    const monthWOs = dashWOs.filter(w => (w.created||'').startsWith(mKey));
     const planned = monthWOs.length;
     const completed = monthWOs.filter(w => w.status === 'Completed').length;
     const overdue = monthWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
@@ -752,7 +805,7 @@ function renderDashboard() {
   // Assets by Category — count-based, replaces "Top Asset Categories by Value"
   html += `<div class="dash-panel"><div class="dash-panel-title">Assets by Category</div>`;
   const sysCounts = {};
-  systemDefs.forEach(s => sysCounts[s.name] = assets.filter(a=>a.system===s.name).length);
+  systemDefs.forEach(s => sysCounts[s.name] = dashAssets.filter(a=>a.system===s.name).length);
   const maxCount = Math.max(...Object.values(sysCounts));
   systemDefs.slice().sort((a,b)=>sysCounts[b.name]-sysCounts[a.name]).forEach(s => {
     const cnt = sysCounts[s.name];
@@ -762,7 +815,7 @@ function renderDashboard() {
 
   // Recent Alerts — live from work orders, most recent first
   html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>`;
-  const recentAlerts = dashboardWorkOrders
+  const recentAlerts = dashWOs
     .filter(w => w.status !== 'Completed')
     .sort((a, b) => new Date(b.created) - new Date(a.created))
     .slice(0, 5);
@@ -785,11 +838,11 @@ function renderDashboard() {
   html += `<div class="dash-grid-4">`;
 
   // Work Orders Summary — live from dashboardWorkOrders
-  const woOpen = dashboardWorkOrders.filter(w => w.status === 'Open').length;
-  const woInProgress = dashboardWorkOrders.filter(w => w.status === 'In Progress').length;
-  const woOverdue = dashboardWorkOrders.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+  const woOpen = dashWOs.filter(w => w.status === 'Open').length;
+  const woInProgress = dashWOs.filter(w => w.status === 'In Progress').length;
+  const woOverdue = dashWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
   const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
-  const woCompletedYTD = dashboardWorkOrders.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
+  const woCompletedYTD = dashWOs.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
     <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">${woOpen}</div><div class="wo-box-label">Open</div></div>
@@ -896,7 +949,9 @@ function getMaintenanceCostRatio(a) {
 }
 
 function getFilteredAssets() {
-  let result = assets.filter(a => {
+  // Global building selection applies here too — same single filter as
+  // Dashboard and Work Orders, not a separate one local to this tab.
+  let result = filterByBuilding(assets).filter(a => {
     if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
     if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
     if(currentCriticalityFilter!=="All" && a.criticality!==currentCriticalityFilter) return false;
@@ -4952,12 +5007,13 @@ async function renderWorkOrders() {
     if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
     const data = await resp.json();
     const orders = data.workOrders || [];
-    lastWorkOrders = orders; // cache for generateCertificate() to reference
+    lastWorkOrders = orders; // cache for generateCertificate() to reference — unfiltered, so detail lookups always work regardless of building selection
     dashboardWorkOrders = orders; // same fetch covers the sidebar unread badge — no reason to keep two stale copies
     updateWOUnreadBadges();
     lastWOSignature = JSON.stringify(orders);
+    refreshBuildingSwitcherOptions(orders);
 
-    container.innerHTML = await buildWorkOrdersHtml(orders);
+    container.innerHTML = await buildWorkOrdersHtml(filterByBuilding(orders));
   } catch (err) {
     container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load work orders: ' + err.message + '</div>';
   }
