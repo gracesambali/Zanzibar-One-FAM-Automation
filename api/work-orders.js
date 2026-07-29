@@ -1380,7 +1380,12 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   }
 
   const fields = { "Status": status };
-  if (notes !== undefined) fields["Notes"] = notes;
+  // Never wipe existing Notes to empty through this path — a real gap
+  // found on review: `notes: ""` would previously overwrite whatever
+  // was there with nothing, with no role check on this path at all.
+  // Legitimate notes updates still go through fine; only an explicit
+  // empty-string wipe is blocked.
+  if (notes !== undefined && notes !== "") fields["Notes"] = notes;
   if (cost !== undefined) {
     fields["Cost (TZS)"] = Number(cost);
     fields["Cost Edited By"] = closedByUsername;
