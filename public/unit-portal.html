@@ -6,25 +6,35 @@
 <title>Tenant Portal — GVC Facility Asset Manager</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; display:flex; flex-direction:column; }
-  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; gap:12px; flex-shrink:0; }
-  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; }
+  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .header-left { display:flex; align-items:center; gap:12px; min-width:0; }
+  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; background:#F0A93E; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#1A3566; }
   .logo img { width:100%; height:100%; object-fit:contain; }
   .header h1 { font-size:15px; font-weight:700; }
   .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
+  #logoutBtn { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0; display:none; }
   .identify-card { max-width:400px; margin:60px auto; background:#fff; border-radius:16px; padding:28px; box-shadow:0 4px 24px rgba(0,0,0,.08); text-align:center; }
   .identify-card h2 { font-size:16px; color:#1A3566; margin-bottom:8px; }
   .identify-card p { font-size:13px; color:#6B7280; margin-bottom:18px; line-height:1.5; }
   .identify-card input { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; margin-bottom:12px; }
   .identify-card button { width:100%; padding:12px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
-  .chat-wrap { flex:1; display:flex; flex-direction:column; max-width:600px; width:100%; margin:0 auto; padding:0 16px; overflow:hidden; }
-  .messages { flex:1; overflow-y:auto; padding:20px 0; display:flex; flex-direction:column; gap:10px; }
+  .page-wrap { max-width:600px; width:100%; margin:0 auto; padding:16px; }
+  .panel { background:#fff; border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .panel-title { font-size:12px; font-weight:700; color:#1A3566; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
+  .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; }
+  .detail-item .label { font-size:10.5px; color:#9CA3AF; text-transform:uppercase; letter-spacing:0.02em; }
+  .detail-item .value { font-size:13.5px; color:#1A1A2E; font-weight:600; margin-top:2px; }
+  .badge { display:inline-block; font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:10px; }
+  .asset-chip { display:inline-block; font-size:11.5px; padding:4px 10px; border-radius:10px; background:#F7F8FA; color:#1A1A2E; margin:0 6px 6px 0; }
+  .chat-panel { display:flex; flex-direction:column; }
+  .messages { max-height:340px; overflow-y:auto; padding:4px 0; display:flex; flex-direction:column; gap:10px; }
   .msg { max-width:78%; padding:10px 14px; border-radius:14px; font-size:13.5px; line-height:1.4; }
   .msg.tenant { align-self:flex-end; background:#1A3566; color:#fff; border-bottom-right-radius:4px; }
-  .msg.pm { align-self:flex-start; background:#fff; color:#1A1A2E; border:1px solid #E2E6ED; border-bottom-left-radius:4px; }
+  .msg.pm { align-self:flex-start; background:#F7F8FA; color:#1A1A2E; border:1px solid #E2E6ED; border-bottom-left-radius:4px; }
   .msg .meta { font-size:10.5px; opacity:0.7; margin-bottom:3px; }
-  .empty-state { text-align:center; color:#9CA3AF; font-size:13px; margin-top:40px; }
-  .input-row { display:flex; gap:8px; padding:14px 0; border-top:1px solid #E2E6ED; flex-shrink:0; }
+  .empty-state { text-align:center; color:#9CA3AF; font-size:13px; padding:20px 0; line-height:1.5; }
+  .input-row { display:flex; gap:8px; padding-top:14px; border-top:1px solid #E2E6ED; margin-top:12px; }
   .input-row input { flex:1; padding:11px 14px; border:1px solid #E2E6ED; border-radius:20px; font-size:14px; }
   .input-row button { padding:11px 20px; border:none; border-radius:20px; background:#1A3566; color:#fff; font-size:13.5px; font-weight:600; cursor:pointer; }
   .input-row button:disabled { opacity:.6; cursor:wait; }
@@ -33,11 +43,14 @@
 </head>
 <body>
   <div class="header">
-    <div class="logo"><img src="/logo.png" alt="GVC"></div>
-    <div>
-      <h1 id="unitHeaderName">Tenant Portal</h1>
-      <div class="sub" id="unitHeaderSub">Loading…</div>
+    <div class="header-left">
+      <div class="logo"><img src="/logo.png" alt="GVC" onerror="this.style.display='none';this.parentElement.textContent='GVC'"></div>
+      <div style="min-width:0">
+        <h1 id="unitHeaderName">Tenant Portal</h1>
+        <div class="sub" id="unitHeaderSub">Loading…</div>
+      </div>
     </div>
+    <button id="logoutBtn" onclick="logout()">Log Out</button>
   </div>
   <div style="background:#fff;border-bottom:1px solid #E2E6ED;padding:12px 20px;text-align:center">
     <div style="font-size:12px;color:#6B7280;max-width:480px;margin:0 auto;line-height:1.5">This is your unit's direct line to your Property Manager, powered by GVC Facility Asset Manager — the same system used to track and maintain every asset in this facility.</div>
@@ -53,16 +66,36 @@
     <p style="font-size:11.5px;color:#9CA3AF;margin-top:14px;margin-bottom:0">Number not matching? Ask your Property Manager to confirm what's on file for your unit.</p>
   </div>
 
-  <div id="chatWrap" class="chat-wrap" style="display:none">
-    <div style="padding:14px 0 0;flex-shrink:0">
-      <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer">⚠ Report an Issue</button>
-      <div style="font-size:11.5px;color:#991B1B;text-align:center;margin-top:8px;line-height:1.4">Breakdowns and complaints are not handled in chat below — use "Report an Issue" above so the right team is actually notified.</div>
+  <div id="pageWrap" class="page-wrap" style="display:none">
+
+    <div class="panel">
+      <div class="panel-title">Unit Details</div>
+      <div class="detail-grid">
+        <div class="detail-item"><div class="label">Type</div><div class="value" id="detailType">—</div></div>
+        <div class="detail-item"><div class="label">Lease Status</div><div class="value" id="detailLease">—</div></div>
+        <div class="detail-item"><div class="label">Tenant</div><div class="value" id="detailTenantName">—</div></div>
+        <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
+        <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
+        <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+      </div>
     </div>
-    <div id="messages" class="messages"></div>
-    <div class="input-row">
-      <input id="messageInput" placeholder="General questions only — use Report an Issue for breakdowns" onkeydown="if(event.key==='Enter')sendMessage()">
-      <button id="sendBtn" onclick="sendMessage()">Send</button>
+
+    <div class="panel">
+      <div class="panel-title">Assets Covered</div>
+      <div id="assetsList"><div class="empty-state" style="padding:0">Loading…</div></div>
     </div>
+
+    <div class="panel chat-panel">
+      <div class="panel-title">Chat</div>
+      <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:8px">⚠ Report an Issue</button>
+      <div style="font-size:11.5px;color:#991B1B;text-align:center;margin-bottom:8px;line-height:1.4">Breakdowns and complaints are not handled in chat below — use "Report an Issue" above so the right team is actually notified.</div>
+      <div id="messages" class="messages"></div>
+      <div class="input-row">
+        <input id="messageInput" placeholder="General questions only — use Report an Issue for breakdowns" onkeydown="if(event.key==='Enter')sendMessage()">
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
   </div>
 
   <div id="reportOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:1000">
@@ -134,9 +167,24 @@
       document.getElementById('unitHeaderSub').textContent = [data.building, data.unitType].filter(Boolean).join(' · ');
       document.title = (data.unitName || 'Tenant Portal') + ' — GVC Facility Asset Manager';
 
+      document.getElementById('detailType').textContent = data.unitType || '—';
+      document.getElementById('detailLease').textContent = data.leaseStatus || '—';
+      document.getElementById('detailTenantName').textContent = data.tenantName || '—';
+      document.getElementById('detailTenantEmail').textContent = data.tenantEmail || '—';
+      document.getElementById('detailTenantPhone').textContent = data.tenantPhone || '—';
+      document.getElementById('detailContract').innerHTML = data.contractUrl
+        ? `<a href="${data.contractUrl}" target="_blank" rel="noopener" style="color:#1A3566">View contract</a>`
+        : 'Not uploaded yet';
+
+      const assets = data.assets || [];
+      document.getElementById('assetsList').innerHTML = assets.length > 0
+        ? assets.map(a => `<span class="asset-chip">${escapeHtml(a.id)} — ${escapeHtml(a.name)}</span>`).join('')
+        : `<div class="empty-state" style="padding:0">No assets assigned to this unit yet.</div>`;
+
       renderMessages(data.chatLog || []);
       document.getElementById('loginCard').style.display = 'none';
-      document.getElementById('chatWrap').style.display = 'flex';
+      document.getElementById('pageWrap').style.display = 'block';
+      document.getElementById('logoutBtn').style.display = 'block';
 
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(refreshMessages, 45000);
@@ -146,7 +194,8 @@
       sessionStorage.removeItem('tenantPortalPhone');
       tenantPhone = '';
       if (document.getElementById('loginCard').style.display === 'none') {
-        document.getElementById('chatWrap').style.display = 'none';
+        document.getElementById('pageWrap').style.display = 'none';
+        document.getElementById('logoutBtn').style.display = 'none';
         document.getElementById('loginCard').style.display = 'block';
       }
       errBox.textContent = err.message;
@@ -154,6 +203,20 @@
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
     }
+  }
+
+  function logout() {
+    if (pollTimer) clearInterval(pollTimer);
+    sessionStorage.removeItem('tenantPortalName');
+    sessionStorage.removeItem('tenantPortalPhone');
+    senderName = '';
+    tenantPhone = '';
+    document.getElementById('senderNameInput').value = '';
+    document.getElementById('phoneInput').value = '';
+    document.getElementById('pageWrap').style.display = 'none';
+    document.getElementById('logoutBtn').style.display = 'none';
+    document.getElementById('unitHeaderSub').textContent = 'Sign in required';
+    document.getElementById('loginCard').style.display = 'block';
   }
 
   async function refreshMessages() {
