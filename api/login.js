@@ -187,7 +187,7 @@ async function sendResetEmail(email, displayName, token) {
       </div>
     </div>`;
 
-  await fetch("https://api.resend.com/emails", {
+  const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -196,5 +196,19 @@ async function sendResetEmail(email, displayName, token) {
       subject: "Set your password \u2014 GVC Facility Asset Manager",
       html,
     }),
-  }).catch(err => console.error("sendResetEmail error:", err));
+  }).catch(err => {
+    console.error("sendResetEmail network error:", err);
+    return null;
+  });
+
+  // fetch() only rejects on a true network failure — a bad API key,
+  // an unverified sending domain, or a rate limit all come back as a
+  // normal (non-2xx) response, which the .catch() above would never
+  // see. Without this check, that whole category of failure is
+  // completely silent: the person gets told "success" and never
+  // receives anything, with no error anywhere to find.
+  if (resp && !resp.ok) {
+    const body = await resp.text().catch(() => "");
+    console.error("sendResetEmail failed:", resp.status, body);
+  }
 }
