@@ -190,8 +190,12 @@ function normalizePhone(s) {
 // number already on file (Tenant Phone), not a separately-set
 // password nobody was actually setting. The link alone is deliberately
 // NOT sufficient access, since a link can be forwarded or guessed at.
-// Never returns lease financials, the signed contract, or anything
-// about other units regardless of verification.
+//
+// Returns everything reasonable for a tenant to see about their OWN
+// unit — lease status, their own contact details, their signed
+// contract, the assets covered under it — but deliberately never the
+// Activity Log (that's an internal staff audit trail, not tenant-
+// facing) and never anything about any other unit.
 async function handleGetUnitPortal(req, res) {
   const { unitId, phone } = req.body || {};
   if (!unitId) return res.status(400).json({ error: "unitId required" });
@@ -215,11 +219,40 @@ async function handleGetUnitPortal(req, res) {
     let chatLog = [];
     try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
 
+    const unitName = f["Unit Name"] || "";
+
+    // Assets covered under this unit — id/name/system only, nothing
+    // financial (no acquisition cost, no depreciation, no maintenance
+    // spend) — that stays staff-only regardless of whose unit it is.
+    let unitAssets = [];
+    try {
+      const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+      const assetsUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
+      assetsUrl.searchParams.set("filterByFormula", `{Unit} = "${unitName.replace(/"/g, '\\"')}"`);
+      const assetsResp = await fetch(assetsUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+      if (assetsResp.ok) {
+        const assetsData = await assetsResp.json();
+        unitAssets = (assetsData.records || []).map(r => ({
+          id: r.fields["Asset ID"] || "",
+          name: r.fields["Name"] || "",
+          system: r.fields["System"] || "",
+        }));
+      }
+    } catch (err) {
+      console.error("handleGetUnitPortal: could not load assets:", err);
+    }
+
     return res.status(200).json({
-      unitName: f["Unit Name"] || "",
+      unitName,
       building: f["Building"] || "",
       unitType: f["Unit Type"] || "",
+      leaseStatus: f["Lease Status"] || "",
       tenantName: f["Tenant Name"] || "",
+      tenantEmail: f["Tenant Email"] || "",
+      tenantPhone: f["Tenant Phone"] || "",
+      contractUrl: (f["Signed Contract"] || [])[0] ? f["Signed Contract"][0].url : null,
+      contractFilename: (f["Signed Contract"] || [])[0] ? f["Signed Contract"][0].filename : null,
+      assets: unitAssets,
       chatLog,
     });
   } catch (err) {
