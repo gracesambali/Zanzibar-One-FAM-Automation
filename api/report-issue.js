@@ -406,9 +406,12 @@ async function handleUnitPortalReportIssue(req, res) {
 }
 
 async function handleUnitPortalMessage(req, res) {
-  const { unitId, senderName, message, phone } = req.body || {};
-  if (!unitId || !senderName || !senderName.trim() || !message || !message.trim()) {
-    return res.status(400).json({ error: "unitId, senderName, and message are required" });
+  const { unitId, senderName, message, phone, attachmentBase64, attachmentFilename, attachmentContentType } = req.body || {};
+  if (!unitId || !senderName || !senderName.trim()) {
+    return res.status(400).json({ error: "unitId and senderName are required" });
+  }
+  if ((!message || !message.trim()) && !attachmentBase64) {
+    return res.status(400).json({ error: "A message needs text or an attachment" });
   }
   try {
     const base = process.env.AIRTABLE_BASE_ID;
@@ -426,9 +429,28 @@ async function handleUnitPortalMessage(req, res) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
+    let attachmentUrl = null;
+    if (attachmentBase64) {
+      const uploadResp = await fetch(
+        `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
+        }
+      );
+      if (!uploadResp.ok) throw new Error(await uploadResp.text());
+      const uploadData = await uploadResp.json();
+      const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
+      const match = uploaded.find(x => x.filename === attachmentFilename) || uploaded[uploaded.length - 1];
+      attachmentUrl = match ? match.url : null;
+    }
+
     let chatLog = [];
     try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
-    chatLog.push({ from: "tenant", senderName: senderName.trim(), message: message.trim(), at: new Date().toISOString() });
+    const entry = { from: "tenant", senderName: senderName.trim(), message: (message || "").trim(), at: new Date().toISOString() };
+    if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
+    chatLog.push(entry);
 
     const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
       method: "PATCH",

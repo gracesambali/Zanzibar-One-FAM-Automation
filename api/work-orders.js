@@ -345,12 +345,33 @@ export default async function handler(req, res) {
     // shared channel, not a members-only room. What's actually personal
     // is whether YOU'VE read it, tracked separately below.
     if (req.body && req.body.addChatMessage) {
-      const { recordId, text } = req.body;
-      if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
+      const { recordId, text, attachmentBase64, attachmentFilename, attachmentContentType } = req.body;
+      if (!recordId) return res.status(400).json({ error: "recordId required" });
+      if (!text && !attachmentBase64) return res.status(400).json({ error: "A message needs text or an attachment" });
 
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+
+        // Upload first, if there's a file — the message entry just
+        // references the resulting URL, same pattern already used for
+        // vendor proforma and unit contract uploads.
+        let attachmentUrl = null;
+        if (attachmentBase64) {
+          const uploadResp = await fetch(
+            `https://content.airtable.com/v0/${base}/${recordId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
+            }
+          );
+          if (!uploadResp.ok) throw new Error(await uploadResp.text());
+          const uploadData = await uploadResp.json();
+          const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
+          const match = uploaded.find(f => f.filename === attachmentFilename) || uploaded[uploaded.length - 1];
+          attachmentUrl = match ? match.url : null;
+        }
 
         const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
@@ -360,7 +381,9 @@ export default async function handler(req, res) {
 
         let chatLog = [];
         try { chatLog = JSON.parse(woData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
-        chatLog.push({ text, by: session.u, at: new Date().toISOString() });
+        const entry = { text: text || "", by: session.u, at: new Date().toISOString() };
+        if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
+        chatLog.push(entry);
 
         // Sending a message means you've obviously seen everything up
         // to that point — stamp your own read receipt in the same
@@ -874,13 +897,32 @@ export default async function handler(req, res) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to send unit messages." });
       }
-      const { unitId, message } = req.body;
-      if (!unitId || !message || !message.trim()) {
-        return res.status(400).json({ error: "unitId and message are required" });
+      const { unitId, message, attachmentBase64, attachmentFilename, attachmentContentType } = req.body;
+      if (!unitId) return res.status(400).json({ error: "unitId is required" });
+      if ((!message || !message.trim()) && !attachmentBase64) {
+        return res.status(400).json({ error: "A message needs text or an attachment" });
       }
       try {
         const base = process.env.AIRTABLE_BASE_ID;
         const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+
+        let attachmentUrl = null;
+        if (attachmentBase64) {
+          const uploadResp = await fetch(
+            `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
+            }
+          );
+          if (!uploadResp.ok) throw new Error(await uploadResp.text());
+          const uploadData = await uploadResp.json();
+          const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
+          const match = uploaded.find(f => f.filename === attachmentFilename) || uploaded[uploaded.length - 1];
+          attachmentUrl = match ? match.url : null;
+        }
+
         const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
         });
@@ -889,7 +931,9 @@ export default async function handler(req, res) {
 
         let chatLog = [];
         try { chatLog = JSON.parse(unitData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
-        chatLog.push({ from: "pm", senderName: session.u, message: message.trim(), at: new Date().toISOString() });
+        const entry = { from: "pm", senderName: session.u, message: (message || "").trim(), at: new Date().toISOString() };
+        if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
+        chatLog.push(entry);
 
         const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
           method: "PATCH",
