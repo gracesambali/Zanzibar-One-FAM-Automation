@@ -2061,6 +2061,7 @@ async function renderUnits() {
     html += `<div class="asset-list">` + units.map(u => {
       const unitAssets = assets.filter(a => a.unit === u.name);
       const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
+      const contactBits = [u.tenantName, u.tenantEmail, u.tenantPhone].filter(Boolean).join(' · ');
       return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
           <div>
@@ -2069,7 +2070,12 @@ async function renderUnits() {
               <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
               <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
             </div>
-            <div style="font-size:12px;color:var(--muted);margin-top:4px">${u.building}${u.tenantName ? ' · ' + u.tenantName : ''}${u.tenantContact ? ' · ' + u.tenantContact : ''}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">${u.building}${contactBits ? ' · ' + contactBits : ''}</div>
+            <div style="margin-top:6px">
+              ${u.contractUrl
+                ? `<a href="${u.contractUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">📄 View signed contract${u.contractFilename ? ' — ' + u.contractFilename : ''}</a>`
+                : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:3px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
+            </div>
           </div>
           <div style="font-size:12px;color:var(--navy);font-weight:600">${unitAssets.length} asset${unitAssets.length !== 1 ? 's' : ''}</div>
         </div>
@@ -2082,6 +2088,56 @@ async function renderUnits() {
     container.innerHTML = html;
   } catch (err) {
     container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load units: ${err.message}</div>`;
+  }
+}
+
+function openUploadContractModal(unitId, unitName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'uploadContractOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Signed Contract</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${unitName}</div>
+      <input id="uc_file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <div id="uc_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('uploadContractOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="uc_submit" onclick="submitUploadContract('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Upload</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitUploadContract(unitId) {
+  const file = document.getElementById('uc_file').files[0];
+  const errorBox = document.getElementById('uc_error');
+  const btn = document.getElementById('uc_submit');
+  errorBox.style.display = 'none';
+  if (!file) { errorBox.textContent = 'Choose a file first.'; errorBox.style.display = 'block'; return; }
+  if (file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploadUnitContract: true, unitId, filename: file.name, contentType: file.type || 'application/pdf', fileBase64: base64 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not upload contract');
+    document.getElementById('uploadContractOverlay')?.remove();
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Upload';
   }
 }
 
@@ -2105,12 +2161,17 @@ function openAddUnitModal() {
       </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Name</label>
       <input id="au_tenant" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Contact</label>
-      <input id="au_contact" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Email</label>
+      <input id="au_email" type="email" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tenant Phone (SMS)</label>
+      <input id="au_phone" placeholder="e.g. +255 7XX XXX XXX" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Lease Status</label>
-      <select id="au_lease" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <select id="au_lease" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="Occupied">Occupied</option><option value="Vacant">Vacant</option><option value="Notice Given">Notice Given</option>
       </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Signed Contract</label>
+      <input id="au_contract" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Optional here — can be attached later from the unit's row instead.</div>
       <div id="au_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('addUnitOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -2125,22 +2186,40 @@ async function submitAddUnit() {
   const building = document.getElementById('au_building').value;
   const unitType = document.getElementById('au_type').value;
   const tenantName = document.getElementById('au_tenant').value.trim();
-  const tenantContact = document.getElementById('au_contact').value.trim();
+  const tenantEmail = document.getElementById('au_email').value.trim();
+  const tenantPhone = document.getElementById('au_phone').value.trim();
   const leaseStatus = document.getElementById('au_lease').value;
+  const file = document.getElementById('au_contract').files[0];
   const errorBox = document.getElementById('au_error');
   const btn = document.getElementById('au_submit');
   errorBox.style.display = 'none';
   if (!unitName) { errorBox.textContent = 'Unit name is required.'; errorBox.style.display = 'block'; return; }
+  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addUnit: true, unitName, building, unitType, tenantName, tenantContact, leaseStatus }),
+      body: JSON.stringify({ addUnit: true, unitName, building, unitType, tenantName, tenantEmail, tenantPhone, leaseStatus }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add unit');
+
+    if (file) {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await fetch('/api/work-orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadUnitContract: true, unitId: data.unit.id, filename: file.name, contentType: file.type || 'application/pdf', fileBase64: base64 }),
+      });
+    }
+
     document.getElementById('addUnitOverlay')?.remove();
     renderUnits();
   } catch (err) {
