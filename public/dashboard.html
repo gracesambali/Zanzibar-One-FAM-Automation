@@ -640,6 +640,7 @@ let currentSearch = "";
 // filtering. Confirmed: full switcher for everyone, no role
 // restrictions on who gets to use it.
 let currentBuildingFilter = "__all__";
+let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
 
 function setBuildingFilter(value) {
   currentBuildingFilter = value;
@@ -652,26 +653,40 @@ function setBuildingFilter(value) {
   else if (tab === 'assets') renderAssets();
 }
 
-// Populates the switcher's real options from whatever Building values
-// actually exist on real work orders — deliberately not sourced from
-// the separate Facilities/Buildings planning table, since what matters
-// here is what's actually tagged on real data, not what's been
-// proposed for a future client.
-function refreshBuildingSwitcherOptions(orders) {
+// Populates the switcher from the full Facilities -> Building
+// structure, not from what's actually tagged on real data — every
+// facility (Malls, Offices, Villas, Halls, ...) shows up as selectable
+// immediately, even before it has any real assets or work orders in
+// it yet. Facility-level options ("All of Offices") are prefixed
+// "facility:" to distinguish from a specific building selection.
+function refreshBuildingSwitcherOptions() {
   const sel = document.getElementById('buildingSwitcher');
   if (!sel) return;
-  const buildings = [...new Set((orders || []).map(o => o.building).filter(Boolean))].sort();
   const current = sel.value || "__all__";
-  sel.innerHTML = `<option value="__all__">All Buildings</option>` +
-    buildings.map(b => `<option value="${b}">${b}</option>`).join('');
-  if (buildings.includes(current) || current === "__all__") sel.value = current;
+  let html = `<option value="__all__">All Buildings</option>`;
+  facilitiesData.forEach(f => {
+    html += `<optgroup label="${f.name}">`;
+    html += `<option value="facility:${f.name}">All of ${f.name}</option>`;
+    f.buildings.forEach(b => { html += `<option value="${b}">${b}</option>`; });
+    html += `</optgroup>`;
+  });
+  sel.innerHTML = html;
+  sel.value = current; // falls back to whatever the browser defaults to if current no longer exists
 }
 
-// Filters an already-fetched work orders array by the current building
-// selection. "__all__" is a no-op — the whole point of the default.
-function filterByBuilding(orders) {
-  if (currentBuildingFilter === "__all__") return orders;
-  return (orders || []).filter(o => o.building === currentBuildingFilter);
+// Filters an already-fetched assets/work-orders array by the current
+// building selection. "__all__" is a no-op. A "facility:X" selection
+// matches any building belonging to that facility; anything else is
+// an exact single-building match.
+function filterByBuilding(items) {
+  if (currentBuildingFilter === "__all__") return items;
+  if (currentBuildingFilter.startsWith("facility:")) {
+    const facilityName = currentBuildingFilter.slice("facility:".length);
+    const facility = facilitiesData.find(f => f.name === facilityName);
+    const buildingSet = new Set(facility ? facility.buildings : []);
+    return (items || []).filter(i => buildingSet.has(i.building));
+  }
+  return (items || []).filter(i => i.building === currentBuildingFilter);
 }
 
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
@@ -749,7 +764,7 @@ function renderDashboard() {
   // and assets arrays stay unfiltered, since other code (record lookups,
   // unread badges, Asset Register) depends on them having everything.
   const dashWOs = filterByBuilding(dashboardWorkOrders);
-  refreshBuildingSwitcherOptions(dashboardWorkOrders);
+  refreshBuildingSwitcherOptions();
 
   let html = '';
 
@@ -5011,7 +5026,7 @@ async function renderWorkOrders() {
     dashboardWorkOrders = orders; // same fetch covers the sidebar unread badge — no reason to keep two stale copies
     updateWOUnreadBadges();
     lastWOSignature = JSON.stringify(orders);
-    refreshBuildingSwitcherOptions(orders);
+    refreshBuildingSwitcherOptions();
 
     container.innerHTML = await buildWorkOrdersHtml(filterByBuilding(orders));
   } catch (err) {
@@ -6091,9 +6106,10 @@ async function decommissionAsset(recordId, assetName) {
 async function loadAssetsAndInit() {
   const loadingEl = document.getElementById('loading-screen');
   try {
-    const [assetsResp, woResp] = await Promise.all([
+    const [assetsResp, woResp, facResp] = await Promise.all([
       fetch('/api/get-assets'),
       fetch('/api/work-orders'),
+      fetch('/api/get-assets?facilities=true'),
     ]);
     if (assetsResp.status === 401) {
       window.location.href = '/login.html';
@@ -6106,6 +6122,15 @@ async function loadAssetsAndInit() {
     currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
     currentUsername = data.username || "";
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
+
+    // Full Facility -> Building structure for the switcher — fetched
+    // once here, not derived from what's actually tagged on data, so
+    // every facility shows up as selectable even before it has any
+    // real assets or work orders in it yet.
+    if (facResp.ok) {
+      const facData = await facResp.json();
+      facilitiesData = facData.facilities || [];
+    }
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
     if (woResp.ok) {
