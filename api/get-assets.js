@@ -241,8 +241,11 @@ async function handleGetUnits(req, res) {
       building: r.fields["Building"] || "",
       unitType: r.fields["Unit Type"] || "",
       tenantName: r.fields["Tenant Name"] || "",
-      tenantContact: r.fields["Tenant Contact"] || "",
+      tenantEmail: r.fields["Tenant Email"] || "",
+      tenantPhone: r.fields["Tenant Phone"] || "",
       leaseStatus: r.fields["Lease Status"] || "",
+      contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
+      contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
     })).filter(u => u.name);
 
     return res.status(200).json({ units });

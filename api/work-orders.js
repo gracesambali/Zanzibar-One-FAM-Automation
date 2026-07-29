@@ -722,7 +722,7 @@ export default async function handler(req, res) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to add a unit." });
       }
-      const { unitName, building, unitType, tenantName, tenantContact, leaseStatus } = req.body;
+      const { unitName, building, unitType, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
       if (!unitName || !unitName.trim() || !building) {
         return res.status(400).json({ error: "Unit name and building are required" });
       }
@@ -738,7 +738,8 @@ export default async function handler(req, res) {
               "Building": building,
               "Unit Type": unitType || "",
               "Tenant Name": tenantName || "",
-              "Tenant Contact": tenantContact || "",
+              "Tenant Email": tenantEmail || "",
+              "Tenant Phone": tenantPhone || "",
               "Lease Status": leaseStatus || "Vacant",
               "Added By": session.u,
             },
@@ -752,6 +753,36 @@ export default async function handler(req, res) {
         } });
       } catch (err) {
         console.error("addUnit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Uploading the signed contract to an existing unit — same
+    // create-then-upload pattern already used for vendor proforma
+    // attachments, since Airtable's upload endpoint needs an existing
+    // record to attach to.
+    if (req.body && req.body.uploadUnitContract) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to upload a contract." });
+      }
+      const { unitId, filename, contentType, fileBase64 } = req.body;
+      if (!unitId || !filename || !fileBase64) {
+        return res.status(400).json({ error: "unitId, filename, and fileBase64 are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const uploadResp = await fetch(
+          `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Signed Contract")}/uploadAttachment`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
+          }
+        );
+        if (!uploadResp.ok) throw new Error(await uploadResp.text());
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadUnitContract error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
