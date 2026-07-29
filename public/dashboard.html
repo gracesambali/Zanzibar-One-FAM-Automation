@@ -2032,6 +2032,149 @@ let lastPlans = [];
 // Technician, confirmed simple rule). Filtered by the exact same
 // global Building/Facility switcher as everywhere else — units carry
 // a .building field, so filterByBuilding works here unchanged.
+async function showUnitDetail(unitId) {
+  let u = lastUnits.find(x => x.id === unitId);
+  const container = document.getElementById('view-units');
+  container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">Loading…</div>`;
+
+  // Always refetch fresh rather than trust the list snapshot — chat and
+  // activity change from outside this page too (the tenant's own portal).
+  try {
+    const resp = await fetch('/api/get-assets?units=true');
+    const data = await resp.json();
+    lastUnits = data.units || [];
+    u = lastUnits.find(x => x.id === unitId);
+  } catch { /* fall back to whatever we already had, if anything */ }
+
+  if (!u) { container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Unit not found.</div>`; return; }
+
+  const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
+  const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
+  const unitAssets = assets.filter(a => a.unit === u.name);
+
+  let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Units</button>
+  <div class="wo-layout">
+  <div class="wo-main">
+  <div class="detail-panel">
+    <div class="detail-header">
+      <div><div class="detail-title">${u.name}</div><div class="detail-sub">${u.building}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
+        <span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
+        <button onclick="copyUnitPortalLink('${u.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">🔗 Portal Link</button>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Tenant</div>
+      <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div class="detail-field"><div class="detail-field-label">Name</div><div class="detail-field-value">${u.tenantName || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Email</div><div class="detail-field-value">${u.tenantEmail || '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Phone</div><div class="detail-field-value">${u.tenantPhone || '—'}</div></div>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Signed Contract</div>
+      ${u.contractUrl
+        ? `<a href="${u.contractUrl}" target="_blank" rel="noopener" style="font-size:13px;color:var(--navy);text-decoration:underline">📄 View signed contract${u.contractFilename ? ' — ' + u.contractFilename : ''}</a>`
+        : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">Assets (${unitAssets.length})</div>
+        <button onclick="openManageUnitAssetsModal('${u.id}', '${u.name}', '${u.building}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Assets</button>
+      </div>
+      ${unitAssets.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${unitAssets.map(a => `<span style="font-size:11px;padding:3px 9px;border-radius:10px;background:#F7F8FA;color:var(--text)">${a.id} — ${a.name}</span>`).join('')}
+      </div>` : `<div style="font-size:12.5px;color:var(--muted);font-style:italic">No assets assigned yet.</div>`}
+    </div>
+
+    <div style="padding:20px 24px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
+      <div style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px">
+        ${(u.activityLog && u.activityLog.length > 0) ? u.activityLog.slice().reverse().map(e => `<div style="font-size:12.5px;color:var(--text);padding-left:10px;border-left:2px solid var(--border)">
+          <span style="color:var(--muted)">${new Date(e.at).toLocaleString()} — ${e.by}</span><br>${e.text}
+        </div>`).join('') : `<div style="font-size:12.5px;color:var(--muted);font-style:italic">Nothing recorded yet.</div>`}
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="unitDetailActivityInput" placeholder="Add a note — a call, a complaint, anything worth keeping on record…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitUnitDetailNote('${u.id}')">
+        <button onclick="submitUnitDetailNote('${u.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Add</button>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div class="wo-chat-col">
+  <div class="detail-panel">
+    <div style="padding:18px 20px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">💬 Tenant Chat</div>
+      <div style="font-size:11px;color:var(--muted)">The tenant replies from their own portal link — no login on their end.</div>
+    </div>
+    <div id="unitDetailChatBody" style="padding:12px 20px 18px">
+      <div id="unitDetailChatMessages" style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;margin-bottom:12px">
+        ${(u.chatLog && u.chatLog.length > 0) ? u.chatLog.map(m => `
+          <div style="align-self:${m.from === 'tenant' ? 'flex-end' : 'flex-start'};max-width:85%;padding:8px 12px;border-radius:12px;font-size:12.5px;line-height:1.4;background:${m.from === 'tenant' ? 'var(--navy)' : '#F7F8FA'};color:${m.from === 'tenant' ? '#fff' : 'var(--text)'};border:${m.from === 'tenant' ? 'none' : '1px solid var(--border)'}">
+            <div style="font-size:10.5px;opacity:0.75;margin-bottom:2px">${m.senderName || (m.from === 'pm' ? 'Staff' : '')} · ${new Date(m.at).toLocaleString()}</div>
+            ${m.message}
+          </div>`).join('') : `<div style="font-size:12px;color:var(--muted);text-align:center;padding:16px">No messages yet.</div>`}
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="unitDetailChatInput" placeholder="Reply as staff…" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')submitUnitDetailChat('${u.id}')">
+        <button onclick="submitUnitDetailChat('${u.id}')" style="padding:9px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Send</button>
+      </div>
+    </div>
+  </div>
+  </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function submitUnitDetailNote(unitId) {
+  const input = document.getElementById('unitDetailActivityInput');
+  const note = input.value.trim();
+  if (!note) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addUnitNote: true, unitId, note }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add note');
+    showUnitDetail(unitId);
+  } catch (err) {
+    alert('Could not add note: ' + err.message);
+  }
+}
+
+async function submitUnitDetailChat(unitId) {
+  const input = document.getElementById('unitDetailChatInput');
+  const message = input.value.trim();
+  if (!message) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sendUnitChatMessage: true, unitId, message }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send message');
+    showUnitDetail(unitId);
+  } catch (err) {
+    alert('Could not send: ' + err.message);
+  }
+}
+
+function copyUnitPortalLink(unitId) {
+  const link = `${window.location.origin}/unit-portal.html?unit=${unitId}`;
+  navigator.clipboard.writeText(link).then(() => {
+    alert('Portal link copied — send this directly to the tenant. No login needed on their end.');
+  }).catch(() => {
+    prompt('Copy this link:', link);
+  });
+}
+
 async function renderUnits() {
   const container = document.getElementById('view-units');
   if (!container) return;
@@ -2040,13 +2183,13 @@ async function renderUnits() {
   try {
     const resp = await fetch('/api/get-assets?units=true');
     const data = await resp.json();
-    const allUnits = data.units || [];
-    const units = filterByBuilding(allUnits);
+    lastUnits = data.units || [];
+    const units = filterByBuilding(lastUnits);
 
     let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div>
         <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Units</div>
-        <div style="font-size:12px;color:var(--muted)">Each unit's assets are pulled live from the Asset Register — nothing duplicated here.</div>
+        <div style="font-size:12px;color:var(--muted)">Click a unit to open its own page — chat, activity, contract, and assets all live there together.</div>
       </div>
       <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
     </div>`;
@@ -2060,41 +2203,20 @@ async function renderUnits() {
     const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
 
     html += `<div class="asset-list">` + units.map(u => {
-      const unitAssets = assets.filter(a => a.unit === u.name);
+      const unitAssetCount = assets.filter(a => a.unit === u.name).length;
       const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
-      const contactBits = [u.tenantName, u.tenantEmail, u.tenantPhone].filter(Boolean).join(' · ');
-      return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
-          <div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="font-size:14px;font-weight:700;color:var(--text)">${u.name}</span>
-              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
-              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
-            </div>
-            <div style="font-size:12px;color:var(--muted);margin-top:4px">${u.building}${contactBits ? ' · ' + contactBits : ''}</div>
-            <div style="margin-top:6px">
-              ${u.contractUrl
-                ? `<a href="${u.contractUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">📄 View signed contract${u.contractFilename ? ' — ' + u.contractFilename : ''}</a>`
-                : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:3px 10px;font-size:11px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
-            </div>
+      return `<button class="asset-row" onclick="showUnitDetail('${u.id}')" style="text-align:left">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="asset-name">${u.name}</span>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
+            ${u.chatLog && u.chatLog.length ? `<span class="wo-row-unread-dot" title="Has chat activity">${u.chatLog.length > 9 ? '9+' : u.chatLog.length}</span>` : ''}
           </div>
-          <div style="text-align:right;flex-shrink:0">
-            <div style="font-size:12px;color:var(--navy);font-weight:600;margin-bottom:6px">${unitAssets.length} asset${unitAssets.length !== 1 ? 's' : ''}</div>
-            <button onclick="openManageUnitAssetsModal('${u.id}', '${u.name}', '${u.building}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Assets</button>
-          </div>
+          <div class="asset-meta">${u.building}${u.tenantName ? ' · ' + u.tenantName : ''} · ${unitAssetCount} asset${unitAssetCount !== 1 ? 's' : ''}</div>
         </div>
-        ${unitAssets.length > 0 ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px">
-          ${unitAssets.map(a => `<span style="font-size:11px;padding:3px 9px;border-radius:10px;background:#F7F8FA;color:var(--text)">${a.id} — ${a.name}</span>`).join('')}
-        </div>` : ''}
-        ${(u.activityLog && u.activityLog.length > 0) ? `<details style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-          <summary style="font-size:11.5px;font-weight:600;color:var(--navy);cursor:pointer">Activity (${u.activityLog.length})</summary>
-          <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
-            ${u.activityLog.slice().reverse().map(e => `<div style="font-size:11.5px;color:var(--text);padding-left:10px;border-left:2px solid var(--border)">
-              <span style="color:var(--muted)">${new Date(e.at).toLocaleString()} — ${e.by}</span><br>${e.text}
-            </div>`).join('')}
-          </div>
-        </details>` : ''}
-      </div>`;
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>`;
     }).join('') + `</div>`;
 
     container.innerHTML = html;
@@ -2238,16 +2360,17 @@ function openAddUnitModal() {
   const overlay = document.createElement('div');
   overlay.id = 'addUnitOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
-  const allBuildings = [...new Set(facilitiesData.flatMap(f => f.buildings))].sort();
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add a Tenant Unit</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Name *</label>
       <input id="au_name" placeholder="e.g. Shop 12, Suite 3B" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
-      <select id="au_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        ${allBuildings.map(b => `<option value="${b}">${b}</option>`).join('')}
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility *</label>
+      <select id="au_facility" onchange="onAddUnitFacilityChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${facilitiesData.map(f => `<option value="${f.name}">${f.name}</option>`).join('')}
       </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
+      <select id="au_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Type</label>
       <select id="au_type" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="Shop">Shop</option><option value="Office">Office</option><option value="House">House</option>
@@ -2272,6 +2395,16 @@ function openAddUnitModal() {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  onAddUnitFacilityChange();
+}
+
+function onAddUnitFacilityChange() {
+  const facilityName = document.getElementById('au_facility')?.value;
+  const buildingSel = document.getElementById('au_building');
+  if (!buildingSel) return;
+  const facility = facilitiesData.find(f => f.name === facilityName);
+  const buildings = facility ? facility.buildings : [];
+  buildingSel.innerHTML = buildings.map(b => `<option value="${b}">${b}</option>`).join('');
 }
 
 async function submitAddUnit() {
@@ -2815,6 +2948,7 @@ async function uploadPlanDocument(recordId, inputEl) {
 }
 
 let lastWorkOrders = [];
+let lastUnits = [];
 
 // --- Floor Plan tab: live status markers on an uploaded floor plan image ---
 // --- Built-in default floor plans (conceptual, generated from real room/asset
