@@ -824,6 +824,18 @@ function renderDashboard() {
 
   let html = '';
 
+  // Shows exactly which slice of the campus this Dashboard is currently
+  // scoped to — reflects the same Facility/Building switcher in the
+  // header, so it's never ambiguous what "Total Assets" etc. actually
+  // means without having to check the dropdowns themselves.
+  let scopeLabel = 'All Campus';
+  if (currentBuildingFilter !== '__all__') {
+    scopeLabel = currentFacilityFilter !== '__all__' ? `${currentFacilityFilter} → ${currentBuildingFilter}` : currentBuildingFilter;
+  } else if (currentFacilityFilter !== '__all__') {
+    scopeLabel = `${currentFacilityFilter} — All Buildings`;
+  }
+  html += `<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:12px">📍 Viewing: ${scopeLabel}</div>`;
+
   // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:12px;color:var(--muted)">Dashboard window:</span>
