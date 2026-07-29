@@ -716,6 +716,71 @@ export default async function handler(req, res) {
     // foundation the new procurement workflow sits on: vendors have to
     // actually exist in the system before quotes/invoices can be
     // attached against them.
+    // Creating a tenant unit — anyone except Technician, confirmed, to
+    // keep this simple rather than defining a precise allowed list.
+    if (req.body && req.body.addUnit) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to add a unit." });
+      }
+      const { unitName, building, unitType, tenantName, tenantContact, leaseStatus } = req.body;
+      if (!unitName || !unitName.trim() || !building) {
+        return res.status(400).json({ error: "Unit name and building are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+        const resp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: {
+              "Unit Name": unitName.trim(),
+              "Building": building,
+              "Unit Type": unitType || "",
+              "Tenant Name": tenantName || "",
+              "Tenant Contact": tenantContact || "",
+              "Lease Status": leaseStatus || "Vacant",
+              "Added By": session.u,
+            },
+            typecast: true,
+          }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const created = await resp.json();
+        return res.status(200).json({ success: true, unit: {
+          id: created.id, name: created.fields["Unit Name"] || "", building: created.fields["Building"] || "",
+        } });
+      } catch (err) {
+        console.error("addUnit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Tagging an asset to a tenant unit — same permission rule as
+    // creating one. Independent of Room/Zone; a unit can span several
+    // physical zones (the multi-floor semi-detached villa case).
+    if (req.body && req.body.assignAssetToUnit) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to assign a unit." });
+      }
+      const { assetRecordId, unitName } = req.body;
+      if (!assetRecordId) return res.status(400).json({ error: "assetRecordId required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+        const resp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${assetRecordId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Unit": unitName || "" } }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        return res.status(200).json({ success: true, unit: unitName || "" });
+      } catch (err) {
+        console.error("assignAssetToUnit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.addVendor) {
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && session.r !== "procurement") {

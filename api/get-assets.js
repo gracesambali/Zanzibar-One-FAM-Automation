@@ -34,6 +34,14 @@ export default async function handler(req, res) {
     return handleGetFacilities(req, res);
   }
 
+  // Tenant units — Property Manager, core roles, BO/SysAdmin (all
+  // except Technician, confirmed, to keep this simple). Each unit
+  // carries its own tenant info; assets tag onto a unit by name, same
+  // plain-text convention as Building/Facility.
+  if (req.query.units === "true") {
+    return handleGetUnits(req, res);
+  }
+
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
     return handleGetFloorPlan(req, res);
@@ -163,6 +171,7 @@ function normalizeRecord(record) {
     room: f["Room/Zone"] || "",
     building: f["Building"] || "",
     facility: f["Facility"] || "",
+    unit: f["Unit"] || "",
     manufacturer: f["Manufacturer"] || "",
     model: f["Model"] || "",
     installDate: f["Install Date"] || "",
@@ -216,6 +225,33 @@ function normalizeRecord(record) {
 // A QR sticker is physically stuck on equipment where anyone can scan it,
 // so financial data never belongs here regardless of what's shown
 // internally in the dashboard.
+async function handleGetUnits(req, res) {
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) throw new Error("Could not load units");
+    const data = await resp.json();
+
+    const units = (data.records || []).map(r => ({
+      id: r.id,
+      name: r.fields["Unit Name"] || "",
+      building: r.fields["Building"] || "",
+      unitType: r.fields["Unit Type"] || "",
+      tenantName: r.fields["Tenant Name"] || "",
+      tenantContact: r.fields["Tenant Contact"] || "",
+      leaseStatus: r.fields["Lease Status"] || "",
+    })).filter(u => u.name);
+
+    return res.status(200).json({ units });
+  } catch (err) {
+    console.error("handleGetUnits error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleGetFacilities(req, res) {
   try {
     const base = process.env.AIRTABLE_BASE_ID;
