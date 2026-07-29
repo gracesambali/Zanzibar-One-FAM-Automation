@@ -50,10 +50,33 @@
   </div>
 
   <div id="chatWrap" class="chat-wrap" style="display:none">
+    <div style="padding:14px 0 0;flex-shrink:0">
+      <button onclick="openReportIssue()" style="width:100%;padding:11px;border:1px solid #1A3566;border-radius:10px;background:#fff;color:#1A3566;font-size:13.5px;font-weight:600;cursor:pointer">⚠ Report an Issue</button>
+    </div>
     <div id="messages" class="messages"></div>
     <div class="input-row">
       <input id="messageInput" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendMessage()">
       <button id="sendBtn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <div id="reportOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:1000">
+    <div style="background:#fff;border-radius:16px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:4px">Report an Issue</div>
+      <div style="font-size:12px;color:#6B7280;margin-bottom:16px">This opens a real work order with the right team — separate from ordinary chat.</div>
+      <label style="font-size:12px;font-weight:600;color:#1A3566;display:block;margin-bottom:6px">What kind of issue?</label>
+      <select id="reportCategory" style="width:100%;padding:11px 14px;border:1px solid #E2E6ED;border-radius:8px;font-size:14px;margin-bottom:14px">
+        <option value="Electrical">Electrical</option>
+        <option value="Mechanical">Mechanical</option>
+        <option value="NonTechnical">Non-technical</option>
+      </select>
+      <label style="font-size:12px;font-weight:600;color:#1A3566;display:block;margin-bottom:6px">Describe it</label>
+      <textarea id="reportDescription" rows="4" style="width:100%;padding:11px 14px;border:1px solid #E2E6ED;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:14px"></textarea>
+      <div id="reportError" style="color:#991B1B;font-size:12.5px;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeReportIssue()" style="flex:1;padding:11px;border:1px solid #E2E6ED;border-radius:8px;background:#fff;color:#1A3566;font-weight:600;font-size:13.5px;cursor:pointer">Cancel</button>
+        <button id="reportSubmitBtn" onclick="submitReportIssue()" style="flex:1;padding:11px;border:none;border-radius:8px;background:#1A3566;color:#fff;font-weight:600;font-size:13.5px;cursor:pointer">Submit</button>
+      </div>
     </div>
   </div>
 
@@ -180,6 +203,43 @@
       alert('Could not send: ' + err.message);
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  function openReportIssue() {
+    document.getElementById('reportDescription').value = '';
+    document.getElementById('reportError').style.display = 'none';
+    document.getElementById('reportOverlay').style.display = 'flex';
+  }
+
+  function closeReportIssue() {
+    document.getElementById('reportOverlay').style.display = 'none';
+  }
+
+  async function submitReportIssue() {
+    const category = document.getElementById('reportCategory').value;
+    const description = document.getElementById('reportDescription').value.trim();
+    const errBox = document.getElementById('reportError');
+    const btn = document.getElementById('reportSubmitBtn');
+    errBox.style.display = 'none';
+    if (!description) { errBox.textContent = 'Describe the issue first.'; errBox.style.display = 'block'; return; }
+
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    try {
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unitPortalReportIssue: true, unitId, senderName, category, description, password: portalPassword }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit');
+      closeReportIssue();
+      alert('Reported — ' + data.woId + '. The right team has been notified.');
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Submit';
     }
   }
 
