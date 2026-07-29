@@ -178,6 +178,137 @@ function displayRoom(room) {
   return out;
 }
 
+// Public-safe unit info + chat history — no login in the account
+// sense, but a real password gate: the link alone is deliberately NOT
+// sufficient access, since a link can be forwarded or guessed at.
+// Never returns lease financials, the signed contract, or anything
+// about other units regardless of password correctness.
+async function handleGetUnitPortal(req, res) {
+  const { unitId, password } = req.body || {};
+  if (!unitId) return res.status(400).json({ error: "unitId required" });
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!resp.ok) return res.status(404).json({ error: "Unit not found" });
+    const data = await resp.json();
+    const f = data.fields;
+
+    const storedPassword = f["Portal Password"] || "";
+    // Fail closed: no password set yet on this unit means no access,
+    // not open access — the tenant needs to get it from staff first.
+    if (!storedPassword || password !== storedPassword) {
+      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    }
+
+    let chatLog = [];
+    try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+
+    return res.status(200).json({
+      unitName: f["Unit Name"] || "",
+      building: f["Building"] || "",
+      unitType: f["Unit Type"] || "",
+      tenantName: f["Tenant Name"] || "",
+      chatLog,
+    });
+  } catch (err) {
+    console.error("handleGetUnitPortal error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// A tenant sending a message — no login, so senderName is typed in
+// each time, same principle as the report form's "Your Name" field.
+async function handleUnitPortalMessage(req, res) {
+  const { unitId, senderName, message, password } = req.body || {};
+  if (!unitId || !senderName || !senderName.trim() || !message || !message.trim()) {
+    return res.status(400).json({ error: "unitId, senderName, and message are required" });
+  }
+  try {
+    const base = process.env.AIRTABLE_BASE_ID;
+    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+
+    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!getResp.ok) return res.status(404).json({ error: "Unit not found" });
+    const unitData = await getResp.json();
+    const f = unitData.fields;
+
+    const storedPassword = f["Portal Password"] || "";
+    if (!storedPassword || password !== storedPassword) {
+      return res.status(401).json({ error: "Incorrect password — check with your Property Manager.", requiresPassword: true });
+    }
+
+    let chatLog = [];
+    try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+    chatLog.push({ from: "tenant", senderName: senderName.trim(), message: message.trim(), at: new Date().toISOString() });
+
+    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog) } }),
+    });
+    if (!patchResp.ok) throw new Error("Could not save message");
+
+    await notifyPMOfTenantMessage(f["Unit Name"] || "", senderName.trim(), message.trim());
+
+    return res.status(200).json({ success: true, chatLog });
+  } catch (err) {
+    console.error("handleUnitPortalMessage error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function notifyPMOfTenantMessage(unitName, senderName, message) {
+  const directory = getAllStaffDirectory();
+  const recipients = directory.filter(e => e.role === "property_manager" || e.role === "business_owner" || e.role === "system_admin");
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+
+  const toList = recipients.map(e => e.email).filter(Boolean);
+  if (toList.length > 0) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Tenant Message</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${unitName}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 8px;color:#1A1A2E;font-size:13px"><strong>${senderName}</strong> wrote:</p>
+          <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${message}</p>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`, to: toList, subject: `Tenant message — ${unitName}`, html }),
+    }).catch(err => console.error("notifyPMOfTenantMessage email error:", err));
+  }
+
+  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+  if (phones.length > 0) {
+    try {
+      const smsMessage = `Tenant message - ${unitName} (${senderName}): ${message}`.slice(0, 300);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: smsMessage,
+          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+        }),
+      });
+    } catch (err) {
+      console.error("notifyPMOfTenantMessage SMS error:", err);
+    }
+  }
+}
+
 async function handleGetLocations(req, res) {
   try {
     const base = process.env.AIRTABLE_BASE_ID;
@@ -243,6 +374,18 @@ export default async function handler(req, res) {
   // in the register later — no fuzzy text matching needed downstream.
   if (req.method === "GET" && req.query.locations) {
     return handleGetLocations(req, res);
+  }
+
+  // Unit portal — a real password gate now, not just possessing the
+  // link. POST rather than GET specifically because a password is
+  // involved — it shouldn't sit in a URL query string where it could
+  // end up in server logs or browser history.
+  if (req.method === "POST" && req.body && req.body.unitPortalLogin) {
+    return handleGetUnitPortal(req, res);
+  }
+
+  if (req.method === "POST" && req.body && req.body.unitPortalMessage) {
+    return handleUnitPortalMessage(req, res);
   }
 
   if (req.method !== "POST") {

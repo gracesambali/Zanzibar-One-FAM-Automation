@@ -238,6 +238,8 @@ async function handleGetUnits(req, res) {
     const units = (data.records || []).map(r => {
       let activityLog = [];
       try { activityLog = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { activityLog = []; }
+      let chatLog = [];
+      try { chatLog = JSON.parse(r.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
       return {
         id: r.id,
         name: r.fields["Unit Name"] || "",
@@ -247,9 +249,11 @@ async function handleGetUnits(req, res) {
         tenantEmail: r.fields["Tenant Email"] || "",
         tenantPhone: r.fields["Tenant Phone"] || "",
         leaseStatus: r.fields["Lease Status"] || "",
+        portalPassword: r.fields["Portal Password"] || "",
         contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
         contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
         activityLog,
+        chatLog,
       };
     }).filter(u => u.name);
 

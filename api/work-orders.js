@@ -758,6 +758,49 @@ export default async function handler(req, res) {
       }
     }
 
+    // Editing tenant details — every change lands in Activity, showing
+    // exactly what changed, not just that something did.
+    if (req.body && req.body.editUnit) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to edit a unit." });
+      }
+      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, portalPassword } = req.body;
+      if (!unitId) return res.status(400).json({ error: "unitId required" });
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read unit");
+        const before = (await getResp.json()).fields;
+
+        const fields = {};
+        const changes = [];
+        if (tenantName !== undefined && tenantName !== (before["Tenant Name"] || "")) { fields["Tenant Name"] = tenantName; changes.push(`Tenant Name: "${before["Tenant Name"] || ""}" → "${tenantName}"`); }
+        if (tenantEmail !== undefined && tenantEmail !== (before["Tenant Email"] || "")) { fields["Tenant Email"] = tenantEmail; changes.push(`Email: "${before["Tenant Email"] || ""}" → "${tenantEmail}"`); }
+        if (tenantPhone !== undefined && tenantPhone !== (before["Tenant Phone"] || "")) { fields["Tenant Phone"] = tenantPhone; changes.push(`Phone: "${before["Tenant Phone"] || ""}" → "${tenantPhone}"`); }
+        if (leaseStatus !== undefined && leaseStatus !== (before["Lease Status"] || "")) { fields["Lease Status"] = leaseStatus; changes.push(`Lease Status: "${before["Lease Status"] || ""}" → "${leaseStatus}"`); }
+        if (portalPassword !== undefined && portalPassword !== (before["Portal Password"] || "")) { fields["Portal Password"] = portalPassword; changes.push(`Portal password updated`); }
+
+        if (Object.keys(fields).length > 0) {
+          const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ fields, typecast: true }),
+          });
+          if (!patchResp.ok) throw new Error(await patchResp.text());
+          await appendUnitActivityLog(unitId, `✎ Updated by ${session.u} — ${changes.join('; ')}`, session.u, "system");
+        }
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editUnit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Uploading the signed contract to an existing unit — same
     // create-then-upload pattern already used for vendor proforma
     // attachments, since Airtable's upload endpoint needs an existing
@@ -820,6 +863,45 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, unit: unitName || "" });
       } catch (err) {
         console.error("assignAssetToUnit error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // PM/staff replying in a unit's chat — same permission rule as the
+    // rest of the Units tab (all except Technician). Writes to the
+    // exact same Chat Log the tenant's no-login portal reads from and
+    // posts to — one shared thread, not two separate ones.
+    if (req.body && req.body.sendUnitChatMessage) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to send unit messages." });
+      }
+      const { unitId, message } = req.body;
+      if (!unitId || !message || !message.trim()) {
+        return res.status(400).json({ error: "unitId and message are required" });
+      }
+      try {
+        const base = process.env.AIRTABLE_BASE_ID;
+        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+        });
+        if (!getResp.ok) throw new Error("Could not read unit");
+        const unitData = await getResp.json();
+
+        let chatLog = [];
+        try { chatLog = JSON.parse(unitData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
+        chatLog.push({ from: "pm", senderName: session.u, message: message.trim(), at: new Date().toISOString() });
+
+        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog) } }),
+        });
+        if (!patchResp.ok) throw new Error("Could not save message");
+
+        return res.status(200).json({ success: true, chatLog });
+      } catch (err) {
+        console.error("sendUnitChatMessage error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
