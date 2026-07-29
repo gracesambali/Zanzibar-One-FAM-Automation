@@ -2064,7 +2064,6 @@ async function showUnitDetail(unitId) {
   const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
   const unitAssets = assets.filter(a => a.unit === u.name);
   const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/unit-portal.html?unit=' + u.id)}`;
-  const breakdownQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/report.html')}`;
 
   let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Units</button>
   <div class="wo-layout">
@@ -2079,16 +2078,11 @@ async function showUnitDetail(unitId) {
       </div>
     </div>
 
-    <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;gap:24px;flex-wrap:wrap">
-      <div style="text-align:center">
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="text-align:center;width:110px">
         <img src="${unitQrUrl}" alt="QR code to this unit's portal" style="width:110px;height:110px;border-radius:6px;border:1px solid var(--border)" title="Scan to open this unit's tenant portal">
-        <div style="font-size:11px;color:var(--muted);margin-top:6px;max-width:110px">Opens this unit's tenant portal</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Opens this unit's tenant portal</div>
         <button onclick="downloadQrCode('${unitQrUrl}','${u.name.replace(/[^a-zA-Z0-9]/g,'-')}-portal')" style="margin-top:6px;padding:4px 10px;font-size:10.5px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
-      </div>
-      <div style="text-align:center">
-        <img src="${breakdownQrUrl}" alt="QR code to report a breakdown" style="width:110px;height:110px;border-radius:6px;border:1px solid var(--border)" title="Scan to open the general Report a Breakdown page">
-        <div style="font-size:11px;color:var(--muted);margin-top:6px;max-width:110px">Opens Report a Breakdown</div>
-        <button onclick="downloadQrCode('${breakdownQrUrl}','${u.name.replace(/[^a-zA-Z0-9]/g,'-')}-breakdown')" style="margin-top:6px;padding:4px 10px;font-size:10.5px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
       </div>
     </div>
 

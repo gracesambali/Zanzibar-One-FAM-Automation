@@ -91,8 +91,41 @@
 
     <div id="result" class="result"></div>
 
+    <details style="margin-top:20px;text-align:center">
+      <summary style="font-size:11.5px;color:#9CA3AF;cursor:pointer">Printing signage for this page?</summary>
+      <div style="margin-top:10px">
+        <img id="pageQrImg" src="" alt="QR code to this Report a Breakdown page" style="width:130px;height:130px;border-radius:6px;border:1px solid #E2E6ED">
+        <div style="margin-top:6px">
+          <button type="button" onclick="downloadPageQr()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid #E2E6ED;border-radius:6px;background:#fff;color:#1A3566;cursor:pointer">↓ Download QR Code</button>
+        </div>
+      </div>
+    </details>
+
     <div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
   </div>
+
+<script>
+  const pageQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(window.location.origin + '/report.html')}`;
+  document.getElementById('pageQrImg').src = pageQrUrl;
+
+  async function downloadPageQr() {
+    try {
+      const resp = await fetch(pageQrUrl);
+      if (!resp.ok) throw new Error('QR service returned ' + resp.status);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'report-a-breakdown-qr.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch (err) {
+      alert('Could not download QR code: ' + err.message);
+    }
+  }
+</script>
 
 <script>
 document.getElementById('takePhotoBtn').addEventListener('click', () => document.getElementById('photoCamera').click());
