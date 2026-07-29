@@ -314,10 +314,15 @@ button { font-family: inherit; cursor: pointer; }
       <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
     </div>
   </div>
-  <div style="display:flex;align-items:center;gap:16px">
-    <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
-      <option value="__all__">All Buildings</option>
+  <div style="display:flex;align-items:center;gap:8px">
+    <select id="facilitySwitcher" onchange="onFacilityFilterChange(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
+      <option value="__all__" style="color:#1A1A2E;background:#fff">All Facilities</option>
     </select>
+    <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
+      <option value="__all__" style="color:#1A1A2E;background:#fff">All Buildings</option>
+    </select>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px">
     <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
     <div id="loggedInUserBadge" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px 4px 4px">
       <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:#1A3566;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden"></div>
@@ -634,18 +639,18 @@ let currentStatusFilter = "All";
 let currentSortBy = "default";
 let currentSearch = "";
 
-// Global, persistent Building filter — chosen once in the header,
-// carried across every tab until changed, same idea as the logged-in
-// session itself. "__all__" (the default) means portfolio-wide, no
-// filtering. Confirmed: full switcher for everyone, no role
-// restrictions on who gets to use it.
+// Global, persistent Building/Facility filter — chosen once in the
+// header, carried across every tab until changed, same idea as the
+// logged-in session itself. "__all__" on both (the default) means
+// portfolio-wide, no filtering. Confirmed: full switcher for everyone,
+// no role restrictions on who gets to use it. Two separate dropdowns,
+// not one combined one — Facility narrows which buildings the Building
+// dropdown even offers, but each is its own clear, readable control.
+let currentFacilityFilter = "__all__";
 let currentBuildingFilter = "__all__";
 let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
 
-function setBuildingFilter(value) {
-  currentBuildingFilter = value;
-  // Re-render whichever tab is currently open, so the change is felt
-  // immediately rather than only on next navigation.
+function rerenderActiveTab() {
   const active = document.querySelector('.tab-btn.active');
   const tab = active ? active.dataset.tab : null;
   if (tab === 'workorders') renderWorkOrders();
@@ -653,40 +658,75 @@ function setBuildingFilter(value) {
   else if (tab === 'assets') renderAssets();
 }
 
-// Populates the switcher from the full Facilities -> Building
-// structure, not from what's actually tagged on real data — every
-// facility (Malls, Offices, Villas, Halls, ...) shows up as selectable
-// immediately, even before it has any real assets or work orders in
-// it yet. Facility-level options ("All of Offices") are prefixed
-// "facility:" to distinguish from a specific building selection.
-function refreshBuildingSwitcherOptions() {
-  const sel = document.getElementById('buildingSwitcher');
+// Changing Facility resets Building back to "all buildings within that
+// facility" and repopulates the Building dropdown to only that
+// facility's buildings — never leaves a stale building selected from a
+// different facility.
+function onFacilityFilterChange(value) {
+  currentFacilityFilter = value;
+  currentBuildingFilter = "__all__";
+  populateBuildingDropdown();
+  rerenderActiveTab();
+}
+
+function setBuildingFilter(value) {
+  currentBuildingFilter = value;
+  rerenderActiveTab();
+}
+
+// Facility dropdown — static list of every facility, always the same
+// regardless of anything else selected.
+function populateFacilityDropdown() {
+  const sel = document.getElementById('facilitySwitcher');
   if (!sel) return;
   const current = sel.value || "__all__";
-  let html = `<option value="__all__">All Buildings</option>`;
+  let html = `<option value="__all__" style="color:#1A1A2E;background:#fff">All Facilities</option>`;
   facilitiesData.forEach(f => {
-    html += `<optgroup label="${f.name}">`;
-    html += `<option value="facility:${f.name}">All of ${f.name}</option>`;
-    f.buildings.forEach(b => { html += `<option value="${b}">${b}</option>`; });
-    html += `</optgroup>`;
+    html += `<option value="${f.name}" style="color:#1A1A2E;background:#fff">${f.name}</option>`;
   });
   sel.innerHTML = html;
-  sel.value = current; // falls back to whatever the browser defaults to if current no longer exists
+  sel.value = current;
+}
+
+// Building dropdown — scoped to whichever Facility is currently
+// selected. "All Facilities" shows every building across all
+// facilities, flat; a specific Facility shows only its own buildings.
+function populateBuildingDropdown() {
+  const sel = document.getElementById('buildingSwitcher');
+  if (!sel) return;
+  const allLabel = currentFacilityFilter === "__all__" ? "All Buildings" : `All of ${currentFacilityFilter}`;
+  let html = `<option value="__all__" style="color:#1A1A2E;background:#fff">${allLabel}</option>`;
+  const relevantFacilities = currentFacilityFilter === "__all__"
+    ? facilitiesData
+    : facilitiesData.filter(f => f.name === currentFacilityFilter);
+  relevantFacilities.forEach(f => {
+    f.buildings.forEach(b => {
+      html += `<option value="${b}" style="color:#1A1A2E;background:#fff">${b}</option>`;
+    });
+  });
+  sel.innerHTML = html;
+  sel.value = currentBuildingFilter;
+}
+
+function refreshBuildingSwitcherOptions() {
+  populateFacilityDropdown();
+  populateBuildingDropdown();
 }
 
 // Filters an already-fetched assets/work-orders array by the current
-// building selection. "__all__" is a no-op. A "facility:X" selection
-// matches any building belonging to that facility; anything else is
-// an exact single-building match.
+// Facility + Building selection together. A specific Building always
+// wins if set; otherwise a specific Facility matches any building
+// belonging to it; "__all__" on both is a no-op.
 function filterByBuilding(items) {
-  if (currentBuildingFilter === "__all__") return items;
-  if (currentBuildingFilter.startsWith("facility:")) {
-    const facilityName = currentBuildingFilter.slice("facility:".length);
-    const facility = facilitiesData.find(f => f.name === facilityName);
+  if (currentBuildingFilter !== "__all__") {
+    return (items || []).filter(i => i.building === currentBuildingFilter);
+  }
+  if (currentFacilityFilter !== "__all__") {
+    const facility = facilitiesData.find(f => f.name === currentFacilityFilter);
     const buildingSet = new Set(facility ? facility.buildings : []);
     return (items || []).filter(i => buildingSet.has(i.building));
   }
-  return (items || []).filter(i => i.building === currentBuildingFilter);
+  return items;
 }
 
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
@@ -767,11 +807,6 @@ function renderDashboard() {
   refreshBuildingSwitcherOptions();
 
   let html = '';
-
-  // "For You Today" — loads async, right at the top, before anything
-  // generic. This is the answer to "what do I actually need to do" —
-  // not something to hunt for further down the page.
-  html += `<div id="pendingForMePanel" style="margin-bottom:18px"></div>`;
 
   // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
@@ -917,6 +952,10 @@ function renderDashboard() {
   </div>`;
 
   html += `</div>`;
+
+  // "For You Today" — repositioned directly above Maintenance Cost
+  // Overview, not at the very top of the page.
+  html += `<div id="pendingForMePanel" style="margin-top:20px"></div>`;
 
   const canSeeApiKey = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
 
