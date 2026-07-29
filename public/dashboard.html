@@ -576,15 +576,15 @@ const ROLE_PERMISSIONS = {
   // to see what's outstanding and do their job. Any role could get this
   // treatment later by flipping this one flag, without touching the
   // sidebar code itself.
-  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false, simplifiedNav: true },
-  electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
-  mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
-  admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
-  property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
-  procurement: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
-  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
-  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true },
-  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, approveProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
+  technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false, simplifiedNav: true },
+  electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  procurement: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
 };
 
 const levelDefs = [
@@ -3532,7 +3532,6 @@ async function showWorkOrderDetail(recordId) {
   currentWODetailId = recordId;
   const container = document.getElementById('view-workorders');
   const procStatus = o.procurementStatus || 'None';
-  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
   const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
   const statusClass = o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue';
 
@@ -4019,11 +4018,16 @@ function renderWODetailProcurement(o) {
   const el = document.getElementById('woDetailProcurement');
   if (!el) return;
   const procStatus = o.procurementStatus || 'None';
-  const canApprove = currentUserPermissions && currentUserPermissions.approveProcurement;
   const canFulfill = currentUserPermissions && currentUserPermissions.fulfillProcurement;
-  let breakdown = [];
-  try { breakdown = JSON.parse(o.costBreakdown || '[]'); } catch { breakdown = []; }
-  const total = breakdown.reduce((s, i) => s + (Number(i.cost) || 0), 0);
+  const isOverseer = currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[o.assignedRole];
+  const canConfirmDelivery = isOverseer || (!!routedLoginRole && currentUserRole === routedLoginRole);
+
+  let spec = null;
+  try {
+    const breakdown = JSON.parse(o.costBreakdown || '[]');
+    spec = breakdown[0] || null;
+  } catch { spec = null; }
 
   let html = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Procurement</div>`;
 
@@ -4031,29 +4035,37 @@ function renderWODetailProcurement(o) {
     html += `<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Not requested for this work order.</div>
       ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
   } else {
-    const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'] };
+    // Approved/Rejected kept in the color map purely for safe display
+    // of any historical record from before this flow changed — those
+    // two states can never be reached again going forward.
+    const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'], Delivered: ['#DCFCE7','#166534'] };
     html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatusLabel(procStatus)}</span>`;
-    if (breakdown.length > 0) {
-      html += `<table style="width:100%;margin-top:10px;font-size:12.5px;border-collapse:collapse">
-        <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Qty</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Unit Rate</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Total</td></tr>
-        ${breakdown.map(i => `<tr><td style="padding:4px 0;border-bottom:1px solid var(--border)">${i.description}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">${i.quantity !== undefined ? i.quantity : '—'}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">${i.unitRate !== undefined ? Number(i.unitRate).toLocaleString() : '—'}</td><td style="padding:4px 0;border-bottom:1px solid var(--border);text-align:right">TZS ${Number(i.cost).toLocaleString()}</td></tr>`).join('')}
-        <tr><td colspan="3" style="padding:6px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:6px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${total.toLocaleString()}</td></tr>
-      </table>`;
-    }
-    if (procStatus === 'Rejected' && o.procurementRejectionReason) {
-      html += `<div style="font-size:12px;color:#991B1B;margin-top:8px">❌ ${o.procurementRejectionReason}</div>
-        <button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:8px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">Revise Request</button>`;
-    }
-    if (procStatus === 'Requested' && canApprove) {
-      html += `<div style="margin-top:10px;display:flex;gap:8px">
-        <button onclick="approveProcurement('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✓ Approve</button>
-        <button onclick="rejectProcurementPrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Reject</button>
+
+    if (spec) {
+      html += `<div style="margin-top:10px;background:#F7F8FA;border-radius:8px;padding:10px 12px;font-size:12.5px">
+        <div style="font-weight:600;color:var(--text)">${spec.description}</div>
+        <div style="color:var(--muted);margin-top:2px">Quantity: ${spec.quantity}${spec.unit ? ' ' + spec.unit : ''}</div>
       </div>`;
     }
-    if (procStatus === 'Approved' && canFulfill) {
-      html += `<button onclick="fulfillProcurement('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Payment Processed</button>`;
-    } else if (procStatus === 'Approved') {
-      html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">✅ Approved — waiting on Procurement to process payment</div>`;
+
+    if (o.cost) {
+      html += `<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--navy)">TZS ${Number(o.cost).toLocaleString()}</div>`;
+    }
+
+    if (procStatus === 'Requested' && canFulfill) {
+      html += `<button onclick="openFulfillProcurementModal('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>`;
+    } else if (procStatus === 'Requested') {
+      html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">Waiting on Procurement to source and fulfill</div>`;
+    }
+
+    if (procStatus === 'Fulfilled' && canConfirmDelivery) {
+      html += `<button onclick="confirmDelivery('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📬 Confirm Delivery</button>`;
+    } else if (procStatus === 'Fulfilled') {
+      html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">Paid — waiting on the routed role to confirm delivery</div>`;
+    }
+
+    if (procStatus === 'Delivered') {
+      html += `<div style="margin-top:10px;font-size:12px;color:var(--green)">📬 Delivery confirmed${o.procurementApprovedBy ? ' by ' + o.procurementApprovedBy : ''}</div>`;
     }
   }
   el.innerHTML = html;
@@ -4838,20 +4850,23 @@ async function submitWorkOrderPhoto(recordId, photoType, inputEl) {
 let procurementLineItemCount = 0;
 
 function openProcurementRequestModal(recordId, assetName) {
-  procurementLineItemCount = 0;
   const overlay = document.createElement('div');
   overlay.id = 'procurementOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
-  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
+  overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
     <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Request Procurement: ${assetName}</h3>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Add each item and its cost. This work order can't be closed until the request is approved and fulfilled.</div>
-    <div id="procLineItemsHeader" style="display:flex;gap:8px;margin-bottom:6px;font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">
-      <div style="box-sizing:border-box;flex:2;min-width:0">Description</div><div style="box-sizing:border-box;flex-shrink:0;width:60px">Qty</div><div style="box-sizing:border-box;flex-shrink:0;width:90px">Unit Rate</div><div style="box-sizing:border-box;flex-shrink:0;width:90px">Line Total</div><div style="box-sizing:border-box;flex-shrink:0;width:20px"></div>
-    </div>
-    <div id="procLineItems"></div>
-    <button onclick="addProcurementLineItem()" style="margin:8px 0 16px;padding:7px 14px;font-size:12px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;width:100%">+ Add Item</button>
-    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;color:var(--navy);padding-top:10px;border-top:1px solid var(--border);margin-bottom:16px">
-      <span>Total</span><span id="procTotal">TZS 0</span>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Describe what's needed — Procurement sources it and handles cost from here, no pricing needed from you.</div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description *</label>
+    <textarea id="proc_description" rows="3" placeholder="e.g. Replacement compressor fan motor, 240V" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;margin-bottom:12px"></textarea>
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <div style="flex:1">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Quantity *</label>
+        <input id="proc_quantity" type="number" min="1" value="1" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      </div>
+      <div style="flex:1">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit</label>
+        <input id="proc_unit" placeholder="e.g. pcs, litres" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      </div>
     </div>
     <div id="procRequestError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
     <div style="display:flex;gap:8px">
@@ -4860,58 +4875,16 @@ function openProcurementRequestModal(recordId, assetName) {
     </div>
   </div>`;
   document.body.appendChild(overlay);
-  addProcurementLineItem();
-}
-
-function addProcurementLineItem() {
-  const id = procurementLineItemCount++;
-  const container = document.getElementById('procLineItems');
-  const row = document.createElement('div');
-  row.id = `procItem_${id}`;
-  row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center';
-  row.innerHTML = `
-    <input placeholder="e.g. Pipe fitting" class="proc-item-desc" style="box-sizing:border-box;flex:2;min-width:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <input type="number" placeholder="1" class="proc-item-qty" value="1" min="0" oninput="updateLineTotal('${id}')" style="box-sizing:border-box;flex-shrink:0;width:60px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <input type="number" placeholder="0" class="proc-item-rate" oninput="updateLineTotal('${id}')" style="box-sizing:border-box;flex-shrink:0;width:90px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-    <div class="proc-item-linetotal" style="box-sizing:border-box;flex-shrink:0;width:90px;font-size:13px;font-weight:600;color:var(--navy);text-align:right;padding-right:4px">0</div>
-    <button onclick="document.getElementById('procItem_${id}').remove();updateProcurementTotal()" style="box-sizing:border-box;flex-shrink:0;width:20px;border:none;background:none;color:var(--red);cursor:pointer;font-size:16px">×</button>
-  `;
-  container.appendChild(row);
-}
-
-function updateLineTotal(id) {
-  const row = document.getElementById(`procItem_${id}`);
-  const qty = Number(row.querySelector('.proc-item-qty').value) || 0;
-  const rate = Number(row.querySelector('.proc-item-rate').value) || 0;
-  const lineTotal = qty * rate;
-  row.querySelector('.proc-item-linetotal').textContent = lineTotal.toLocaleString();
-  updateProcurementTotal();
-}
-
-function updateProcurementTotal() {
-  const rows = document.querySelectorAll('#procLineItems > div');
-  let total = 0;
-  rows.forEach(row => {
-    const qty = Number(row.querySelector('.proc-item-qty')?.value) || 0;
-    const rate = Number(row.querySelector('.proc-item-rate')?.value) || 0;
-    total += qty * rate;
-  });
-  document.getElementById('procTotal').textContent = 'TZS ' + total.toLocaleString();
 }
 
 async function submitProcurementRequest(recordId) {
-  const rows = document.querySelectorAll('#procLineItems > div');
-  const lineItems = [];
-  rows.forEach(row => {
-    const desc = row.querySelector('.proc-item-desc').value.trim();
-    const quantity = Number(row.querySelector('.proc-item-qty').value) || 0;
-    const unitRate = Number(row.querySelector('.proc-item-rate').value) || 0;
-    if (desc) lineItems.push({ description: desc, quantity, unitRate, cost: quantity * unitRate });
-  });
-
+  const description = document.getElementById('proc_description').value.trim();
+  const quantity = Number(document.getElementById('proc_quantity').value) || 0;
+  const unit = document.getElementById('proc_unit').value.trim();
   const errorBox = document.getElementById('procRequestError');
-  if (lineItems.length === 0) {
-    errorBox.textContent = 'Add at least one item with a description.';
+
+  if (!description || !quantity) {
+    errorBox.textContent = 'A description and quantity are required.';
     errorBox.style.display = 'block';
     return;
   }
@@ -4920,7 +4893,7 @@ async function submitProcurementRequest(recordId) {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestProcurement: true, recordId, lineItems }),
+      body: JSON.stringify({ requestProcurement: true, recordId, description, quantity, unit }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
@@ -4965,49 +4938,44 @@ async function rejectWorkOrderClosurePrompt(recordId) {
   }
 }
 
-async function approveProcurement(recordId) {
-  if (!confirm('Approve this procurement request?')) return;
-  try {
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approveProcurement: true, recordId }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not approve');
-    refreshWorkOrdersView(recordId);
-  } catch (err) {
-    alert('Could not approve: ' + err.message);
-  }
+// Retired along with the approval gate itself — Procurement no longer
+// waits on anyone's approval, so there's nothing left to approve or
+// reject. These used to call approveProcurement/rejectProcurement,
+// which no longer exist on the backend.
+
+// Procurement enters the final cost themselves when marking a request
+// fulfilled — interim, until vendor quotes (Procurement Responses) are
+// wired in to pull the Chosen quote's AI-extracted cost automatically.
+function openFulfillProcurementModal(recordId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'fulfillProcurementOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Mark Fulfilled</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Enter what was actually paid — this unblocks the work order and notifies the routed role that delivery is on its way.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Final Cost (TZS) *</label>
+      <input id="fp_cost" type="number" min="0" step="any" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('fulfillProcurementOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button onclick="submitFulfillProcurement('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Mark Fulfilled</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
 }
 
-async function rejectProcurementPrompt(recordId) {
-  const reason = prompt('Why is this being rejected? (shown to whoever requested it)');
-  if (!reason) return;
+async function submitFulfillProcurement(recordId) {
+  const finalCost = document.getElementById('fp_cost').value;
+  if (finalCost === '' || Number(finalCost) < 0) { alert('Enter a valid final cost.'); return; }
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rejectProcurement: true, recordId, reason }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reject');
-    refreshWorkOrdersView(recordId);
-  } catch (err) {
-    alert('Could not reject: ' + err.message);
-  }
-}
-
-async function fulfillProcurement(recordId) {
-  if (!confirm('Mark this procurement as fulfilled? This unblocks the work order for the technician to complete.')) return;
-  try {
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fulfillProcurement: true, recordId }),
+      body: JSON.stringify({ fulfillProcurement: true, recordId, finalCost }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark fulfilled');
+    document.getElementById('fulfillProcurementOverlay')?.remove();
     refreshWorkOrdersView(recordId);
   } catch (err) {
     alert('Could not mark fulfilled: ' + err.message);
