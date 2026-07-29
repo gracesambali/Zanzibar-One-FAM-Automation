@@ -748,6 +748,7 @@ export default async function handler(req, res) {
         });
         if (!resp.ok) throw new Error(await resp.text());
         const created = await resp.json();
+        await appendUnitActivityLog(created.id, `🏠 Unit created by ${session.u}${tenantName ? ` — tenant: ${tenantName}` : ''}`, session.u, "system");
         return res.status(200).json({ success: true, unit: {
           id: created.id, name: created.fields["Unit Name"] || "", building: created.fields["Building"] || "",
         } });
@@ -780,6 +781,7 @@ export default async function handler(req, res) {
           }
         );
         if (!uploadResp.ok) throw new Error(await uploadResp.text());
+        await appendUnitActivityLog(unitId, `📄 Signed contract uploaded by ${session.u} — ${filename}`, session.u, "system");
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("uploadUnitContract error:", err);
@@ -790,11 +792,15 @@ export default async function handler(req, res) {
     // Tagging an asset to a tenant unit — same permission rule as
     // creating one. Independent of Room/Zone; a unit can span several
     // physical zones (the multi-floor semi-detached villa case).
+    // unitId is optional — passed whenever the frontend already has
+    // the full unit record on hand, so the event can be logged to that
+    // unit's own activity ribbon; the asset tagging itself always
+    // works even without it.
     if (req.body && req.body.assignAssetToUnit) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to assign a unit." });
       }
-      const { assetRecordId, unitName } = req.body;
+      const { assetRecordId, unitName, unitId, assetLabel } = req.body;
       if (!assetRecordId) return res.status(400).json({ error: "assetRecordId required" });
       try {
         const base = process.env.AIRTABLE_BASE_ID;
@@ -805,6 +811,12 @@ export default async function handler(req, res) {
           body: JSON.stringify({ fields: { "Unit": unitName || "" } }),
         });
         if (!resp.ok) throw new Error(await resp.text());
+        if (unitId) {
+          const label = assetLabel || assetRecordId;
+          await appendUnitActivityLog(unitId, unitName
+            ? `🔧 Asset assigned by ${session.u} — ${label}`
+            : `🔧 Asset removed by ${session.u} — ${label}`, session.u, "system");
+        }
         return res.status(200).json({ success: true, unit: unitName || "" });
       } catch (err) {
         console.error("assignAssetToUnit error:", err);
@@ -1127,6 +1139,33 @@ export default async function handler(req, res) {
 // used by the procurement, checklist, closure, and photo-upload
 // actions below. Read-modify-write, same pattern as the inline
 // addActivityEntry handler.
+// Same convention as appendActivityLog, scoped to the Units table
+// instead — separate function since the table name/env var differs,
+// not because the underlying pattern is any different.
+async function appendUnitActivityLog(unitId, text, by, type) {
+  const base = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+
+  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  });
+  if (!getResp.ok) { console.error("appendUnitActivityLog: could not read unit"); return null; }
+  const unitData = await getResp.json();
+
+  let log = [];
+  try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
+  log.push(entry);
+
+  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
+  });
+  if (!patchResp.ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
+  return entry;
+}
+
 async function appendActivityLog(recordId, text, by, type) {
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");

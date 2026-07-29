@@ -235,18 +235,23 @@ async function handleGetUnits(req, res) {
     if (!resp.ok) throw new Error("Could not load units");
     const data = await resp.json();
 
-    const units = (data.records || []).map(r => ({
-      id: r.id,
-      name: r.fields["Unit Name"] || "",
-      building: r.fields["Building"] || "",
-      unitType: r.fields["Unit Type"] || "",
-      tenantName: r.fields["Tenant Name"] || "",
-      tenantEmail: r.fields["Tenant Email"] || "",
-      tenantPhone: r.fields["Tenant Phone"] || "",
-      leaseStatus: r.fields["Lease Status"] || "",
-      contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
-      contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
-    })).filter(u => u.name);
+    const units = (data.records || []).map(r => {
+      let activityLog = [];
+      try { activityLog = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { activityLog = []; }
+      return {
+        id: r.id,
+        name: r.fields["Unit Name"] || "",
+        building: r.fields["Building"] || "",
+        unitType: r.fields["Unit Type"] || "",
+        tenantName: r.fields["Tenant Name"] || "",
+        tenantEmail: r.fields["Tenant Email"] || "",
+        tenantPhone: r.fields["Tenant Phone"] || "",
+        leaseStatus: r.fields["Lease Status"] || "",
+        contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
+        contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
+        activityLog,
+      };
+    }).filter(u => u.name);
 
     return res.status(200).json({ units });
   } catch (err) {
