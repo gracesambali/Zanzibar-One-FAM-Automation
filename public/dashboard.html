@@ -6298,11 +6298,14 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     ctx.fillText(idText, W / 2, 288 * scale);
 
     // Logo — plain, centered near the bottom, no band or container
-    // around it.
-    const logoBox = { w: W - 60 * scale, h: 34 * scale };
+    // around it. Bounded to fit inside the card's own bottom edge
+    // (H - 6*scale) with real padding — previously sized/positioned to
+    // reach the canvas edge itself, cutting it off.
+    const logoTop = 300 * scale;
+    const logoBox = { w: W - 60 * scale, h: (H - 6 * scale) - logoTop - 10 * scale };
     const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
     const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
-    ctx.drawImage(logoImg, (W - logoW) / 2, 306 * scale, logoW, logoH);
+    ctx.drawImage(logoImg, (W - logoW) / 2, logoTop, logoW, logoH);
 
     URL.revokeObjectURL(qrObjUrl);
 
