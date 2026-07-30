@@ -9,6 +9,7 @@ import { getSession, setSessionCookie } from "../lib/auth.js";
 import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getContactForUsername, getAllStaffDirectory } from "../lib/staffDirectory.js";
+import { getChecklistForWorkOrder } from "../lib/checklists.js";
 
 export default async function handler(req, res) {
   // Public quick-view mode (for QR code scanning — no login needed)
@@ -302,6 +303,38 @@ async function handlePublicQuickview(req, res) {
     if (!record) return res.status(404).json({ error: "Asset not found" });
     const f = record.fields;
 
+    // Checklist — Asset Category maps directly onto the checklist
+    // library's own keys (Generator, Pump, Air Conditioning Unit, etc.),
+    // so no name-guessing is needed here the way the full dashboard
+    // does it. Degrades gracefully to a generic checklist if the
+    // category isn't a direct match — never returns nothing.
+    const checklist = getChecklistForWorkOrder(f["Asset Category"] || null, null);
+
+    // Maintenance history — real work orders performed on this asset,
+    // most recent first. Same financial-omission policy as the rest of
+    // this endpoint: what was done and when, never what it cost.
+    let history = [];
+    try {
+      const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+      const woUrl = new URL(`https://api.airtable.com/v0/${base}/${woTable}`);
+      woUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
+      woUrl.searchParams.set("sort[0][field]", "Created");
+      woUrl.searchParams.set("sort[0][direction]", "desc");
+      woUrl.searchParams.set("maxRecords", "20");
+      const woResp = await fetch(woUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+      if (woResp.ok) {
+        const woData = await woResp.json();
+        history = (woData.records || []).map(r => ({
+          woId: r.fields["WO ID"] || "",
+          status: r.fields["Status"] || "",
+          maintenanceType: r.fields["Maintenance Type"] || "",
+          created: r.fields["Created"] || "",
+        }));
+      }
+    } catch (histErr) {
+      console.error("handlePublicQuickview history error:", histErr);
+    }
+
     return res.status(200).json({
       id: f["Asset ID"] || "", name: f["Name"] || "", system: f["System"] || "",
       category: f["Asset Category"] || "",
@@ -313,6 +346,8 @@ async function handlePublicQuickview(req, res) {
       lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
       lastService: f["Last Service"] || "",
       nextService: f["Next Service Due"] || "",
+      checklist,
+      history,
       // No acquisitionCost, currentValue, or residualValue — never sent here.
     });
   } catch (err) {
