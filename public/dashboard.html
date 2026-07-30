@@ -6851,8 +6851,9 @@ async function submitNewAsset() {
     customPrefix = othersText.substring(0,4).toUpperCase().replace(/[^A-Z]/g,'') || 'AST';
   }
 
-  if (!name || !category) {
-    errorBox.textContent = 'Name and Category are required.';
+  const buildingVal = document.getElementById('na_building').value;
+  if (!name || !category || !buildingVal) {
+    errorBox.textContent = 'Name, Category, and Building are required.';
     errorBox.style.display = 'block';
     return;
   }
