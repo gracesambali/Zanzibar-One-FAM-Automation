@@ -65,10 +65,19 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
   if (!a.name || !a.nature || !a.category) {
     return res.status(400).json({ error: "Name, Asset Nature, and Asset Category are required" });
   }
+  if (!a.building) {
+    return res.status(400).json({ error: "Building is required — every asset needs to be tagged so it's visible to the Building/Facility switcher." });
+  }
 
   try {
-    // Auto-generate ID from category prefix (or custom prefix for "Others")
-    const prefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
+    // Auto-generate ID from building code + category prefix — the
+    // building code is prepended INTO the prefix itself, so the
+    // sequence naturally scopes per-building-per-category (Mall 1's
+    // ACC units count 001, 002... independently from Villa 7's).
+    // generateNextAssetId doesn't need to know about buildings at all;
+    // it just searches for whatever full prefix it's given.
+    const categoryPrefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
+    const prefix = a.buildingCode ? `${a.buildingCode}-${categoryPrefix}` : categoryPrefix;
     const assetId = await generateNextAssetId(prefix);
 
     const base = process.env.AIRTABLE_BASE_ID;
@@ -94,6 +103,8 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
           "Asset ID": assetId,
           "Name": a.name,
           "System": a.system || "",
+          "Building": a.building || "",
+          "Facility": a.facility || "",
           "Asset Nature": a.nature || "Tangible",
           "Mobility": a.mobility || "",
           "Asset Category": a.category || "",
