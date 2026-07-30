@@ -6658,7 +6658,14 @@ function openAddAssetForm() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Onboarding a replacement? Decommission the old unit first from its detail view, then add the new one here.</div>
       <div id="addAssetError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
 
-      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the category below — you never type it.</div>
+      <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the building and category below — you never type it.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility *</label>
+      <select id="na_facility" onchange="onAddAssetFacilityChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${facilitiesData.map(f => `<option value="${f.name}">${f.name}</option>`).join('')}
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
+      <select id="na_building" onchange="onCategoryChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature *</label>
       <select id="na_nature" onchange="onNatureChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -6738,6 +6745,28 @@ function openAddAssetForm() {
   `;
   document.body.appendChild(overlay);
   onNatureChange();
+  onAddAssetFacilityChange();
+}
+
+// Derives a short building code from its name — "Mall 1" -> "M1",
+// "Villa 7" -> "V7". Falls back to initials if a building's name
+// doesn't follow the simple "Word Number" pattern (e.g. "Zanzibar One
+// Tower"), so this never throws, just produces something reasonable.
+function buildingShortCode(name) {
+  if (!name) return '';
+  const match = name.match(/^([A-Za-z])\S*\s+(\d+)$/);
+  if (match) return (match[1] + match[2]).toUpperCase();
+  return name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 4);
+}
+
+function onAddAssetFacilityChange() {
+  const facilityName = document.getElementById('na_facility')?.value;
+  const buildingSel = document.getElementById('na_building');
+  if (!buildingSel) return;
+  const facility = facilitiesData.find(f => f.name === facilityName);
+  const buildings = facility ? facility.buildings : [];
+  buildingSel.innerHTML = buildings.map(b => `<option value="${b}">${b}</option>`).join('');
+  onCategoryChange();
 }
 
 // --- Classification hierarchy — exact match to page 10 of the guideline, each branch ends with "Others" ---
@@ -6792,7 +6821,9 @@ function onCategoryChange() {
   const othersWrap = document.getElementById('na_othersWrap');
   othersWrap.style.display = category === 'Others' ? 'block' : 'none';
   const prefix = CATEGORY_PREFIXES[category] || 'AST';
-  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${prefix}-0XX`;
+  const buildingSel = document.getElementById('na_building');
+  const bCode = buildingSel && buildingSel.value ? buildingShortCode(buildingSel.value) + '-' : '';
+  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${bCode}${prefix}-0XX`;
 }
 
 function closeAddAssetForm() {
@@ -6850,6 +6881,9 @@ async function submitNewAsset() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name, nature, mobility, category, customPrefix,
+        building: document.getElementById('na_building').value,
+        facility: document.getElementById('na_facility').value,
+        buildingCode: buildingShortCode(document.getElementById('na_building').value),
         system: document.getElementById('na_system').value,
         floor: document.getElementById('na_floor').value,
         room: document.getElementById('na_room').value.trim(),
