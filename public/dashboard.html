@@ -321,11 +321,6 @@ button { font-family: inherit; cursor: pointer; }
     <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
       <option value="__all__" style="color:#1A1A2E;background:#fff">All Buildings</option>
     </select>
-    <select id="currencySwitcher" onchange="setCurrency(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
-      <option value="TZS" style="color:#1A1A2E;background:#fff">TZS</option>
-      <option value="USD" style="color:#1A1A2E;background:#fff">USD</option>
-      <option value="BWP" style="color:#1A1A2E;background:#fff">BWP</option>
-    </select>
   </div>
   <div style="display:flex;align-items:center;gap:16px">
     <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
@@ -681,7 +676,23 @@ function formatCurrency(amountInTzs) {
 
 function setCurrency(value) {
   currentCurrency = value;
-  rerenderActiveTab();
+  if (currentAssetDetailIdx !== null && assets[currentAssetDetailIdx]) {
+    showDetail(currentAssetDetailIdx);
+  } else {
+    rerenderActiveTab();
+  }
+}
+
+// Reusable compact switcher — dropped into whichever panel actually
+// shows prices, rather than sitting alone in the generic header
+// disconnected from any real numbers. Same global state either way,
+// so setting it in one place is reflected everywhere costs appear.
+function currencySwitcherHtml() {
+  return `<select onchange="setCurrency(this.value)" style="font-size:11px;font-weight:600;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">
+    <option value="TZS"${currentCurrency==='TZS'?' selected':''}>TZS</option>
+    <option value="USD"${currentCurrency==='USD'?' selected':''}>USD</option>
+    <option value="BWP"${currentCurrency==='BWP'?' selected':''}>BWP</option>
+  </select>`;
 }
 
 function rerenderActiveTab() {
@@ -1018,7 +1029,10 @@ function renderDashboard() {
 
   if (canSeeApiKey) {
     html += `<div class="dash-panel" style="margin-top:20px">
-      <div class="dash-panel-title">Maintenance Cost Overview</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+        <div class="dash-panel-title" style="margin-bottom:0">Maintenance Cost Overview</div>
+        ${currencySwitcherHtml()}
+      </div>
       <div id="costOverviewContent" style="padding:8px 0;font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
   }
@@ -1140,6 +1154,7 @@ async function renderMaintCostSection(a) {
 }
 
 function renderAssets() {
+  currentAssetDetailIdx = null;
   const systems = ["All", ...systemDefs.map(s=>s.name)];
   const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
   const attn = assets.filter(a=>a.status==="Critical").length;
@@ -1287,7 +1302,10 @@ function renderAssetResults() {
   container.innerHTML = html;
 }
 
+let currentAssetDetailIdx = null;
+
 function showDetail(idx) {
+  currentAssetDetailIdx = idx;
   const a = assets[idx];
   const age = a.installDate ? (new Date().getFullYear()) - parseInt(a.installDate.split("-")[0]) : 0;
   const pct = Math.min((age/a.lifespan)*100, 100);
@@ -1372,7 +1390,10 @@ function showDetail(idx) {
   // are the primary thing, the ratio is just context.
   if (canSeeCost) {
     html += `<div id="maintCostSection" style="padding:16px 24px;border-top:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Cost Summary</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;color:var(--navy)">Maintenance Cost Summary</div>
+        ${currencySwitcherHtml()}
+      </div>
       <div id="maintCostContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
   }
