@@ -24,6 +24,23 @@
   .footer { padding: 14px 22px; text-align:center; font-size:11px; color:var(--muted); border-top:1px solid var(--border); }
   .loading, .error { text-align:center; padding: 40px 20px; color:var(--muted); }
   .report-link { display:block; text-align:center; margin: 16px 22px 20px; padding:10px; background:var(--navy); color:#fff; text-decoration:none; border-radius:8px; font-size:13px; font-weight:600; }
+  .section { padding: 16px 22px; border-top:1px solid var(--border); }
+  .section-title { font-size:12px; font-weight:700; color:var(--navy); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:4px; }
+  .section-sub { font-size:11px; color:var(--muted); margin-bottom:12px; }
+  .checklist-item { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; padding:8px 0; border-bottom:1px solid #F3F4F6; font-size:13px; }
+  .checklist-item:last-child { border-bottom:none; }
+  .checklist-task { flex:1; }
+  .checklist-freq { flex-shrink:0; font-size:10.5px; color:var(--muted); background:#F3F4F6; padding:2px 8px; border-radius:8px; white-space:nowrap; }
+  .history-item { padding:8px 0; border-bottom:1px solid #F3F4F6; font-size:12.5px; }
+  .history-item:last-child { border-bottom:none; }
+  .history-top { display:flex; justify-content:space-between; align-items:center; }
+  .history-id { font-weight:600; color:#111827; }
+  .history-date { color:var(--muted); font-size:11px; }
+  .history-type { color:var(--muted); font-size:11.5px; margin-top:2px; }
+  .status-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:10.5px; font-weight:600; }
+  .status-completed { background:#dcfce7; color:var(--green); }
+  .status-open, .status-inprogress { background:#fef3c7; color:var(--amber); }
+  .empty-note { font-size:12.5px; color:var(--muted); font-style:italic; }
 </style>
 </head>
 <body>
@@ -52,6 +69,50 @@
       const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
       if (days <= 0) return "—";
       return days >= 60 ? `${days}d (~${Math.round(days/30)}mo)` : `${days} days`;
+    }
+
+    function renderChecklistSection(checklist) {
+      if (!checklist || !checklist.items || checklist.items.length === 0) {
+        return `<div class="section"><div class="section-title">Maintenance Checklist</div><div class="empty-note">No checklist available for this asset yet.</div></div>`;
+      }
+      const subLabel = checklist.generic
+        ? `General ${checklist.class.replace(' (General)', '')} checklist — no asset-specific list on file`
+        : `${checklist.class}${checklist.sourceStandard ? ' — sourced from ' + checklist.sourceStandard : ''}`;
+      return `
+        <div class="section">
+          <div class="section-title">Maintenance Checklist</div>
+          <div class="section-sub">${subLabel}</div>
+          ${checklist.items.map(item => `
+            <div class="checklist-item">
+              <span class="checklist-task">${item.task}</span>
+              <span class="checklist-freq">${item.frequency}</span>
+            </div>`).join('')}
+        </div>`;
+    }
+
+    function historyStatusClass(status) {
+      const k = (status || "").toLowerCase().replace(/\s+/g, "");
+      if (k === "completed") return "status-completed";
+      return "status-open";
+    }
+
+    function renderHistorySection(history) {
+      if (!history || history.length === 0) {
+        return `<div class="section"><div class="section-title">Maintenance History</div><div class="empty-note">No maintenance recorded for this asset yet.</div></div>`;
+      }
+      return `
+        <div class="section">
+          <div class="section-title">Maintenance History</div>
+          <div class="section-sub">${history.length} record${history.length !== 1 ? 's' : ''}, most recent first</div>
+          ${history.map(h => `
+            <div class="history-item">
+              <div class="history-top">
+                <span class="history-id">${h.woId}</span>
+                <span class="status-badge ${historyStatusClass(h.status)}">${h.status || '—'}</span>
+              </div>
+              <div class="history-type">${h.maintenanceType || 'Maintenance'} — ${h.created ? new Date(h.created).toLocaleDateString() : '—'}</div>
+            </div>`).join('')}
+        </div>`;
     }
 
     async function load() {
@@ -89,6 +150,8 @@
             <div class="row"><span class="label">Next Service Due</span><span class="value">${data.nextService || "—"}</span></div>
             <div class="row"><span class="label">Maintenance Interval</span><span class="value">${maintenanceInterval(data.lastService, data.nextService)}</span></div>
           </div>
+          ${renderChecklistSection(data.checklist)}
+          ${renderHistorySection(data.history)}
           <a class="report-link" href="/report.html">🛠 Report an issue with this asset</a>
           <div class="footer">Gracing Ventures · Facility Asset Management</div>
         `;
