@@ -317,6 +317,26 @@ async function handleGetFacilities(req, res) {
   }
 }
 
+// Same matching logic as the staff dashboard's own guessChecklistClass —
+// ported here so the public page finds the same specific checklist
+// class a logged-in user would see, not a weaker direct-category match
+// that falls back to generic far more often than it should.
+function guessChecklistClass(name, system) {
+  const text = ((name || "") + " " + (system || "")).toLowerCase();
+  if (text.includes("pump")) return "Pump";
+  if (text.includes("generator")) return "Generator";
+  if (text.includes("lift") || text.includes("elevator")) return "Lift / Elevator";
+  if (text.includes("ups")) return "UPS";
+  if (text.includes("fire panel") || text.includes("fire detection")) return "Fire Panel";
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("fan coil") || text.includes("cooling tower") || text.includes("air conditioning")) return "Air Conditioning Unit";
+  if (text.includes("cctv")) return "CCTV Camera";
+  if (text.includes("access control")) return "Access Control Panel";
+  if (text.includes("computer") && !text.includes("bms")) return "Desktop Computer";
+  if (text.includes("smoke detector")) return "Smoke Detector";
+  if (text.includes("compressor")) return "Compressor";
+  return null;
+}
+
 async function handlePublicQuickview(req, res) {
   const assetId = req.query.id;
   try {
@@ -334,12 +354,13 @@ async function handlePublicQuickview(req, res) {
     if (!record) return res.status(404).json({ error: "Asset not found" });
     const f = record.fields;
 
-    // Checklist — Asset Category maps directly onto the checklist
-    // library's own keys (Generator, Pump, Air Conditioning Unit, etc.),
-    // so no name-guessing is needed here the way the full dashboard
-    // does it. Degrades gracefully to a generic checklist if the
-    // category isn't a direct match — never returns nothing.
-    const checklist = getChecklistForWorkOrder(f["Asset Category"] || null, null);
+    // Checklist — same two-step matching the staff dashboard already
+    // uses: guess a specific class from the asset's actual name/system
+    // first (far more precise), falling back to Asset Category only if
+    // that guess comes up empty, then to the universal generic
+    // checklist if neither matches. Never returns nothing.
+    const guessedClass = guessChecklistClass(f["Name"], f["System"]);
+    const checklist = getChecklistForWorkOrder(guessedClass || f["Asset Category"] || null, null);
 
     // Maintenance history — real work orders performed on this asset,
     // most recent first. Same financial-omission policy as the rest of
