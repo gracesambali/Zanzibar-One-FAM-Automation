@@ -6227,8 +6227,8 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/logo.png')]);
 
     const canvas = document.createElement('canvas');
-    canvas.width = 440;
-    canvas.height = 260;
+    canvas.width = 260;
+    canvas.height = 340;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -6236,37 +6236,33 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     ctx.lineWidth = 3;
     ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
 
-    // Logo — left, fit within its box preserving aspect ratio, works
-    // whether the logo is a vertical mark or a horizontal wordmark.
-    const logoBox = { x: 20, y: 20, w: 130, h: 185 };
-    const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
-    const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
-    ctx.drawImage(logoImg, logoBox.x + (logoBox.w - logoW) / 2, logoBox.y + (logoBox.h - logoH) / 2, logoW, logoH);
+    // QR — top, centered
+    const qrSize = 200;
+    ctx.drawImage(qrImg, (canvas.width - qrSize) / 2, 20, qrSize, qrSize);
 
-    // Divider between logo and QR
-    ctx.strokeStyle = '#D1D5DB';
+    // Asset ID / Unit name — centered beneath the QR
+    ctx.fillStyle = '#1A3566';
+    ctx.font = 'bold 22px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(idText, canvas.width / 2, 254);
+
+    // Small logo ribbon — a distinct band at the bottom, not just a
+    // floating logo, matching the confirmed vertical layout.
+    const ribbonY = 272;
+    const ribbonH = 56;
+    ctx.fillStyle = '#F7F8FA';
+    ctx.fillRect(4, ribbonY, canvas.width - 8, ribbonH);
+    ctx.strokeStyle = '#E2E6ED';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(168, 20);
-    ctx.lineTo(168, 205);
+    ctx.moveTo(4, ribbonY);
+    ctx.lineTo(canvas.width - 4, ribbonY);
     ctx.stroke();
 
-    // QR — right
-    ctx.drawImage(qrImg, 190, 18, 190, 190);
-
-    // Divider above the ID text strip
-    ctx.strokeStyle = '#1A3566';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(20, 220);
-    ctx.lineTo(420, 220);
-    ctx.stroke();
-
-    // Asset ID / Unit ID
-    ctx.fillStyle = '#1A3566';
-    ctx.font = 'bold 24px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(idText, canvas.width / 2, 248);
+    const logoBox = { w: canvas.width - 40, h: ribbonH - 16 };
+    const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
+    const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
+    ctx.drawImage(logoImg, (canvas.width - logoW) / 2, ribbonY + (ribbonH - logoH) / 2, logoW, logoH);
 
     URL.revokeObjectURL(qrObjUrl);
 
