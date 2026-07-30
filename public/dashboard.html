@@ -6226,43 +6226,114 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
 
     const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/logo.png')]);
 
+    // Inter is already the app's own font — canvas won't use a webfont
+    // until it's explicitly confirmed loaded, otherwise text silently
+    // falls back to a generic system font and the whole thing looks cheap.
+    await Promise.all([
+      document.fonts.load('700 44px Inter'),
+      document.fonts.load('600 26px Inter'),
+    ]);
+
+    // Rendered at 3x the visual size — this gets printed and stuck on
+    // a physical asset, so a soft, pixelated QR code isn't acceptable;
+    // it needs to stay cleanly scannable at sticker size.
+    const scale = 3;
+    const W = 260 * scale, H = 340 * scale;
     const canvas = document.createElement('canvas');
-    canvas.width = 260;
-    canvas.height = 340;
+    canvas.width = W;
+    canvas.height = H;
     const ctx = canvas.getContext('2d');
+
+    function roundRectPath(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    const navy = '#0A3866';
+    const gold = '#DEB33F';
+    const outerR = 18 * scale;
+
+    // Base card with a soft shadow, rounded corners — a real printed
+    // card, not a plain rectangle with a hard border.
+    ctx.save();
+    ctx.shadowColor = 'rgba(10, 56, 102, 0.18)';
+    ctx.shadowBlur = 14 * scale;
+    ctx.shadowOffsetY = 4 * scale;
     ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#1A3566';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+    roundRectPath(6 * scale, 6 * scale, W - 12 * scale, H - 12 * scale, outerR);
+    ctx.fill();
+    ctx.restore();
 
-    // QR — top, centered
-    const qrSize = 200;
-    ctx.drawImage(qrImg, (canvas.width - qrSize) / 2, 20, qrSize, qrSize);
-
-    // Asset ID / Unit name — centered beneath the QR
-    ctx.fillStyle = '#1A3566';
-    ctx.font = 'bold 22px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(idText, canvas.width / 2, 254);
-
-    // Small logo ribbon — a distinct band at the bottom, not just a
-    // floating logo, matching the confirmed vertical layout.
-    const ribbonY = 272;
-    const ribbonH = 56;
-    ctx.fillStyle = '#F7F8FA';
-    ctx.fillRect(4, ribbonY, canvas.width - 8, ribbonH);
-    ctx.strokeStyle = '#E2E6ED';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(4, ribbonY);
-    ctx.lineTo(canvas.width - 4, ribbonY);
+    ctx.strokeStyle = navy;
+    ctx.lineWidth = 2 * scale;
+    roundRectPath(6 * scale, 6 * scale, W - 12 * scale, H - 12 * scale, outerR);
     ctx.stroke();
 
-    const logoBox = { w: canvas.width - 40, h: ribbonH - 16 };
+    // Thin gold accent line just inside the top edge — a designed
+    // detail, not just a flat navy/white card.
+    ctx.strokeStyle = gold;
+    ctx.lineWidth = 3 * scale;
+    ctx.beginPath();
+    ctx.moveTo(28 * scale, 16 * scale);
+    ctx.lineTo(W - 28 * scale, 16 * scale);
+    ctx.stroke();
+
+    // QR — top, centered, on its own soft card for breathing room
+    const qrCardSize = 214 * scale;
+    const qrCardX = (W - qrCardSize) / 2;
+    const qrCardY = 32 * scale;
+    ctx.fillStyle = '#FAFBFC';
+    roundRectPath(qrCardX, qrCardY, qrCardSize, qrCardSize, 10 * scale);
+    ctx.fill();
+    ctx.strokeStyle = '#E2E6ED';
+    ctx.lineWidth = 1 * scale;
+    roundRectPath(qrCardX, qrCardY, qrCardSize, qrCardSize, 10 * scale);
+    ctx.stroke();
+
+    const qrSize = 194 * scale;
+    ctx.imageSmoothingEnabled = false; // keep QR modules crisp, not blurred
+    ctx.drawImage(qrImg, (W - qrSize) / 2, qrCardY + (qrCardSize - qrSize) / 2, qrSize, qrSize);
+    ctx.imageSmoothingEnabled = true;
+
+    // Asset ID / Unit name — centered beneath the QR card
+    ctx.fillStyle = navy;
+    ctx.font = `700 ${26 * scale}px Inter, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(idText, W / 2, 288 * scale);
+
+    // Logo ribbon — a genuine distinct band at the bottom, subtle
+    // gradient rather than flat gray, rounded to match the card's
+    // bottom corners exactly.
+    const ribbonY = 302 * scale;
+    const ribbonH = 30 * scale;
+    const ribbonX = 6 * scale;
+    const ribbonW = W - 12 * scale;
+    ctx.save();
+    roundRectPath(ribbonX, ribbonY, ribbonW, ribbonH, outerR);
+    ctx.clip();
+    const grad = ctx.createLinearGradient(0, ribbonY, 0, ribbonY + ribbonH);
+    grad.addColorStop(0, '#F5F7FA');
+    grad.addColorStop(1, '#ECEFF3');
+    ctx.fillStyle = grad;
+    ctx.fillRect(ribbonX, ribbonY, ribbonW, ribbonH);
+    ctx.restore();
+    ctx.strokeStyle = '#E2E6ED';
+    ctx.lineWidth = 1 * scale;
+    ctx.beginPath();
+    ctx.moveTo(ribbonX, ribbonY);
+    ctx.lineTo(ribbonX + ribbonW, ribbonY);
+    ctx.stroke();
+
+    const logoBox = { w: ribbonW - 40 * scale, h: ribbonH - 10 * scale };
     const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
     const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
-    ctx.drawImage(logoImg, (canvas.width - logoW) / 2, ribbonY + (ribbonH - logoH) / 2, logoW, logoH);
+    ctx.drawImage(logoImg, (W - logoW) / 2, ribbonY + (ribbonH - logoH) / 2, logoW, logoH);
 
     URL.revokeObjectURL(qrObjUrl);
 
