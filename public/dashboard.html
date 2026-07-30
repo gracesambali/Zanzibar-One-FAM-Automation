@@ -1380,7 +1380,7 @@ function showDetail(idx) {
     <button onclick="exportSingleAssetFormat('${a.id}','xlsx')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">XLSX</button>
     <button onclick="exportSingleAssetFormat('${a.id}','csv')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
     <button onclick="exportSingleAssetFormat('${a.id}','pdf')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
-    <button onclick="downloadQrCode('${qrUrl}','${a.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ QR Code</button>
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ QR Code</button>
   </div>`;
 
   // Audit trail — edit history
@@ -2093,7 +2093,7 @@ async function showUnitDetail(unitId) {
         <div style="text-align:center;width:100px;flex-shrink:0">
           <img src="${unitQrUrl}" alt="QR code to this unit's portal" style="width:100px;height:100px;border-radius:6px;border:1px solid var(--border)" title="Scan to open this unit's tenant portal">
           <div style="font-size:10px;color:var(--muted);margin-top:5px">Opens tenant portal</div>
-          <button onclick="downloadQrCode('${unitQrUrl}','${u.name.replace(/[^a-zA-Z0-9]/g,'-')}-portal')" style="margin-top:5px;padding:3px 8px;font-size:10px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
+          <button onclick="downloadQrCode('${unitQrUrl}','${u.name}','${u.name.replace(/[^a-zA-Z0-9]/g,'-')}-portal')" style="margin-top:5px;padding:3px 8px;font-size:10px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button>
         </div>
       </div>
       ${!u.tenantPhone ? `<div style="margin-top:10px;font-size:11.5px;color:#92400E">⚠ No phone on file — the tenant can't sign in to their portal until this is set.</div>` : `<div style="margin-top:10px;font-size:11px;color:var(--muted)">This phone number is what the tenant signs into their portal with.</div>`}
@@ -6202,21 +6202,86 @@ function exportSingleAssetXLSX(assetId) {
 // (browsers require same-origin, or a blob, for that attribute to be honored
 // reliably). Fetching the QR image ourselves and turning it into a blob URL
 // fixes this — this is what actually makes "Download QR" save a real PNG file.
-async function downloadQrCode(qrUrl, assetId) {
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not load ' + src));
+    img.src = src;
+  });
+}
+
+// Composes a printable sticker: company logo + QR code + Asset/Unit ID,
+// matching the confirmed physical label layout — this is what actually
+// gets stuck on the asset or unit, not the bare QR code alone.
+async function downloadQrCode(qrUrl, idText, filenameBase) {
   try {
-    const resp = await fetch(qrUrl);
-    if (!resp.ok) throw new Error('QR service returned ' + resp.status);
-    const blob = await resp.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = `${assetId}-qr.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    // Fetch the QR as a blob first, same proven pattern as before —
+    // loading a blob URL into an <img> avoids any cross-origin canvas
+    // tainting that loading the qrserver.com URL directly might risk.
+    const qrResp = await fetch(qrUrl);
+    if (!qrResp.ok) throw new Error('QR service returned ' + qrResp.status);
+    const qrBlob = await qrResp.blob();
+    const qrObjUrl = URL.createObjectURL(qrBlob);
+
+    const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/logo.png')]);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 440;
+    canvas.height = 260;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#1A3566';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+
+    // Logo — left, fit within its box preserving aspect ratio, works
+    // whether the logo is a vertical mark or a horizontal wordmark.
+    const logoBox = { x: 20, y: 20, w: 130, h: 185 };
+    const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
+    const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
+    ctx.drawImage(logoImg, logoBox.x + (logoBox.w - logoW) / 2, logoBox.y + (logoBox.h - logoH) / 2, logoW, logoH);
+
+    // Divider between logo and QR
+    ctx.strokeStyle = '#D1D5DB';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(168, 20);
+    ctx.lineTo(168, 205);
+    ctx.stroke();
+
+    // QR — right
+    ctx.drawImage(qrImg, 190, 18, 190, 190);
+
+    // Divider above the ID text strip
+    ctx.strokeStyle = '#1A3566';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(20, 220);
+    ctx.lineTo(420, 220);
+    ctx.stroke();
+
+    // Asset ID / Unit ID
+    ctx.fillStyle = '#1A3566';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(idText, canvas.width / 2, 248);
+
+    URL.revokeObjectURL(qrObjUrl);
+
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filenameBase}-label.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }, 'image/png');
   } catch (err) {
-    alert('Could not download QR code: ' + err.message);
+    alert('Could not create label: ' + err.message);
   }
 }
 
