@@ -35,6 +35,17 @@ export default async function handler(req, res) {
     return handleGetFacilities(req, res);
   }
 
+  // Live exchange rates for the currency switcher — TZS is the base
+  // currency everything's actually stored in; this just gives the
+  // frontend today's TZS->USD and TZS->BWP rates to convert display
+  // values with. Free, no-key open endpoint, updates once daily —
+  // fetched fresh each call rather than cached, since this is a low-
+  // volume internal tool, not worth the complexity of a cache layer
+  // until it actually becomes a problem.
+  if (req.query.exchangeRates === "true") {
+    return handleGetExchangeRates(req, res);
+  }
+
   // Tenant units — Property Manager, core roles, BO/SysAdmin (all
   // except Technician, confirmed, to keep this simple). Each unit
   // carries its own tenant info; assets tag onto a unit by name, same
@@ -260,6 +271,26 @@ async function handleGetUnits(req, res) {
     return res.status(200).json({ units });
   } catch (err) {
     console.error("handleGetUnits error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleGetExchangeRates(req, res) {
+  try {
+    const resp = await fetch("https://open.er-api.com/v6/latest/TZS");
+    if (!resp.ok) throw new Error(`Exchange rate service returned ${resp.status}`);
+    const data = await resp.json();
+    if (data.result !== "success" || !data.rates) throw new Error("Exchange rate service returned an unexpected response");
+
+    return res.status(200).json({
+      base: "TZS",
+      tzsToUsd: data.rates["USD"] || null,
+      tzsToBwp: data.rates["BWP"] || null,
+      lastUpdated: data.time_last_update_utc || null,
+      attribution: "Rates by exchangerate-api.com",
+    });
+  } catch (err) {
+    console.error("handleGetExchangeRates error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
