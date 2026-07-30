@@ -321,6 +321,11 @@ button { font-family: inherit; cursor: pointer; }
     <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
       <option value="__all__" style="color:#1A1A2E;background:#fff">All Buildings</option>
     </select>
+    <select id="currencySwitcher" onchange="setCurrency(this.value)" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
+      <option value="TZS" style="color:#1A1A2E;background:#fff">TZS</option>
+      <option value="USD" style="color:#1A1A2E;background:#fff">USD</option>
+      <option value="BWP" style="color:#1A1A2E;background:#fff">BWP</option>
+    </select>
   </div>
   <div style="display:flex;align-items:center;gap:16px">
     <div class="live-label"><div class="live-dot"></div> Live Monitoring</div>
@@ -654,6 +659,30 @@ let currentSearch = "";
 let currentFacilityFilter = "__all__";
 let currentBuildingFilter = "__all__";
 let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
+
+// Currency switcher — TZS is what's actually stored everywhere; this
+// only affects how it's DISPLAYED. Rates fetched once at init from a
+// live service, not hardcoded, so this stays current day to day.
+let currentCurrency = 'TZS';
+let exchangeRates = { USD: null, BWP: null };
+
+// The one shared formatter every cost display in the app should call —
+// converts and labels correctly for whichever currency is currently
+// selected. Amount is always in TZS (the real stored value); this
+// never mutates the underlying data, only the presentation.
+function formatCurrency(amountInTzs) {
+  if (amountInTzs === null || amountInTzs === undefined || isNaN(amountInTzs)) return '—';
+  if (currentCurrency === 'TZS' || !exchangeRates[currentCurrency]) {
+    return 'TZS ' + Math.round(amountInTzs).toLocaleString();
+  }
+  const converted = amountInTzs * exchangeRates[currentCurrency];
+  return currentCurrency + ' ' + converted.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function setCurrency(value) {
+  currentCurrency = value;
+  rerenderActiveTab();
+}
 
 function rerenderActiveTab() {
   const active = document.querySelector('.tab-btn.active');
@@ -1088,14 +1117,14 @@ async function renderMaintCostSection(a) {
     ['Inspection', s.Inspection], ['Procurement', s.Procurement], ['Other', s.Other],
   ].filter(([, v]) => v > 0);
 
-  let html = `<div style="font-size:26px;font-weight:700;color:var(--navy);margin-bottom:2px">TZS ${Math.round(s.total).toLocaleString()}</div>
+  let html = `<div style="font-size:26px;font-weight:700;color:var(--navy);margin-bottom:2px">${formatCurrency(s.total)}</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Total maintenance spend recorded for this asset</div>`;
 
   if (types.length > 0) {
     html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       ${types.map(([label, v]) => `<div style="background:#F7F8FA;border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:110px">
         <div style="font-size:10.5px;color:var(--muted)">${label}</div>
-        <div style="font-size:14px;font-weight:600;color:var(--text)">TZS ${Math.round(v).toLocaleString()}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">${formatCurrency(v)}</div>
       </div>`).join('')}
     </div>`;
   }
@@ -1104,7 +1133,7 @@ async function renderMaintCostSection(a) {
     const ratio = (s.total / a.acquisitionCost) * 100;
     const color = ratio >= 75 ? 'var(--red)' : ratio >= 50 ? 'var(--amber)' : 'var(--muted)';
     const note = ratio >= 75 ? ' — consider replacement' : ratio >= 50 ? ' — high maintenance cost' : '';
-    html += `<div style="font-size:11.5px;color:${color}">Maintenance cost is ${ratio.toFixed(0)}% of acquisition cost (TZS ${Number(a.acquisitionCost).toLocaleString()})${note}, automatically calculated.</div>`;
+    html += `<div style="font-size:11.5px;color:${color}">Maintenance cost is ${ratio.toFixed(0)}% of acquisition cost (${formatCurrency(a.acquisitionCost)})${note}, automatically calculated.</div>`;
   }
 
   el.innerHTML = html;
@@ -1238,7 +1267,7 @@ function renderAssetResults() {
     const valueBlock = canSeeCost ? `
       <div style="text-align:right;flex-shrink:0;min-width:110px">
         <div style="font-size:11px;color:var(--muted)">Current Value</div>
-        <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? 'TZS ' + Number(a.currentValue).toLocaleString() : '—'}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? formatCurrency(a.currentValue) : '—'}</div>
         ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
       </div>` : '';
     const costRatio = getMaintenanceCostRatio(a);
@@ -2624,7 +2653,7 @@ async function renderPlannedMaintenance() {
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${p.title}</span><span class="asset-id">${p.planId}</span>
               <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sc[0]};color:${sc[1]}">${p.status}</span>
             </div>
-            <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: TZS ${totalBudget.toLocaleString()} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
+            <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: ${formatCurrency(totalBudget)} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
           </div>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </button>`;
@@ -2735,8 +2764,8 @@ function showPlanDetail(recordId) {
       ${p.budgetItems.length === 0 ? '<div style="font-size:12px;color:var(--muted)">No budget items yet.</div>' : `
       <table style="width:100%;font-size:12.5px;border-collapse:collapse">
         <tr style="border-bottom:1px solid var(--border)"><td style="padding:4px 0;font-weight:600;color:var(--muted)">Item</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Planned</td><td style="padding:4px 0;font-weight:600;color:var(--muted);text-align:right">Actual</td></tr>
-        ${p.budgetItems.map((i,idx) => `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 0">${i.description}</td><td style="padding:6px 0;text-align:right">TZS ${Number(i.plannedCost||0).toLocaleString()}</td><td style="padding:6px 0;text-align:right">${i.actualCost ? 'TZS ' + Number(i.actualCost).toLocaleString() : `<button onclick="setPlanActualCost('${p.recordId}',${idx})" style="font-size:10.5px;color:var(--navy);background:none;border:none;cursor:pointer;text-decoration:underline">+ add actual</button>`}</td></tr>`).join('')}
-        <tr><td style="padding:8px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalPlanned.toLocaleString()}</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">TZS ${totalActual.toLocaleString()}</td></tr>
+        ${p.budgetItems.map((i,idx) => `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 0">${i.description}</td><td style="padding:6px 0;text-align:right">${formatCurrency(i.plannedCost||0)}</td><td style="padding:6px 0;text-align:right">${i.actualCost ? formatCurrency(i.actualCost) : `<button onclick="setPlanActualCost('${p.recordId}',${idx})" style="font-size:10.5px;color:var(--navy);background:none;border:none;cursor:pointer;text-decoration:underline">+ add actual</button>`}</td></tr>`).join('')}
+        <tr><td style="padding:8px 0;font-weight:700;color:var(--navy)">Total</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">${formatCurrency(totalPlanned)}</td><td style="padding:8px 0;font-weight:700;color:var(--navy);text-align:right">${formatCurrency(totalActual)}</td></tr>
       </table>`}
     </div>
 
@@ -3949,13 +3978,13 @@ async function loadCostOverview() {
     const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
     const maxVal = Math.max(...types.map(t => byType[t]));
 
-    let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">TZS ${total.toLocaleString()} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
+    let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">${formatCurrency(total)} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
     types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
       const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
       html += `<div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
           <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
-          <span style="color:var(--muted)">TZS ${byType[type].toLocaleString()}</span>
+          <span style="color:var(--muted)">${formatCurrency(byType[type])}</span>
         </div>
         <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
@@ -3990,7 +4019,7 @@ async function loadCostOverview() {
         <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">By Asset</div>
         ${shown.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
           <span><span style="font-weight:600;color:var(--text)">${r.assetId}</span> <span style="color:var(--muted)">— ${r.name}</span></span>
-          <span style="color:var(--navy);font-weight:600">TZS ${Math.round(r.total).toLocaleString()}</span>
+          <span style="color:var(--navy);font-weight:600">${formatCurrency(r.total)}</span>
         </div>`).join('')}
         ${assetRows.length > 10 ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">+${assetRows.length - 10} more — see Asset Register, sorted by Maintenance Cost Ratio, for the full list.</div>` : ''}
       </div>`;
@@ -4004,11 +4033,11 @@ async function loadCostOverview() {
       html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         ${pendingIdCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
           <span style="color:#92400E;font-weight:600">⚠ Pending Asset Identification</span>
-          <span style="color:#92400E;font-weight:600">TZS ${Math.round(pendingIdCostCache).toLocaleString()}</span>
+          <span style="color:#92400E;font-weight:600">${formatCurrency(pendingIdCostCache)}</span>
         </div>` : ''}
         ${unattributedCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
           <span style="color:var(--muted)">Unattributed / Non-Asset Costs</span>
-          <span style="color:var(--muted);font-weight:600">TZS ${Math.round(unattributedCostCache).toLocaleString()}</span>
+          <span style="color:var(--muted);font-weight:600">${formatCurrency(unattributedCostCache)}</span>
         </div>` : ''}
       </div>`;
     }
@@ -4302,7 +4331,7 @@ async function showWorkOrderDetail(recordId) {
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
-      ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · TZS ' + Number(o.cost).toLocaleString() : ''}</div>` : ''}
+      ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · ' + formatCurrency(o.cost) : ''}</div>` : ''}
       ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
       ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
       ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
@@ -4764,7 +4793,7 @@ function renderWODetailProcurement(o) {
     }
 
     if (o.cost) {
-      html += `<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--navy)">TZS ${Number(o.cost).toLocaleString()}</div>`;
+      html += `<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--navy)">${formatCurrency(o.cost)}</div>`;
     }
 
     if (procStatus === 'Requested' && canFulfill) {
@@ -4828,7 +4857,7 @@ async function renderWODetailProcurementResponses(o) {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
           <div>
             <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}</div>
-            ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">TZS ${Number(r.totalCost).toLocaleString()}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
+            ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">${formatCurrency(r.totalCost)}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
             ${r.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${r.vatStatus}</div>` : ''}
             ${r.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${r.summary}</div>` : ''}
             ${r.attachmentUrl ? `<a href="${r.attachmentUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">View proforma${r.attachmentFilename ? ' — ' + r.attachmentFilename : ''}</a>` : `<div style="font-size:11px;color:var(--muted);font-style:italic">No file attached yet</div>`}
@@ -6492,7 +6521,7 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       </div>
 
       <div class="cost-highlight">
-        <div class="cost-val">TZS ${(data.totalCost || 0).toLocaleString()}</div>
+        <div class="cost-val">${formatCurrency(data.totalCost || 0)}</div>
         <div class="cost-label">Total maintenance cost this period</div>
       </div>
 
@@ -6936,10 +6965,11 @@ async function decommissionAsset(recordId, assetName) {
 async function loadAssetsAndInit() {
   const loadingEl = document.getElementById('loading-screen');
   try {
-    const [assetsResp, woResp, facResp] = await Promise.all([
+    const [assetsResp, woResp, facResp, ratesResp] = await Promise.all([
       fetch('/api/get-assets'),
       fetch('/api/work-orders'),
       fetch('/api/get-assets?facilities=true'),
+      fetch('/api/get-assets?exchangeRates=true'),
     ]);
     if (assetsResp.status === 401) {
       window.location.href = '/login.html';
@@ -6960,6 +6990,14 @@ async function loadAssetsAndInit() {
     if (facResp.ok) {
       const facData = await facResp.json();
       facilitiesData = facData.facilities || [];
+    }
+
+    // Live exchange rates for the currency switcher — non-fatal if this
+    // fails, since TZS (the actual stored currency) always still works
+    // regardless of whether the conversion service is reachable.
+    if (ratesResp.ok) {
+      const ratesData = await ratesResp.json();
+      exchangeRates = { USD: ratesData.tzsToUsd, BWP: ratesData.tzsToBwp };
     }
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)
