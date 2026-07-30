@@ -6255,7 +6255,6 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     }
 
     const navy = '#0A3866';
-    const gold = '#DEB33F';
     const outerR = 18 * scale;
 
     // Base card with a soft shadow, rounded corners — a real printed
@@ -6272,15 +6271,6 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     ctx.strokeStyle = navy;
     ctx.lineWidth = 2 * scale;
     roundRectPath(6 * scale, 6 * scale, W - 12 * scale, H - 12 * scale, outerR);
-    ctx.stroke();
-
-    // Thin gold accent line just inside the top edge — a designed
-    // detail, not just a flat navy/white card.
-    ctx.strokeStyle = gold;
-    ctx.lineWidth = 3 * scale;
-    ctx.beginPath();
-    ctx.moveTo(28 * scale, 16 * scale);
-    ctx.lineTo(W - 28 * scale, 16 * scale);
     ctx.stroke();
 
     // QR — top, centered, on its own soft card for breathing room
@@ -6307,33 +6297,12 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(idText, W / 2, 288 * scale);
 
-    // Logo ribbon — a genuine distinct band at the bottom, subtle
-    // gradient rather than flat gray, rounded to match the card's
-    // bottom corners exactly.
-    const ribbonY = 302 * scale;
-    const ribbonH = 30 * scale;
-    const ribbonX = 6 * scale;
-    const ribbonW = W - 12 * scale;
-    ctx.save();
-    roundRectPath(ribbonX, ribbonY, ribbonW, ribbonH, outerR);
-    ctx.clip();
-    const grad = ctx.createLinearGradient(0, ribbonY, 0, ribbonY + ribbonH);
-    grad.addColorStop(0, '#F5F7FA');
-    grad.addColorStop(1, '#ECEFF3');
-    ctx.fillStyle = grad;
-    ctx.fillRect(ribbonX, ribbonY, ribbonW, ribbonH);
-    ctx.restore();
-    ctx.strokeStyle = '#E2E6ED';
-    ctx.lineWidth = 1 * scale;
-    ctx.beginPath();
-    ctx.moveTo(ribbonX, ribbonY);
-    ctx.lineTo(ribbonX + ribbonW, ribbonY);
-    ctx.stroke();
-
-    const logoBox = { w: ribbonW - 40 * scale, h: ribbonH - 10 * scale };
+    // Logo — plain, centered near the bottom, no band or container
+    // around it.
+    const logoBox = { w: W - 60 * scale, h: 34 * scale };
     const logoScale = Math.min(logoBox.w / logoImg.width, logoBox.h / logoImg.height);
     const logoW = logoImg.width * logoScale, logoH = logoImg.height * logoScale;
-    ctx.drawImage(logoImg, (W - logoW) / 2, ribbonY + (ribbonH - logoH) / 2, logoW, logoH);
+    ctx.drawImage(logoImg, (W - logoW) / 2, 306 * scale, logoW, logoH);
 
     URL.revokeObjectURL(qrObjUrl);
 
