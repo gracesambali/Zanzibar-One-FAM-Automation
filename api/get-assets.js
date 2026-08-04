@@ -374,6 +374,95 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Readings from Airtable into Postgres.
+  // Different shape from every migration before it, deliberately:
+  // a reading has no natural unique name to check one-by-one against
+  // (unlike Vendor Name or Asset ID), and this table can realistically
+  // hold hundreds or thousands of rows from the test sensors reporting
+  // periodically. Two adjustments follow from that:
+  //   1. Idempotency comes from a real database constraint
+  //      (sensor_id, timestamp) — added via `on conflict do nothing` —
+  //      instead of a per-row existence check.
+  //   2. Inserts are batched (500 rows per database round-trip)
+  //      instead of one row at a time, so this doesn't risk timing out
+  //      on a serverless function if there's real volume.
+  // Requires the readings_sensor_timestamp_unique constraint to exist
+  // first (added separately via SQL Editor) — fails clearly if it
+  // doesn't, rather than silently allowing duplicates.
+  if (req.query.migrateReadings === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { query } = await import("../lib/postgresClient.js");
+
+      const readingsTable = process.env.AIRTABLE_READINGS_TABLE || "Readings";
+      const airtableReadings = await listAllRecords(readingsTable);
+
+      let skippedNoSensorId = 0;
+      const validRecords = [];
+      for (const record of airtableReadings) {
+        const f = record.fields;
+        const sensorId = (f["Sensor ID"] || "").trim();
+        if (!sensorId) { skippedNoSensorId++; continue; }
+        validRecords.push({ sensorId, f });
+      }
+
+      const BATCH_SIZE = 500;
+      let totalInserted = 0;
+      const batchErrors = [];
+
+      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
+        const batch = validRecords.slice(i, i + BATCH_SIZE);
+        const placeholders = [];
+        const values = [];
+        batch.forEach((item, idx) => {
+          const { sensorId, f } = item;
+          const base = idx * 6;
+          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+          values.push(
+            f["Timestamp"] || new Date().toISOString(),
+            sensorId,
+            f["Asset ID"] || null,
+            f["Value"] !== undefined && f["Value"] !== null && f["Value"] !== "" ? Number(f["Value"]) : null,
+            f["Unit"] || null,
+            f["Within Range"] === true ? true : (f["Within Range"] === false ? false : null)
+          );
+        });
+        try {
+          const result = await query(
+            `insert into readings (timestamp, sensor_id, asset_id, value, unit, within_range)
+             values ${placeholders.join(", ")}
+             on conflict (sensor_id, timestamp) do nothing
+             returning id`,
+            values
+          );
+          totalInserted += result.rows.length;
+        } catch (batchErr) {
+          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
+        }
+      }
+
+      const skippedAsDuplicate = validRecords.length - totalInserted -
+        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableReadings.length,
+        inserted: totalInserted,
+        skippedNoSensorId,
+        skippedAsDuplicate,
+        batchErrors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
