@@ -11,6 +11,7 @@
 //
 // Both require a real login — this modifies the client's actual data.
 
+import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAllStaffDirectory } from "../lib/staffDirectory.js";
@@ -80,8 +81,8 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
     const prefix = a.buildingCode ? `${a.buildingCode}-${categoryPrefix}` : categoryPrefix;
     const assetId = await generateNextAssetId(prefix);
 
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com attachment upload below
+    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
 
     // Non-technical roles (Admin, Stock Keeper) can't be expected to
     // correctly judge classification/criticality on unfamiliar
@@ -92,43 +93,36 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
     const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
     const needsReview = nonTechnicalRoles.includes(addedByRole);
 
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        fields: {
-          "Asset ID": assetId,
-          "Name": a.name,
-          "System": a.system || "",
-          "Building": a.building || "",
-          "Facility": a.facility || "",
-          "Asset Nature": a.nature || "Tangible",
-          "Mobility": a.mobility || "",
-          "Asset Category": a.category || "",
-          "Floor/Level": a.floor || "",
-          "Room/Zone": a.room || "",
-          "Manufacturer": a.manufacturer || "",
-          "Model": a.model || "",
-          "Install Date": a.installDate || new Date().toISOString().split("T")[0],
-          "Expected Lifespan (Years)": Number(a.lifespan) || 15,
-          "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
-          "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
-          "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
-          "Current Value (TZS)": computeCurrentValue(a),
-          "Status": a.status || "Good",          // Good / Poor / Critical
-          "Criticality": a.criticality || "Medium", // High / Medium / Low
-          "Active": true,
-          "Added By": addedBy,
-          "Needs Technical Review": needsReview,
-        },
-      }),
-    });
-
-    if (!resp.ok) throw new Error(`Airtable create failed: ${resp.status} ${await resp.text()}`);
-    const created = await resp.json();
+    let created;
+    try {
+      created = await createRecord(table, {
+        "Asset ID": assetId,
+        "Name": a.name,
+        "System": a.system || "",
+        "Building": a.building || "",
+        "Facility": a.facility || "",
+        "Asset Nature": a.nature || "Tangible",
+        "Mobility": a.mobility || "",
+        "Asset Category": a.category || "",
+        "Floor/Level": a.floor || "",
+        "Room/Zone": a.room || "",
+        "Manufacturer": a.manufacturer || "",
+        "Model": a.model || "",
+        "Install Date": a.installDate || new Date().toISOString().split("T")[0],
+        "Expected Lifespan (Years)": Number(a.lifespan) || 15,
+        "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
+        "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
+        "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
+        "Current Value (TZS)": computeCurrentValue(a),
+        "Status": a.status || "Good",          // Good / Poor / Critical
+        "Criticality": a.criticality || "Medium", // High / Medium / Low
+        "Active": true,
+        "Added By": addedBy,
+        "Needs Technical Review": needsReview,
+      });
+    } catch (e) {
+      throw new Error(`Airtable create failed: ${e.message}`);
+    }
 
     // Nameplate photo — a non-technical person can photograph the
     // physical label instead of needing to correctly transcribe
@@ -178,17 +172,11 @@ function getCategoryPrefix(category) {
 }
 
 async function generateNextAssetId(prefix) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `FIND("${prefix}-", {Asset ID}) = 1`);
-  url.searchParams.set("fields[]", "Asset ID");
-
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `FIND("${prefix}-", {Asset ID}) = 1`,
+    fields: ["Asset ID"],
   });
-  if (!resp.ok) throw new Error(`Airtable lookup failed: ${resp.status}`);
-  const data = await resp.json();
 
   let maxSeq = 0;
   for (const record of data.records || []) {
@@ -205,22 +193,15 @@ async function generateNextAssetId(prefix) {
 // the same Edit Log table, so the asset detail page has one consistent
 // place to pull a complete activity history from.
 async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedBy) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
-  await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      fields: {
-        "Asset ID": assetId,
-        "Field Changed": fieldLabel,
-        "Old Value": String(oldValue ?? ""),
-        "New Value": String(newValue ?? ""),
-        "Edited By": editedBy,
-        "Timestamp": new Date().toISOString(),
-      },
-    }),
-  }).catch(e => console.error("logAssetActivity write failed (non-fatal):", e));
+  const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
+  await createRecord(logTable, {
+    "Asset ID": assetId,
+    "Field Changed": fieldLabel,
+    "Old Value": String(oldValue ?? ""),
+    "New Value": String(newValue ?? ""),
+    "Edited By": editedBy,
+    "Timestamp": new Date().toISOString(),
+  }).catch(e => console.error("logAssetActivity write failed (non-fatal):", e.message));
 }
 
 async function handleDecommission(req, res, decommissionedBy) {
@@ -230,31 +211,16 @@ async function handleDecommission(req, res, decommissionedBy) {
   }
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
 
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        fields: {
-          "Active": false,
-          "Decommissioned By": decommissionedBy,
-          "Note": reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
-        },
-      }),
-    });
+    const ok = await updateRecord(table, recordId, {
+      "Active": false,
+      "Decommissioned By": decommissionedBy,
+      "Note": reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
+    }).then(() => true).catch(e => { throw new Error(`Airtable update failed: ${e.message}`); });
 
-    if (!resp.ok) throw new Error(`Airtable update failed: ${resp.status} ${await resp.text()}`);
-
-    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (currentResp.ok) {
-      const current = await currentResp.json();
+    const current = await getRecord(table, recordId).catch(() => null);
+    if (current) {
       const assetId = current.fields["Asset ID"] || "";
       await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy);
     }
@@ -267,16 +233,10 @@ async function handleDecommission(req, res, decommissionedBy) {
 }
 
 async function findByAssetId(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
   });
-  if (!resp.ok) throw new Error(`Airtable lookup failed: ${resp.status}`);
-  const data = await resp.json();
   return data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
@@ -285,15 +245,10 @@ async function handleRelocate(req, res, relocatedBy) {
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (!newFloor && !newRoom) return res.status(400).json({ error: "At least a new floor or room/zone is required" });
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
 
   try {
-    const readResp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!readResp.ok) throw new Error("Could not read asset: " + readResp.status);
-    const current = await readResp.json();
+    const current = await getRecord(componentsTable, recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
     const oldFloor = current.fields["Floor/Level"] || "";
     const oldRoom = current.fields["Room/Zone"] || "";
     const oldBuilding = current.fields["Building"] || "";
@@ -305,26 +260,16 @@ async function handleRelocate(req, res, relocatedBy) {
     if (newRoom) updateFields["Room/Zone"] = newRoom;
     if (newBuilding) updateFields["Building"] = newBuilding;
 
-    const updateResp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: updateFields }),
-    });
-    if (!updateResp.ok) throw new Error("Failed to update asset location: " + updateResp.status);
+    await updateRecord(componentsTable, recordId, updateFields)
+      .catch(e => { throw new Error("Failed to update asset location: " + e.message); });
 
-    const logTable = encodeURIComponent(process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log");
-    await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          "Asset ID": assetId, "Asset Name": assetName,
-          "Old Floor": oldFloor, "Old Room/Zone": oldRoom, "Old Building": oldBuilding,
-          "New Floor": newFloor || oldFloor, "New Room/Zone": newRoom || oldRoom, "New Building": newBuilding || oldBuilding,
-          "Relocated By": relocatedBy, "Date": new Date().toISOString(), "Reason": reason || "",
-        },
-      }),
-    }).catch(e => console.error("Relocation log write failed (non-fatal):", e));
+    const logTable = process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log";
+    await createRecord(logTable, {
+      "Asset ID": assetId, "Asset Name": assetName,
+      "Old Floor": oldFloor, "Old Room/Zone": oldRoom, "Old Building": oldBuilding,
+      "New Floor": newFloor || oldFloor, "New Room/Zone": newRoom || oldRoom, "New Building": newBuilding || oldBuilding,
+      "Relocated By": relocatedBy, "Date": new Date().toISOString(), "Reason": reason || "",
+    }).catch(e => console.error("Relocation log write failed (non-fatal):", e.message));
 
     const oldLocation = [oldFloor, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
     const newLocation = [newFloor || oldFloor, newRoom || oldRoom, newBuilding || oldBuilding].filter(Boolean).join(" / ");
@@ -353,16 +298,11 @@ async function handleEditAsset(req, res, editedBy) {
     return res.status(400).json({ error: "recordId and changes object required" });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
 
   try {
     // Read current values first (for the audit log)
-    const readResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!readResp.ok) throw new Error("Could not read asset: " + readResp.status);
-    const current = await readResp.json();
+    const current = await getRecord(table, recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
     const assetId = current.fields["Asset ID"] || "";
 
     // Filter to only allowed fields and build the update + audit entries
@@ -398,31 +338,21 @@ async function handleEditAsset(req, res, editedBy) {
     }
 
     // Update the asset
-    const updateResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: updateFields }),
-    });
-    if (!updateResp.ok) throw new Error("Failed to update: " + updateResp.status);
+    await updateRecord(table, recordId, updateFields)
+      .catch(e => { throw new Error("Failed to update: " + e.message); });
 
     // Write audit log entries
-    const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
+    const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
     const timestamp = new Date().toISOString();
     for (const entry of auditEntries) {
-      await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fields: {
-            "Asset ID": assetId,
-            "Field Changed": entry.field,
-            "Old Value": String(entry.oldValue),
-            "New Value": String(entry.newValue),
-            "Edited By": editedBy,
-            "Timestamp": timestamp,
-          },
-        }),
-      }).catch(e => console.error("Edit log write failed (non-fatal):", e));
+      await createRecord(logTable, {
+        "Asset ID": assetId,
+        "Field Changed": entry.field,
+        "Old Value": String(entry.oldValue),
+        "New Value": String(entry.newValue),
+        "Edited By": editedBy,
+        "Timestamp": timestamp,
+      }).catch(e => console.error("Edit log write failed (non-fatal):", e.message));
     }
 
     return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId });
@@ -441,36 +371,24 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
     return res.status(400).json({ error: "assetId, floor, x, and y are required" });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions");
+  const table = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
 
   try {
     // Check if a position already exists for this asset — update it if so,
     // otherwise create a new one. Keeps one row per asset, not a growing log.
-    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-    findUrl.searchParams.set("maxRecords", "1");
-    const findResp = await fetch(findUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    const findData = findResp.ok ? await findResp.json() : { records: [] };
+    const findData = await listRecords(table, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => ({ records: [] }));
     const existing = findData.records && findData.records[0];
     const isNewPlacement = !existing;
 
     const fields = { "Asset ID": assetId, "Floor": floor, "X%": Number(x), "Y%": Number(y) };
 
     if (existing) {
-      await fetch(`https://api.airtable.com/v0/${base}/${table}/${existing.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields }),
-      });
+      await updateRecord(table, existing.id, fields);
     } else {
-      await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields }),
-      });
+      await createRecord(table, fields);
     }
 
     const floorPlanRecordId = await findOrCreateFloorPlanRecord(floor);
@@ -487,49 +405,32 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
 // Plans record for a given floor, or creates a blank one if this is the
 // very first activity recorded for that floor.
 async function findOrCreateFloorPlanRecord(floor) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
 
-  const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  findUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
-  findUrl.searchParams.set("maxRecords", "1");
-  const findResp = await fetch(findUrl.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  const findData = findResp.ok ? await findResp.json() : { records: [] };
+  const findData = await listRecords(table, {
+    filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
+    maxRecords: 1,
+  }).catch(() => ({ records: [] }));
   if (findData.records && findData.records[0]) return findData.records[0].id;
 
-  const createResp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Floor": floor } }),
-  });
-  const createData = await createResp.json();
-  return createData.id;
+  const created = await createRecord(table, { "Floor": floor });
+  return created.id;
 }
 
 // Same read-modify-write pattern as every other Activity Log in the
 // system — real time, timestamped, attributed.
 async function appendFloorPlanActivity(recordId, text, by) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendFloorPlanActivity: could not read record"); return; }
-  const data = await getResp.json();
+  const data = await getRecord(table, recordId).catch(() => null);
+  if (!data) { console.error("appendFloorPlanActivity: could not read record"); return; }
 
   let log = [];
   try { log = JSON.parse(data.fields["Activity Log"] || "[]"); } catch { log = []; }
   log.push({ text, by, at: new Date().toISOString() });
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) console.error("appendFloorPlanActivity: could not save entry");
+  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+    .catch(() => console.error("appendFloorPlanActivity: could not save entry"));
 }
 
 // Uploads a floor plan drawing directly from the dashboard — no need to
@@ -549,29 +450,21 @@ async function handleUploadFloorPlan(req, res, uploadedBy) {
     return res.status(400).json({ error: "Image is too large — Airtable's direct upload limit is 5MB. Try a smaller or more compressed image." });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
+  const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
+  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
 
   try {
     // 1. Find existing record for this floor, or create one
-    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    findUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
-    findUrl.searchParams.set("maxRecords", "1");
-    const findResp = await fetch(findUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    const findData = findResp.ok ? await findResp.json() : { records: [] };
+    const findData = await listRecords(table, {
+      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => ({ records: [] }));
     let recordId = findData.records && findData.records[0] && findData.records[0].id;
 
     if (!recordId) {
-      const createResp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Floor": floor } }),
-      });
-      if (!createResp.ok) throw new Error("Could not create Floor Plans record: " + createResp.status);
-      const createData = await createResp.json();
-      recordId = createData.id;
+      const created = await createRecord(table, { "Floor": floor })
+        .catch(e => { throw new Error("Could not create Floor Plans record: " + e.message); });
+      recordId = created.id;
     }
 
     // 2. Upload the image via Airtable's direct base64 upload API
@@ -589,11 +482,7 @@ async function handleUploadFloorPlan(req, res, uploadedBy) {
     }
 
     // 3. Stamp who uploaded it and when, for accountability
-    await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Uploaded By": uploadedBy, "Uploaded Date": new Date().toISOString() } }),
-    });
+    await updateRecord(table, recordId, { "Uploaded By": uploadedBy, "Uploaded Date": new Date().toISOString() });
 
     await appendFloorPlanActivity(recordId, `📎 Floor plan image uploaded: ${filename}`, uploadedBy);
 
@@ -620,8 +509,8 @@ async function handleUploadDocument(req, res, uploadedBy) {
     return res.status(400).json({ error: "File is too large — Airtable's direct upload limit is 5MB." });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
 
   try {
     const uploadResp = await fetch(
@@ -639,17 +528,10 @@ async function handleUploadDocument(req, res, uploadedBy) {
 
     // Stamp who uploaded it and when — same accountability pattern as
     // floor plan uploads, relocations, and edits elsewhere in the system.
-    await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Documents Last Uploaded By": uploadedBy, "Documents Last Uploaded Date": new Date().toISOString() } }),
-    });
+    await updateRecord(table, recordId, { "Documents Last Uploaded By": uploadedBy, "Documents Last Uploaded Date": new Date().toISOString() });
 
-    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (currentResp.ok) {
-      const current = await currentResp.json();
+    const current = await getRecord(table, recordId).catch(() => null);
+    if (current) {
       const assetId = current.fields["Asset ID"] || "";
       await logAssetActivity(assetId, "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy);
     }
@@ -669,20 +551,12 @@ async function handleClearTechnicalReview(req, res, clearedBy) {
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Needs Technical Review": false } }),
-    });
-    if (!resp.ok) throw new Error("Could not clear review flag");
+    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+    await updateRecord(table, recordId, { "Needs Technical Review": false })
+      .catch(() => { throw new Error("Could not clear review flag"); });
 
-    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (currentResp.ok) {
-      const current = await currentResp.json();
+    const current = await getRecord(table, recordId).catch(() => null);
+    if (current) {
       const assetId = current.fields["Asset ID"] || "";
       await logAssetActivity(assetId, "Needs Technical Review", "Yes", "Cleared — reviewed", clearedBy);
     }
@@ -703,32 +577,23 @@ async function handleCreatePlan(req, res, createdBy) {
   if (!title) return res.status(400).json({ error: "Title is required" });
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
     const planId = `PM-${Date.now()}`;
 
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          "Plan ID": planId,
-          "Name": title,
-          "Description": description || "",
-          "Plan Status": "Planning",
-          "Created By": createdBy,
-          "Created Date": new Date().toISOString().split("T")[0],
-          "Target Start Date": targetStartDate || "",
-          "Target End Date": targetEndDate || "",
-          "Budget Items": JSON.stringify(Array.isArray(budgetItems) ? budgetItems : []),
-          "Milestones": "[]",
-          "Meeting Log": "[]",
-          "Action Points": "[]",
-        },
-      }),
+    const created = await createRecord(table, {
+      "Plan ID": planId,
+      "Name": title,
+      "Description": description || "",
+      "Plan Status": "Planning",
+      "Created By": createdBy,
+      "Created Date": new Date().toISOString().split("T")[0],
+      "Target Start Date": targetStartDate || "",
+      "Target End Date": targetEndDate || "",
+      "Budget Items": JSON.stringify(Array.isArray(budgetItems) ? budgetItems : []),
+      "Milestones": "[]",
+      "Meeting Log": "[]",
+      "Action Points": "[]",
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const created = await resp.json();
     return res.status(200).json({ success: true, planId, recordId: created.id });
   } catch (err) {
     console.error("handleCreatePlan error:", err);
@@ -759,16 +624,10 @@ async function handleUpdatePlan(req, res, editedBy) {
   }
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
     const fields = { [field]: value };
 
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields }),
-    });
-    if (!resp.ok) throw new Error(await resp.text());
+    await updateRecord(table, recordId, fields).catch(e => { throw new Error(e.message); });
 
     const label = PLAN_FIELD_LABELS[field] || field;
     await appendPlanActivityLog(recordId, `✎ ${label} updated by ${editedBy}`, editedBy);
@@ -784,40 +643,28 @@ async function handleUpdatePlan(req, res, editedBy) {
 // Shared helper — appends one entry to a plan's Activity Log, same
 // read-modify-write pattern already used for Work Orders.
 async function appendPlanActivityLog(recordId, text, by) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+  const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendPlanActivityLog: could not read plan"); return; }
-  const planData = await getResp.json();
+  const planData = await getRecord(table, recordId).catch(() => null);
+  if (!planData) { console.error("appendPlanActivityLog: could not read plan"); return; }
 
   let log = [];
   try { log = JSON.parse(planData.fields["Activity Log"] || "[]"); } catch { log = []; }
   log.push({ text, by, at: new Date().toISOString() });
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) console.error("appendPlanActivityLog: could not save entry");
+  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+    .catch(() => console.error("appendPlanActivityLog: could not save entry"));
 }
 
 // Notifies the plan's creator whenever anything changes on it — the
 // confirmed requirement: they should hear about anything that comes in
 // between, not just find out by checking back later.
 async function notifyPlanCreator(recordId, editedBy, whatChanged) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+  const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
 
   try {
-    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!getResp.ok) return;
-    const planData = await getResp.json();
+    const planData = await getRecord(table, recordId).catch(() => null);
+    if (!planData) return;
     const createdBy = planData.fields["Created By"];
     const planTitle = planData.fields["Name"] || "Planned Maintenance";
     if (!createdBy || createdBy === editedBy) return; // don't notify people of their own edit
@@ -860,7 +707,7 @@ async function handleUploadPlanDocument(req, res, uploadedBy) {
   }
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
+    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload
     const resp = await fetch(
       `https://content.airtable.com/v0/${base}/${recordId}/Attachments/uploadAttachment`,
       {
