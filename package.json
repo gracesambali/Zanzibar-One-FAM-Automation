@@ -2,6 +2,7 @@
   "name": "zanzibar-one-fam-automation",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,6 +12,7 @@
   "dependencies": {
     "airtable": "^0.12.2",
     "next": "^14.2.0",
+    "pg": "^8.22.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
