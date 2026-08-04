@@ -380,3 +380,10 @@ create index idx_asset_positions_floor on asset_positions (floor);
 -- rule going forward, not only a migration convenience.
 -- ============================================================
 alter table readings add constraint readings_sensor_timestamp_unique unique (sensor_id, timestamp);
+
+-- ============================================================
+-- Added post-launch: uniqueness rule for alert_log, same reasoning as
+-- readings — no natural business key, needed for the migration to be
+-- idempotent via on conflict do nothing.
+-- ============================================================
+alter table alert_log add constraint alert_log_asset_timestamp_unique unique (asset_id, timestamp);
