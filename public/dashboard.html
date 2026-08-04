@@ -413,8 +413,14 @@ button { font-family: inherit; cursor: pointer; }
 
 <script>
 // ============================================================
-// BRANDING CONFIG — edit these 4 lines for each client deployment.
-// Nothing else in this file needs to change per client.
+// BRANDING CONFIG — the values below are the fallback/default, used
+// immediately so the page is never blank or broken while waiting on
+// the network. A moment later, the fetch further down this block
+// overwrites these same fields in place with whatever this Vercel
+// deployment's CLIENT_NAME / CLIENT_BUILDING_LABEL / etc. env vars
+// say — so a new client deployment is a Vercel env var change, not a
+// hand-edit here. If that fetch ever fails, these defaults are what's
+// already showing, so nothing breaks.
 // ============================================================
 const CLIENT_CONFIG = {
   clientName: "Zanzibar One Tower",
@@ -426,12 +432,30 @@ const CLIENT_CONFIG = {
   pageTitle: "GVC Facility Asset Manager"
 };
 
-// Apply config to the page (header text, browser tab title)
-document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
-document.addEventListener('DOMContentLoaded', () => {
+// Applies whatever's currently in CLIENT_CONFIG to the page — called
+// once immediately with the defaults above, then again if the fetch
+// below brings back different values.
+function applyClientConfigToPage() {
+  document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
   const sub = document.getElementById('header-subtitle');
   if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
-});
+}
+
+applyClientConfigToPage();
+document.addEventListener('DOMContentLoaded', applyClientConfigToPage);
+
+// Best-effort override — mutates the same CLIENT_CONFIG object in
+// place (never reassigned), so every other place in this file that
+// reads CLIENT_CONFIG.xxx automatically sees the real values too,
+// with zero other changes needed anywhere else in this file.
+fetch('/api/get-assets?clientconfig=true')
+  .then(r => r.ok ? r.json() : null)
+  .then(data => {
+    if (!data) return;
+    Object.assign(CLIENT_CONFIG, data);
+    applyClientConfigToPage();
+  })
+  .catch(err => console.error('Client config fetch failed — using built-in defaults:', err));
 
 let assets = []; // populated live from Airtable via /api/get-assets
 let currentUserRole = "technician";

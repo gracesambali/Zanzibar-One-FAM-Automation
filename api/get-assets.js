@@ -13,6 +13,23 @@ import { getContactForUsername, getAllStaffDirectory } from "../lib/staffDirecto
 import { getChecklistForWorkOrder } from "../lib/checklists.js";
 
 export default async function handler(req, res) {
+  // Public branding config — no login needed. Sourced from env vars so
+  // a new client deployment only needs new Vercel env vars set, not a
+  // hand-edit to dashboard.html's source. Defaults match the current
+  // Zanzibar One Tower values exactly, so nothing changes for the
+  // existing pilot unless these env vars are deliberately set.
+  if (req.query.clientconfig === "true") {
+    return res.status(200).json({
+      clientName: process.env.CLIENT_NAME || "Zanzibar One Tower",
+      buildingLabel: process.env.CLIENT_BUILDING_LABEL || "Zanzibar One Tower",
+      region: process.env.CLIENT_REGION || "Zanzibar",
+      district: process.env.CLIENT_DISTRICT || "Zanzibar Urban",
+      building: process.env.CLIENT_BUILDING || "Zanzibar One Tower",
+      accentColor: process.env.CLIENT_ACCENT_COLOR || "#1A3566",
+      pageTitle: process.env.CLIENT_PAGE_TITLE || "GVC Facility Asset Manager",
+    });
+  }
+
   // Public quick-view mode (for QR code scanning — no login needed)
   if (req.query.public === "true" && req.query.id) {
     return handlePublicQuickview(req, res);
