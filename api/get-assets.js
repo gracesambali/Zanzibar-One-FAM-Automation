@@ -5,6 +5,7 @@
 // offset token until every record is retrieved, however many there are).
 // Returns them in the exact shape the dashboard's JavaScript expects.
 
+import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
@@ -137,26 +138,8 @@ export default async function handler(req, res) {
 }
 
 async function fetchAllRecords() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  let allRecords = [];
-  let offset = null;
-
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status} ${await resp.text()}`);
-
-    const data = await resp.json();
-    allRecords = allRecords.concat(data.records || []);
-    offset = data.offset; // Airtable includes this only if there are more pages
-  } while (offset);
-
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const allRecords = await listAllRecords(table, { pageSize: 100 });
   return allRecords.map(normalizeRecord);
 }
 
@@ -239,15 +222,10 @@ function normalizeRecord(record) {
 // internally in the dashboard.
 async function handleGetUnits(req, res) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error("Could not load units");
-    const data = await resp.json();
+    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
+    const records = await listAllRecords(table);
 
-    const units = (data.records || []).map(r => {
+    const units = records.map(r => {
       let activityLog = [];
       try { activityLog = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { activityLog = []; }
       let chatLog = [];
@@ -297,15 +275,10 @@ async function handleGetExchangeRates(req, res) {
 
 async function handleGetFacilities(req, res) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_FACILITIES_TABLE || "Facilities");
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error("Could not load facilities");
-    const data = await resp.json();
+    const table = process.env.AIRTABLE_FACILITIES_TABLE || "Facilities";
+    const records = await listAllRecords(table);
 
-    const facilities = (data.records || []).map(r => ({
+    const facilities = records.map(r => ({
       name: r.fields["Name"] || "",
       buildings: (r.fields["Building"] || []).map(b => (typeof b === "string" ? b : b.name || "")),
     })).filter(f => f.name);
@@ -340,16 +313,11 @@ function guessChecklistClass(name, system) {
 async function handlePublicQuickview(req, res) {
   const assetId = req.query.id;
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-    url.searchParams.set("maxRecords", "1");
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+    const data = await listRecords(table, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
     });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status}`);
-    const data = await resp.json();
     const record = data.records && data.records[0];
     if (!record) return res.status(404).json({ error: "Asset not found" });
     const f = record.fields;
@@ -367,15 +335,13 @@ async function handlePublicQuickview(req, res) {
     // this endpoint: what was done and when, never what it cost.
     let history = [];
     try {
-      const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-      const woUrl = new URL(`https://api.airtable.com/v0/${base}/${woTable}`);
-      woUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-      woUrl.searchParams.set("sort[0][field]", "Created");
-      woUrl.searchParams.set("sort[0][direction]", "desc");
-      woUrl.searchParams.set("maxRecords", "20");
-      const woResp = await fetch(woUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-      if (woResp.ok) {
-        const woData = await woResp.json();
+      const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+      const woData = await listRecords(woTable, {
+        filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+        sort: [{ field: "Created", direction: "desc" }],
+        maxRecords: 20,
+      }).catch(() => null);
+      if (woData) {
         history = (woData.records || []).map(r => ({
           woId: r.fields["WO ID"] || "",
           status: r.fields["Status"] || "",
@@ -409,18 +375,12 @@ async function handlePublicQuickview(req, res) {
 
 async function handleEditLog(req, res) {
   const assetId = req.query.id;
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log");
+  const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
   try {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${logTable}`);
-    url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-    url.searchParams.set("sort[0][field]", "Timestamp");
-    url.searchParams.set("sort[0][direction]", "desc");
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    const data = await listRecords(logTable, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      sort: [{ field: "Timestamp", direction: "desc" }],
     });
-    if (!resp.ok) throw new Error("Failed to fetch edit log");
-    const data = await resp.json();
     const entries = (data.records || []).map(r => ({
       field: r.fields["Field Changed"] || "",
       oldValue: r.fields["Old Value"] || "",
@@ -440,24 +400,20 @@ async function handleEditLog(req, res) {
 // no separate file storage needed).
 async function handleGetFloorPlan(req, res) {
   const floor = req.query.floorplan;
-  const base = process.env.AIRTABLE_BASE_ID;
-  const floorPlansTable = encodeURIComponent(process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans");
-  const positionsTable = encodeURIComponent(process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions");
+  const floorPlansTable = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
+  const positionsTable = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
 
   try {
     // 1. Find the floor plan image for this floor
-    const planUrl = new URL(`https://api.airtable.com/v0/${base}/${floorPlansTable}`);
-    planUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
-    planUrl.searchParams.set("maxRecords", "1");
-    const planResp = await fetch(planUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
+    const planData = await listRecords(floorPlansTable, {
+      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => null);
     let imageUrl = null;
     let uploadedBy = null;
     let uploadDate = null;
     let activityLog = "[]";
-    if (planResp.ok) {
-      const planData = await planResp.json();
+    if (planData) {
       const record = planData.records && planData.records[0];
       const attachment = record && record.fields["Image"] && record.fields["Image"][0];
       imageUrl = attachment ? attachment.url : null;
@@ -467,15 +423,12 @@ async function handleGetFloorPlan(req, res) {
     }
 
     // 2. Find all saved marker positions for assets on this floor
-    const posUrl = new URL(`https://api.airtable.com/v0/${base}/${positionsTable}`);
-    posUrl.searchParams.set("filterByFormula", `{Floor} = "${floor.replace(/"/g, '\\"')}"`);
-    posUrl.searchParams.set("pageSize", "100");
-    const posResp = await fetch(posUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
+    const posData = await listRecords(positionsTable, {
+      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
+      pageSize: 100,
+    }).catch(() => null);
     let positions = [];
-    if (posResp.ok) {
-      const posData = await posResp.json();
+    if (posData) {
       positions = (posData.records || []).map(r => ({
         assetId: r.fields["Asset ID"] || "",
         x: Number(r.fields["X%"]) || 0,
@@ -614,47 +567,13 @@ async function buildPeriodReport(req, res, days) {
 }
 
 async function fetchAllWorkOrdersForReport() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  let records = [];
-  let offset;
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Work Orders fetch failed: ${resp.status}`);
-    const data = await resp.json();
-    records = records.concat(data.records || []);
-    offset = data.offset;
-  } while (offset);
-  return records;
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  return listAllRecords(table, { pageSize: 100 });
 }
 
 async function fetchAllLogRecords() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  let allRecords = [];
-  let offset = null;
-
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status} ${await resp.text()}`);
-
-    const data = await resp.json();
-    allRecords = allRecords.concat(data.records || []);
-    offset = data.offset;
-  } while (offset);
-
-  return allRecords;
+  const table = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  return listAllRecords(table, { pageSize: 100 });
 }
 
 function countBy(records, field) {
@@ -675,15 +594,10 @@ function countBy(records, field) {
 
 async function handleGetPlannedMaintenance(req, res) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}?pageSize=100`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status}`);
-    const data = await resp.json();
+    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
+    const records = await listAllRecords(table, { pageSize: 100 });
 
-    const plans = (data.records || []).map(r => {
+    const plans = records.map(r => {
       const f = r.fields;
       let budgetItems = [], milestones = [], meetingLog = [], actionPoints = [];
       try { budgetItems = JSON.parse(f["Budget Items"] || "[]"); } catch {}
