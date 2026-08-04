@@ -1182,6 +1182,89 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: err.message });
     }
   }
+
+  // One-time migration: Users from Airtable into Postgres. Different
+  // in kind from every migration before it — this copies real
+  // credentials (password hashes and salts, reset tokens), even
+  // though nothing in the live app reads from this table yet. The
+  // actual login cutover is a deliberately separate, later decision;
+  // this endpoint only copies data, exactly like every other
+  // migration in this series, and changes nothing about how anyone
+  // currently logs in.
+  //
+  // Extra care taken specifically because of what this table holds:
+  // the response below reports only counts and skip reasons by
+  // username — never a hash, salt, or token value, in either the
+  // success path or an error path. Same safety rules as every other
+  // migration otherwise: read-only on Airtable, idempotent (skips a
+  // username that already exists), explicit confirm required,
+  // Business Owner/System Admin only.
+  if (req.query.migrateUsers === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const usersTable = process.env.AIRTABLE_USERS_TABLE || "Users";
+      const airtableUsers = await listAllRecords(usersTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableUsers) {
+        const f = record.fields;
+        const username = (f["Username"] || "").trim();
+        const role = (f["Role"] || "").trim();
+        if (!username || !role) {
+          skipped++;
+          skipDetails.push({ recordId: record.id, reason: !username ? "no Username field set" : "no Role field set" });
+          continue;
+        }
+
+        try {
+          const existing = await getByColumn("users", "username", username);
+          if (existing) { skipped++; skipDetails.push({ username, reason: "already exists in Postgres" }); continue; }
+
+          await insert("users", {
+            username,
+            email: f["Email"] || null,
+            display_name: f["Display Name"] || null,
+            role,
+            password_hash: f["Password Hash"] || null,
+            password_salt: f["Password Salt"] || null,
+            reset_token: f["Reset Token"] || null,
+            reset_token_expires: f["Reset Token Expires"] || null,
+          });
+          inserted++;
+        } catch (rowErr) {
+          // Deliberately not including rowErr.message verbatim here if
+          // it could ever echo a value back — Postgres error messages
+          // for a unique-violation only include the column/constraint
+          // name, never the value, so this is safe, but kept explicit
+          // rather than assumed.
+          errors.push({ username, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableUsers.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
