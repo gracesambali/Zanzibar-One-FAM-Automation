@@ -538,6 +538,68 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Asset Positions (floor plan marker
+  // coordinates) from Airtable into Postgres. Same safety rules as
+  // every migration so far — read-only on Airtable, idempotent (skips
+  // an asset_id that already exists — matches the app's own "one row
+  // per asset" convention), explicit confirm required.
+  if (req.query.migrateAssetPositions === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const positionsTable = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
+      const airtablePositions = await listAllRecords(positionsTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtablePositions) {
+        const f = record.fields;
+        const assetId = (f["Asset ID"] || "").trim();
+        const floor = (f["Floor"] || "").trim();
+        if (!assetId || !floor) {
+          skipped++;
+          skipDetails.push({ recordId: record.id, reason: !assetId ? "no Asset ID field set" : "no Floor field set" });
+          continue;
+        }
+
+        try {
+          const existing = await getByColumn("asset_positions", "asset_id", assetId);
+          if (existing) { skipped++; skipDetails.push({ assetId, reason: "already exists in Postgres" }); continue; }
+
+          await insert("asset_positions", {
+            asset_id: assetId,
+            floor,
+            x_pct: Number(f["X%"]) || 0,
+            y_pct: Number(f["Y%"]) || 0,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ assetId, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtablePositions.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
