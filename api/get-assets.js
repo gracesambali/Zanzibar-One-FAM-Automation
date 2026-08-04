@@ -1071,6 +1071,117 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, error: err.message });
     }
   }
+
+  // One-time migration: Work Orders from Airtable into Postgres — the
+  // largest and most JSON-heavy table in this whole migration series.
+  // Same safety rules as every migration before it: read-only on
+  // Airtable, idempotent (skips a wo_id that already exists — Work
+  // Orders already has a real, enforced-by-the-app unique ID, unlike
+  // Readings/Alert Log/Edit Log/Relocation Log which needed a new
+  // constraint), explicit confirm required. Six independent JSON
+  // fields (Checklist Progress, Activity Log, Chat Log, Chat
+  // Participants, Chat Read Receipts, Cost Breakdown), each parsed
+  // with its own safe fallback — one malformed field can't take down
+  // the row or any other field. Three photo attachments (Before,
+  // After, Reporter), each single-file, same pattern as Nameplate
+  // Photo on Components.
+  if (req.query.migrateWorkOrders === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+      const airtableWorkOrders = await listAllRecords(woTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      const safeParseObj = (raw) => { try { return JSON.parse(raw || "{}"); } catch { return {}; } };
+      const safeParseArr = (raw) => { try { return JSON.parse(raw || "[]"); } catch { return []; } };
+
+      for (const record of airtableWorkOrders) {
+        const f = record.fields;
+        const woId = (f["WO ID"] || "").trim();
+        if (!woId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no WO ID field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("work_orders", "wo_id", woId);
+          if (existing) { skipped++; skipDetails.push({ woId, reason: "already exists in Postgres" }); continue; }
+
+          const beforePhoto = (f["Before Photo"] || [])[0] || null;
+          const afterPhoto = (f["After Photo"] || [])[0] || null;
+          const reporterPhoto = (f["Reporter Photo"] || [])[0] || null;
+
+          await insert("work_orders", {
+            wo_id: woId,
+            asset_id: f["Asset ID"] || null,
+            asset_name: f["Asset Name"] || null,
+            system: f["System"] || null,
+            location: f["Location"] || null,
+            status: f["Status"] || "Open",
+            urgency: f["Urgency"] || null,
+            maintenance_type: f["Maintenance Type"] || null,
+            building: f["Building"] || null,
+            unit: f["Unit"] || null,
+            notes: f["Notes"] || null,
+            created: f["Created"] || new Date().toISOString(),
+            completed_date: f["Completed Date"] || null,
+            closed_by: f["Closed By"] || null,
+            cost_tzs: f["Cost (TZS)"] !== undefined && f["Cost (TZS)"] !== null ? Number(f["Cost (TZS)"]) : null,
+            cost_edited_by: f["Cost Edited By"] || null,
+            cost_edited_date: f["Cost Edited Date"] || null,
+            checklist_progress: JSON.stringify(safeParseObj(f["Checklist Progress"])),
+            activity_log: JSON.stringify(safeParseArr(f["Activity Log"])),
+            chat_log: JSON.stringify(safeParseArr(f["Chat Log"])),
+            chat_participants: JSON.stringify(safeParseArr(f["Chat Participants"])),
+            chat_read_receipts: JSON.stringify(safeParseObj(f["Chat Read Receipts"])),
+            assigned_role: f["Assigned Role"] || null,
+            assigned_role_set_by: f["Assigned Role Set By"] || null,
+            assigned_technician: f["Assigned Technician"] || null,
+            assigned_technician_set_by: f["Assigned Technician Set By"] || null,
+            assignment_status: f["Assignment Status"] || null,
+            non_asset_confirmed: f["Non-Asset Confirmed"] === true,
+            asset_id_set_by: f["Asset ID Set By"] || null,
+            procurement_status: f["Procurement Status"] || "None",
+            cost_breakdown: JSON.stringify(safeParseArr(f["Cost Breakdown"])),
+            procurement_requested_by: f["Procurement Requested By"] || null,
+            procurement_approved_by: f["Procurement Approved By"] || null,
+            procurement_rejection_reason: f["Procurement Rejection Reason"] || null,
+            before_photo_url: beforePhoto ? beforePhoto.url : null,
+            after_photo_url: afterPhoto ? afterPhoto.url : null,
+            reporter_contact: f["Reporter Contact"] || null,
+            reporter_photo_url: reporterPhoto ? reporterPhoto.url : null,
+            satisfaction_status: f["Satisfaction Status"] || null,
+            satisfaction_reason: f["Satisfaction Reason"] || null,
+            closure_rejection_reason: f["Closure Rejection Reason"] || null,
+            last_reminder_sent: f["Last Reminder Sent"] || null,
+            escalation_sent: f["Escalation Sent"] === true,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ woId, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableWorkOrders.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
