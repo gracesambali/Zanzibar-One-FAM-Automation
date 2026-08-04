@@ -301,6 +301,79 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Sensors from Airtable into Postgres. Same
+  // safety rules as every migration before it — read-only on Airtable,
+  // idempotent (skips a sensor_id that already exists), explicit
+  // confirm required. First migration to carry a real Activity Log —
+  // Airtable stores it as a JSON-encoded text string, so it's parsed
+  // here (falling back to an empty array on anything malformed) rather
+  // than copied as a raw string, landing as genuine jsonb on the
+  // Postgres side. Assignee can be a plain string or a
+  // collaborator-shaped object ({name, email}) — normalized the same
+  // way handleGetReadings already does elsewhere in this codebase.
+  if (req.query.migrateSensors === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const sensorsTable = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
+      const airtableSensors = await listAllRecords(sensorsTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableSensors) {
+        const f = record.fields;
+        const sensorId = (f["Sensor ID"] || "").trim();
+        if (!sensorId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Sensor ID field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("sensors", "sensor_id", sensorId);
+          if (existing) { skipped++; skipDetails.push({ sensorId, reason: "already exists in Postgres" }); continue; }
+
+          let activityLog = [];
+          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
+
+          const rawAssignee = f["Assignee"];
+          const assignee = rawAssignee
+            ? (typeof rawAssignee === "string" ? rawAssignee : (rawAssignee.name || rawAssignee.email || ""))
+            : null;
+
+          await insert("sensors", {
+            sensor_id: sensorId,
+            asset_id: f["Asset ID"] || null,
+            sensor_type: f["Sensor Type"] || null,
+            notes: f["Notes"] || null,
+            status: f["Status"] || null,
+            assignee,
+            activity_log: JSON.stringify(activityLog),
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ sensorId, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableSensors.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
