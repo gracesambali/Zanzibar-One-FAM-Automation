@@ -12,6 +12,7 @@
 // frontend can select several and close them all at once without a
 // page reload between each one.
 
+import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklistForWorkOrder } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
@@ -29,13 +30,9 @@ import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirecto
 // assigned to. Returns null if allowed, or an error message if not.
 async function checkRoutedRoleMatch(session, recordId) {
   if (session.r === "business_owner" || session.r === "system_admin") return null;
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!checkResp.ok) return null; // fail open ONLY on a read error — a network/API failure, not a routing gap
-  const checkData = await checkResp.json();
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  const checkData = await getRecord(table, recordId).catch(() => null);
+  if (!checkData) return null; // fail open ONLY on a read error — a network/API failure, not a routing gap
   const assignedRole = checkData.fields["Assigned Role"];
 
   const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
@@ -172,32 +169,21 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId, description, and quantity are required" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
 
         const spec = { description: description.trim(), quantity, unit: (unit || "").trim() };
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fields: {
-              "Procurement Status": "Requested",
-              // Reusing the existing Cost Breakdown field for the new,
-              // simpler spec shape — no new Airtable field needed. It
-              // no longer holds pricing, just what's actually needed.
-              "Cost Breakdown": JSON.stringify([spec]),
-              "Procurement Requested By": session.u,
-              "Procurement Rejection Reason": "",
-            },
-          }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save procurement request");
+        await updateRecord(table, recordId, {
+          "Procurement Status": "Requested",
+          // Reusing the existing Cost Breakdown field for the new,
+          // simpler spec shape — no new Airtable field needed. It
+          // no longer holds pricing, just what's actually needed.
+          "Cost Breakdown": JSON.stringify([spec]),
+          "Procurement Requested By": session.u,
+          "Procurement Rejection Reason": "",
+        }).catch(() => { throw new Error("Could not save procurement request"); });
         await appendActivityLog(recordId, `🛒 Procurement requested — ${spec.description} (${spec.quantity}${spec.unit ? " " + spec.unit : ""})`, session.u, "procurement_request");
         await notifyProcurementOfRequest(current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", session.u, spec);
         return res.status(200).json({ success: true });
@@ -221,21 +207,13 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId and finalCost are required" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
         const total = Number(finalCost) || 0;
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not mark procurement fulfilled");
+        await updateRecord(table, recordId, { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() })
+          .catch(() => { throw new Error("Could not mark procurement fulfilled"); });
         await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, delivery note sent to routed role`, session.u, "system");
         await notifyRoutedRoleOfDeliveryArrival(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
 
@@ -259,14 +237,9 @@ export default async function handler(req, res) {
       const roleError = await checkRoutedRoleMatch(session, recordId);
       if (roleError) return res.status(403).json({ error: roleError });
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Procurement Status": "Delivered", "Procurement Approved By": session.u } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not confirm delivery");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        await updateRecord(table, recordId, { "Procurement Status": "Delivered", "Procurement Approved By": session.u })
+          .catch(() => { throw new Error("Could not confirm delivery"); });
         await appendActivityLog(recordId, `📬 Delivery confirmed by ${session.u}`, session.u, "system");
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -304,14 +277,9 @@ export default async function handler(req, res) {
       if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         let log = [];
         try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
@@ -323,12 +291,8 @@ export default async function handler(req, res) {
           at: new Date().toISOString(),
         });
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save activity entry");
+        await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+          .catch(() => { throw new Error("Could not save activity entry"); });
 
         return res.status(200).json({ success: true, log });
       } catch (err) {
@@ -350,8 +314,8 @@ export default async function handler(req, res) {
       if (!text && !attachmentBase64) return res.status(400).json({ error: "A message needs text or an attachment" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
         // Upload first, if there's a file — the message entry just
         // references the resulting URL, same pattern already used for
@@ -373,11 +337,7 @@ export default async function handler(req, res) {
           attachmentUrl = match ? match.url : null;
         }
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         let chatLog = [];
         try { chatLog = JSON.parse(woData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
@@ -392,12 +352,8 @@ export default async function handler(req, res) {
         try { readReceipts = JSON.parse(woData.fields["Chat Read Receipts"] || "{}"); } catch { readReceipts = {}; }
         readReceipts[session.u] = new Date().toISOString();
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog), "Chat Read Receipts": JSON.stringify(readReceipts) } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save chat message");
+        await updateRecord(table, recordId, { "Chat Log": JSON.stringify(chatLog), "Chat Read Receipts": JSON.stringify(readReceipts) })
+          .catch(() => { throw new Error("Could not save chat message"); });
 
         return res.status(200).json({ success: true, chatLog, chatReadReceipts: readReceipts });
       } catch (err) {
@@ -416,25 +372,16 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         let readReceipts = {};
         try { readReceipts = JSON.parse(woData.fields["Chat Read Receipts"] || "{}"); } catch { readReceipts = {}; }
         readReceipts[session.u] = new Date().toISOString();
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Chat Read Receipts": JSON.stringify(readReceipts) } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save read receipt");
+        await updateRecord(table, recordId, { "Chat Read Receipts": JSON.stringify(readReceipts) })
+          .catch(() => { throw new Error("Could not save read receipt"); });
 
         return res.status(200).json({ success: true, chatReadReceipts: readReceipts });
       } catch (err) {
@@ -476,22 +423,13 @@ export default async function handler(req, res) {
       }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
         const currentAssignedRole = woData.fields["Assigned Role"] || "";
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Assigned Role": assignedRole, "Assigned Role Set By": session.u } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save reassignment");
+        await updateRecord(table, recordId, { "Assigned Role": assignedRole, "Assigned Role Set By": session.u })
+          .catch(() => { throw new Error("Could not save reassignment"); });
 
         await appendActivityLog(recordId, `🔀 Reassigned from ${currentAssignedRole || "Unassigned"} to ${assignedRole}`, session.u, "system");
 
@@ -527,25 +465,15 @@ export default async function handler(req, res) {
       }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: {
-            "Assigned Technician": technicianUsername,
-            "Assigned Technician Set By": session.u,
-            "Assignment Status": "Pending",
-          } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save technician assignment");
+        await updateRecord(table, recordId, {
+          "Assigned Technician": technicianUsername,
+          "Assigned Technician Set By": session.u,
+          "Assignment Status": "Pending",
+        }).catch(() => { throw new Error("Could not save technician assignment"); });
 
         await appendActivityLog(recordId, `👷 Assigned to ${technicianUsername} by ${session.u}`, session.u, "system");
 
@@ -569,25 +497,16 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         if (woData.fields["Assigned Technician"] !== session.u) {
           return res.status(403).json({ error: "This job isn't assigned to you." });
         }
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Assignment Status": "Confirmed" } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not confirm assignment");
+        await updateRecord(table, recordId, { "Assignment Status": "Confirmed" })
+          .catch(() => { throw new Error("Could not confirm assignment"); });
 
         await appendActivityLog(recordId, `✅ Assignment confirmed by ${session.u}`, session.u, "system");
 
@@ -611,26 +530,17 @@ export default async function handler(req, res) {
       }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         if (woData.fields["Assigned Technician"] !== session.u) {
           return res.status(403).json({ error: "This job isn't assigned to you." });
         }
         const assignedBy = woData.fields["Assigned Technician Set By"] || "";
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Assigned Technician": "", "Assignment Status": "" } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not decline assignment");
+        await updateRecord(table, recordId, { "Assigned Technician": "", "Assignment Status": "" })
+          .catch(() => { throw new Error("Could not decline assignment"); });
 
         await appendActivityLog(recordId, `❌ Assignment declined by ${session.u}: ${reason.trim()}`, session.u, "system");
 
@@ -665,34 +575,24 @@ export default async function handler(req, res) {
       }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
 
-        const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-        findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-        findUrl.searchParams.set("maxRecords", "1");
-        const findResp = await fetch(findUrl.toString(), {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!findResp.ok) throw new Error("Could not look up asset");
-        const findData = await findResp.json();
+        const findData = await listRecords(componentsTable, {
+          filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+          maxRecords: 1,
+        }).catch(() => { throw new Error("Could not look up asset"); });
         const assetRecord = findData.records && findData.records[0];
         if (!assetRecord) return res.status(404).json({ error: `Asset "${assetId}" not found in the register.` });
         const af = assetRecord.fields;
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: {
-            "Asset ID": af["Asset ID"] || assetId,
-            "Asset Name": af["Name"] || "",
-            "System": af["System"] || "",
-            "Asset ID Set By": session.u,
-            "Non-Asset Confirmed": false,
-          } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not attach asset");
+        await updateRecord(table, recordId, {
+          "Asset ID": af["Asset ID"] || assetId,
+          "Asset Name": af["Name"] || "",
+          "System": af["System"] || "",
+          "Asset ID Set By": session.u,
+          "Non-Asset Confirmed": false,
+        }).catch(() => { throw new Error("Could not attach asset"); });
 
         await appendActivityLog(recordId, `🔗 Linked to asset ${af["Asset ID"] || assetId} (${af["Name"] || ""}) by ${session.u}`, session.u, "system");
 
@@ -713,18 +613,12 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: {
-            "Non-Asset Confirmed": true,
-            "Asset ID Set By": session.u,
-          } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not confirm");
+        await updateRecord(table, recordId, {
+          "Non-Asset Confirmed": true,
+          "Asset ID Set By": session.u,
+        }).catch(() => { throw new Error("Could not confirm"); });
 
         await appendActivityLog(recordId, `✔ Confirmed not a registered asset — by ${session.u}`, session.u, "system");
 
@@ -750,27 +644,17 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Unit name and building are required" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
-        const resp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fields: {
-              "Unit Name": unitName.trim(),
-              "Building": building,
-              "Unit Type": unitType || "",
-              "Tenant Name": tenantName || "",
-              "Tenant Email": tenantEmail || "",
-              "Tenant Phone": tenantPhone || "",
-              "Lease Status": leaseStatus || "Vacant",
-              "Added By": session.u,
-            },
-            typecast: true,
-          }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        const created = await resp.json();
+        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
+        const created = await createRecord(unitsTable, {
+          "Unit Name": unitName.trim(),
+          "Building": building,
+          "Unit Type": unitType || "",
+          "Tenant Name": tenantName || "",
+          "Tenant Email": tenantEmail || "",
+          "Tenant Phone": tenantPhone || "",
+          "Lease Status": leaseStatus || "Vacant",
+          "Added By": session.u,
+        }, { typecast: true });
         await appendUnitActivityLog(created.id, `🏠 Unit created by ${session.u}${tenantName ? ` — tenant: ${tenantName}` : ''}`, session.u, "system");
         return res.status(200).json({ success: true, unit: {
           id: created.id, name: created.fields["Unit Name"] || "", building: created.fields["Building"] || "",
@@ -790,14 +674,10 @@ export default async function handler(req, res) {
       const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
       if (!unitId) return res.status(400).json({ error: "unitId required" });
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read unit");
-        const before = (await getResp.json()).fields;
+        const unitRecord = await getRecord(unitsTable, unitId).catch(() => { throw new Error("Could not read unit"); });
+        const before = unitRecord.fields;
 
         const fields = {};
         const changes = [];
@@ -807,12 +687,8 @@ export default async function handler(req, res) {
         if (leaseStatus !== undefined && leaseStatus !== (before["Lease Status"] || "")) { fields["Lease Status"] = leaseStatus; changes.push(`Lease Status: "${before["Lease Status"] || ""}" → "${leaseStatus}"`); }
 
         if (Object.keys(fields).length > 0) {
-          const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ fields, typecast: true }),
-          });
-          if (!patchResp.ok) throw new Error(await patchResp.text());
+          await updateRecord(unitsTable, unitId, fields, { typecast: true })
+            .catch(async e => { throw new Error(e.message); });
           await appendUnitActivityLog(unitId, `✎ Updated by ${session.u} — ${changes.join('; ')}`, session.u, "system");
         }
 
@@ -868,14 +744,8 @@ export default async function handler(req, res) {
       const { assetRecordId, unitName, unitId, assetLabel } = req.body;
       if (!assetRecordId) return res.status(400).json({ error: "assetRecordId required" });
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-        const resp = await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${assetRecordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Unit": unitName || "" } }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
+        const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+        await updateRecord(componentsTable, assetRecordId, { "Unit": unitName || "" });
         if (unitId) {
           const label = assetLabel || assetRecordId;
           await appendUnitActivityLog(unitId, unitName
@@ -903,8 +773,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "A message needs text or an attachment" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+        const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
+        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
 
         let attachmentUrl = null;
         if (attachmentBase64) {
@@ -923,11 +793,7 @@ export default async function handler(req, res) {
           attachmentUrl = match ? match.url : null;
         }
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read unit");
-        const unitData = await getResp.json();
+        const unitData = await getRecord(unitsTable, unitId).catch(() => { throw new Error("Could not read unit"); });
 
         let chatLog = [];
         try { chatLog = JSON.parse(unitData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
@@ -935,12 +801,8 @@ export default async function handler(req, res) {
         if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
         chatLog.push(entry);
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog) } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save message");
+        await updateRecord(unitsTable, unitId, { "Chat Log": JSON.stringify(chatLog) })
+          .catch(() => { throw new Error("Could not save message"); });
 
         return res.status(200).json({ success: true, chatLog });
       } catch (err) {
@@ -960,26 +822,16 @@ export default async function handler(req, res) {
       }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const vendorsTable = encodeURIComponent(process.env.AIRTABLE_VENDORS_TABLE || "Vendors");
+        const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
 
-        const resp = await fetch(`https://api.airtable.com/v0/${base}/${vendorsTable}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fields: {
-              "Vendor Name": name.trim(),
-              "Email": (email || "").trim(),
-              "Phone": (phone || "").trim(),
-              "Category/System": Array.isArray(categories) ? categories : [],
-              "Active": true,
-              "Added By": session.u,
-            },
-            typecast: true, // lets a new category value be added on the fly without a manual Airtable step each time
-          }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        const created = await resp.json();
+        const created = await createRecord(vendorsTable, {
+          "Vendor Name": name.trim(),
+          "Email": (email || "").trim(),
+          "Phone": (phone || "").trim(),
+          "Category/System": Array.isArray(categories) ? categories : [],
+          "Active": true,
+          "Added By": session.u,
+        }, { typecast: true }); // lets a new category value be added on the fly without a manual Airtable step each time
 
         return res.status(200).json({ success: true, vendor: {
           id: created.id,
@@ -1010,17 +862,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "woId and vendorName are required" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
-
-        const resp = await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "WO ID": woId, "Vendor Name": vendorName.trim(), "Chosen": false } }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        const created = await resp.json();
-
+        const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
+        const created = await createRecord(responsesTable, { "WO ID": woId, "Vendor Name": vendorName.trim(), "Chosen": false });
         return res.status(200).json({ success: true, responseId: created.id });
       } catch (err) {
         console.error("addProcurementResponse error:", err);
@@ -1070,42 +913,36 @@ export default async function handler(req, res) {
       const { responseId, woId } = req.body;
       if (!responseId || !woId) return res.status(400).json({ error: "responseId and woId are required" });
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
+        const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
 
-        const listUrl = new URL(`https://api.airtable.com/v0/${base}/${responsesTable}`);
-        listUrl.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
-        const listResp = await fetch(listUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-        if (!listResp.ok) throw new Error("Could not look up existing quotes");
-        const listData = await listResp.json();
+        const listData = await listRecords(responsesTable, {
+          filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
+        }).catch(() => { throw new Error("Could not look up existing quotes"); });
         const others = (listData.records || []).filter(r => r.id !== responseId && r.fields["Chosen"]);
 
         if (others.length > 0) {
-          await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}`, {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ records: others.map(r => ({ id: r.id, fields: { "Chosen": false } })) }),
-          });
+          // Airtable's batch-update endpoint isn't in the shared client
+          // yet — this list is realistically 0-1 records (only one
+          // quote can have been previously chosen), so sequential
+          // updates are simple and fine here.
+          for (const other of others) {
+            await updateRecord(responsesTable, other.id, { "Chosen": false }).catch(() => {});
+          }
         }
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${responsesTable}/${responseId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Chosen": true } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not mark quote as chosen");
+        await updateRecord(responsesTable, responseId, { "Chosen": true })
+          .catch(() => { throw new Error("Could not mark quote as chosen"); });
 
         // Best-effort activity log on the actual work order — woId here
         // is the plain-text "WO-..." value, not an Airtable record ID,
         // so it has to be looked up first. Not fatal if this part fails;
         // the quote is already chosen either way.
         try {
-          const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-          const woUrl = new URL(`https://api.airtable.com/v0/${base}/${woTable}`);
-          woUrl.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
-          woUrl.searchParams.set("maxRecords", "1");
-          const woResp = await fetch(woUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-          const woData = woResp.ok ? await woResp.json() : { records: [] };
+          const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+          const woData = await listRecords(woTable, {
+            filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
+            maxRecords: 1,
+          }).catch(() => ({ records: [] }));
           const woRecord = woData.records && woData.records[0];
           const chosenVendor = (listData.records || []).find(r => r.id === responseId);
           if (woRecord) {
@@ -1135,12 +972,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId and message are required" });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        const current = currentResp.ok ? await currentResp.json() : { fields: {} };
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
 
         await appendActivityLog(recordId, `⏳ Procurement delay: ${message.trim()} — ${session.u}`, session.u, "procurement_request");
         await notifyOfProcurementDelay(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", message.trim(), current.fields["Assigned Technician"]);
@@ -1157,14 +990,9 @@ export default async function handler(req, res) {
       if (!recordId || itemId === undefined || itemId === null) return res.status(400).json({ error: "recordId and itemId required" });
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-        const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-        });
-        if (!getResp.ok) throw new Error("Could not read work order");
-        const woData = await getResp.json();
+        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
         let progress = {};
         try { progress = JSON.parse(woData.fields["Checklist Progress"] || "{}"); } catch { progress = {}; }
@@ -1174,12 +1002,8 @@ export default async function handler(req, res) {
         // the same way, in both directions.
         progress[itemId] = { checked: !!checked, by: session.u, at: new Date().toISOString() };
 
-        const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: { "Checklist Progress": JSON.stringify(progress) } }),
-        });
-        if (!patchResp.ok) throw new Error("Could not save checklist progress");
+        await updateRecord(table, recordId, { "Checklist Progress": JSON.stringify(progress) })
+          .catch(() => { throw new Error("Could not save checklist progress"); });
 
         const itemLabel = req.body.itemLabel || `item ${Number(itemId) + 1}`;
         const activityText = checked ? `☑ Checked off: ${itemLabel}` : `☐ Unchecked: ${itemLabel}`;
@@ -1199,23 +1023,15 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: "Not permitted to edit work order costs." });
       }
       try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-        const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fields: {
-              "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
-              // Pulled from the verified session — same as Closed By,
-              // Added By, etc. elsewhere in the system. Cannot be typed
-              // in or faked by whoever's making the edit.
-              "Cost Edited By": session.u,
-              "Cost Edited Date": new Date().toISOString(),
-            },
-          }),
+        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        await updateRecord(table, recordId, {
+          "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
+          // Pulled from the verified session — same as Closed By,
+          // Added By, etc. elsewhere in the system. Cannot be typed
+          // in or faked by whoever's making the edit.
+          "Cost Edited By": session.u,
+          "Cost Edited Date": new Date().toISOString(),
         });
-        if (!resp.ok) throw new Error(await resp.text());
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("cost-only edit error:", err);
@@ -1268,50 +1084,34 @@ export default async function handler(req, res) {
 // instead — separate function since the table name/env var differs,
 // not because the underlying pattern is any different.
 async function appendUnitActivityLog(unitId, text, by, type) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+  const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendUnitActivityLog: could not read unit"); return null; }
-  const unitData = await getResp.json();
+  const unitData = await getRecord(table, unitId).catch(() => null);
+  if (!unitData) { console.error("appendUnitActivityLog: could not read unit"); return null; }
 
   let log = [];
   try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
+  const ok = await updateRecord(table, unitId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  if (!ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
   return entry;
 }
 
 async function appendActivityLog(recordId, text, by, type) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendActivityLog: could not read work order"); return null; }
-  const woData = await getResp.json();
+  const woData = await getRecord(table, recordId).catch(() => null);
+  if (!woData) { console.error("appendActivityLog: could not read work order"); return null; }
 
   let log = [];
   try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) { console.error("appendActivityLog: could not save entry"); return null; }
+  const ok = await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  if (!ok) { console.error("appendActivityLog: could not save entry"); return null; }
   return entry;
 }
 
@@ -1352,32 +1152,12 @@ async function handleUploadWorkOrderPhoto(req, res, uploadedBy) {
 }
 
 async function fetchAllWorkOrders() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  let allRecords = [];
-  let offset = null;
-
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status} ${await resp.text()}`);
-
-    const data = await resp.json();
-    allRecords = allRecords.concat(data.records || []);
-    offset = data.offset;
-  } while (offset);
-
-  return allRecords;
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  return listAllRecords(table, { pageSize: 100 });
 }
 
 async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   // Closing is never a single person's unilateral call anymore.
   // "Completed" can only be reached through the dedicated approveClosure
@@ -1398,11 +1178,8 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   // Review — confirmed requirement, no silent exceptions. Without a
   // routed role, there's nobody whose job it is to sign off on it.
   if (status === "Ready for Review") {
-    const checkResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (checkResp.ok) {
-      const checkData = await checkResp.json();
+    const checkData = await getRecord(table, recordId).catch(() => null);
+    if (checkData) {
       if (!checkData.fields["Assigned Role"]) {
         return {
           ok: false,
@@ -1436,19 +1213,11 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
     fields["Cost Edited Date"] = new Date().toISOString();
   }
 
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields }),
-  });
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    console.error(`Work order update failed for ${recordId}:`, errText);
-    return { ok: false, recordId, error: errText };
+  try {
+    await updateRecord(table, recordId, fields);
+  } catch (e) {
+    console.error(`Work order update failed for ${recordId}:`, e.message);
+    return { ok: false, recordId, error: e.message };
   }
 
   // Every status move is now a real, attributed Activity Log entry —
@@ -1473,15 +1242,10 @@ async function handleApproveClosure(req, res, approvedByUsername) {
   const { recordId } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
-    const woResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!woResp.ok) throw new Error("Could not read work order");
-    const woData = await woResp.json();
+    const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
 
     if (woData.fields["Status"] !== "Ready for Review") {
       return res.status(400).json({ error: "This work order isn't waiting for review — nothing to approve." });
@@ -1491,19 +1255,12 @@ async function handleApproveClosure(req, res, approvedByUsername) {
     const reporterContact = woData.fields["Reporter Contact"];
     const assetName = woData.fields["Asset Name"] || "the reported issue";
 
-    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          "Status": "Completed",
-          "Completed Date": new Date().toISOString(),
-          "Closed By": approvedByUsername,
-          "Closure Rejection Reason": "",
-        },
-      }),
-    });
-    if (!patchResp.ok) throw new Error("Could not approve closure");
+    await updateRecord(table, recordId, {
+      "Status": "Completed",
+      "Completed Date": new Date().toISOString(),
+      "Closed By": approvedByUsername,
+      "Closure Rejection Reason": "",
+    }).catch(() => { throw new Error("Could not approve closure"); });
 
     if (assetIdForRollover) await advanceAssetNextService(assetIdForRollover);
     if (reporterContact) await sendSatisfactionRequest(reporterContact, recordId, assetName);
@@ -1522,16 +1279,11 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
   const { recordId, reason } = req.body || {};
   if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
-    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Status": "In Progress", "Closure Rejection Reason": reason } }),
-    });
-    if (!patchResp.ok) throw new Error("Could not reject closure");
+    await updateRecord(table, recordId, { "Status": "In Progress", "Closure Rejection Reason": reason })
+      .catch(() => { throw new Error("Could not reject closure"); });
 
     await appendActivityLog(recordId, `❌ Work sent back by ${rejectedByUsername} — ${reason}`, rejectedByUsername, "system");
     return res.status(200).json({ success: true });
@@ -1894,21 +1646,16 @@ function sanitizeForSmsWO(text) {
 // otherwise defaults to 90 days. This is what actually closes the loop
 // and stops the false repeat-alert bug.
 async function advanceAssetNextService(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
 
-  const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-  findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  findUrl.searchParams.set("maxRecords", "1");
-
-  const findResp = await fetch(findUrl.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!findResp.ok) {
+  const findData = await listRecords(componentsTable, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+    maxRecords: 1,
+  }).catch(() => null);
+  if (!findData) {
     console.error("advanceAssetNextService: could not look up asset", assetId);
     return;
   }
-  const findData = await findResp.json();
   const record = findData.records && findData.records[0];
   if (!record) {
     console.error("advanceAssetNextService: no Component found for", assetId);
@@ -1920,31 +1667,19 @@ async function advanceAssetNextService(assetId) {
   const nextDue = new Date(today);
   nextDue.setDate(nextDue.getDate() + intervalDays);
 
-  await fetch(`https://api.airtable.com/v0/${base}/${componentsTable}/${record.id}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Last Service": today.toISOString().split("T")[0],
-        "Next Service Due": nextDue.toISOString().split("T")[0],
-      },
-    }),
-  });
+  await updateRecord(componentsTable, record.id, {
+    "Last Service": today.toISOString().split("T")[0],
+    "Next Service Due": nextDue.toISOString().split("T")[0],
+  }).catch(e => console.error("advanceAssetNextService: update failed", e.message));
 }
 
 async function handleGetProcurementResponses(req, res, woId) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const responsesTable = encodeURIComponent(process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses");
+    const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
 
-    const url = new URL(`https://api.airtable.com/v0/${base}/${responsesTable}`);
-    url.searchParams.set("filterByFormula", `{WO ID} = "${woId.replace(/"/g, '\\"')}"`);
-    const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-    if (!resp.ok) throw new Error("Could not load vendor quotes");
-    const data = await resp.json();
+    const data = await listRecords(responsesTable, {
+      filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
+    }).catch(() => { throw new Error("Could not load vendor quotes"); });
 
     const responses = (data.records || []).map(r => ({
       id: r.id,
@@ -1966,21 +1701,10 @@ async function handleGetProcurementResponses(req, res, woId) {
 
 async function handleGetVendors(req, res) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const vendorsTable = encodeURIComponent(process.env.AIRTABLE_VENDORS_TABLE || "Vendors");
+    const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
 
-    let allRecords = [];
-    let offset = null;
-    do {
-      const url = new URL(`https://api.airtable.com/v0/${base}/${vendorsTable}`);
-      url.searchParams.set("filterByFormula", "{Active} = TRUE()");
-      if (offset) url.searchParams.set("offset", offset);
-      const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-      if (!resp.ok) throw new Error("Could not load vendors");
-      const data = await resp.json();
-      allRecords = allRecords.concat(data.records || []);
-      offset = data.offset || null;
-    } while (offset);
+    const allRecords = await listAllRecords(vendorsTable, { filterByFormula: "{Active} = TRUE()" })
+      .catch(() => { throw new Error("Could not load vendors"); });
 
     const vendors = allRecords.map(r => ({
       id: r.id,
@@ -2050,20 +1774,15 @@ async function handleScheduleInspection(req, res, scheduledBy) {
     return res.status(400).json({ error: "assetId required" });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
     // Look up the asset so the work order has real Name/System/Location, same as other WO types
-    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-    findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-    findUrl.searchParams.set("maxRecords", "1");
-    const findResp = await fetch(findUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!findResp.ok) throw new Error("Could not look up asset");
-    const findData = await findResp.json();
+    const findData = await listRecords(componentsTable, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => { throw new Error("Could not look up asset"); });
     const record = findData.records && findData.records[0];
     if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
     const f = record.fields;
@@ -2082,28 +1801,14 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
     };
 
-    let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Inspection" } }),
-    });
-
-    if (!createResp.ok) {
-      const firstErr = await createResp.text();
-      console.error("Inspection creation with Maintenance Type failed, retrying without it:", firstErr);
-      createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: baseFields }),
-      });
+    let created;
+    try {
+      created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Inspection" });
+    } catch (firstErr) {
+      console.error("Inspection creation with Maintenance Type failed, retrying without it:", firstErr.message);
+      created = await createRecord(woTable, baseFields);
     }
 
-    if (!createResp.ok) {
-      const errText = await createResp.text();
-      throw new Error("Failed to create inspection work order: " + createResp.status + " " + errText);
-    }
-
-    const created = await createResp.json();
     return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
     console.error("handleScheduleInspection error:", err);
@@ -2127,20 +1832,15 @@ async function handleOrderSparePart(req, res, orderedBy) {
     return res.status(400).json({ error: "assetId required" });
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
     // Look up the asset so the work order has real Name/System/Location, same as every other WO type
-    const findUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-    findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-    findUrl.searchParams.set("maxRecords", "1");
-    const findResp = await fetch(findUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!findResp.ok) throw new Error("Could not look up asset");
-    const findData = await findResp.json();
+    const findData = await listRecords(componentsTable, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => { throw new Error("Could not look up asset"); });
     const record = findData.records && findData.records[0];
     if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
     const f = record.fields;
@@ -2159,32 +1859,18 @@ async function handleOrderSparePart(req, res, orderedBy) {
       "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
     };
 
-    let createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Procurement" } }),
-    });
-
-    if (!createResp.ok) {
-      const firstErr = await createResp.text();
+    let created;
+    try {
+      created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Procurement" });
+    } catch (firstErr) {
       // "Procurement" needs adding as a choice on the Maintenance Type
       // singleSelect field in Airtable — same one-time manual step as
       // adding "External" to Assigned Role earlier. Falls back to no
       // type in the meantime rather than failing the whole request.
-      console.error("Spare-part WO creation with Maintenance Type failed, retrying without it — add \"Procurement\" as a Maintenance Type choice in Airtable to fix permanently:", firstErr);
-      createResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: baseFields }),
-      });
+      console.error("Spare-part WO creation with Maintenance Type failed, retrying without it — add \"Procurement\" as a Maintenance Type choice in Airtable to fix permanently:", firstErr.message);
+      created = await createRecord(woTable, baseFields);
     }
 
-    if (!createResp.ok) {
-      const errText = await createResp.text();
-      throw new Error("Failed to create spare-part work order: " + createResp.status + " " + errText);
-    }
-
-    const created = await createResp.json();
     return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
     console.error("handleOrderSparePart error:", err);
