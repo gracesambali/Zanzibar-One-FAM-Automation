@@ -13,6 +13,7 @@
 // equipment.
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { listRecords, updateRecord, createRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
@@ -73,70 +74,42 @@ export default async function handler(req, res) {
 }
 
 async function fetchRecordByAssetId(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.records && data.records.length > 0 ? data.records[0] : null;
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+  }).catch(() => null);
+  return data && data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
 async function setRealDueDate(recordId, dueDateStr) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    // Clear Last Alert Sent too, so this test isn't skipped as
-    // "already alerted today" if you're re-testing the same day.
-    body: JSON.stringify({ fields: { "Next Service Due": dueDateStr, "Last Alert Sent": "" } }),
-  });
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  // Clear Last Alert Sent too, so this test isn't skipped as
+  // "already alerted today" if you're re-testing the same day.
+  await updateRecord(table, recordId, { "Next Service Due": dueDateStr, "Last Alert Sent": "" });
 }
 
 async function markAlerted(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Alert Sent": new Date().toISOString().split("T")[0] } }),
-  });
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  await updateRecord(table, recordId, { "Last Alert Sent": new Date().toISOString().split("T")[0] });
 }
 
 async function logAlert(f, urgency, message) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Urgency": urgency,
-        "Channel": "Email + SMS (real-path test)",
-        "Message": message,
-      },
-    }),
-  });
-  if (!resp.ok) return `FAILED: ${await resp.text()}`;
-  return true;
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  try {
+    await createRecord(logTable, {
+      "Timestamp": new Date().toISOString(),
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Urgency": urgency,
+      "Channel": "Email + SMS (real-path test)",
+      "Message": message,
+    });
+    return true;
+  } catch (e) {
+    return `FAILED: ${e.message}`;
+  }
 }
 
 async function createWorkOrder(f, urgency) {
@@ -144,32 +117,25 @@ async function createWorkOrder(f, urgency) {
   const existing = await findOpenWorkOrder(assetId);
   if (existing) return `skipped — already has an open work order (${existing.fields["WO ID"]})`;
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Status": "Open",
-        "Urgency": urgency,
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": new Date().toISOString().split("T")[0],
-        "Notes": "",
-      },
-    }),
-  });
-  if (!resp.ok) return `FAILED: ${await resp.text()}`;
-  return woId;
+  try {
+    await createRecord(woTable, {
+      "WO ID": woId,
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Status": "Open",
+      "Urgency": urgency,
+      "Created": new Date().toISOString(),
+      "Last Reminder Sent": new Date().toISOString().split("T")[0],
+      "Notes": "",
+    });
+    return woId;
+  } catch (e) {
+    return `FAILED: ${e.message}`;
+  }
 }
 
 async function sendEmail(f, urgency, daysUntil, message) {

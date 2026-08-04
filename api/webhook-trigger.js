@@ -13,6 +13,7 @@
 // This does NOT replace the daily cron — that stays as a safety net
 // in case a webhook call ever fails to fire.
 
+import { getRecord, listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 
@@ -82,105 +83,65 @@ export default async function handler(req, res) {
 }
 
 async function fetchRecord(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  return resp.json();
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  return getRecord(table, recordId).catch(() => null);
 }
 
 async function fetchRecordByAssetId(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.records && data.records.length > 0 ? data.records[0] : null;
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+  }).catch(() => null);
+  return data && data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
 async function logAlert(f, urgency, message) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Urgency": urgency,
-        "Channel": "Email + SMS (instant webhook)",
-        "Messages": message,
-      },
-    }),
-  });
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  await createRecord(logTable, {
+    "Timestamp": new Date().toISOString(),
+    "Asset ID": f["Asset ID"] || "",
+    "Asset Name": f["Name"] || "",
+    "System": f["System"] || "",
+    "Location": f["Room/Zone"] || "",
+    "Urgency": urgency,
+    "Channel": "Email + SMS (instant webhook)",
+    "Messages": message,
+  }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
 async function createWorkOrder(f, urgency) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Status": "Open",
-        "Urgency": urgency,
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": todayString(),
-        "Notes": "",
-      },
-    }),
-  });
-  if (!resp.ok) {
-    console.error("Work order creation failed:", await resp.text());
+  let created;
+  try {
+    created = await createRecord(woTable, {
+      "WO ID": woId,
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Status": "Open",
+      "Urgency": urgency,
+      "Created": new Date().toISOString(),
+      "Last Reminder Sent": todayString(),
+      "Notes": "",
+    });
+  } catch (e) {
+    console.error("Work order creation failed:", e.message);
     return null;
   }
 
-  const created = await resp.json();
   const openingLog = [{ text: `🆕 Work order opened — instant ${urgency.toLowerCase()} alert`, by: "system", at: new Date().toISOString() }];
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${created.id}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(openingLog) } }),
-  }).catch(e => console.error("Opening log write failed (non-fatal):", e));
+  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+    .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return woId;
 }
 
 async function updateReminderTimestamp(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Reminder Sent": todayString() } }),
-  });
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  await updateRecord(woTable, recordId, { "Last Reminder Sent": todayString() });
 }
 
 async function sendEmail(f, urgency, message) {
