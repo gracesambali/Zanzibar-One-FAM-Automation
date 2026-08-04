@@ -63,6 +63,66 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: copies Vendors from Airtable into the new
+  // Postgres vendors table. Read-only on the Airtable side — nothing
+  // in Airtable is touched, modified, or deleted. Safe to re-run:
+  // skips any vendor whose name already exists in Postgres rather
+  // than creating a duplicate, so re-running after a partial failure
+  // just picks up where it left off. Requires an explicit confirm=true
+  // on top of the admin gate, so this can't fire from an accidental
+  // click or a crawler hitting the URL.
+  if (req.query.migrateVendors === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
+      const airtableVendors = await listAllRecords(vendorsTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+
+      for (const record of airtableVendors) {
+        const f = record.fields;
+        const vendorName = f["Vendor Name"];
+        if (!vendorName) { skipped++; continue; }
+
+        try {
+          const existing = await getByColumn("vendors", "vendor_name", vendorName);
+          if (existing) { skipped++; continue; }
+
+          await insert("vendors", {
+            vendor_name: vendorName,
+            email: f["Email"] || null,
+            phone: f["Phone"] || null,
+            categories: Array.isArray(f["Category/System"]) ? f["Category/System"] : [],
+            active: f["Active"] !== false,
+            added_by: f["Added By"] || null,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ vendorName, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableVendors.length,
+        inserted,
+        skipped,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
