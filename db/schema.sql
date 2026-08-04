@@ -406,3 +406,16 @@ alter table edit_log add constraint edit_log_asset_field_timestamp_unique unique
 -- the real uniqueness, same shape as readings/alert_log.
 -- ============================================================
 alter table relocation_log add constraint relocation_log_asset_date_unique unique (asset_id, date);
+
+-- ============================================================
+-- Added post-launch: uniqueness rule for procurement_responses.
+-- Unlike every table before it, Airtable has no timestamp/created-date
+-- field for this table at all, so (wo_id, vendor_name) is used
+-- instead — matching how the feature is actually used in the app
+-- (one quote per vendor per work order; chooseProcurementResponse
+-- assumes exactly one "Chosen" row per vendor per WO). Known
+-- limitation: if a vendor ever legitimately submits two separate
+-- quotes for the same work order, only the first survives migration.
+-- Acceptable given how new and low-volume this feature is.
+-- ============================================================
+alter table procurement_responses add constraint procurement_responses_wo_vendor_unique unique (wo_id, vendor_name);

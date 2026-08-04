@@ -923,6 +923,84 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Procurement Responses (vendor quotes) from
+  // Airtable into Postgres. Same safety rules as Vendors/Facilities/
+  // Units — read-only on Airtable, explicit confirm required. Uses
+  // the simpler per-row existence-check pattern (not the batched
+  // pattern) since this table is realistically low-volume — one row
+  // per vendor quote submitted against a work order, a newer feature.
+  // Idempotency is via (wo_id, vendor_name) — see the schema comment
+  // for the known limitation this implies.
+  if (req.query.migrateProcurementResponses === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { query, insert } = await import("../lib/postgresClient.js");
+
+      const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
+      const airtableResponses = await listAllRecords(responsesTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableResponses) {
+        const f = record.fields;
+        const woId = (f["WO ID"] || "").trim();
+        const vendorName = (f["Vendor Name"] || "").trim();
+        if (!woId || !vendorName) {
+          skipped++;
+          skipDetails.push({ recordId: record.id, reason: !woId ? "no WO ID field set" : "no Vendor Name field set" });
+          continue;
+        }
+
+        try {
+          const existingCheck = await query(
+            "select id from procurement_responses where wo_id = $1 and vendor_name = $2 limit 1",
+            [woId, vendorName]
+          );
+          if (existingCheck.rows.length > 0) {
+            skipped++;
+            skipDetails.push({ woId, vendorName, reason: "already exists in Postgres" });
+            continue;
+          }
+
+          const proforma = (f["Proforma Attachment"] || [])[0] || null;
+
+          await insert("procurement_responses", {
+            wo_id: woId,
+            vendor_name: vendorName,
+            chosen: f["Chosen"] === true,
+            proforma_attachment_url: proforma ? proforma.url : null,
+            proforma_attachment_filename: proforma ? proforma.filename : null,
+            total_cost_ai: f["Total Cost (AI)"] !== undefined && f["Total Cost (AI)"] !== null ? Number(f["Total Cost (AI)"]) : null,
+            vat_status_ai: f["VAT Status (AI)"] || null,
+            summary_ai: f["Summary (AI)"] || null,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ woId, vendorName, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableResponses.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
