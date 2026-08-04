@@ -755,6 +755,89 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Edit Log from Airtable into Postgres. Same
+  // batched pattern as Readings/Alert Log — no natural unique business
+  // key, potentially real volume (every asset edit writes here). The
+  // uniqueness rule is (asset_id, field_changed, timestamp) rather
+  // than just (asset_id, timestamp) — see the schema comment: a single
+  // multi-field edit legitimately creates several rows sharing the
+  // exact same timestamp, so timestamp alone isn't enough to identify
+  // a real duplicate. Requires edit_log_asset_field_timestamp_unique
+  // to exist first (applied separately via SQL Editor).
+  if (req.query.migrateEditLog === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { query } = await import("../lib/postgresClient.js");
+
+      const editLogTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
+      const airtableEditLog = await listAllRecords(editLogTable);
+
+      let skippedNoAssetId = 0;
+      const validRecords = [];
+      for (const record of airtableEditLog) {
+        const f = record.fields;
+        const assetId = (f["Asset ID"] || "").trim();
+        if (!assetId) { skippedNoAssetId++; continue; }
+        validRecords.push({ assetId, f });
+      }
+
+      const BATCH_SIZE = 500;
+      let totalInserted = 0;
+      const batchErrors = [];
+
+      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
+        const batch = validRecords.slice(i, i + BATCH_SIZE);
+        const placeholders = [];
+        const values = [];
+        batch.forEach((item, idx) => {
+          const { assetId, f } = item;
+          const base = idx * 6;
+          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+          values.push(
+            assetId,
+            f["Field Changed"] || null,
+            f["Old Value"] || null,
+            f["New Value"] || null,
+            f["Edited By"] || null,
+            f["Timestamp"] || new Date().toISOString()
+          );
+        });
+        try {
+          const result = await query(
+            `insert into edit_log (asset_id, field_changed, old_value, new_value, edited_by, timestamp)
+             values ${placeholders.join(", ")}
+             on conflict (asset_id, field_changed, timestamp) do nothing
+             returning id`,
+            values
+          );
+          totalInserted += result.rows.length;
+        } catch (batchErr) {
+          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
+        }
+      }
+
+      const skippedAsDuplicateEditLog = validRecords.length - totalInserted -
+        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableEditLog.length,
+        inserted: totalInserted,
+        skippedNoAssetId,
+        skippedAsDuplicate: skippedAsDuplicateEditLog,
+        batchErrors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.

@@ -387,3 +387,13 @@ alter table readings add constraint readings_sensor_timestamp_unique unique (sen
 -- idempotent via on conflict do nothing.
 -- ============================================================
 alter table alert_log add constraint alert_log_asset_timestamp_unique unique (asset_id, timestamp);
+
+-- ============================================================
+-- Added post-launch: uniqueness rule for edit_log. Deliberately three
+-- columns, not two like readings/alert_log — a single multi-field
+-- edit legitimately creates several rows sharing the exact same
+-- timestamp (see handleEditAsset in manage-asset.js), so (asset_id,
+-- timestamp) alone would wrongly treat those as duplicates.
+-- (asset_id, field_changed, timestamp) is what's actually unique.
+-- ============================================================
+alter table edit_log add constraint edit_log_asset_field_timestamp_unique unique (asset_id, field_changed, timestamp);
