@@ -463,6 +463,81 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Units (tenant records) from Airtable into
+  // Postgres. Same safety rules as Vendors/Facilities/Components/
+  // Sensors — read-only on Airtable, idempotent (skips a unit_name
+  // that already exists), explicit confirm required. Carries two JSON
+  // fields (Activity Log, Chat Log — both parsed with a safe fallback
+  // to an empty array, same pattern as Sensors) and one attachment
+  // (Signed Contract, single file, same pattern as Nameplate Photo on
+  // Components).
+  if (req.query.migrateUnits === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
+      const airtableUnits = await listAllRecords(unitsTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableUnits) {
+        const f = record.fields;
+        const unitName = (f["Unit Name"] || "").trim();
+        if (!unitName) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Unit Name field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("units", "unit_name", unitName);
+          if (existing) { skipped++; skipDetails.push({ unitName, reason: "already exists in Postgres" }); continue; }
+
+          let activityLog = [];
+          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
+          let chatLog = [];
+          try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+
+          const contract = (f["Signed Contract"] || [])[0] || null;
+
+          await insert("units", {
+            unit_name: unitName,
+            building: f["Building"] || null,
+            unit_type: f["Unit Type"] || null,
+            tenant_name: f["Tenant Name"] || null,
+            tenant_email: f["Tenant Email"] || null,
+            tenant_phone: f["Tenant Phone"] || null,
+            lease_status: f["Lease Status"] || "Vacant",
+            signed_contract_url: contract ? contract.url : null,
+            signed_contract_filename: contract ? contract.filename : null,
+            activity_log: JSON.stringify(activityLog),
+            chat_log: JSON.stringify(chatLog),
+            added_by: f["Added By"] || null,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ unitName, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableUnits.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
