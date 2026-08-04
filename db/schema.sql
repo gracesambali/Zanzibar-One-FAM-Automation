@@ -371,3 +371,12 @@ create index idx_asset_positions_floor on asset_positions (floor);
 -- End of schema. 15 tables, matching the 15 Airtable tables
 -- currently referenced across the codebase.
 -- ============================================================
+
+-- ============================================================
+-- Added post-launch: uniqueness rule for readings, needed before the
+-- Readings migration can be idempotent (safe to re-run). A sensor
+-- reporting two distinct readings at the exact same instant isn't a
+-- real scenario — this also just doubles as a sane data-integrity
+-- rule going forward, not only a migration convenience.
+-- ============================================================
+alter table readings add constraint readings_sensor_timestamp_unique unique (sensor_id, timestamp);
