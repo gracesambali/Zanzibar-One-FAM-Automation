@@ -18,7 +18,7 @@
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
-import { listAllRecords } from "../lib/airtableClient.js";
+import { listAllRecords, listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getContactsForRole, getAllStaffDirectory } from "../lib/staffDirectory.js";
@@ -174,42 +174,30 @@ async function fetchAllRecords() {
 }
 
 async function logAlert(f, urgency, message, alertType) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Urgency": `${alertType}: ${urgency}`,
-        "Channel": "Email + SMS",
-        "Messages": message,
-      },
-    }),
-  });
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    console.error("Alert log write failed:", errorText);
-    return `FAILED: ${errorText}`;
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  try {
+    await createRecord(logTable, {
+      "Timestamp": new Date().toISOString(),
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Urgency": `${alertType}: ${urgency}`,
+      "Channel": "Email + SMS",
+      "Messages": message,
+    });
+    return true;
+  } catch (err) {
+    console.error("Alert log write failed:", err.message);
+    return `FAILED: ${err.message}`;
   }
-  return true;
 }
 
 // Creates a real, trackable Work Order with the reminder-tracking field
 // already set — this is the anchor the 5-day reminder loop checks
 // against going forward.
 async function createWorkOrder(f, urgency) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
   const baseFields = {
@@ -231,35 +219,22 @@ async function createWorkOrder(f, urgency) {
   // creating the work order without it, rather than silently losing the
   // work order entirely. Once the field is added in Airtable, the first
   // attempt succeeds and this fallback never triggers.
-  let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Preventive" } }),
-  });
-
-  if (!resp.ok) {
-    const firstError = await resp.text();
-    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstError);
-    resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: baseFields }),
-    });
+  let created;
+  try {
+    created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Preventive" });
+  } catch (firstErr) {
+    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstErr.message);
+    try {
+      created = await createRecord(woTable, baseFields);
+    } catch (secondErr) {
+      console.error("Work order creation failed:", secondErr.message);
+      return `FAILED: ${secondErr.message}`;
+    }
   }
 
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    console.error("Work order creation failed:", errorText);
-    return `FAILED: ${errorText}`;
-  }
-
-  const created = await resp.json();
   const openingLog = [{ text: `🆕 Work order opened — automated ${urgency.toLowerCase()} maintenance alert`, by: "system", at: new Date().toISOString() }];
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${created.id}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(openingLog) } }),
-  }).catch(e => console.error("Opening log write failed (non-fatal):", e));
+  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+    .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return woId;
 }
@@ -267,16 +242,8 @@ async function createWorkOrder(f, urgency) {
 // Updates an EXISTING open Work Order's reminder timestamp — this is
 // what drives the 5-day loop, without creating a duplicate record.
 async function updateReminderTimestamp(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Reminder Sent": todayString() } }),
-  });
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  await updateRecord(woTable, recordId, { "Last Reminder Sent": todayString() });
 }
 
 // ---------------------------------------------------------------------
@@ -444,15 +411,11 @@ function daysBetween(from, to) {
 // days and flags them once — same "escalate once, not every day"
 // principle as the work order escalation above.
 async function checkPlanDeadlines() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const planTable = encodeURIComponent(process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance");
+  const planTable = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
 
   try {
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${planTable}?pageSize=100`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) { console.error("Plan deadline check: could not fetch plans"); return 0; }
-    const data = await resp.json();
+    const data = await listRecords(planTable, { pageSize: 100 }).catch(() => null);
+    if (!data) { console.error("Plan deadline check: could not fetch plans"); return 0; }
 
     const now = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -486,20 +449,12 @@ async function checkPlanDeadlines() {
         }).catch(err => console.error("Plan deadline email error:", err));
       }
 
-      await fetch(`https://api.airtable.com/v0/${base}/${planTable}/${r.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Deadline Alert Sent": true } }),
-      });
+      await updateRecord(planTable, r.id, { "Deadline Alert Sent": true });
 
       let log = [];
       try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
       log.push({ text: `⏰ 7-day countdown alert sent — target end ${r.fields["Target End Date"]}`, by: "system", at: new Date().toISOString() });
-      await fetch(`https://api.airtable.com/v0/${base}/${planTable}/${r.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-      });
+      await updateRecord(planTable, r.id, { "Activity Log": JSON.stringify(log) });
     }
 
     return dueSoon.length;
@@ -517,16 +472,13 @@ async function sendDailySummary(maintenanceTriggeredToday) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return;
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
   try {
-    const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-    const woResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}?pageSize=100`, { headers });
+    const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+    const woData = await listRecords(woTable, { pageSize: 100 }).catch(() => null);
     let openedToday = 0, closedToday = 0, totalOpen = 0, overdue = 0, urgent = 0;
-    if (woResp.ok) {
-      const woData = await woResp.json();
+    if (woData) {
       (woData.records || []).forEach(r => {
         const f = r.fields;
         if (f["Status"] !== "Completed") {
@@ -542,11 +494,10 @@ async function sendDailySummary(maintenanceTriggeredToday) {
     // Sensor alerts specifically — anything in Alert Log whose Channel
     // mentions "sensor," within the last 24 hours, kept separate from
     // the asset-due maintenance alerts counted above.
-    const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-    const logResp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}?pageSize=100`, { headers });
+    const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+    const logData = await listRecords(logTable, { pageSize: 100 }).catch(() => null);
     let sensorAlertsToday = 0;
-    if (logResp.ok) {
-      const logData = await logResp.json();
+    if (logData) {
       (logData.records || []).forEach(r => {
         const f = r.fields;
         const isRecent = f["Timestamp"] && new Date(f["Timestamp"]).getTime() >= cutoff;
@@ -591,15 +542,11 @@ async function sendDailySummary(maintenanceTriggeredToday) {
 }
 
 async function checkAndEscalateStaleWorkOrders() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}?pageSize=100`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) { console.error("Escalation check: could not fetch work orders"); return 0; }
-    const data = await resp.json();
+    const data = await listRecords(woTable, { pageSize: 100 }).catch(() => null);
+    if (!data) { console.error("Escalation check: could not fetch work orders"); return 0; }
 
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const stale = (data.records || []).filter(r => {
@@ -617,19 +564,11 @@ async function checkAndEscalateStaleWorkOrders() {
     // stale work order internally and log it to its own Activity
     // thread, since that's silent record-keeping, not a notification.
     for (const r of stale) {
-      await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${r.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Escalation Sent": true } }),
-      });
+      await updateRecord(woTable, r.id, { "Escalation Sent": true });
       let log = [];
       try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
       log.push({ type: "system", text: "🚩 Escalated — open more than 24 hours, supervisor notified", by: "system", at: new Date().toISOString() });
-      await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${r.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-      });
+      await updateRecord(woTable, r.id, { "Activity Log": JSON.stringify(log) });
     }
 
     return stale.length;
@@ -681,27 +620,17 @@ function todayString() {
 async function updateComponentLastAlertSent(f, timestamp) {
   const assetId = f["Asset ID"];
   if (!assetId) return;
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const findUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  findUrl.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  findUrl.searchParams.set("maxRecords", "1");
-  findUrl.searchParams.set("fields[]", "Asset ID");
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
   try {
-    const findResp = await fetch(findUrl.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!findResp.ok) return;
-    const findData = await findResp.json();
-    const record = findData.records && findData.records[0];
+    const findData = await listRecords(table, {
+      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+      maxRecords: 1,
+    }).catch(() => null);
+    const record = findData && findData.records && findData.records[0];
     if (!record) return;
-    await fetch(`https://api.airtable.com/v0/${base}/${table}/${record.id}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Last Alert Sent": timestamp } }),
-    });
+    await updateRecord(table, record.id, { "Last Alert Sent": timestamp });
   } catch (e) {
-    console.error("updateComponentLastAlertSent failed for", assetId, e);
+    console.error("updateComponentLastAlertSent failed for", assetId, e.message);
   }
 }
 
@@ -711,8 +640,7 @@ async function updateComponentLastAlertSent(f, timestamp) {
 // unnecessary writes. Runs once daily as part of the existing cron — no new
 // scheduled function needed (Vercel Hobby plan caps serverless functions).
 async function syncCurrentValues(records) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
   let updated = 0;
 
   for (const record of records) {
@@ -732,17 +660,10 @@ async function syncCurrentValues(records) {
     if (Number(existing) === result.currentValue) continue; // already correct, skip the write
 
     try {
-      await fetch(`https://api.airtable.com/v0/${base}/${table}/${record.id}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ fields: { "Current Value (TZS)": result.currentValue } }),
-      });
+      await updateRecord(table, record.id, { "Current Value (TZS)": result.currentValue });
       updated++;
     } catch (e) {
-      console.error(`Current Value sync failed for ${f["Asset ID"]}:`, e);
+      console.error(`Current Value sync failed for ${f["Asset ID"]}:`, e.message);
     }
   }
 
