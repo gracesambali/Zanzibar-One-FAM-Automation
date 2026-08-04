@@ -12,6 +12,7 @@
 // hear about it exactly the same way they would a system-generated
 // alert, with the reporter's name and exact location attached.
 
+import { getRecord, listRecords, listAllRecords, updateRecord, createRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { getAllStaffDirectory } from "../lib/staffDirectory.js";
 
@@ -21,8 +22,7 @@ async function handleSatisfactionResponse(req, res) {
     return res.status(400).send("Invalid link.");
   }
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
 
   try {
     const fields = {
@@ -33,23 +33,15 @@ async function handleSatisfactionResponse(req, res) {
       fields["Satisfaction Reason"] = reason || "(no reason given)";
     }
 
-    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields }),
-    });
+    const patchOk = await updateRecord(woTable, recordId, fields).then(() => true).catch(() => false);
 
-    if (!patchResp.ok) {
+    if (!patchOk) {
       return res.status(500).send(simplePage("Something went wrong", "Please contact the technical team directly."));
     }
 
     // Log this into the same conversation thread as everything else.
-    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    let woData = null;
-    if (getResp.ok) {
-      woData = await getResp.json();
+    const woData = await getRecord(woTable, recordId).catch(() => null);
+    if (woData) {
       let log = [];
       try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
       log.push({
@@ -60,11 +52,7 @@ async function handleSatisfactionResponse(req, res) {
         by: "reporter",
         at: new Date().toISOString(),
       });
-      await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-      });
+      await updateRecord(woTable, recordId, { "Activity Log": JSON.stringify(log) }).catch(() => {});
     }
 
     if (satisfaction === "yes") {
@@ -199,13 +187,9 @@ async function handleGetUnitPortal(req, res) {
   const { unitId, phone } = req.body || {};
   if (!unitId) return res.status(400).json({ error: "unitId required" });
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
-    const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) return res.status(404).json({ error: "Unit not found" });
-    const data = await resp.json();
+    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
+    const data = await getRecord(table, unitId).catch(() => null);
+    if (!data) return res.status(404).json({ error: "Unit not found" });
     const f = data.fields;
 
     const storedPhone = normalizePhone(f["Tenant Phone"]);
@@ -230,12 +214,11 @@ async function handleGetUnitPortal(req, res) {
     // spend) — that stays staff-only regardless of whose unit it is.
     let unitAssets = [];
     try {
-      const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-      const assetsUrl = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-      assetsUrl.searchParams.set("filterByFormula", `{Unit} = "${unitName.replace(/"/g, '\\"')}"`);
-      const assetsResp = await fetch(assetsUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-      if (assetsResp.ok) {
-        const assetsData = await assetsResp.json();
+      const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+      const assetsData = await listRecords(componentsTable, {
+        filterByFormula: `{Unit} = "${unitName.replace(/"/g, '\\"')}"`,
+      }).catch(() => null);
+      if (assetsData) {
         unitAssets = (assetsData.records || []).map(r => ({
           id: r.fields["Asset ID"] || "",
           name: r.fields["Name"] || "",
@@ -290,26 +273,18 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
 // duplicated here rather than imported since each Vercel function file
 // runs isolated; matches work-orders.js's own appendUnitActivityLog.
 async function appendUnitActivityLog(unitId, text, by, type) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+  const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendUnitActivityLog: could not read unit"); return null; }
-  const unitData = await getResp.json();
+  const unitData = await getRecord(table, unitId).catch(() => null);
+  if (!unitData) { console.error("appendUnitActivityLog: could not read unit"); return null; }
 
   let log = [];
   try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
+  const ok = await updateRecord(table, unitId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  if (!ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
   return entry;
 }
 
@@ -322,13 +297,9 @@ async function handleUnitPortalReportIssue(req, res) {
   if (!assignedRole) return res.status(400).json({ error: "Invalid category" });
 
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const unitsTable = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
-    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${unitsTable}/${unitId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!getResp.ok) return res.status(404).json({ error: "Unit not found" });
-    const unitData = await getResp.json();
+    const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
+    const unitData = await getRecord(unitsTable, unitId).catch(() => null);
+    if (!unitData) return res.status(404).json({ error: "Unit not found" });
     const f = unitData.fields;
 
     const storedPhone = normalizePhone(f["Tenant Phone"]);
@@ -414,14 +385,11 @@ async function handleUnitPortalMessage(req, res) {
     return res.status(400).json({ error: "A message needs text or an attachment" });
   }
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const table = encodeURIComponent(process.env.AIRTABLE_UNITS_TABLE || "Units");
+    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com attachment upload below
+    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
 
-    const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!getResp.ok) return res.status(404).json({ error: "Unit not found" });
-    const unitData = await getResp.json();
+    const unitData = await getRecord(table, unitId).catch(() => null);
+    if (!unitData) return res.status(404).json({ error: "Unit not found" });
     const f = unitData.fields;
 
     const storedPhone = normalizePhone(f["Tenant Phone"]);
@@ -429,6 +397,9 @@ async function handleUnitPortalMessage(req, res) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
+    // Attachment upload uses Airtable's separate content API (different
+    // host, different semantics) — not covered by the shared client,
+    // left as a direct call on purpose.
     let attachmentUrl = null;
     if (attachmentBase64) {
       const uploadResp = await fetch(
@@ -452,12 +423,8 @@ async function handleUnitPortalMessage(req, res) {
     if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
     chatLog.push(entry);
 
-    const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${unitId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { "Chat Log": JSON.stringify(chatLog) } }),
-    });
-    if (!patchResp.ok) throw new Error("Could not save message");
+    const saved = await updateRecord(table, unitId, { "Chat Log": JSON.stringify(chatLog) }).then(() => true).catch(() => false);
+    if (!saved) throw new Error("Could not save message");
 
     // Deliberately no email/SMS here — confirmed, per-message
     // notifications for ordinary chat were flagged as chaotic. Staff
@@ -475,22 +442,8 @@ async function handleUnitPortalMessage(req, res) {
 
 async function handleGetLocations(req, res) {
   try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const componentsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-
-    let allRecords = [];
-    let offset = null;
-    do {
-      const url = new URL(`https://api.airtable.com/v0/${base}/${componentsTable}`);
-      url.searchParams.set("fields[]", "Floor/Level");
-      url.searchParams.append("fields[]", "Room/Zone");
-      if (offset) url.searchParams.set("offset", offset);
-      const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-      if (!resp.ok) throw new Error("Could not load locations");
-      const data = await resp.json();
-      allRecords = allRecords.concat(data.records || []);
-      offset = data.offset || null;
-    } while (offset);
+    const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+    const allRecords = await listAllRecords(componentsTable, { fields: ["Floor/Level", "Room/Zone"] });
 
     // Floor -> Set of rooms, using the same friendly labels the Asset
     // Register itself displays, deduplicated.
@@ -593,8 +546,7 @@ export default async function handler(req, res) {
 }
 
 async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
@@ -616,37 +568,25 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   if (building) baseFields["Building"] = building;
   if (unit) baseFields["Unit"] = unit;
 
-  let resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { ...baseFields, "Maintenance Type": "Corrective" } }),
-  });
-
-  if (!resp.ok) {
-    console.error("Work order creation with Maintenance Type failed, retrying without it:", await resp.text());
-    resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: baseFields }),
-    });
+  let created;
+  try {
+    created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Corrective" });
+  } catch (firstErr) {
+    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstErr.message);
+    try {
+      created = await createRecord(woTable, baseFields);
+    } catch (secondErr) {
+      console.error("Work order creation failed:", secondErr.message);
+      throw new Error("Could not create the work order — please try again or contact the technical team directly.");
+    }
   }
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    console.error("Work order creation failed:", errText);
-    throw new Error("Could not create the work order — please try again or contact the technical team directly.");
-  }
-  const created = await resp.json();
 
   // The very first entry — every work order's story now genuinely
   // starts here, not partway through once procurement or a photo
   // happens to trigger the first log write.
   const openingLog = [{ text: `🆕 Work order opened — reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}`, by: reporterName, at: new Date().toISOString() }];
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${created.id}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(openingLog) } }),
-  }).catch(e => console.error("Opening log write failed (non-fatal):", e));
+  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+    .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return { woId, recordId: created.id };
 }
@@ -745,23 +685,15 @@ async function sendSms(message) {
 // from. Without this, staff-reported issues were invisible in those
 // reports even though the notification and Work Order both worked.
 async function logAlert(description, location, recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": "",
-        "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
-        "System": "",
-        "Location": location,
-        "Urgency": "REPORTED",
-        "Channel": "Email + SMS (staff report)",
-        "Messages": `Staff-reported issue: ${description}`,
-      },
-    }),
-  });
-  if (!resp.ok) console.error("Alert log write failed:", await resp.text());
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  await createRecord(logTable, {
+    "Timestamp": new Date().toISOString(),
+    "Asset ID": "",
+    "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+    "System": "",
+    "Location": location,
+    "Urgency": "REPORTED",
+    "Channel": "Email + SMS (staff report)",
+    "Messages": `Staff-reported issue: ${description}`,
+  }).catch(e => console.error("Alert log write failed:", e.message));
 }
