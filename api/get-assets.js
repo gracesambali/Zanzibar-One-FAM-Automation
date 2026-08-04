@@ -125,6 +125,75 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Facilities from Airtable into Postgres. Same
+  // safety rules as migrateVendors — read-only on Airtable, idempotent
+  // (skips a facility whose name already exists), explicit confirm
+  // required. First table to also touch a child table
+  // (facility_buildings), since Airtable's "Building" field can hold
+  // several buildings per facility — either plain strings or
+  // linked-record objects, normalized the same way
+  // handleGetFacilities already does elsewhere in this file.
+  if (req.query.migrateFacilities === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const facilitiesTable = process.env.AIRTABLE_FACILITIES_TABLE || "Facilities";
+      const airtableFacilities = await listAllRecords(facilitiesTable);
+
+      let inserted = 0, skipped = 0, buildingsInserted = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableFacilities) {
+        const f = record.fields;
+        const name = (f["Name"] || "").trim();
+        if (!name) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Name field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("facilities", "name", name);
+          if (existing) { skipped++; skipDetails.push({ name, reason: "already exists in Postgres" }); continue; }
+
+          const created = await insert("facilities", { name });
+          inserted++;
+
+          // "Building" can hold plain strings or linked-record-shaped
+          // objects — same normalization already used elsewhere in
+          // this file. Deduplicated before insert since the child
+          // table's primary key is (facility_id, building_name).
+          const rawBuildings = f["Building"] || [];
+          const buildingNames = [...new Set(
+            rawBuildings.map(b => (typeof b === "string" ? b : b.name || "")).filter(Boolean)
+          )];
+          for (const buildingName of buildingNames) {
+            await insert("facility_buildings", { facility_id: created.id, building_name: buildingName });
+            buildingsInserted++;
+          }
+        } catch (rowErr) {
+          errors.push({ name, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableFacilities.length,
+        inserted,
+        buildingsInserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
