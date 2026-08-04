@@ -1001,6 +1001,76 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Planned Maintenance from Airtable into
+  // Postgres. Same safety rules as Vendors/Facilities/Units — read-
+  // only on Airtable, idempotent (skips a plan_id that already
+  // exists), explicit confirm required. The most JSON-heavy table in
+  // this migration series — five separate JSON fields — but nothing
+  // new in kind, same safe-parse-with-fallback pattern already proven
+  // on Sensors and Units, just applied five times over.
+  if (req.query.migratePlannedMaintenance === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const planTable = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
+      const airtablePlans = await listAllRecords(planTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      const safeParse = (raw) => { try { return JSON.parse(raw || "[]"); } catch { return []; } };
+
+      for (const record of airtablePlans) {
+        const f = record.fields;
+        const planId = (f["Plan ID"] || "").trim();
+        if (!planId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Plan ID field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("planned_maintenance", "plan_id", planId);
+          if (existing) { skipped++; skipDetails.push({ planId, reason: "already exists in Postgres" }); continue; }
+
+          await insert("planned_maintenance", {
+            plan_id: planId,
+            name: f["Name"] || planId,
+            description: f["Description"] || null,
+            plan_status: f["Plan Status"] || "Planning",
+            created_by: f["Created By"] || null,
+            created_date: f["Created Date"] || null,
+            target_start_date: f["Target Start Date"] || null,
+            target_end_date: f["Target End Date"] || null,
+            budget_items: JSON.stringify(safeParse(f["Budget Items"])),
+            milestones: JSON.stringify(safeParse(f["Milestones"])),
+            meeting_log: JSON.stringify(safeParse(f["Meeting Log"])),
+            action_points: JSON.stringify(safeParse(f["Action Points"])),
+            activity_log: JSON.stringify(safeParse(f["Activity Log"])),
+            deadline_alert_sent: f["Deadline Alert Sent"] === true,
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ planId, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtablePlans.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
