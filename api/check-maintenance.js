@@ -18,6 +18,7 @@
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
+import { listAllRecords } from "../lib/airtableClient.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getContactsForRole, getAllStaffDirectory } from "../lib/staffDirectory.js";
@@ -32,7 +33,22 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date
 const REMINDER_INTERVAL_DAYS = 5; // once open, remind every N days until closed
 
+// Vercel automatically sends this header on real cron-triggered requests
+// when CRON_SECRET is set as an env var — so this rejects anyone calling
+// the URL directly, while requiring zero config on Vercel's side beyond
+// setting the env var. Same pattern as the shared-secret checks already
+// used in ingest-sensor-data.js and webhook-trigger.js.
+function isAuthorizedCronRequest(req) {
+  const expected = process.env.CRON_SECRET;
+  if (!expected) return false; // fail closed if not configured, not open
+  return req.headers.authorization === `Bearer ${expected}`;
+}
+
 export default async function handler(req, res) {
+  if (!isAuthorizedCronRequest(req)) {
+    return res.status(401).json({ error: "Unauthorized — this endpoint only accepts Vercel's scheduled cron trigger." });
+  }
+
   try {
     const records = await fetchAllRecords();
     const results = [];
@@ -150,27 +166,11 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function fetchAllRecords() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  let allRecords = [];
-  let offset = null;
-
-  do {
-    const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status} ${await resp.text()}`);
-
-    const data = await resp.json();
-    allRecords = allRecords.concat(data.records || []);
-    offset = data.offset;
-  } while (offset);
-
-  return allRecords;
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  // Now routed through the shared client — same table-name flexibility
+  // as before, but auth, retry-on-429, and pagination are handled in
+  // one place (lib/airtableClient.js) instead of duplicated here.
+  return listAllRecords(table, { pageSize: 100 });
 }
 
 async function logAlert(f, urgency, message, alertType) {
