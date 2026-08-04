@@ -605,6 +605,68 @@ export default async function handler(req, res) {
     return handleEditLog(req, res);
   }
 
+  // One-time migration: Floor Plans from Airtable into Postgres. Same
+  // safety rules as every migration so far — read-only on Airtable,
+  // idempotent (skips a floor that already exists, matching the app's
+  // own one-record-per-floor convention), explicit confirm required.
+  if (req.query.migrateFloorPlans === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const floorPlansTable = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
+      const airtableFloorPlans = await listAllRecords(floorPlansTable);
+
+      let inserted = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableFloorPlans) {
+        const f = record.fields;
+        const floor = (f["Floor"] || "").trim();
+        if (!floor) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Floor field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("floor_plans", "floor", floor);
+          if (existing) { skipped++; skipDetails.push({ floor, reason: "already exists in Postgres" }); continue; }
+
+          let activityLog = [];
+          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
+
+          const image = (f["Image"] || [])[0] || null;
+
+          await insert("floor_plans", {
+            floor,
+            image_url: image ? image.url : null,
+            uploaded_by: f["Uploaded By"] || null,
+            uploaded_date: f["Uploaded Date"] || null,
+            activity_log: JSON.stringify(activityLog),
+          });
+          inserted++;
+        } catch (rowErr) {
+          errors.push({ floor, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableFloorPlans.length,
+        inserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
