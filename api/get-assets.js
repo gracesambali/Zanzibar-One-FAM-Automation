@@ -194,6 +194,113 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Components (the Asset Register) from Airtable
+  // into Postgres — the biggest and most central table so far. Same
+  // safety rules as Vendors/Facilities: read-only on Airtable,
+  // idempotent (skips an asset_id that already exists), explicit
+  // confirm required, Business Owner/System Admin only.
+  //
+  // Compliance Documents is a multi-attachment field — becomes rows in
+  // the component_documents child table, one per file. Nameplate
+  // Photo is single-attachment — stored directly as two columns on
+  // the component itself, matching the schema.
+  if (req.query.migrateComponents === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
+      const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+      const airtableComponents = await listAllRecords(componentsTable);
+
+      let inserted = 0, skipped = 0, documentsInserted = 0;
+      const errors = [];
+      const skipDetails = [];
+
+      for (const record of airtableComponents) {
+        const f = record.fields;
+        const assetId = (f["Asset ID"] || "").trim();
+        if (!assetId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Asset ID field set" }); continue; }
+
+        try {
+          const existing = await getByColumn("components", "asset_id", assetId);
+          if (existing) { skipped++; skipDetails.push({ assetId, reason: "already exists in Postgres" }); continue; }
+
+          const nameplatePhoto = (f["Nameplate Photo"] || [])[0] || null;
+
+          const created = await insert("components", {
+            asset_id: assetId,
+            name: f["Name"] || assetId,
+            system: f["System"] || null,
+            floor_level: f["Floor/Level"] || null,
+            room_zone: f["Room/Zone"] || null,
+            building: f["Building"] || null,
+            facility: f["Facility"] || null,
+            unit: f["Unit"] || null,
+            manufacturer: f["Manufacturer"] || null,
+            model: f["Model"] || null,
+            install_date: f["Install Date"] || null,
+            status: f["Status"] || "Good",
+            criticality: f["Criticality"] || "Medium",
+            last_service: f["Last Service"] || null,
+            next_service_due: f["Next Service Due"] || null,
+            expected_lifespan_years: f["Expected Lifespan (Years)"] ? Number(f["Expected Lifespan (Years)"]) : 15,
+            maintenance_interval_days: f["Maintenance Interval (Days)"] ? Number(f["Maintenance Interval (Days)"]) : 90,
+            note: f["Note"] || null,
+            active: f["Active"] !== false,
+            added_by: f["Added By"] || null,
+            decommissioned_by: f["Decommissioned By"] || null,
+            asset_nature: f["Asset Nature"] || null,
+            mobility: f["Mobility"] || null,
+            asset_category: f["Asset Category"] || null,
+            acquisition_cost_tzs: f["Acquisition Cost (TZS)"] !== undefined ? Number(f["Acquisition Cost (TZS)"]) : null,
+            residual_value_tzs: f["Residual Value (TZS)"] !== undefined ? Number(f["Residual Value (TZS)"]) : 0,
+            current_value_tzs: f["Current Value (TZS)"] !== undefined ? Number(f["Current Value (TZS)"]) : null,
+            needs_technical_review: f["Needs Technical Review"] === true,
+            nameplate_photo_url: nameplatePhoto ? nameplatePhoto.url : null,
+            nameplate_photo_filename: nameplatePhoto ? nameplatePhoto.filename : null,
+            warranty_expiry_date: f["Warranty Expiry Date"] || null,
+            target_range_temp: f["Target Range (Temp)"] || null,
+            target_range_humidity: f["Target Range (Humidity)"] || null,
+            last_alert_sent: f["Last Alert Sent"] || null,
+            documents_uploaded_by: f["Documents Last Uploaded By"] || null,
+            documents_uploaded_date: f["Documents Last Uploaded Date"] || null,
+          });
+          inserted++;
+
+          const complianceDocs = f["Compliance Documents"] || [];
+          for (const doc of complianceDocs) {
+            await insert("component_documents", {
+              component_id: created.id,
+              url: doc.url,
+              filename: doc.filename || null,
+            });
+            documentsInserted++;
+          }
+        } catch (rowErr) {
+          errors.push({ assetId, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableComponents.length,
+        inserted,
+        documentsInserted,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
