@@ -838,6 +838,91 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Relocation Log from Airtable into Postgres.
+  // Same batched pattern as Readings/Alert Log — two-column uniqueness
+  // (asset_id, date), since handleRelocate writes exactly one entry
+  // per relocation action (unlike Edit Log's multi-row-per-action
+  // shape). Requires relocation_log_asset_date_unique to exist first
+  // (applied separately via SQL Editor).
+  if (req.query.migrateRelocationLog === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { query } = await import("../lib/postgresClient.js");
+
+      const relocationLogTable = process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log";
+      const airtableRelocationLog = await listAllRecords(relocationLogTable);
+
+      let skippedNoAssetId = 0;
+      const validRecords = [];
+      for (const record of airtableRelocationLog) {
+        const f = record.fields;
+        const assetId = (f["Asset ID"] || "").trim();
+        if (!assetId) { skippedNoAssetId++; continue; }
+        validRecords.push({ assetId, f });
+      }
+
+      const BATCH_SIZE = 500;
+      let totalInserted = 0;
+      const batchErrors = [];
+
+      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
+        const batch = validRecords.slice(i, i + BATCH_SIZE);
+        const placeholders = [];
+        const values = [];
+        batch.forEach((item, idx) => {
+          const { assetId, f } = item;
+          const base = idx * 11;
+          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
+          values.push(
+            assetId,
+            f["Asset Name"] || null,
+            f["Old Floor"] || null,
+            f["Old Room/Zone"] || null,
+            f["Old Building"] || null,
+            f["New Floor"] || null,
+            f["New Room/Zone"] || null,
+            f["New Building"] || null,
+            f["Relocated By"] || null,
+            f["Date"] || new Date().toISOString(),
+            f["Reason"] || null
+          );
+        });
+        try {
+          const result = await query(
+            `insert into relocation_log (asset_id, asset_name, old_floor, old_room_zone, old_building, new_floor, new_room_zone, new_building, relocated_by, date, reason)
+             values ${placeholders.join(", ")}
+             on conflict (asset_id, date) do nothing
+             returning id`,
+            values
+          );
+          totalInserted += result.rows.length;
+        } catch (batchErr) {
+          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
+        }
+      }
+
+      const skippedAsDuplicate = validRecords.length - totalInserted -
+        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableRelocationLog.length,
+        inserted: totalInserted,
+        skippedNoAssetId,
+        skippedAsDuplicate,
+        batchErrors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.

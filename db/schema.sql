@@ -397,3 +397,12 @@ alter table alert_log add constraint alert_log_asset_timestamp_unique unique (as
 -- (asset_id, field_changed, timestamp) is what's actually unique.
 -- ============================================================
 alter table edit_log add constraint edit_log_asset_field_timestamp_unique unique (asset_id, field_changed, timestamp);
+
+-- ============================================================
+-- Added post-launch: uniqueness rule for relocation_log. Two columns
+-- here, not three like edit_log — handleRelocate in manage-asset.js
+-- writes exactly one relocation entry per relocation action (unlike
+-- edit_log's multi-row-per-action pattern), so (asset_id, date) is
+-- the real uniqueness, same shape as readings/alert_log.
+-- ============================================================
+alter table relocation_log add constraint relocation_log_asset_date_unique unique (asset_id, date);
