@@ -87,15 +87,16 @@ export default async function handler(req, res) {
 
       let inserted = 0, skipped = 0;
       const errors = [];
+      const skipDetails = [];
 
       for (const record of airtableVendors) {
         const f = record.fields;
-        const vendorName = f["Vendor Name"];
-        if (!vendorName) { skipped++; continue; }
+        const vendorName = (f["Vendor Name"] || "").trim();
+        if (!vendorName) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Vendor Name field set" }); continue; }
 
         try {
           const existing = await getByColumn("vendors", "vendor_name", vendorName);
-          if (existing) { skipped++; continue; }
+          if (existing) { skipped++; skipDetails.push({ vendorName, reason: "already exists in Postgres" }); continue; }
 
           await insert("vendors", {
             vendor_name: vendorName,
@@ -116,6 +117,7 @@ export default async function handler(req, res) {
         totalInAirtable: airtableVendors.length,
         inserted,
         skipped,
+        skipDetails,
         errors,
       });
     } catch (err) {
