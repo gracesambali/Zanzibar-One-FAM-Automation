@@ -41,6 +41,28 @@ export default async function handler(req, res) {
   }
   setSessionCookie(res, session.u, session.r);
 
+  // One-off diagnostic to confirm DATABASE_URL actually works once set
+  // in Vercel — restricted to Business Owner/System Admin since this
+  // is infrastructure testing, not something day-to-day staff need.
+  // Touches no real data: just confirms the connection and that the
+  // schema's tables are visible from here. Safe to leave in place;
+  // remove once the Postgres migration is further along and this has
+  // served its purpose.
+  if (req.query.dbtest === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    try {
+      const { query } = await import("../lib/postgresClient.js");
+      const result = await query(
+        "select now() as db_time, (select count(*) from information_schema.tables where table_schema = 'public') as table_count"
+      );
+      return res.status(200).json({ connected: true, ...result.rows[0] });
+    } catch (err) {
+      return res.status(500).json({ connected: false, error: err.message });
+    }
+  }
+
   // Edit log for a specific asset (audit trail)
   if (req.query.editlog && req.query.id) {
     return handleEditLog(req, res);
