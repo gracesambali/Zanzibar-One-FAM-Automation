@@ -667,6 +667,94 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time migration: Alert Log from Airtable into Postgres. Same
+  // shape as the Readings migration and for the same reason — no
+  // natural unique business key, and potentially a real volume of
+  // rows given how many alert-writing paths exist across this
+  // codebase (daily cron, webhook trigger, sensor ingestion, reported
+  // issues, demo/test triggers). Idempotent via a real database
+  // constraint (asset_id, timestamp) + on conflict do nothing, and
+  // batched (500 rows/round-trip) rather than one row at a time.
+  // Requires alert_log_asset_timestamp_unique to exist first (applied
+  // separately via SQL Editor, same as readings_sensor_timestamp_unique
+  // before it).
+  //
+  // One real inconsistency found in the source data while building
+  // this: the message field is called "Messages" in most of the
+  // alert-writing code, but "Message" (singular) in two of them
+  // (demo-trigger.js, run-real-test.js) — a genuine naming drift in
+  // the original codebase, not a migration bug. Checked for both.
+  if (req.query.migrateAlertLog === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { query } = await import("../lib/postgresClient.js");
+
+      const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+      const airtableAlerts = await listAllRecords(logTable);
+
+      const validRecords = airtableAlerts.map(record => ({ record, f: record.fields }));
+
+      const BATCH_SIZE = 500;
+      let totalInserted = 0;
+      const batchErrors = [];
+
+      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
+        const batch = validRecords.slice(i, i + BATCH_SIZE);
+        const placeholders = [];
+        const values = [];
+        batch.forEach((item, idx) => {
+          const { f } = item;
+          const base = idx * 8;
+          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`);
+          values.push(
+            f["Timestamp"] || new Date().toISOString(),
+            f["Asset ID"] || null,
+            f["Asset Name"] || null,
+            f["System"] || null,
+            f["Location"] || null,
+            f["Urgency"] || null,
+            f["Channel"] || null,
+            // "Messages" (plural) is the field used by most alert-writing
+            // code; "Message" (singular) is used by two call sites. Both
+            // checked, since either could be the one actually populated.
+            f["Messages"] || f["Message"] || null
+          );
+        });
+        try {
+          const result = await query(
+            `insert into alert_log (timestamp, asset_id, asset_name, system, location, urgency, channel, message)
+             values ${placeholders.join(", ")}
+             on conflict (asset_id, timestamp) do nothing
+             returning id`,
+            values
+          );
+          totalInserted += result.rows.length;
+        } catch (batchErr) {
+          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
+        }
+      }
+
+      const skippedAsDuplicate = validRecords.length - totalInserted -
+        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableAlerts.length,
+        inserted: totalInserted,
+        skippedAsDuplicate,
+        batchErrors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
