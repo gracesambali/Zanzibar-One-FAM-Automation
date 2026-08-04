@@ -21,6 +21,7 @@
 // says it should — this proves the real pipeline works, it just
 // doesn't corrupt the asset's actual schedule to do it.
 
+import { listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml, buildGenericAlertEmailHtml } from "../lib/emailTemplate.js";
@@ -138,84 +139,57 @@ export default async function handler(req, res) {
 }
 
 async function fetchRecordByAssetId(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.records && data.records.length > 0 ? data.records[0] : null;
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+  }).catch(() => null);
+  return data && data.records && data.records.length > 0 ? data.records[0] : null;
 }
 
 async function logAlert(f, urgency, message) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Urgency": urgency,
-        "Channel": "Email + SMS (public demo trigger — simulated date, real due date untouched)",
-        "Message": message,
-      },
-    }),
-  });
-  if (!resp.ok) return `FAILED: ${await resp.text()}`;
-  return true;
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  try {
+    await createRecord(logTable, {
+      "Timestamp": new Date().toISOString(),
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Urgency": urgency,
+      "Channel": "Email + SMS (public demo trigger — simulated date, real due date untouched)",
+      "Message": message,
+    });
+    return true;
+  } catch (e) {
+    return `FAILED: ${e.message}`;
+  }
 }
 
 async function createWorkOrder(f, urgency) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": f["Asset ID"] || "",
-        "Asset Name": f["Name"] || "",
-        "System": f["System"] || "",
-        "Location": f["Room/Zone"] || "",
-        "Status": "Open",
-        "Urgency": urgency,
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": new Date().toISOString().split("T")[0],
-        "Notes": "",
-      },
-    }),
-  });
-  if (!resp.ok) return null;
-  return woId;
+  try {
+    await createRecord(woTable, {
+      "WO ID": woId,
+      "Asset ID": f["Asset ID"] || "",
+      "Asset Name": f["Name"] || "",
+      "System": f["System"] || "",
+      "Location": f["Room/Zone"] || "",
+      "Status": "Open",
+      "Urgency": urgency,
+      "Created": new Date().toISOString(),
+      "Last Reminder Sent": new Date().toISOString().split("T")[0],
+      "Notes": "",
+    });
+    return woId;
+  } catch (e) {
+    return null;
+  }
 }
 
 async function updateReminderTimestamp(recordId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
-  await fetch(`https://api.airtable.com/v0/${base}/${woTable}/${recordId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ fields: { "Last Reminder Sent": new Date().toISOString().split("T")[0] } }),
-  });
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  await updateRecord(woTable, recordId, { "Last Reminder Sent": new Date().toISOString().split("T")[0] });
 }
 
 async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
@@ -319,16 +293,8 @@ async function handleSimpleTestAlert(req, res) {
 }
 
 async function buildRealMessage(assetId, forcedUrgency) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId}"`);
-
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) throw new Error(`Airtable fetch failed: ${resp.status}`);
-  const data = await resp.json();
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, { filterByFormula: `{Asset ID} = "${assetId}"` });
   if (!data.records || data.records.length === 0) return null;
 
   const f = data.records[0].fields;
@@ -349,30 +315,17 @@ async function buildRealMessage(assetId, forcedUrgency) {
 }
 
 async function logDemoAlert(message, assetId, forcedUrgency) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const url = `https://api.airtable.com/v0/${base}/${logTable}`;
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": assetId || "DEMO",
-        "Asset Name": assetId ? assetId : "Demo Trigger",
-        "System": "",
-        "Location": "",
-        "Urgency": forcedUrgency ? `TEST-${forcedUrgency}` : "DEMO",
-        "Channel": "Email + SMS",
-        "Message": message,
-      },
-    }),
-  });
-  if (!resp.ok) console.error("Alert log write failed:", await resp.text());
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  await createRecord(logTable, {
+    "Timestamp": new Date().toISOString(),
+    "Asset ID": assetId || "DEMO",
+    "Asset Name": assetId ? assetId : "Demo Trigger",
+    "System": "",
+    "Location": "",
+    "Urgency": forcedUrgency ? `TEST-${forcedUrgency}` : "DEMO",
+    "Channel": "Email + SMS",
+    "Message": message,
+  }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
 async function sendSimpleTestEmail(message) {

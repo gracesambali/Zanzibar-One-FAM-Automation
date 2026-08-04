@@ -15,6 +15,7 @@
 // it's called by machines, not logged-in people).
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
+import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
 import { getAssignedRole } from "../lib/routing.js";
@@ -47,15 +48,10 @@ async function handleEditSensor(req, res, editedBy) {
   const { recordId, notes, status, assignee } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
+  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
 
   try {
-    const currentResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-    });
-    if (!currentResp.ok) throw new Error("Could not read sensor");
-    const current = await currentResp.json();
+    const current = await getRecord(table, recordId).catch(() => { throw new Error("Could not read sensor"); });
 
     const fields = {};
     const changes = [];
@@ -64,12 +60,7 @@ async function handleEditSensor(req, res, editedBy) {
     if (assignee !== undefined && assignee !== current.fields["Assignee"]) { fields["Assignee"] = assignee; changes.push(["Assignee", current.fields["Assignee"] || "", assignee]); }
 
     if (Object.keys(fields).length > 0) {
-      const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields }),
-      });
-      if (!patchResp.ok) throw new Error("Could not save sensor");
+      await updateRecord(table, recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
     }
 
     for (const [field, oldVal, newVal] of changes) {
@@ -86,25 +77,17 @@ async function handleEditSensor(req, res, editedBy) {
 // Shared helper — same read-modify-write pattern as Work Orders and
 // Planned Maintenance, so a sensor's Activity Log works identically.
 async function appendSensorActivity(recordId, text, by) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
+  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
 
-  const getResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!getResp.ok) { console.error("appendSensorActivity: could not read sensor"); return; }
-  const sensorData = await getResp.json();
+  const sensorData = await getRecord(table, recordId).catch(() => null);
+  if (!sensorData) { console.error("appendSensorActivity: could not read sensor"); return; }
 
   let log = [];
   try { log = JSON.parse(sensorData.fields["Activity Log"] || "[]"); } catch { log = []; }
   log.push({ text, by, at: new Date().toISOString() });
 
-  const patchResp = await fetch(`https://api.airtable.com/v0/${base}/${table}/${recordId}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: { "Activity Log": JSON.stringify(log) } }),
-  });
-  if (!patchResp.ok) console.error("appendSensorActivity: could not save entry");
+  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+    .catch(() => console.error("appendSensorActivity: could not save entry"));
 }
 
 // ---------------------------------------------------------------------
@@ -179,40 +162,22 @@ async function handleGetReadings(req, res) {
 }
 
 async function fetchAllSensors() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) throw new Error(`Sensors fetch failed: ${resp.status}`);
-  const data = await resp.json();
-  return data.records || [];
+  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
+  return listAllRecords(table);
 }
 
 async function fetchRecentReadings() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_READINGS_TABLE || "Readings");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("pageSize", "100");
-  url.searchParams.set("sort[0][field]", "Timestamp");
-  url.searchParams.set("sort[0][direction]", "desc");
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+  const table = process.env.AIRTABLE_READINGS_TABLE || "Readings";
+  const data = await listRecords(table, {
+    pageSize: 100,
+    sort: [{ field: "Timestamp", direction: "desc" }],
   });
-  if (!resp.ok) throw new Error(`Readings fetch failed: ${resp.status}`);
-  const data = await resp.json();
   return data.records || [];
 }
 
 async function fetchAllComponents() {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) throw new Error(`Components fetch failed: ${resp.status}`);
-  const data = await resp.json();
-  return data.records || [];
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  return listAllRecords(table);
 }
 
 // ---------------------------------------------------------------------
@@ -313,116 +278,77 @@ function checkWithinRange(value, rangeStr) {
 }
 
 async function fetchSensorBySensorId(sensorId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_SENSORS_TABLE || "Sensors");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Sensor ID} = "${sensorId.replace(/"/g, '\\"')}"`);
-  url.searchParams.set("maxRecords", "1");
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.records && data.records[0] ? data.records[0] : null;
+  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
+  const data = await listRecords(table, {
+    filterByFormula: `{Sensor ID} = "${sensorId.replace(/"/g, '\\"')}"`,
+    maxRecords: 1,
+  }).catch(() => null);
+  return data && data.records && data.records[0] ? data.records[0] : null;
 }
 
 async function fetchComponentByAssetId(assetId) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || "Components");
-  const url = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  url.searchParams.set("filterByFormula", `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`);
-  url.searchParams.set("maxRecords", "1");
-  const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.records && data.records[0] ? data.records[0] : null;
+  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const data = await listRecords(table, {
+    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
+    maxRecords: 1,
+  }).catch(() => null);
+  return data && data.records && data.records[0] ? data.records[0] : null;
 }
 
 async function createReading({ timestamp, sensorId, assetId, value, unit, withinRange }) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = encodeURIComponent(process.env.AIRTABLE_READINGS_TABLE || "Readings");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": timestamp,
-        "Sensor ID": sensorId,
-        "Asset ID": assetId,
-        "Value": value,
-        "Unit": unit,
-        "Within Range": withinRange === true,
-      },
-    }),
-  });
-  if (!resp.ok) console.error("Reading write failed:", await resp.text());
+  const table = process.env.AIRTABLE_READINGS_TABLE || "Readings";
+  await createRecord(table, {
+    "Timestamp": timestamp,
+    "Sensor ID": sensorId,
+    "Asset ID": assetId,
+    "Value": value,
+    "Unit": unit,
+    "Within Range": withinRange === true,
+  }).catch(e => console.error("Reading write failed:", e.message));
 }
 
 async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const woTable = encodeURIComponent(process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders");
+  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${woTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "WO ID": woId,
-        "Asset ID": assetId || "",
-        "Asset Name": assetName || "",
-        "System": sensorTypeLabel || "",
-        "Location": location || "",
-        "Status": "Open",
-        "Urgency": "SENSOR ALERT",
-        "Created": new Date().toISOString(),
-        "Last Reminder Sent": new Date().toISOString().split("T")[0],
-        "Notes": `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
-        "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
-      },
-    }),
-  });
-  if (!resp.ok) {
-    console.error("Sensor test work order creation failed:", await resp.text());
+  try {
+    await createRecord(woTable, {
+      "WO ID": woId,
+      "Asset ID": assetId || "",
+      "Asset Name": assetName || "",
+      "System": sensorTypeLabel || "",
+      "Location": location || "",
+      "Status": "Open",
+      "Urgency": "SENSOR ALERT",
+      "Created": new Date().toISOString(),
+      "Last Reminder Sent": new Date().toISOString().split("T")[0],
+      "Notes": `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+      "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
+    });
+    return woId;
+  } catch (e) {
+    console.error("Sensor test work order creation failed:", e.message);
     return null;
   }
-  return woId;
 }
 
 async function logAlert({ assetId, assetName, location, urgency, message }) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const logTable = encodeURIComponent(process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log");
-  const resp = await fetch(`https://api.airtable.com/v0/${base}/${logTable}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: {
-        "Timestamp": new Date().toISOString(),
-        "Asset ID": assetId || "",
-        "Asset Name": assetName || "",
-        "System": "",
-        "Urgency": urgency,
-        "Channel": "Email + SMS (manual sensor test)",
-        "Messages": message,
-      },
-    }),
-  });
-  if (!resp.ok) {
-    console.error("Alert log write failed:", await resp.text());
-    return `FAILED: ${await resp.text()}`;
+  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
+  try {
+    await createRecord(logTable, {
+      "Timestamp": new Date().toISOString(),
+      "Asset ID": assetId || "",
+      "Asset Name": assetName || "",
+      "System": "",
+      "Urgency": urgency,
+      "Channel": "Email + SMS (manual sensor test)",
+      "Messages": message,
+    });
+    return true;
+  } catch (e) {
+    console.error("Alert log write failed:", e.message);
+    return `FAILED: ${e.message}`;
   }
-  return true;
 }
 
 async function sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange, woId }) {
