@@ -15,7 +15,6 @@
 // it's called by machines, not logged-in people).
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
-import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
 import { getAssignedRole } from "../lib/routing.js";
@@ -48,19 +47,18 @@ async function handleEditSensor(req, res, editedBy) {
   const { recordId, notes, status, assignee } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
-  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
-
   try {
-    const current = await getRecord(table, recordId).catch(() => { throw new Error("Could not read sensor"); });
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const current = await getById("sensors", recordId).catch(() => { throw new Error("Could not read sensor"); });
 
     const fields = {};
     const changes = [];
-    if (notes !== undefined && notes !== current.fields["Notes"]) { fields["Notes"] = notes; changes.push(["Notes", current.fields["Notes"] || "", notes]); }
-    if (status !== undefined && status !== current.fields["Status"]) { fields["Status"] = status; changes.push(["Status", current.fields["Status"] || "", status]); }
-    if (assignee !== undefined && assignee !== current.fields["Assignee"]) { fields["Assignee"] = assignee; changes.push(["Assignee", current.fields["Assignee"] || "", assignee]); }
+    if (notes !== undefined && notes !== current.notes) { fields.notes = notes; changes.push(["Notes", current.notes || "", notes]); }
+    if (status !== undefined && status !== current.status) { fields.status = status; changes.push(["Status", current.status || "", status]); }
+    if (assignee !== undefined && assignee !== current.assignee) { fields.assignee = assignee; changes.push(["Assignee", current.assignee || "", assignee]); }
 
     if (Object.keys(fields).length > 0) {
-      await updateRecord(table, recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
+      await update("sensors", recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
     }
 
     for (const [field, oldVal, newVal] of changes) {
@@ -77,16 +75,15 @@ async function handleEditSensor(req, res, editedBy) {
 // Shared helper — same read-modify-write pattern as Work Orders and
 // Planned Maintenance, so a sensor's Activity Log works identically.
 async function appendSensorActivity(recordId, text, by) {
-  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const sensorData = await getRecord(table, recordId).catch(() => null);
+  const sensorData = await getById("sensors", recordId).catch(() => null);
   if (!sensorData) { console.error("appendSensorActivity: could not read sensor"); return; }
 
-  let log = [];
-  try { log = JSON.parse(sensorData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const log = Array.isArray(sensorData.activity_log) ? sensorData.activity_log : [];
   log.push({ text, by, at: new Date().toISOString() });
 
-  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+  await update("sensors", recordId, { activity_log: JSON.stringify(log) })
     .catch(() => console.error("appendSensorActivity: could not save entry"));
 }
 
@@ -102,31 +99,30 @@ async function handleGetReadings(req, res) {
 
     const componentByAssetId = {};
     for (const c of components) {
-      componentByAssetId[c.fields["Asset ID"]] = c.fields;
+      componentByAssetId[c.asset_id] = c;
     }
 
     const latestBySensor = {};
     for (const r of readings) {
-      const sid = r.fields["Sensor ID"];
+      const sid = r.sensor_id;
       if (!sid) continue;
       const existing = latestBySensor[sid];
-      if (!existing || new Date(r.fields["Timestamp"]) > new Date(existing.fields["Timestamp"])) {
+      if (!existing || new Date(r.timestamp) > new Date(existing.timestamp)) {
         latestBySensor[sid] = r;
       }
     }
 
     const result = sensors.map(s => {
-      const f = s.fields;
-      const assetId = f["Asset ID"] || "";
+      const assetId = s.asset_id || "";
       const component = componentByAssetId[assetId] || {};
-      const latest = latestBySensor[f["Sensor ID"]];
-      const sensorType = f["Sensor Type"] || "";
+      const latest = latestBySensor[s.sensor_id];
+      const sensorType = s.sensor_type || "";
 
       let targetRange;
       if (sensorType === "Humidity") {
-        targetRange = component["Target Range (Humidity)"] || null;
+        targetRange = component.target_range_humidity || null;
       } else if (sensorType === "Temperature") {
-        targetRange = component["Target Range (Temp)"] || null;
+        targetRange = component.target_range_temp || null;
       } else if (sensorType === "Door") {
         targetRange = "Closed (0)";
       } else if (sensorType === "Equipment Status") {
@@ -137,20 +133,24 @@ async function handleGetReadings(req, res) {
 
       return {
         recordId: s.id,
-        sensorId: f["Sensor ID"] || "",
+        sensorId: s.sensor_id || "",
         sensorType,
         assetId,
-        assetName: component["Name"] || assetId,
-        location: component["Room/Zone"] || "",
+        assetName: component.name || assetId,
+        location: component.room_zone || "",
         targetRange,
-        latestValue: latest ? latest.fields["Value"] : null,
-        latestUnit: latest ? latest.fields["Unit"] : null,
-        withinRange: latest ? latest.fields["Within Range"] : null,
-        lastReadingAt: latest ? latest.fields["Timestamp"] : null,
-        notes: f["Notes"] || "",
-        status: f["Status"] || "",
-        assignee: f["Assignee"] ? (f["Assignee"].name || f["Assignee"].email || "") : "",
-        activityLog: f["Activity Log"] || "[]",
+        latestValue: latest ? (latest.value !== null ? Number(latest.value) : null) : null,
+        latestUnit: latest ? latest.unit : null,
+        withinRange: latest ? latest.within_range : null,
+        lastReadingAt: latest ? latest.timestamp : null,
+        notes: s.notes || "",
+        status: s.status || "",
+        // Already normalized to a plain string at migration time (was a
+        // collaborator-object-or-string field in Airtable) — read as-is.
+        assignee: s.assignee || "",
+        // Original sent this as a raw JSON string, not a parsed array —
+        // preserved exactly, same pattern as Floor Plans/Planned Maintenance.
+        activityLog: JSON.stringify(s.activity_log || []),
       };
     });
 
@@ -162,22 +162,19 @@ async function handleGetReadings(req, res) {
 }
 
 async function fetchAllSensors() {
-  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
-  return listAllRecords(table);
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("sensors");
 }
 
 async function fetchRecentReadings() {
-  const table = process.env.AIRTABLE_READINGS_TABLE || "Readings";
-  const data = await listRecords(table, {
-    pageSize: 100,
-    sort: [{ field: "Timestamp", direction: "desc" }],
-  });
-  return data.records || [];
+  const { query: pgQuery } = await import("../lib/postgresClient.js");
+  const result = await pgQuery("select * from readings order by timestamp desc limit 100");
+  return result.rows;
 }
 
 async function fetchAllComponents() {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  return listAllRecords(table);
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("components");
 }
 
 // ---------------------------------------------------------------------
@@ -197,11 +194,11 @@ async function handleRunTest(req, res, triggeredBy) {
     const sensor = await fetchSensorBySensorId(sensorId);
     if (!sensor) return res.status(404).json({ error: `Sensor "${sensorId}" not found` });
 
-    const assetId = sensor.fields["Asset ID"] || "";
-    const sensorType = sensor.fields["Sensor Type"] || "";
+    const assetId = sensor.asset_id || "";
+    const sensorType = sensor.sensor_type || "";
     const component = assetId ? await fetchComponentByAssetId(assetId) : null;
-    const assetName = component?.fields["Name"] || assetId;
-    const location = component?.fields["Room/Zone"] || "";
+    const assetName = component?.name || assetId;
+    const location = component?.room_zone || "";
 
     const unit = UNIT_BY_TYPE[sensorType] || "";
     const isBinary = sensorType === "Door" || sensorType === "Equipment Status";
@@ -212,8 +209,8 @@ async function handleRunTest(req, res, triggeredBy) {
       targetRangeDisplay = sensorType === "Door" ? "Closed (0)" : "OK (0)";
     } else {
       const rangeStr = sensorType === "Humidity"
-        ? component?.fields["Target Range (Humidity)"]
-        : component?.fields["Target Range (Temp)"];
+        ? component?.target_range_humidity
+        : component?.target_range_temp;
       withinRange = checkWithinRange(numericValue, rangeStr);
       targetRangeDisplay = rangeStr || "(not set)";
     }
@@ -223,7 +220,7 @@ async function handleRunTest(req, res, triggeredBy) {
     await appendSensorActivity(sensor.id, `Test reading: ${numericValue}${unit} (${withinRange ? "within range" : "OUT OF RANGE"})`, triggeredBy);
 
     if (withinRange === false) {
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.fields["System"] });
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.system });
 
       const [emailResp, smsResp] = await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
@@ -278,52 +275,44 @@ function checkWithinRange(value, rangeStr) {
 }
 
 async function fetchSensorBySensorId(sensorId) {
-  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
-  const data = await listRecords(table, {
-    filterByFormula: `{Sensor ID} = "${sensorId.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => null);
-  return data && data.records && data.records[0] ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("sensors", "sensor_id", sensorId).catch(() => null);
 }
 
 async function fetchComponentByAssetId(assetId) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, {
-    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => null);
-  return data && data.records && data.records[0] ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("components", "asset_id", assetId).catch(() => null);
 }
 
 async function createReading({ timestamp, sensorId, assetId, value, unit, withinRange }) {
-  const table = process.env.AIRTABLE_READINGS_TABLE || "Readings";
-  await createRecord(table, {
-    "Timestamp": timestamp,
-    "Sensor ID": sensorId,
-    "Asset ID": assetId,
-    "Value": value,
-    "Unit": unit,
-    "Within Range": withinRange === true,
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("readings", {
+    timestamp,
+    sensor_id: sensorId,
+    asset_id: assetId,
+    value,
+    unit,
+    within_range: withinRange === true,
   }).catch(e => console.error("Reading write failed:", e.message));
 }
 
 async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
   try {
-    await createRecord(woTable, {
-      "WO ID": woId,
-      "Asset ID": assetId || "",
-      "Asset Name": assetName || "",
-      "System": sensorTypeLabel || "",
-      "Location": location || "",
-      "Status": "Open",
-      "Urgency": "SENSOR ALERT",
-      "Created": new Date().toISOString(),
-      "Last Reminder Sent": new Date().toISOString().split("T")[0],
-      "Notes": `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
-      "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("work_orders", {
+      wo_id: woId,
+      asset_id: assetId || null,
+      asset_name: assetName || null,
+      system: sensorTypeLabel || null,
+      location: location || null,
+      status: "Open",
+      urgency: "SENSOR ALERT",
+      created: new Date().toISOString(),
+      last_reminder_sent: new Date().toISOString().split("T")[0],
+      notes: `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+      assigned_role: getAssignedRole(realSystem, assetName) || null,
     });
     return woId;
   } catch (e) {
@@ -333,16 +322,16 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
 }
 
 async function logAlert({ assetId, assetName, location, urgency, message }) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
   try {
-    await createRecord(logTable, {
-      "Timestamp": new Date().toISOString(),
-      "Asset ID": assetId || "",
-      "Asset Name": assetName || "",
-      "System": "",
-      "Urgency": urgency,
-      "Channel": "Email + SMS (manual sensor test)",
-      "Messages": message,
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: assetId || null,
+      asset_name: assetName || null,
+      system: null,
+      urgency,
+      channel: "Email + SMS (manual sensor test)",
+      message,
     });
     return true;
   } catch (e) {

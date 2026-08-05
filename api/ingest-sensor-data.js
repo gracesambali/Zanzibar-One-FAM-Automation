@@ -24,7 +24,6 @@
 // table. Unknown sensor IDs are accepted (200) but not written, so a
 // misconfigured device doesn't 500 the whole ingestion pipeline.
 
-import { listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
 import { getAssignedRole } from "../lib/routing.js";
@@ -60,7 +59,7 @@ export default async function handler(req, res) {
       return res.status(202).json({ status: "ignored", reason: "unknown sensor ID" });
     }
 
-    const assetId = sensor.fields["Asset ID"] || "";
+    const assetId = sensor.asset_id || "";
     const component = assetId ? await fetchComponentByAssetId(assetId) : null;
 
     let withinRange;
@@ -72,9 +71,9 @@ export default async function handler(req, res) {
       targetRangeDisplay = type === "door" ? "Closed (0)" : "OK (0)";
     } else {
       const targetRangeRaw = type === "temperature"
-        ? component?.fields["Target Range (Temp)"]
+        ? component?.target_range_temp
         : type === "humidity"
-        ? component?.fields["Target Range (Humidity)"]
+        ? component?.target_range_humidity
         : null;
       withinRange = checkWithinRange(reading, targetRangeRaw);
       targetRangeDisplay = targetRangeRaw || "(not set)";
@@ -90,11 +89,11 @@ export default async function handler(req, res) {
     });
 
     if (withinRange === false) {
-      const assetName = component?.fields["Name"] || device_id;
-      const location = component?.fields["Room/Zone"] || "";
-      const sensorTypeLabel = sensor.fields["Sensor Type"] || type;
+      const assetName = component?.name || device_id;
+      const location = component?.room_zone || "";
+      const sensorTypeLabel = sensor.sensor_type || type;
 
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem: component?.fields["System"] });
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem: component?.system });
 
       await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
@@ -120,32 +119,24 @@ function checkWithinRange(value, rangeStr) {
 }
 
 async function fetchSensorBySensorId(sensorId) {
-  const table = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
-  const data = await listRecords(table, {
-    filterByFormula: `{Sensor ID} = "${sensorId.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => null);
-  return data && data.records && data.records[0] ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("sensors", "sensor_id", sensorId).catch(() => null);
 }
 
 async function fetchComponentByAssetId(assetId) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, {
-    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => null);
-  return data && data.records && data.records[0] ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("components", "asset_id", assetId).catch(() => null);
 }
 
 async function createReading({ timestamp, sensorId, assetId, value, unit, withinRange }) {
-  const table = process.env.AIRTABLE_READINGS_TABLE || "Readings";
-  await createRecord(table, {
-    "Timestamp": timestamp,
-    "Sensor ID": sensorId,
-    "Asset ID": assetId,
-    "Value": value,
-    "Unit": unit,
-    "Within Range": withinRange === true,
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("readings", {
+    timestamp,
+    sensor_id: sensorId,
+    asset_id: assetId,
+    value,
+    unit,
+    within_range: withinRange === true,
   }).catch(e => console.error("Reading write failed:", e.message));
 }
 
@@ -154,46 +145,48 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
 // so sensor breaches show up in the Work Orders tab and can be worked
 // (In Progress / Completed) exactly like any other issue.
 async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
   let created;
   try {
-    created = await createRecord(woTable, {
-      "WO ID": woId,
-      "Asset ID": assetId || "",
-      "Asset Name": assetName || "",
-      "System": sensorTypeLabel || "",
-      "Location": location || "",
-      "Status": "Open",
-      "Urgency": "SENSOR ALERT",
-      "Created": new Date().toISOString(),
-      "Last Reminder Sent": new Date().toISOString().split("T")[0],
-      "Notes": `Auto-generated from sensor alert: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
-      "Assigned Role": getAssignedRole(realSystem, assetName) || undefined,
+    const { insert } = await import("../lib/postgresClient.js");
+    created = await insert("work_orders", {
+      wo_id: woId,
+      asset_id: assetId || null,
+      asset_name: assetName || null,
+      system: sensorTypeLabel || null,
+      location: location || null,
+      status: "Open",
+      urgency: "SENSOR ALERT",
+      created: new Date().toISOString(),
+      last_reminder_sent: new Date().toISOString().split("T")[0],
+      notes: `Auto-generated from sensor alert: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
+      assigned_role: getAssignedRole(realSystem, assetName) || null,
+      activity_log: "[]",
     });
   } catch (e) {
     console.error("Sensor work order creation failed:", e.message);
     return null;
   }
 
+  const { update } = await import("../lib/postgresClient.js");
   const openingLog = [{ text: `🆕 Work order opened — sensor breach: ${sensorTypeLabel} reading ${reading}${unit}`, by: "system", at: new Date().toISOString() }];
-  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+  await update("work_orders", created.id, { activity_log: JSON.stringify(openingLog) })
     .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return woId;
 }
 
 async function logAlert({ assetId, assetName, location, urgency, message }) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-  await createRecord(logTable, {
-    "Timestamp": new Date().toISOString(),
-    "Asset ID": assetId || "",
-    "Asset Name": assetName || "",
-    "System": "",
-    "Urgency": urgency,
-    "Channel": "Email + SMS (sensor threshold breach)",
-    "Messages": message,
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("alert_log", {
+    timestamp: new Date().toISOString(),
+    asset_id: assetId || null,
+    asset_name: assetName || null,
+    system: null,
+    urgency,
+    channel: "Email + SMS (sensor threshold breach)",
+    message,
   }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
