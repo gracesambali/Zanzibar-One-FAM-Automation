@@ -11,7 +11,6 @@
 //
 // Both require a real login — this modifies the client's actual data.
 
-import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAllStaffDirectory } from "../lib/staffDirectory.js";
@@ -369,24 +368,20 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
     return res.status(400).json({ error: "assetId, floor, x, and y are required" });
   }
 
-  const table = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
-
   try {
+    const { getByColumn, update, insert } = await import("../lib/postgresClient.js");
+
     // Check if a position already exists for this asset — update it if so,
     // otherwise create a new one. Keeps one row per asset, not a growing log.
-    const findData = await listRecords(table, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => ({ records: [] }));
-    const existing = findData.records && findData.records[0];
+    const existing = await getByColumn("asset_positions", "asset_id", assetId).catch(() => null);
     const isNewPlacement = !existing;
 
-    const fields = { "Asset ID": assetId, "Floor": floor, "X%": Number(x), "Y%": Number(y) };
+    const fields = { asset_id: assetId, floor, x_pct: Number(x), y_pct: Number(y) };
 
     if (existing) {
-      await updateRecord(table, existing.id, fields);
+      await update("asset_positions", existing.id, fields);
     } else {
-      await createRecord(table, fields);
+      await insert("asset_positions", fields);
     }
 
     const floorPlanRecordId = await findOrCreateFloorPlanRecord(floor);
@@ -403,31 +398,29 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
 // Plans record for a given floor, or creates a blank one if this is the
 // very first activity recorded for that floor.
 async function findOrCreateFloorPlanRecord(floor) {
-  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
+  const { getByColumn, insert } = await import("../lib/postgresClient.js");
 
-  const findData = await listRecords(table, {
-    filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => ({ records: [] }));
-  if (findData.records && findData.records[0]) return findData.records[0].id;
+  const existing = await getByColumn("floor_plans", "floor", floor).catch(() => null);
+  if (existing) return existing.id;
 
-  const created = await createRecord(table, { "Floor": floor });
+  const created = await insert("floor_plans", { floor });
   return created.id;
 }
 
 // Same read-modify-write pattern as every other Activity Log in the
 // system — real time, timestamped, attributed.
 async function appendFloorPlanActivity(recordId, text, by) {
-  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const data = await getRecord(table, recordId).catch(() => null);
+  const data = await getById("floor_plans", recordId).catch(() => null);
   if (!data) { console.error("appendFloorPlanActivity: could not read record"); return; }
 
-  let log = [];
-  try { log = JSON.parse(data.fields["Activity Log"] || "[]"); } catch { log = []; }
+  // jsonb columns come back already-parsed from Postgres — no manual
+  // JSON.parse needed, unlike the Airtable version.
+  const log = Array.isArray(data.activity_log) ? data.activity_log : [];
   log.push({ text, by, at: new Date().toISOString() });
 
-  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+  await update("floor_plans", recordId, { activity_log: JSON.stringify(log) })
     .catch(() => console.error("appendFloorPlanActivity: could not save entry"));
 }
 
@@ -435,110 +428,23 @@ async function appendFloorPlanActivity(recordId, text, by) {
 // touch Airtable manually. Finds (or creates) the Floor Plans record for
 // the given floor, uploads the image via Airtable's base64 upload API,
 // and stamps who uploaded it and when, for accountability.
+// KNOWN GAP, DELIBERATE: this function is entirely about uploading a
+// file to Airtable's content API, which requires an existing Airtable
+// record to attach to. That mechanism no longer applies now that Floor
+// Plans records live in Postgres. Returns a clear, honest error rather
+// than a broken Airtable call or a silent no-op. Needs Supabase Storage
+// (or equivalent) wired up before this can actually work again.
 async function handleUploadFloorPlan(req, res, uploadedBy) {
-  const { floor, filename, contentType, fileBase64 } = req.body || {};
-  if (!floor || !filename || !contentType || !fileBase64) {
-    return res.status(400).json({ error: "floor, filename, contentType, and fileBase64 are all required" });
-  }
-
-  // 5MB limit, same as Airtable's own base64 upload limit — check before
-  // sending, so the error is clear rather than a generic Airtable failure.
-  const approxBytes = fileBase64.length * 0.75;
-  if (approxBytes > 5 * 1024 * 1024) {
-    return res.status(400).json({ error: "Image is too large — Airtable's direct upload limit is 5MB. Try a smaller or more compressed image." });
-  }
-
-  const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
-  const table = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
-
-  try {
-    // 1. Find existing record for this floor, or create one
-    const findData = await listRecords(table, {
-      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => ({ records: [] }));
-    let recordId = findData.records && findData.records[0] && findData.records[0].id;
-
-    if (!recordId) {
-      const created = await createRecord(table, { "Floor": floor })
-        .catch(e => { throw new Error("Could not create Floor Plans record: " + e.message); });
-      recordId = created.id;
-    }
-
-    // 2. Upload the image via Airtable's direct base64 upload API
-    const uploadResp = await fetch(
-      `https://content.airtable.com/v0/${base}/${recordId}/Image/uploadAttachment`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ contentType, filename, file: fileBase64 }),
-      }
-    );
-    if (!uploadResp.ok) {
-      const errText = await uploadResp.text();
-      throw new Error(`Airtable upload failed: ${uploadResp.status} ${errText}`);
-    }
-
-    // 3. Stamp who uploaded it and when, for accountability
-    await updateRecord(table, recordId, { "Uploaded By": uploadedBy, "Uploaded Date": new Date().toISOString() });
-
-    await appendFloorPlanActivity(recordId, `📎 Floor plan image uploaded: ${filename}`, uploadedBy);
-
-    return res.status(200).json({ success: true, floor, uploadedBy });
-  } catch (err) {
-    console.error("handleUploadFloorPlan error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(501).json({
+    error: "Floor plan image uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
+  });
 }
 
-// Uploads a real compliance document (Fire Safety Certificate, OSHA
-// Compliance Licence, etc.) directly to an asset's own record — not a
-// system-generated report, an actual file the client already has.
-// Airtable's attachment fields hold multiple files, so each upload adds
-// to the list rather than replacing what's there.
+// Same gap as handleUploadFloorPlan — see the comment there.
 async function handleUploadDocument(req, res, uploadedBy) {
-  const { recordId, filename, contentType, fileBase64 } = req.body || {};
-  if (!recordId || !filename || !contentType || !fileBase64) {
-    return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
-  }
-
-  const approxBytes = fileBase64.length * 0.75;
-  if (approxBytes > 5 * 1024 * 1024) {
-    return res.status(400).json({ error: "File is too large — Airtable's direct upload limit is 5MB." });
-  }
-
-  const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-
-  try {
-    const uploadResp = await fetch(
-      `https://content.airtable.com/v0/${base}/${recordId}/Compliance%20Documents/uploadAttachment`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ contentType, filename, file: fileBase64 }),
-      }
-    );
-    if (!uploadResp.ok) {
-      const errText = await uploadResp.text();
-      throw new Error(`Airtable upload failed: ${uploadResp.status} ${errText}`);
-    }
-
-    // Stamp who uploaded it and when — same accountability pattern as
-    // floor plan uploads, relocations, and edits elsewhere in the system.
-    await updateRecord(table, recordId, { "Documents Last Uploaded By": uploadedBy, "Documents Last Uploaded Date": new Date().toISOString() });
-
-    const current = await getRecord(table, recordId).catch(() => null);
-    if (current) {
-      const assetId = current.fields["Asset ID"] || "";
-      await logAssetActivity(assetId, "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy);
-    }
-
-    return res.status(200).json({ success: true, filename, uploadedBy });
-  } catch (err) {
-    console.error("handleUploadDocument error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(501).json({
+    error: "Compliance document uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
+  });
 }
 
 // Clears the "Needs Technical Review" flag once an Engineer has actually
@@ -549,13 +455,13 @@ async function handleClearTechnicalReview(req, res, clearedBy) {
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
-    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-    await updateRecord(table, recordId, { "Needs Technical Review": false })
+    const { getById, update } = await import("../lib/postgresClient.js");
+    await update("components", recordId, { needs_technical_review: false })
       .catch(() => { throw new Error("Could not clear review flag"); });
 
-    const current = await getRecord(table, recordId).catch(() => null);
+    const current = await getById("components", recordId).catch(() => null);
     if (current) {
-      const assetId = current.fields["Asset ID"] || "";
+      const assetId = current.asset_id || "";
       await logAssetActivity(assetId, "Needs Technical Review", "Yes", "Cleared — reviewed", clearedBy);
     }
 
@@ -575,22 +481,22 @@ async function handleCreatePlan(req, res, createdBy) {
   if (!title) return res.status(400).json({ error: "Title is required" });
 
   try {
-    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
+    const { insert } = await import("../lib/postgresClient.js");
     const planId = `PM-${Date.now()}`;
 
-    const created = await createRecord(table, {
-      "Plan ID": planId,
-      "Name": title,
-      "Description": description || "",
-      "Plan Status": "Planning",
-      "Created By": createdBy,
-      "Created Date": new Date().toISOString().split("T")[0],
-      "Target Start Date": targetStartDate || "",
-      "Target End Date": targetEndDate || "",
-      "Budget Items": JSON.stringify(Array.isArray(budgetItems) ? budgetItems : []),
-      "Milestones": "[]",
-      "Meeting Log": "[]",
-      "Action Points": "[]",
+    const created = await insert("planned_maintenance", {
+      plan_id: planId,
+      name: title,
+      description: description || null,
+      plan_status: "Planning",
+      created_by: createdBy,
+      created_date: new Date().toISOString().split("T")[0],
+      target_start_date: targetStartDate || null,
+      target_end_date: targetEndDate || null,
+      budget_items: JSON.stringify(Array.isArray(budgetItems) ? budgetItems : []),
+      milestones: "[]",
+      meeting_log: "[]",
+      action_points: "[]",
     });
     return res.status(200).json({ success: true, planId, recordId: created.id });
   } catch (err) {
@@ -603,6 +509,9 @@ async function handleCreatePlan(req, res, createdBy) {
 // items, milestones, meeting log entries, action points. The caller
 // sends only the piece it's changing; everything else is read first
 // and preserved, same read-modify-write pattern used for Activity Log.
+// Kept as the original Airtable-style field names since that's the
+// contract the frontend sends — PLAN_FIELD_COLUMNS below maps each to
+// its real Postgres column, used only internally.
 const PLAN_FIELD_LABELS = {
   "Plan Status": "Status",
   "Description": "Description",
@@ -614,6 +523,13 @@ const PLAN_FIELD_LABELS = {
   "Action Points": "Action points",
 };
 
+const PLAN_FIELD_COLUMNS = {
+  "Plan Status": "plan_status", "Description": "description",
+  "Target Start Date": "target_start_date", "Target End Date": "target_end_date",
+  "Budget Items": "budget_items", "Milestones": "milestones",
+  "Meeting Log": "meeting_log", "Action Points": "action_points",
+};
+
 async function handleUpdatePlan(req, res, editedBy) {
   const { recordId, field, value } = req.body || {};
   const allowedFields = Object.keys(PLAN_FIELD_LABELS);
@@ -622,10 +538,13 @@ async function handleUpdatePlan(req, res, editedBy) {
   }
 
   try {
-    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
-    const fields = { [field]: value };
-
-    await updateRecord(table, recordId, fields).catch(e => { throw new Error(e.message); });
+    const { update } = await import("../lib/postgresClient.js");
+    const column = PLAN_FIELD_COLUMNS[field];
+    // Budget Items/Milestones/Meeting Log/Action Points are jsonb
+    // columns — the frontend sends them as an already-JSON-encoded
+    // string, same shape Airtable expected, so it passes straight
+    // through into the column unchanged.
+    await update("planned_maintenance", recordId, { [column]: value }).catch(e => { throw new Error(e.message); });
 
     const label = PLAN_FIELD_LABELS[field] || field;
     await appendPlanActivityLog(recordId, `✎ ${label} updated by ${editedBy}`, editedBy);
@@ -641,16 +560,15 @@ async function handleUpdatePlan(req, res, editedBy) {
 // Shared helper — appends one entry to a plan's Activity Log, same
 // read-modify-write pattern already used for Work Orders.
 async function appendPlanActivityLog(recordId, text, by) {
-  const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const planData = await getRecord(table, recordId).catch(() => null);
+  const planData = await getById("planned_maintenance", recordId).catch(() => null);
   if (!planData) { console.error("appendPlanActivityLog: could not read plan"); return; }
 
-  let log = [];
-  try { log = JSON.parse(planData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const log = Array.isArray(planData.activity_log) ? planData.activity_log : [];
   log.push({ text, by, at: new Date().toISOString() });
 
-  await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+  await update("planned_maintenance", recordId, { activity_log: JSON.stringify(log) })
     .catch(() => console.error("appendPlanActivityLog: could not save entry"));
 }
 
@@ -658,13 +576,12 @@ async function appendPlanActivityLog(recordId, text, by) {
 // confirmed requirement: they should hear about anything that comes in
 // between, not just find out by checking back later.
 async function notifyPlanCreator(recordId, editedBy, whatChanged) {
-  const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
-
   try {
-    const planData = await getRecord(table, recordId).catch(() => null);
+    const { getById } = await import("../lib/postgresClient.js");
+    const planData = await getById("planned_maintenance", recordId).catch(() => null);
     if (!planData) return;
-    const createdBy = planData.fields["Created By"];
-    const planTitle = planData.fields["Name"] || "Planned Maintenance";
+    const createdBy = planData.created_by;
+    const planTitle = planData.name || "Planned Maintenance";
     if (!createdBy || createdBy === editedBy) return; // don't notify people of their own edit
 
     const directory = getAllStaffDirectory();
@@ -698,30 +615,10 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
   }
 }
 
+// KNOWN GAP, DELIBERATE: same file-storage gap as handleUploadFloorPlan
+// and handleUploadDocument — see the comment there.
 async function handleUploadPlanDocument(req, res, uploadedBy) {
-  const { recordId, filename, contentType, fileBase64 } = req.body || {};
-  if (!recordId || !filename || !fileBase64) {
-    return res.status(400).json({ error: "recordId, filename, and fileBase64 are required" });
-  }
-
-  try {
-    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload
-    const resp = await fetch(
-      `https://content.airtable.com/v0/${base}/${recordId}/Attachments/uploadAttachment`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
-      }
-    );
-    if (!resp.ok) throw new Error(await resp.text());
-
-    await appendPlanActivityLog(recordId, `📎 Document uploaded: ${filename} (by ${uploadedBy})`, uploadedBy);
-    await notifyPlanCreator(recordId, uploadedBy, `A document was uploaded (${filename})`);
-
-    return res.status(200).json({ success: true });
-  } catch (err) {
-    console.error("handleUploadPlanDocument error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(501).json({
+    error: "Plan document uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
+  });
 }
