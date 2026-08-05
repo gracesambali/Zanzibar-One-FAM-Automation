@@ -12,7 +12,6 @@
 // frontend can select several and close them all at once without a
 // page reload between each one.
 
-import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklistForWorkOrder } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
@@ -30,10 +29,10 @@ import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirecto
 // assigned to. Returns null if allowed, or an error message if not.
 async function checkRoutedRoleMatch(session, recordId) {
   if (session.r === "business_owner" || session.r === "system_admin") return null;
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-  const checkData = await getRecord(table, recordId).catch(() => null);
+  const { getById } = await import("../lib/postgresClient.js");
+  const checkData = await getById("work_orders", recordId).catch(() => null);
   if (!checkData) return null; // fail open ONLY on a read error — a network/API failure, not a routing gap
-  const assignedRole = checkData.fields["Assigned Role"];
+  const assignedRole = checkData.assigned_role;
 
   const expectedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
   // Fail CLOSED on anything unmapped (missing, unrecognized, or a
@@ -104,19 +103,51 @@ export default async function handler(req, res) {
       const workOrders = records
         .map(r => ({
           id: r.id,
-          woId: r.fields["WO ID"] || "",
-          assetId: r.fields["Asset ID"] || "",
-          assetName: r.fields["Asset Name"] || "",
-          system: r.fields["System"] || "",
-          location: r.fields["Location"] || "",
-          status: r.fields["Status"] || "Open",
-          urgency: r.fields["Urgency"] || "",
-          maintenanceType: r.fields["Maintenance Type"] || "",
-          created: r.fields["Created"] || "",
-          completedDate: r.fields["Completed Date"] || "",
-          closedBy: r.fields["Closed By"] || "",
-          cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", building: r.fields["Building"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", unit: r.fields["Unit"] || "", nonAssetConfirmed: r.fields["Non-Asset Confirmed"] || false, assetIdSetBy: r.fields["Asset ID Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
-          notes: r.fields["Notes"] || "",
+          woId: r.wo_id || "",
+          assetId: r.asset_id || "",
+          assetName: r.asset_name || "",
+          system: r.system || "",
+          location: r.location || "",
+          status: r.status || "Open",
+          urgency: r.urgency || "",
+          maintenanceType: r.maintenance_type || "",
+          created: r.created || "",
+          completedDate: r.completed_date || "",
+          closedBy: r.closed_by || "",
+          cost: r.cost_tzs !== null ? Number(r.cost_tzs) : null,
+          costEditedBy: r.cost_edited_by || "",
+          costEditedDate: r.cost_edited_date || "",
+          // These four originally arrived pre-JSON-encoded as strings
+          // from Airtable; jsonb columns come back already-parsed from
+          // Postgres, so re-stringified here to preserve the exact
+          // same shape the frontend already expects.
+          checklistProgress: JSON.stringify(r.checklist_progress || {}),
+          activityLog: JSON.stringify(r.activity_log || []),
+          chatLog: JSON.stringify(r.chat_log || []),
+          chatParticipants: JSON.stringify(r.chat_participants || []),
+          chatReadReceipts: JSON.stringify(r.chat_read_receipts || {}),
+          assignedRole: r.assigned_role || "",
+          assignedRoleSetBy: r.assigned_role_set_by || "",
+          building: r.building || "",
+          assignedTechnician: r.assigned_technician || "",
+          assignedTechnicianSetBy: r.assigned_technician_set_by || "",
+          unit: r.unit || "",
+          nonAssetConfirmed: r.non_asset_confirmed || false,
+          assetIdSetBy: r.asset_id_set_by || "",
+          assignmentStatus: r.assignment_status || "",
+          procurementStatus: r.procurement_status || "None",
+          costBreakdown: JSON.stringify(r.cost_breakdown || []),
+          procurementRequestedBy: r.procurement_requested_by || "",
+          procurementApprovedBy: r.procurement_approved_by || "",
+          procurementRejectionReason: r.procurement_rejection_reason || "",
+          beforePhoto: r.before_photo_url || null,
+          afterPhoto: r.after_photo_url || null,
+          reporterContact: r.reporter_contact || "",
+          reporterPhoto: r.reporter_photo_url || null,
+          satisfactionStatus: r.satisfaction_status || "",
+          satisfactionReason: r.satisfaction_reason || "",
+          closureRejectionReason: r.closure_rejection_reason || "",
+          notes: r.notes || "",
         }))
         .sort((a, b) => new Date(b.created) - new Date(a.created));
       return res.status(200).json({ workOrders });
@@ -169,23 +200,23 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId, description, and quantity are required" });
       }
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
+        const current = await getById("work_orders", recordId).catch(() => ({}));
 
         const spec = { description: description.trim(), quantity, unit: (unit || "").trim() };
 
-        await updateRecord(table, recordId, {
-          "Procurement Status": "Requested",
-          // Reusing the existing Cost Breakdown field for the new,
-          // simpler spec shape — no new Airtable field needed. It
-          // no longer holds pricing, just what's actually needed.
-          "Cost Breakdown": JSON.stringify([spec]),
-          "Procurement Requested By": session.u,
-          "Procurement Rejection Reason": "",
+        await update("work_orders", recordId, {
+          procurement_status: "Requested",
+          // Reusing the existing cost_breakdown column for the new,
+          // simpler spec shape — no new column needed. It no longer
+          // holds pricing, just what's actually needed.
+          cost_breakdown: JSON.stringify([spec]),
+          procurement_requested_by: session.u,
+          procurement_rejection_reason: null,
         }).catch(() => { throw new Error("Could not save procurement request"); });
         await appendActivityLog(recordId, `🛒 Procurement requested — ${spec.description} (${spec.quantity}${spec.unit ? " " + spec.unit : ""})`, session.u, "procurement_request");
-        await notifyProcurementOfRequest(current.fields["WO ID"] || "", current.fields["Asset Name"] || "Unnamed", session.u, spec);
+        await notifyProcurementOfRequest(current.wo_id || "", current.asset_name || "Unnamed", session.u, spec);
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("requestProcurement error:", err);
@@ -207,15 +238,15 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId and finalCost are required" });
       }
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
+        const current = await getById("work_orders", recordId).catch(() => ({}));
         const total = Number(finalCost) || 0;
 
-        await updateRecord(table, recordId, { "Procurement Status": "Fulfilled", "Cost (TZS)": total, "Cost Edited By": session.u, "Cost Edited Date": new Date().toISOString() })
+        await update("work_orders", recordId, { procurement_status: "Fulfilled", cost_tzs: total, cost_edited_by: session.u, cost_edited_date: new Date().toISOString() })
           .catch(() => { throw new Error("Could not mark procurement fulfilled"); });
         await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, delivery note sent to routed role`, session.u, "system");
-        await notifyRoutedRoleOfDeliveryArrival(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", total);
+        await notifyRoutedRoleOfDeliveryArrival(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", total);
 
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -237,8 +268,8 @@ export default async function handler(req, res) {
       const roleError = await checkRoutedRoleMatch(session, recordId);
       if (roleError) return res.status(403).json({ error: roleError });
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-        await updateRecord(table, recordId, { "Procurement Status": "Delivered", "Procurement Approved By": session.u })
+        const { update } = await import("../lib/postgresClient.js");
+        await update("work_orders", recordId, { procurement_status: "Delivered", procurement_approved_by: session.u })
           .catch(() => { throw new Error("Could not confirm delivery"); });
         await appendActivityLog(recordId, `📬 Delivery confirmed by ${session.u}`, session.u, "system");
         return res.status(200).json({ success: true });
@@ -277,12 +308,11 @@ export default async function handler(req, res) {
       if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        let log = [];
-        try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
+        const log = Array.isArray(woData.activity_log) ? woData.activity_log : [];
 
         log.push({
           type: entryType || "comment", // comment / procurement_request / system
@@ -291,7 +321,7 @@ export default async function handler(req, res) {
           at: new Date().toISOString(),
         });
 
-        await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) })
+        await update("work_orders", recordId, { activity_log: JSON.stringify(log) })
           .catch(() => { throw new Error("Could not save activity entry"); });
 
         return res.status(200).json({ success: true, log });
@@ -312,50 +342,40 @@ export default async function handler(req, res) {
       const { recordId, text, attachmentBase64, attachmentFilename, attachmentContentType } = req.body;
       if (!recordId) return res.status(400).json({ error: "recordId required" });
       if (!text && !attachmentBase64) return res.status(400).json({ error: "A message needs text or an attachment" });
+      // KNOWN GAP, DELIBERATE: attachment uploads previously went
+      // through Airtable's content API — no longer applies now that
+      // Work Orders live in Postgres. Text-only messages still work
+      // completely; an attachment-only message (no text) has nothing
+      // left to save, so it's rejected clearly rather than silently
+      // dropped.
+      if (attachmentBase64 && !text) {
+        return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
+      }
 
       try {
-        const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        // Upload first, if there's a file — the message entry just
-        // references the resulting URL, same pattern already used for
-        // vendor proforma and unit contract uploads.
-        let attachmentUrl = null;
-        if (attachmentBase64) {
-          const uploadResp = await fetch(
-            `https://content.airtable.com/v0/${base}/${recordId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
-            }
-          );
-          if (!uploadResp.ok) throw new Error(await uploadResp.text());
-          const uploadData = await uploadResp.json();
-          const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
-          const match = uploaded.find(f => f.filename === attachmentFilename) || uploaded[uploaded.length - 1];
-          attachmentUrl = match ? match.url : null;
-        }
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
-
-        let chatLog = [];
-        try { chatLog = JSON.parse(woData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
+        const chatLog = Array.isArray(woData.chat_log) ? woData.chat_log : [];
         const entry = { text: text || "", by: session.u, at: new Date().toISOString() };
-        if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
         chatLog.push(entry);
 
         // Sending a message means you've obviously seen everything up
         // to that point — stamp your own read receipt in the same
         // write, so you never see your own message as "unread."
-        let readReceipts = {};
-        try { readReceipts = JSON.parse(woData.fields["Chat Read Receipts"] || "{}"); } catch { readReceipts = {}; }
+        const readReceipts = (woData.chat_read_receipts && typeof woData.chat_read_receipts === "object") ? woData.chat_read_receipts : {};
         readReceipts[session.u] = new Date().toISOString();
 
-        await updateRecord(table, recordId, { "Chat Log": JSON.stringify(chatLog), "Chat Read Receipts": JSON.stringify(readReceipts) })
+        await update("work_orders", recordId, { chat_log: JSON.stringify(chatLog), chat_read_receipts: JSON.stringify(readReceipts) })
           .catch(() => { throw new Error("Could not save chat message"); });
 
-        return res.status(200).json({ success: true, chatLog, chatReadReceipts: readReceipts });
+        return res.status(200).json({
+          success: true,
+          chatLog,
+          chatReadReceipts: readReceipts,
+          ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet." } : {}),
+        });
       } catch (err) {
         console.error("addChatMessage error:", err);
         return res.status(500).json({ error: err.message });
@@ -372,15 +392,14 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        let readReceipts = {};
-        try { readReceipts = JSON.parse(woData.fields["Chat Read Receipts"] || "{}"); } catch { readReceipts = {}; }
+        const readReceipts = (woData.chat_read_receipts && typeof woData.chat_read_receipts === "object") ? woData.chat_read_receipts : {};
         readReceipts[session.u] = new Date().toISOString();
 
-        await updateRecord(table, recordId, { "Chat Read Receipts": JSON.stringify(readReceipts) })
+        await update("work_orders", recordId, { chat_read_receipts: JSON.stringify(readReceipts) })
           .catch(() => { throw new Error("Could not save read receipt"); });
 
         return res.status(200).json({ success: true, chatReadReceipts: readReceipts });
@@ -423,12 +442,12 @@ export default async function handler(req, res) {
       }
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
-        const currentAssignedRole = woData.fields["Assigned Role"] || "";
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
+        const currentAssignedRole = woData.assigned_role || "";
 
-        await updateRecord(table, recordId, { "Assigned Role": assignedRole, "Assigned Role Set By": session.u })
+        await update("work_orders", recordId, { assigned_role: assignedRole, assigned_role_set_by: session.u })
           .catch(() => { throw new Error("Could not save reassignment"); });
 
         await appendActivityLog(recordId, `🔀 Reassigned from ${currentAssignedRole || "Unassigned"} to ${assignedRole}`, session.u, "system");
@@ -465,20 +484,20 @@ export default async function handler(req, res) {
       }
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        await updateRecord(table, recordId, {
-          "Assigned Technician": technicianUsername,
-          "Assigned Technician Set By": session.u,
-          "Assignment Status": "Pending",
+        await update("work_orders", recordId, {
+          assigned_technician: technicianUsername,
+          assigned_technician_set_by: session.u,
+          assignment_status: "Pending",
         }).catch(() => { throw new Error("Could not save technician assignment"); });
 
         await appendActivityLog(recordId, `👷 Assigned to ${technicianUsername} by ${session.u}`, session.u, "system");
 
-        const woId = woData.fields["WO ID"] || "";
-        const assetName = woData.fields["Asset Name"] || "";
+        const woId = woData.wo_id || "";
+        const assetName = woData.asset_name || "";
         await notifyTechnicianOfAssignment(technicianContact, woId, assetName);
         await notifyAssignerConfirmation(session.u, technicianUsername, woId, assetName);
 
@@ -497,15 +516,15 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        if (woData.fields["Assigned Technician"] !== session.u) {
+        if (woData.assigned_technician !== session.u) {
           return res.status(403).json({ error: "This job isn't assigned to you." });
         }
 
-        await updateRecord(table, recordId, { "Assignment Status": "Confirmed" })
+        await update("work_orders", recordId, { assignment_status: "Confirmed" })
           .catch(() => { throw new Error("Could not confirm assignment"); });
 
         await appendActivityLog(recordId, `✅ Assignment confirmed by ${session.u}`, session.u, "system");
@@ -530,22 +549,22 @@ export default async function handler(req, res) {
       }
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        if (woData.fields["Assigned Technician"] !== session.u) {
+        if (woData.assigned_technician !== session.u) {
           return res.status(403).json({ error: "This job isn't assigned to you." });
         }
-        const assignedBy = woData.fields["Assigned Technician Set By"] || "";
+        const assignedBy = woData.assigned_technician_set_by || "";
 
-        await updateRecord(table, recordId, { "Assigned Technician": "", "Assignment Status": "" })
+        await update("work_orders", recordId, { assigned_technician: null, assignment_status: null })
           .catch(() => { throw new Error("Could not decline assignment"); });
 
         await appendActivityLog(recordId, `❌ Assignment declined by ${session.u}: ${reason.trim()}`, session.u, "system");
 
-        const woId = woData.fields["WO ID"] || "";
-        const assetName = woData.fields["Asset Name"] || "";
+        const woId = woData.wo_id || "";
+        const assetName = woData.asset_name || "";
         if (assignedBy) {
           const assignerContact = getContactForUsername(assignedBy);
           if (assignerContact && (assignerContact.email || assignerContact.phone)) {
@@ -575,28 +594,22 @@ export default async function handler(req, res) {
       }
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-        const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+        const { getByColumn, update } = await import("../lib/postgresClient.js");
 
-        const findData = await listRecords(componentsTable, {
-          filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-          maxRecords: 1,
-        }).catch(() => { throw new Error("Could not look up asset"); });
-        const assetRecord = findData.records && findData.records[0];
-        if (!assetRecord) return res.status(404).json({ error: `Asset "${assetId}" not found in the register.` });
-        const af = assetRecord.fields;
+        const af = await getByColumn("components", "asset_id", assetId).catch(() => { throw new Error("Could not look up asset"); });
+        if (!af) return res.status(404).json({ error: `Asset "${assetId}" not found in the register.` });
 
-        await updateRecord(table, recordId, {
-          "Asset ID": af["Asset ID"] || assetId,
-          "Asset Name": af["Name"] || "",
-          "System": af["System"] || "",
-          "Asset ID Set By": session.u,
-          "Non-Asset Confirmed": false,
+        await update("work_orders", recordId, {
+          asset_id: af.asset_id || assetId,
+          asset_name: af.name || "",
+          system: af.system || "",
+          asset_id_set_by: session.u,
+          non_asset_confirmed: false,
         }).catch(() => { throw new Error("Could not attach asset"); });
 
-        await appendActivityLog(recordId, `🔗 Linked to asset ${af["Asset ID"] || assetId} (${af["Name"] || ""}) by ${session.u}`, session.u, "system");
+        await appendActivityLog(recordId, `🔗 Linked to asset ${af.asset_id || assetId} (${af.name || ""}) by ${session.u}`, session.u, "system");
 
-        return res.status(200).json({ success: true, assetId: af["Asset ID"] || assetId, assetName: af["Name"] || "", system: af["System"] || "" });
+        return res.status(200).json({ success: true, assetId: af.asset_id || assetId, assetName: af.name || "", system: af.system || "" });
       } catch (err) {
         console.error("attachAssetId error:", err);
         return res.status(500).json({ error: err.message });
@@ -613,11 +626,11 @@ export default async function handler(req, res) {
       if (!recordId) return res.status(400).json({ error: "recordId required" });
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { update } = await import("../lib/postgresClient.js");
 
-        await updateRecord(table, recordId, {
-          "Non-Asset Confirmed": true,
-          "Asset ID Set By": session.u,
+        await update("work_orders", recordId, {
+          non_asset_confirmed: true,
+          asset_id_set_by: session.u,
         }).catch(() => { throw new Error("Could not confirm"); });
 
         await appendActivityLog(recordId, `✔ Confirmed not a registered asset — by ${session.u}`, session.u, "system");
@@ -644,20 +657,20 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Unit name and building are required" });
       }
       try {
-        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
-        const created = await createRecord(unitsTable, {
-          "Unit Name": unitName.trim(),
-          "Building": building,
-          "Unit Type": unitType || "",
-          "Tenant Name": tenantName || "",
-          "Tenant Email": tenantEmail || "",
-          "Tenant Phone": tenantPhone || "",
-          "Lease Status": leaseStatus || "Vacant",
-          "Added By": session.u,
+        const { insert } = await import("../lib/postgresClient.js");
+        const created = await insert("units", {
+          unit_name: unitName.trim(),
+          building,
+          unit_type: unitType || null,
+          tenant_name: tenantName || null,
+          tenant_email: tenantEmail || null,
+          tenant_phone: tenantPhone || null,
+          lease_status: leaseStatus || "Vacant",
+          added_by: session.u,
         }, { typecast: true });
         await appendUnitActivityLog(created.id, `🏠 Unit created by ${session.u}${tenantName ? ` — tenant: ${tenantName}` : ''}`, session.u, "system");
         return res.status(200).json({ success: true, unit: {
-          id: created.id, name: created.fields["Unit Name"] || "", building: created.fields["Building"] || "",
+          id: created.id, name: created.unit_name || "", building: created.building || "",
         } });
       } catch (err) {
         console.error("addUnit error:", err);
@@ -674,20 +687,19 @@ export default async function handler(req, res) {
       const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
       if (!unitId) return res.status(400).json({ error: "unitId required" });
       try {
-        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const unitRecord = await getRecord(unitsTable, unitId).catch(() => { throw new Error("Could not read unit"); });
-        const before = unitRecord.fields;
+        const before = await getById("units", unitId).catch(() => { throw new Error("Could not read unit"); });
 
         const fields = {};
         const changes = [];
-        if (tenantName !== undefined && tenantName !== (before["Tenant Name"] || "")) { fields["Tenant Name"] = tenantName; changes.push(`Tenant Name: "${before["Tenant Name"] || ""}" → "${tenantName}"`); }
-        if (tenantEmail !== undefined && tenantEmail !== (before["Tenant Email"] || "")) { fields["Tenant Email"] = tenantEmail; changes.push(`Email: "${before["Tenant Email"] || ""}" → "${tenantEmail}"`); }
-        if (tenantPhone !== undefined && tenantPhone !== (before["Tenant Phone"] || "")) { fields["Tenant Phone"] = tenantPhone; changes.push(`Phone: "${before["Tenant Phone"] || ""}" → "${tenantPhone}"`); }
-        if (leaseStatus !== undefined && leaseStatus !== (before["Lease Status"] || "")) { fields["Lease Status"] = leaseStatus; changes.push(`Lease Status: "${before["Lease Status"] || ""}" → "${leaseStatus}"`); }
+        if (tenantName !== undefined && tenantName !== (before.tenant_name || "")) { fields.tenant_name = tenantName; changes.push(`Tenant Name: "${before.tenant_name || ""}" → "${tenantName}"`); }
+        if (tenantEmail !== undefined && tenantEmail !== (before.tenant_email || "")) { fields.tenant_email = tenantEmail; changes.push(`Email: "${before.tenant_email || ""}" → "${tenantEmail}"`); }
+        if (tenantPhone !== undefined && tenantPhone !== (before.tenant_phone || "")) { fields.tenant_phone = tenantPhone; changes.push(`Phone: "${before.tenant_phone || ""}" → "${tenantPhone}"`); }
+        if (leaseStatus !== undefined && leaseStatus !== (before.lease_status || "")) { fields.lease_status = leaseStatus; changes.push(`Lease Status: "${before.lease_status || ""}" → "${leaseStatus}"`); }
 
         if (Object.keys(fields).length > 0) {
-          await updateRecord(unitsTable, unitId, fields, { typecast: true })
+          await update("units", unitId, fields, { typecast: true })
             .catch(async e => { throw new Error(e.message); });
           await appendUnitActivityLog(unitId, `✎ Updated by ${session.u} — ${changes.join('; ')}`, session.u, "system");
         }
@@ -703,31 +715,13 @@ export default async function handler(req, res) {
     // create-then-upload pattern already used for vendor proforma
     // attachments, since Airtable's upload endpoint needs an existing
     // record to attach to.
+    // KNOWN GAP, DELIBERATE: entirely about uploading a file to
+    // Airtable's content API — no longer applies now that Units live
+    // in Postgres. Clear error rather than a broken call or silent
+    // no-op, same pattern as every other upload function this cutover
+    // has hit.
     if (req.body && req.body.uploadUnitContract) {
-      if (session.r === "technician") {
-        return res.status(403).json({ error: "Not permitted to upload a contract." });
-      }
-      const { unitId, filename, contentType, fileBase64 } = req.body;
-      if (!unitId || !filename || !fileBase64) {
-        return res.status(400).json({ error: "unitId, filename, and fileBase64 are required" });
-      }
-      try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const uploadResp = await fetch(
-          `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Signed Contract")}/uploadAttachment`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
-          }
-        );
-        if (!uploadResp.ok) throw new Error(await uploadResp.text());
-        await appendUnitActivityLog(unitId, `📄 Signed contract uploaded by ${session.u} — ${filename}`, session.u, "system");
-        return res.status(200).json({ success: true });
-      } catch (err) {
-        console.error("uploadUnitContract error:", err);
-        return res.status(500).json({ error: err.message });
-      }
+      return res.status(501).json({ error: "Contract uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done." });
     }
 
     // Tagging an asset to a tenant unit — same permission rule as
@@ -744,8 +738,8 @@ export default async function handler(req, res) {
       const { assetRecordId, unitName, unitId, assetLabel } = req.body;
       if (!assetRecordId) return res.status(400).json({ error: "assetRecordId required" });
       try {
-        const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-        await updateRecord(componentsTable, assetRecordId, { "Unit": unitName || "" });
+        const { update } = await import("../lib/postgresClient.js");
+        await update("components", assetRecordId, { unit: unitName || null });
         if (unitId) {
           const label = assetLabel || assetRecordId;
           await appendUnitActivityLog(unitId, unitName
@@ -772,39 +766,29 @@ export default async function handler(req, res) {
       if ((!message || !message.trim()) && !attachmentBase64) {
         return res.status(400).json({ error: "A message needs text or an attachment" });
       }
+      // KNOWN GAP, DELIBERATE: same file-storage gap as every other
+      // attachment path this cutover has hit. Text-only messages still
+      // work completely.
+      if (attachmentBase64 && (!message || !message.trim())) {
+        return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
+      }
       try {
-        const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com upload below
-        const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        let attachmentUrl = null;
-        if (attachmentBase64) {
-          const uploadResp = await fetch(
-            `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
-            }
-          );
-          if (!uploadResp.ok) throw new Error(await uploadResp.text());
-          const uploadData = await uploadResp.json();
-          const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
-          const match = uploaded.find(f => f.filename === attachmentFilename) || uploaded[uploaded.length - 1];
-          attachmentUrl = match ? match.url : null;
-        }
+        const unitData = await getById("units", unitId).catch(() => { throw new Error("Could not read unit"); });
 
-        const unitData = await getRecord(unitsTable, unitId).catch(() => { throw new Error("Could not read unit"); });
-
-        let chatLog = [];
-        try { chatLog = JSON.parse(unitData.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
+        const chatLog = Array.isArray(unitData.chat_log) ? unitData.chat_log : [];
         const entry = { from: "pm", senderName: session.u, message: (message || "").trim(), at: new Date().toISOString() };
-        if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
         chatLog.push(entry);
 
-        await updateRecord(unitsTable, unitId, { "Chat Log": JSON.stringify(chatLog) })
+        await update("units", unitId, { chat_log: JSON.stringify(chatLog) })
           .catch(() => { throw new Error("Could not save message"); });
 
-        return res.status(200).json({ success: true, chatLog });
+        return res.status(200).json({
+          success: true,
+          chatLog,
+          ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet." } : {}),
+        });
       } catch (err) {
         console.error("sendUnitChatMessage error:", err);
         return res.status(500).json({ error: err.message });
@@ -822,23 +806,23 @@ export default async function handler(req, res) {
       }
 
       try {
-        const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
+        const { insert } = await import("../lib/postgresClient.js");
 
-        const created = await createRecord(vendorsTable, {
-          "Vendor Name": name.trim(),
-          "Email": (email || "").trim(),
-          "Phone": (phone || "").trim(),
-          "Category/System": Array.isArray(categories) ? categories : [],
-          "Active": true,
-          "Added By": session.u,
-        }, { typecast: true }); // lets a new category value be added on the fly without a manual Airtable step each time
+        const created = await insert("vendors", {
+          vendor_name: name.trim(),
+          email: (email || "").trim() || null,
+          phone: (phone || "").trim() || null,
+          categories: Array.isArray(categories) ? categories : [],
+          active: true,
+          added_by: session.u,
+        }, { typecast: true }); // lets a new category value be added on the fly without a manual step each time
 
         return res.status(200).json({ success: true, vendor: {
           id: created.id,
-          name: created.fields["Vendor Name"] || "",
-          email: created.fields["Email"] || "",
-          phone: created.fields["Phone"] || "",
-          categories: created.fields["Category/System"] || [],
+          name: created.vendor_name || "",
+          email: created.email || "",
+          phone: created.phone || "",
+          categories: created.categories || [],
         } });
       } catch (err) {
         console.error("addVendor error:", err);
@@ -849,9 +833,7 @@ export default async function handler(req, res) {
     // Starting a new vendor quote against a work order — Procurement
     // only, confirmed (they're the ones sending POs and collecting
     // responses; nobody else in this flow touches vendor quotes at
-    // all). Two-step with the upload action below: create the row
-    // first, then attach the file to the real record it returns —
-    // Airtable's upload endpoint needs an existing record to attach to.
+    // all).
     if (req.body && req.body.addProcurementResponse) {
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && session.r !== "procurement") {
@@ -862,8 +844,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "woId and vendorName are required" });
       }
       try {
-        const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
-        const created = await createRecord(responsesTable, { "WO ID": woId, "Vendor Name": vendorName.trim(), "Chosen": false });
+        const { insert } = await import("../lib/postgresClient.js");
+        const created = await insert("procurement_responses", { wo_id: woId, vendor_name: vendorName.trim(), chosen: false });
         return res.status(200).json({ success: true, responseId: created.id });
       } catch (err) {
         console.error("addProcurementResponse error:", err);
@@ -871,34 +853,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // Attaching the actual proforma file to a response row already
-    // created above. Uploading here is what triggers Airtable's AI
-    // fields on this table to actually analyze it.
+    // KNOWN GAP, DELIBERATE — bigger than the usual file-storage gap:
+    // this wasn't just an upload. Uploading here is what triggered
+    // Airtable's own AI field type to automatically read the PDF and
+    // extract Total Cost, VAT Status, and a Summary onto the response
+    // row. That's an Airtable-native feature with no Postgres
+    // equivalent at all — file storage alone won't bring this back;
+    // replicating it needs a real document-extraction step built
+    // separately (e.g. calling an AI API directly on the uploaded
+    // file). Worth flagging to Grace specifically, not just folded
+    // into the general storage gap.
     if (req.body && req.body.uploadProcurementResponseAttachment) {
-      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
-      if (!isOverseer && session.r !== "procurement") {
-        return res.status(403).json({ error: "Only Procurement can attach a vendor quote." });
-      }
-      const { responseId, filename, contentType, fileBase64 } = req.body;
-      if (!responseId || !filename || !fileBase64) {
-        return res.status(400).json({ error: "responseId, filename, and fileBase64 are required" });
-      }
-      try {
-        const base = process.env.AIRTABLE_BASE_ID;
-        const uploadResp = await fetch(
-          `https://content.airtable.com/v0/${base}/${responseId}/${encodeURIComponent("Proforma Attachment")}/uploadAttachment`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ contentType: contentType || "application/pdf", filename, file: fileBase64 }),
-          }
-        );
-        if (!uploadResp.ok) throw new Error(await uploadResp.text());
-        return res.status(200).json({ success: true });
-      } catch (err) {
-        console.error("uploadProcurementResponseAttachment error:", err);
-        return res.status(500).json({ error: err.message });
-      }
+      return res.status(501).json({ error: "Vendor quote uploads aren't available right now — file storage is being migrated to the new database, and the automatic cost/VAT extraction from the PDF needs to be rebuilt separately once it is." });
     }
 
     // Marking the winning quote — single-select in effect: choosing one
@@ -913,40 +879,34 @@ export default async function handler(req, res) {
       const { responseId, woId } = req.body;
       if (!responseId || !woId) return res.status(400).json({ error: "responseId and woId are required" });
       try {
-        const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
+        const { query: pgQuery, update } = await import("../lib/postgresClient.js");
 
-        const listData = await listRecords(responsesTable, {
-          filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
-        }).catch(() => { throw new Error("Could not look up existing quotes"); });
-        const others = (listData.records || []).filter(r => r.id !== responseId && r.fields["Chosen"]);
+        const listResult = await pgQuery("select * from procurement_responses where wo_id = $1", [woId])
+          .catch(() => { throw new Error("Could not look up existing quotes"); });
+        const others = listResult.rows.filter(r => r.id !== responseId && r.chosen);
 
         if (others.length > 0) {
-          // Airtable's batch-update endpoint isn't in the shared client
-          // yet — this list is realistically 0-1 records (only one
-          // quote can have been previously chosen), so sequential
-          // updates are simple and fine here.
+          // This list is realistically 0-1 records (only one quote can
+          // have been previously chosen), so sequential updates are
+          // simple and fine here.
           for (const other of others) {
-            await updateRecord(responsesTable, other.id, { "Chosen": false }).catch(() => {});
+            await update("procurement_responses", other.id, { chosen: false }).catch(() => {});
           }
         }
 
-        await updateRecord(responsesTable, responseId, { "Chosen": true })
+        await update("procurement_responses", responseId, { chosen: true })
           .catch(() => { throw new Error("Could not mark quote as chosen"); });
 
         // Best-effort activity log on the actual work order — woId here
-        // is the plain-text "WO-..." value, not an Airtable record ID,
-        // so it has to be looked up first. Not fatal if this part fails;
+        // is the plain-text "WO-..." value, not the internal row id, so
+        // it has to be looked up first. Not fatal if this part fails;
         // the quote is already chosen either way.
         try {
-          const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-          const woData = await listRecords(woTable, {
-            filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
-            maxRecords: 1,
-          }).catch(() => ({ records: [] }));
-          const woRecord = woData.records && woData.records[0];
-          const chosenVendor = (listData.records || []).find(r => r.id === responseId);
+          const woResult = await pgQuery("select id from work_orders where wo_id = $1 limit 1", [woId]).catch(() => null);
+          const woRecord = woResult && woResult.rows[0];
+          const chosenVendor = listResult.rows.find(r => r.id === responseId);
           if (woRecord) {
-            await appendActivityLog(woRecord.id, `🏆 Vendor quote chosen: ${chosenVendor ? chosenVendor.fields["Vendor Name"] : responseId} — by ${session.u}`, session.u, "system");
+            await appendActivityLog(woRecord.id, `🏆 Vendor quote chosen: ${chosenVendor ? chosenVendor.vendor_name : responseId} — by ${session.u}`, session.u, "system");
           }
         } catch (logErr) {
           console.error("chooseProcurementResponse activity log error:", logErr);
@@ -972,11 +932,11 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId and message are required" });
       }
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-        const current = await getRecord(table, recordId).catch(() => ({ fields: {} }));
+        const { getById } = await import("../lib/postgresClient.js");
+        const current = await getById("work_orders", recordId).catch(() => ({}));
 
         await appendActivityLog(recordId, `⏳ Procurement delay: ${message.trim()} — ${session.u}`, session.u, "procurement_request");
-        await notifyOfProcurementDelay(current.fields["Assigned Role"], current.fields["Asset Name"] || "Unnamed", current.fields["WO ID"] || "", message.trim(), current.fields["Assigned Technician"]);
+        await notifyOfProcurementDelay(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", message.trim(), current.assigned_technician);
 
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -990,19 +950,18 @@ export default async function handler(req, res) {
       if (!recordId || itemId === undefined || itemId === null) return res.status(400).json({ error: "recordId and itemId required" });
 
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+        const { getById, update } = await import("../lib/postgresClient.js");
 
-        const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+        const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
-        let progress = {};
-        try { progress = JSON.parse(woData.fields["Checklist Progress"] || "{}"); } catch { progress = {}; }
+        const progress = (woData.checklist_progress && typeof woData.checklist_progress === "object") ? woData.checklist_progress : {};
 
         // Unchecking used to just wipe the entry — no record of who
         // unchecked it or when. Every checklist action is now recorded
         // the same way, in both directions.
         progress[itemId] = { checked: !!checked, by: session.u, at: new Date().toISOString() };
 
-        await updateRecord(table, recordId, { "Checklist Progress": JSON.stringify(progress) })
+        await update("work_orders", recordId, { checklist_progress: JSON.stringify(progress) })
           .catch(() => { throw new Error("Could not save checklist progress"); });
 
         const itemLabel = req.body.itemLabel || `item ${Number(itemId) + 1}`;
@@ -1023,14 +982,14 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: "Not permitted to edit work order costs." });
       }
       try {
-        const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-        await updateRecord(table, recordId, {
-          "Cost (TZS)": cost === "" || cost === undefined ? null : Number(cost),
+        const { update } = await import("../lib/postgresClient.js");
+        await update("work_orders", recordId, {
+          cost_tzs: cost === "" || cost === undefined ? null : Number(cost),
           // Pulled from the verified session — same as Closed By,
           // Added By, etc. elsewhere in the system. Cannot be typed
           // in or faked by whoever's making the edit.
-          "Cost Edited By": session.u,
-          "Cost Edited Date": new Date().toISOString(),
+          cost_edited_by: session.u,
+          cost_edited_date: new Date().toISOString(),
         });
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -1084,80 +1043,52 @@ export default async function handler(req, res) {
 // instead — separate function since the table name/env var differs,
 // not because the underlying pattern is any different.
 async function appendUnitActivityLog(unitId, text, by, type) {
-  const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const unitData = await getRecord(table, unitId).catch(() => null);
+  const unitData = await getById("units", unitId).catch(() => null);
   if (!unitData) { console.error("appendUnitActivityLog: could not read unit"); return null; }
 
-  let log = [];
-  try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const log = Array.isArray(unitData.activity_log) ? unitData.activity_log : [];
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const ok = await updateRecord(table, unitId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  const ok = await update("units", unitId, { activity_log: JSON.stringify(log) }).then(() => true).catch(() => false);
   if (!ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
   return entry;
 }
 
 async function appendActivityLog(recordId, text, by, type) {
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const woData = await getRecord(table, recordId).catch(() => null);
+  const woData = await getById("work_orders", recordId).catch(() => null);
   if (!woData) { console.error("appendActivityLog: could not read work order"); return null; }
 
-  let log = [];
-  try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const log = Array.isArray(woData.activity_log) ? woData.activity_log : [];
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const ok = await updateRecord(table, recordId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  const ok = await update("work_orders", recordId, { activity_log: JSON.stringify(log) }).then(() => true).catch(() => false);
   if (!ok) { console.error("appendActivityLog: could not save entry"); return null; }
   return entry;
 }
 
-// Before/after photo upload — same uploadAttachment pattern already
-// used for Compliance Documents and Floor Plans elsewhere in this
-// system. photoType is "before" or "after", mapping to the matching
-// Airtable field.
+// KNOWN GAP, DELIBERATE: entirely about uploading a file to Airtable's
+// content API — no longer applies now that Work Orders live in
+// Postgres. Same clear-stub pattern as every other upload-only
+// function this cutover has hit.
 async function handleUploadWorkOrderPhoto(req, res, uploadedBy) {
-  const { recordId, photoType, filename, contentType, fileBase64 } = req.body || {};
-  if (!recordId || !photoType || !filename || !fileBase64) {
-    return res.status(400).json({ error: "recordId, photoType, filename, and fileBase64 are required" });
-  }
-  if (photoType !== "before" && photoType !== "after") {
-    return res.status(400).json({ error: "photoType must be 'before' or 'after'" });
-  }
-
-  const fieldName = photoType === "before" ? "Before Photo" : "After Photo";
-
-  try {
-    const base = process.env.AIRTABLE_BASE_ID;
-    const uploadResp = await fetch(
-      `https://content.airtable.com/v0/${base}/${recordId}/${encodeURIComponent(fieldName)}/uploadAttachment`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ contentType: contentType || "image/jpeg", filename, file: fileBase64 }),
-      }
-    );
-    if (!uploadResp.ok) throw new Error(await uploadResp.text());
-
-    await appendActivityLog(recordId, `📷 ${photoType === "before" ? "Before" : "After"} photo uploaded by ${uploadedBy}`, uploadedBy, "system");
-
-    return res.status(200).json({ success: true });
-  } catch (err) {
-    console.error("uploadWorkOrderPhoto error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+  return res.status(501).json({
+    error: "Before/after photo uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
+  });
 }
 
 async function fetchAllWorkOrders() {
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-  return listAllRecords(table, { pageSize: 100 });
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("work_orders");
 }
 
 async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) {
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
   // Closing is never a single person's unilateral call anymore.
   // "Completed" can only be reached through the dedicated approveClosure
@@ -1178,43 +1109,43 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   // Review — confirmed requirement, no silent exceptions. Without a
   // routed role, there's nobody whose job it is to sign off on it.
   if (status === "Ready for Review") {
-    const checkData = await getRecord(table, recordId).catch(() => null);
+    const checkData = await getById("work_orders", recordId).catch(() => null);
     if (checkData) {
-      if (!checkData.fields["Assigned Role"]) {
+      if (!checkData.assigned_role) {
         return {
           ok: false,
           recordId,
           error: "This work order has no routed role assigned yet — it can't be marked Ready for Review until it does.",
         };
       }
-      const procStatus = checkData.fields["Procurement Status"];
+      const procStatus = checkData.procurement_status;
       if (procStatus === "Requested" || procStatus === "Rejected") {
         return {
           ok: false,
           recordId,
           error: procStatus === "Requested"
             ? "This work order can't be marked Ready for Review yet — procurement is still awaiting approval."
-            : `This work order can't be marked Ready for Review yet — the procurement request was rejected (${checkData.fields["Procurement Rejection Reason"] || "no reason given"}) and needs to be revised.`,
+            : `This work order can't be marked Ready for Review yet — the procurement request was rejected (${checkData.procurement_rejection_reason || "no reason given"}) and needs to be revised.`,
         };
       }
     }
   }
 
-  const fields = { "Status": status };
+  const fields = { status };
   // Never wipe existing Notes to empty through this path — a real gap
   // found on review: `notes: ""` would previously overwrite whatever
   // was there with nothing, with no role check on this path at all.
   // Legitimate notes updates still go through fine; only an explicit
   // empty-string wipe is blocked.
-  if (notes !== undefined && notes !== "") fields["Notes"] = notes;
+  if (notes !== undefined && notes !== "") fields.notes = notes;
   if (cost !== undefined) {
-    fields["Cost (TZS)"] = Number(cost);
-    fields["Cost Edited By"] = closedByUsername;
-    fields["Cost Edited Date"] = new Date().toISOString();
+    fields.cost_tzs = Number(cost);
+    fields.cost_edited_by = closedByUsername;
+    fields.cost_edited_date = new Date().toISOString();
   }
 
   try {
-    await updateRecord(table, recordId, fields);
+    await update("work_orders", recordId, fields);
   } catch (e) {
     console.error(`Work order update failed for ${recordId}:`, e.message);
     return { ok: false, recordId, error: e.message };
@@ -1242,24 +1173,24 @@ async function handleApproveClosure(req, res, approvedByUsername) {
   const { recordId } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
-    const woData = await getRecord(table, recordId).catch(() => { throw new Error("Could not read work order"); });
+    const { getById, update } = await import("../lib/postgresClient.js");
 
-    if (woData.fields["Status"] !== "Ready for Review") {
+    const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
+
+    if (woData.status !== "Ready for Review") {
       return res.status(400).json({ error: "This work order isn't waiting for review — nothing to approve." });
     }
 
-    const assetIdForRollover = woData.fields["Asset ID"];
-    const reporterContact = woData.fields["Reporter Contact"];
-    const assetName = woData.fields["Asset Name"] || "the reported issue";
+    const assetIdForRollover = woData.asset_id;
+    const reporterContact = woData.reporter_contact;
+    const assetName = woData.asset_name || "the reported issue";
 
-    await updateRecord(table, recordId, {
-      "Status": "Completed",
-      "Completed Date": new Date().toISOString(),
-      "Closed By": approvedByUsername,
-      "Closure Rejection Reason": "",
+    await update("work_orders", recordId, {
+      status: "Completed",
+      completed_date: new Date().toISOString(),
+      closed_by: approvedByUsername,
+      closure_rejection_reason: null,
     }).catch(() => { throw new Error("Could not approve closure"); });
 
     if (assetIdForRollover) await advanceAssetNextService(assetIdForRollover);
@@ -1279,10 +1210,9 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
   const { recordId, reason } = req.body || {};
   if (!recordId || !reason) return res.status(400).json({ error: "recordId and reason required" });
 
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
-    await updateRecord(table, recordId, { "Status": "In Progress", "Closure Rejection Reason": reason })
+    const { update } = await import("../lib/postgresClient.js");
+    await update("work_orders", recordId, { status: "In Progress", closure_rejection_reason: reason })
       .catch(() => { throw new Error("Could not reject closure"); });
 
     await appendActivityLog(recordId, `❌ Work sent back by ${rejectedByUsername} — ${reason}`, rejectedByUsername, "system");
@@ -1646,50 +1576,41 @@ function sanitizeForSmsWO(text) {
 // otherwise defaults to 90 days. This is what actually closes the loop
 // and stops the false repeat-alert bug.
 async function advanceAssetNextService(assetId) {
-  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const { getByColumn, update } = await import("../lib/postgresClient.js");
 
-  const findData = await listRecords(componentsTable, {
-    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-    maxRecords: 1,
-  }).catch(() => null);
-  if (!findData) {
-    console.error("advanceAssetNextService: could not look up asset", assetId);
-    return;
-  }
-  const record = findData.records && findData.records[0];
+  const record = await getByColumn("components", "asset_id", assetId).catch(() => null);
   if (!record) {
     console.error("advanceAssetNextService: no Component found for", assetId);
     return;
   }
 
-  const intervalDays = Number(record.fields["Maintenance Interval (Days)"]) || 90;
+  const intervalDays = Number(record.maintenance_interval_days) || 90;
   const today = new Date();
   const nextDue = new Date(today);
   nextDue.setDate(nextDue.getDate() + intervalDays);
 
-  await updateRecord(componentsTable, record.id, {
-    "Last Service": today.toISOString().split("T")[0],
-    "Next Service Due": nextDue.toISOString().split("T")[0],
+  await update("components", record.id, {
+    last_service: today.toISOString().split("T")[0],
+    next_service_due: nextDue.toISOString().split("T")[0],
   }).catch(e => console.error("advanceAssetNextService: update failed", e.message));
 }
 
 async function handleGetProcurementResponses(req, res, woId) {
   try {
-    const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
 
-    const data = await listRecords(responsesTable, {
-      filterByFormula: `{WO ID} = "${woId.replace(/"/g, '\\"')}"`,
-    }).catch(() => { throw new Error("Could not load vendor quotes"); });
+    const result = await pgQuery("select * from procurement_responses where wo_id = $1", [woId])
+      .catch(() => { throw new Error("Could not load vendor quotes"); });
 
-    const responses = (data.records || []).map(r => ({
+    const responses = result.rows.map(r => ({
       id: r.id,
-      vendorName: r.fields["Vendor Name"] || "",
-      attachmentUrl: (r.fields["Proforma Attachment"] || [])[0] ? r.fields["Proforma Attachment"][0].url : null,
-      attachmentFilename: (r.fields["Proforma Attachment"] || [])[0] ? r.fields["Proforma Attachment"][0].filename : null,
-      totalCost: r.fields["Total Cost (AI)"] ?? null,
-      vatStatus: r.fields["VAT Status (AI)"] || "",
-      summary: r.fields["Summary (AI)"] || "",
-      chosen: !!r.fields["Chosen"],
+      vendorName: r.vendor_name || "",
+      attachmentUrl: r.proforma_attachment_url || null,
+      attachmentFilename: r.proforma_attachment_filename || null,
+      totalCost: r.total_cost_ai !== null ? Number(r.total_cost_ai) : null,
+      vatStatus: r.vat_status_ai || "",
+      summary: r.summary_ai || "",
+      chosen: !!r.chosen,
     })).sort((a, b) => (a.totalCost ?? Infinity) - (b.totalCost ?? Infinity));
 
     return res.status(200).json({ responses });
@@ -1701,17 +1622,17 @@ async function handleGetProcurementResponses(req, res, woId) {
 
 async function handleGetVendors(req, res) {
   try {
-    const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
 
-    const allRecords = await listAllRecords(vendorsTable, { filterByFormula: "{Active} = TRUE()" })
+    const result = await pgQuery("select * from vendors where active = true")
       .catch(() => { throw new Error("Could not load vendors"); });
 
-    const vendors = allRecords.map(r => ({
+    const vendors = result.rows.map(r => ({
       id: r.id,
-      name: r.fields["Vendor Name"] || "",
-      email: r.fields["Email"] || "",
-      phone: r.fields["Phone"] || "",
-      categories: r.fields["Category/System"] || [],
+      name: r.vendor_name || "",
+      email: r.email || "",
+      phone: r.phone || "",
+      categories: r.categories || [],
     })).sort((a, b) => a.name.localeCompare(b.name));
 
     return res.status(200).json({ vendors });
@@ -1726,18 +1647,30 @@ async function handleMaintenanceReport(req, res) {
   try {
     const records = await fetchAllWorkOrders();
     let filtered = records;
-    if (status) filtered = filtered.filter(r => (r.fields["Status"] || "") === status);
-    if (asset) filtered = filtered.filter(r => (r.fields["Asset ID"] || "") === asset);
-    if (from) { const d = new Date(from); filtered = filtered.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) >= d); }
-    if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) <= d); }
+    if (status) filtered = filtered.filter(r => (r.status || "") === status);
+    if (asset) filtered = filtered.filter(r => (r.asset_id || "") === asset);
+    if (from) { const d = new Date(from); filtered = filtered.filter(r => r.created && new Date(r.created) >= d); }
+    if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.created && new Date(r.created) <= d); }
     const workOrders = filtered.map(r => ({
-      woId: r.fields["WO ID"] || "", assetId: r.fields["Asset ID"] || "",
-      assetName: r.fields["Asset Name"] || "", system: r.fields["System"] || "",
-      location: r.fields["Location"] || "", status: r.fields["Status"] || "Open",
-      urgency: r.fields["Urgency"] || "", maintenanceType: r.fields["Maintenance Type"] || "", created: r.fields["Created"] || "",
-      completedDate: r.fields["Completed Date"] || "", closedBy: r.fields["Closed By"] || "",
-      cost: r.fields["Cost (TZS)"] || null, costEditedBy: r.fields["Cost Edited By"] || "", costEditedDate: r.fields["Cost Edited Date"] || "", checklistProgress: r.fields["Checklist Progress"] || "{}", activityLog: r.fields["Activity Log"] || "[]", chatLog: r.fields["Chat Log"] || "[]", chatParticipants: r.fields["Chat Participants"] || "[]", chatReadReceipts: r.fields["Chat Read Receipts"] || "{}", assignedRole: r.fields["Assigned Role"] || "", assignedRoleSetBy: r.fields["Assigned Role Set By"] || "", building: r.fields["Building"] || "", assignedTechnician: r.fields["Assigned Technician"] || "", assignedTechnicianSetBy: r.fields["Assigned Technician Set By"] || "", unit: r.fields["Unit"] || "", nonAssetConfirmed: r.fields["Non-Asset Confirmed"] || false, assetIdSetBy: r.fields["Asset ID Set By"] || "", assignmentStatus: r.fields["Assignment Status"] || "", procurementStatus: r.fields["Procurement Status"] || "None", costBreakdown: r.fields["Cost Breakdown"] || "[]", procurementRequestedBy: r.fields["Procurement Requested By"] || "", procurementApprovedBy: r.fields["Procurement Approved By"] || "", procurementRejectionReason: r.fields["Procurement Rejection Reason"] || "", beforePhoto: (r.fields["Before Photo"] || [])[0] ? r.fields["Before Photo"][0].url : null, afterPhoto: (r.fields["After Photo"] || [])[0] ? r.fields["After Photo"][0].url : null, reporterContact: r.fields["Reporter Contact"] || "", reporterPhoto: (r.fields["Reporter Photo"] || [])[0] ? r.fields["Reporter Photo"][0].url : null, satisfactionStatus: r.fields["Satisfaction Status"] || "", satisfactionReason: r.fields["Satisfaction Reason"] || "", closureRejectionReason: r.fields["Closure Rejection Reason"] || "",
-      notes: r.fields["Notes"] || "",
+      woId: r.wo_id || "", assetId: r.asset_id || "",
+      assetName: r.asset_name || "", system: r.system || "",
+      location: r.location || "", status: r.status || "Open",
+      urgency: r.urgency || "", maintenanceType: r.maintenance_type || "", created: r.created || "",
+      completedDate: r.completed_date || "", closedBy: r.closed_by || "",
+      cost: r.cost_tzs !== null ? Number(r.cost_tzs) : null,
+      costEditedBy: r.cost_edited_by || "", costEditedDate: r.cost_edited_date || "",
+      checklistProgress: JSON.stringify(r.checklist_progress || {}), activityLog: JSON.stringify(r.activity_log || []),
+      chatLog: JSON.stringify(r.chat_log || []), chatParticipants: JSON.stringify(r.chat_participants || []),
+      chatReadReceipts: JSON.stringify(r.chat_read_receipts || {}), assignedRole: r.assigned_role || "",
+      assignedRoleSetBy: r.assigned_role_set_by || "", building: r.building || "", assignedTechnician: r.assigned_technician || "",
+      assignedTechnicianSetBy: r.assigned_technician_set_by || "", unit: r.unit || "", nonAssetConfirmed: r.non_asset_confirmed || false,
+      assetIdSetBy: r.asset_id_set_by || "", assignmentStatus: r.assignment_status || "", procurementStatus: r.procurement_status || "None",
+      costBreakdown: JSON.stringify(r.cost_breakdown || []), procurementRequestedBy: r.procurement_requested_by || "",
+      procurementApprovedBy: r.procurement_approved_by || "", procurementRejectionReason: r.procurement_rejection_reason || "",
+      beforePhoto: r.before_photo_url || null, afterPhoto: r.after_photo_url || null, reporterContact: r.reporter_contact || "",
+      reporterPhoto: r.reporter_photo_url || null, satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
+      closureRejectionReason: r.closure_rejection_reason || "",
+      notes: r.notes || "",
     })).sort((a, b) => new Date(b.created) - new Date(a.created));
 
     // Cost totals by maintenance type — this is the actual "invisible
@@ -1774,40 +1707,28 @@ async function handleScheduleInspection(req, res, scheduledBy) {
     return res.status(400).json({ error: "assetId required" });
   }
 
-  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
+    const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
     // Look up the asset so the work order has real Name/System/Location, same as other WO types
-    const findData = await listRecords(componentsTable, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => { throw new Error("Could not look up asset"); });
-    const record = findData.records && findData.records[0];
-    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
-    const f = record.fields;
+    const f = await getByColumn("components", "asset_id", assetId).catch(() => { throw new Error("Could not look up asset"); });
+    if (!f) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
     const woId = `WO-${Date.now()}`;
-    const baseFields = {
-      "WO ID": woId,
-      "Asset ID": f["Asset ID"] || assetId,
-      "Asset Name": f["Name"] || "",
-      "System": f["System"] || "",
-      "Location": f["Room/Zone"] || "",
-      "Status": "Open",
-      "Urgency": "SCHEDULED",
-      "Created": new Date().toISOString(),
-      "Notes": notes || `Inspection scheduled by ${scheduledBy}`,
-      "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
-    };
-
-    let created;
-    try {
-      created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Inspection" });
-    } catch (firstErr) {
-      console.error("Inspection creation with Maintenance Type failed, retrying without it:", firstErr.message);
-      created = await createRecord(woTable, baseFields);
-    }
+    const created = await insert("work_orders", {
+      wo_id: woId,
+      asset_id: f.asset_id || assetId,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      status: "Open",
+      urgency: "SCHEDULED",
+      created: new Date().toISOString(),
+      notes: notes || `Inspection scheduled by ${scheduledBy}`,
+      assigned_role: getAssignedRole(f.system, f.name) || null,
+      maintenance_type: "Inspection",
+      activity_log: "[]",
+    });
 
     return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
@@ -1832,44 +1753,28 @@ async function handleOrderSparePart(req, res, orderedBy) {
     return res.status(400).json({ error: "assetId required" });
   }
 
-  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
+    const { getByColumn, insert } = await import("../lib/postgresClient.js");
+
     // Look up the asset so the work order has real Name/System/Location, same as every other WO type
-    const findData = await listRecords(componentsTable, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => { throw new Error("Could not look up asset"); });
-    const record = findData.records && findData.records[0];
-    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
-    const f = record.fields;
+    const f = await getByColumn("components", "asset_id", assetId).catch(() => { throw new Error("Could not look up asset"); });
+    if (!f) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
     const woId = `WO-${Date.now()}`;
-    const baseFields = {
-      "WO ID": woId,
-      "Asset ID": f["Asset ID"] || assetId,
-      "Asset Name": f["Name"] || "",
-      "System": f["System"] || "",
-      "Location": f["Room/Zone"] || "",
-      "Status": "Open",
-      "Urgency": "SCHEDULED",
-      "Created": new Date().toISOString(),
-      "Notes": `Spare part order initiated by ${orderedBy} for ${f["Name"] || assetId}`,
-      "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
-    };
-
-    let created;
-    try {
-      created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Procurement" });
-    } catch (firstErr) {
-      // "Procurement" needs adding as a choice on the Maintenance Type
-      // singleSelect field in Airtable — same one-time manual step as
-      // adding "External" to Assigned Role earlier. Falls back to no
-      // type in the meantime rather than failing the whole request.
-      console.error("Spare-part WO creation with Maintenance Type failed, retrying without it — add \"Procurement\" as a Maintenance Type choice in Airtable to fix permanently:", firstErr.message);
-      created = await createRecord(woTable, baseFields);
-    }
+    const created = await insert("work_orders", {
+      wo_id: woId,
+      asset_id: f.asset_id || assetId,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      status: "Open",
+      urgency: "SCHEDULED",
+      created: new Date().toISOString(),
+      notes: `Spare part order initiated by ${orderedBy} for ${f.name || assetId}`,
+      assigned_role: getAssignedRole(f.system, f.name) || null,
+      maintenance_type: "Procurement",
+      activity_log: "[]",
+    });
 
     return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
