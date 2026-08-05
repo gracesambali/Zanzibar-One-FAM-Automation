@@ -16,9 +16,7 @@
 // token until everything has been checked.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
-import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
-import { listAllRecords, listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getContactsForRole, getAllStaffDirectory } from "../lib/staffDirectory.js";
@@ -59,29 +57,39 @@ export default async function handler(req, res) {
     const digestItems = [];
     const warrantyItems = []; // separate from maintenance alerts — same email, own section
 
-    for (const record of records) {
-      const f = record.fields;
-
+    for (const f of records) {
       // Warranty expiry check — independent of the maintenance due-date
       // logic below. Flags anything expired or expiring within 30 days.
-      const warrantyDate = f["Warranty Expiry Date"];
+      const warrantyDate = f.warranty_expiry_date;
       if (warrantyDate) {
         const warrantyDaysLeft = daysBetween(new Date(), new Date(warrantyDate));
         if (warrantyDaysLeft <= 30) {
           warrantyItems.push({
-            assetId: f["Asset ID"] || "", name: f["Name"] || "",
+            assetId: f.asset_id || "", name: f.name || "",
             expiryDate: warrantyDate, daysLeft: warrantyDaysLeft,
             expired: warrantyDaysLeft < 0,
           });
         }
       }
 
-      const dueDateRaw = f["Next Service Due"];
+      const dueDateRaw = f.next_service_due;
       if (!dueDateRaw) continue;
 
-      const assetId = f["Asset ID"] || "";
+      const assetId = f.asset_id || "";
       const daysUntil = daysBetween(new Date(), new Date(dueDateRaw));
-      const existingWO = await findOpenWorkOrder(assetId);
+      // Local, file-scoped check rather than the shared
+      // lib/workorders.js findOpenWorkOrder — that shared helper is
+      // still Airtable-based, used by 3 files not yet converted
+      // (webhook-trigger.js, demo-trigger.js, run-real-test.js).
+      // Changing its return shape now would silently break them.
+      // Uses the same partial index (idx_work_orders_open_by_asset)
+      // built specifically for this query shape.
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const existingWOResult = await pgQuery(
+        "select * from work_orders where asset_id = $1 and status in ('Open', 'In Progress') limit 1",
+        [assetId]
+      ).catch(() => null);
+      const existingWO = existingWOResult && existingWOResult.rows[0] ? existingWOResult.rows[0] : null;
 
       if (!existingWO) {
         if (daysUntil <= ALERT_WINDOW_DAYS) {
@@ -97,12 +105,12 @@ export default async function handler(req, res) {
           results.push({ asset: assetId, urgency, type: "initial", alertLogWritten: logResult, workOrder: woId });
         }
       } else {
-        const lastReminder = existingWO.fields["Last Reminder Sent"];
+        const lastReminder = existingWO.last_reminder_sent;
         const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
 
         if (daysSinceReminder >= REMINDER_INTERVAL_DAYS) {
-          const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-          const woIdStr = existingWO.fields["WO ID"];
+          const urgency = existingWO.urgency || "OVERDUE";
+          const woIdStr = existingWO.wo_id;
           const message = buildMessage(f, daysUntil, urgency, woIdStr);
 
           const [logResult] = await Promise.all([
@@ -146,11 +154,11 @@ export default async function handler(req, res) {
 
     await sendHeartbeat(records.length, results);
 
-    // Sync "Current Value (TZS)" in Airtable to match the live depreciation
-    // calculation. The dashboard already computes this on every page load —
-    // this just keeps Airtable's own column reflecting the same number, so
-    // anyone browsing Airtable directly (without the dashboard) sees an
-    // accurate figure too, not something manually typed once and left stale.
+    // Sync "Current Value (TZS)" to match the live depreciation
+    // calculation. The dashboard already computes this on every page
+    // load — this just keeps the stored column reflecting the same
+    // number, so anything reading the database directly sees an
+    // accurate figure too, not something computed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
     return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, results });
@@ -166,25 +174,22 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function fetchAllRecords() {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  // Now routed through the shared client — same table-name flexibility
-  // as before, but auth, retry-on-429, and pagination are handled in
-  // one place (lib/airtableClient.js) instead of duplicated here.
-  return listAllRecords(table, { pageSize: 100 });
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("components");
 }
 
 async function logAlert(f, urgency, message, alertType) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
   try {
-    await createRecord(logTable, {
-      "Timestamp": new Date().toISOString(),
-      "Asset ID": f["Asset ID"] || "",
-      "Asset Name": f["Name"] || "",
-      "System": f["System"] || "",
-      "Location": f["Room/Zone"] || "",
-      "Urgency": `${alertType}: ${urgency}`,
-      "Channel": "Email + SMS",
-      "Messages": message,
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: f.asset_id || null,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      urgency: `${alertType}: ${urgency}`,
+      channel: "Email + SMS",
+      message,
     });
     return true;
   } catch (err) {
@@ -197,43 +202,34 @@ async function logAlert(f, urgency, message, alertType) {
 // already set — this is the anchor the 5-day reminder loop checks
 // against going forward.
 async function createWorkOrder(f, urgency) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
 
-  const baseFields = {
-    "WO ID": woId,
-    "Asset ID": f["Asset ID"] || "",
-    "Asset Name": f["Name"] || "",
-    "System": f["System"] || "",
-    "Location": f["Room/Zone"] || "",
-    "Status": "Open",
-    "Urgency": urgency,
-    "Created": new Date().toISOString(),
-    "Last Reminder Sent": todayString(),
-    "Notes": "",
-    "Assigned Role": getAssignedRole(f["System"], f["Name"]) || undefined,
-  };
-
-  // Try with Maintenance Type first; if that field doesn't exist yet in
-  // Airtable, Airtable rejects the WHOLE request — so we fall back to
-  // creating the work order without it, rather than silently losing the
-  // work order entirely. Once the field is added in Airtable, the first
-  // attempt succeeds and this fallback never triggers.
   let created;
   try {
-    created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Preventive" });
-  } catch (firstErr) {
-    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstErr.message);
-    try {
-      created = await createRecord(woTable, baseFields);
-    } catch (secondErr) {
-      console.error("Work order creation failed:", secondErr.message);
-      return `FAILED: ${secondErr.message}`;
-    }
+    const { insert } = await import("../lib/postgresClient.js");
+    created = await insert("work_orders", {
+      wo_id: woId,
+      asset_id: f.asset_id || null,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      status: "Open",
+      urgency,
+      created: new Date().toISOString(),
+      last_reminder_sent: todayString(),
+      notes: null,
+      assigned_role: getAssignedRole(f.system, f.name) || null,
+      maintenance_type: "Preventive",
+      activity_log: "[]",
+    });
+  } catch (e) {
+    console.error("Work order creation failed:", e.message);
+    return `FAILED: ${e.message}`;
   }
 
+  const { update } = await import("../lib/postgresClient.js");
   const openingLog = [{ text: `🆕 Work order opened — automated ${urgency.toLowerCase()} maintenance alert`, by: "system", at: new Date().toISOString() }];
-  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+  await update("work_orders", created.id, { activity_log: JSON.stringify(openingLog) })
     .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return woId;
@@ -242,8 +238,8 @@ async function createWorkOrder(f, urgency) {
 // Updates an EXISTING open Work Order's reminder timestamp — this is
 // what drives the 5-day loop, without creating a duplicate record.
 async function updateReminderTimestamp(recordId) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-  await updateRecord(woTable, recordId, { "Last Reminder Sent": todayString() });
+  const { update } = await import("../lib/postgresClient.js");
+  await update("work_orders", recordId, { last_reminder_sent: todayString() });
 }
 
 // ---------------------------------------------------------------------
@@ -269,8 +265,8 @@ async function sendDigestEmail(items, warrantyItems) {
     const woLabel = i.woId ? ` · ${i.woId}` : "";
     return `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${i.assetId}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Name"] || "—"}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f["Room/Zone"] || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f.name || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${i.f.room_zone || "—"}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${i.urgency}</span>${i.type === "reminder" ? " (reminder)" : ""}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${timing}${woLabel}</td>
     </tr>`;
@@ -384,10 +380,10 @@ async function sendDigestSms(items) {
 // ---------------------------------------------------------------------
 
 function buildMessage(f, daysUntil, urgency, existingWoId) {
-  const name = f["Name"] || "Asset";
-  const assetId = f["Asset ID"] || "";
-  const location = f["Room/Zone"] || "";
-  const due = f["Next Service Due"] || "";
+  const name = f.name || "Asset";
+  const assetId = f.asset_id || "";
+  const location = f.room_zone || "";
+  const due = f.next_service_due || "";
   const timing = daysUntil < 0 ? `${Math.abs(daysUntil)} days overdue` : `${daysUntil} days remaining`;
   const prefix = existingWoId ? `[REMINDER — ${existingWoId} still open] ` : `[${urgency}] `;
   return `${prefix}${name} (${assetId}) at ${location} — service due ${due}. ${timing}.`;
@@ -411,28 +407,26 @@ function daysBetween(from, to) {
 // days and flags them once — same "escalate once, not every day"
 // principle as the work order escalation above.
 async function checkPlanDeadlines() {
-  const planTable = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
-
   try {
-    const data = await listRecords(planTable, { pageSize: 100 }).catch(() => null);
-    if (!data) { console.error("Plan deadline check: could not fetch plans"); return 0; }
+    const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
+    const plans = await pgListAllRecords("planned_maintenance").catch(() => null);
+    if (!plans) { console.error("Plan deadline check: could not fetch plans"); return 0; }
 
     const now = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const dueSoon = (data.records || []).filter(r => {
-      const f = r.fields;
-      const endDate = f["Target End Date"] ? new Date(f["Target End Date"]).getTime() : null;
-      const isActive = f["Plan Status"] !== "Completed";
-      const alreadyAlerted = f["Deadline Alert Sent"] === true;
+    const dueSoon = plans.filter(r => {
+      const endDate = r.target_end_date ? new Date(r.target_end_date).getTime() : null;
+      const isActive = r.plan_status !== "Completed";
+      const alreadyAlerted = r.deadline_alert_sent === true;
       return endDate && isActive && !alreadyAlerted && endDate - now <= sevenDaysMs && endDate - now >= 0;
     });
 
     if (dueSoon.length === 0) return 0;
 
     for (const r of dueSoon) {
-      const createdBy = r.fields["Created By"];
-      const planTitle = r.fields["Name"] || "Planned Maintenance";
-      const daysLeft = Math.ceil((new Date(r.fields["Target End Date"]).getTime() - now) / (24 * 60 * 60 * 1000));
+      const createdBy = r.created_by;
+      const planTitle = r.name || "Planned Maintenance";
+      const daysLeft = Math.ceil((new Date(r.target_end_date).getTime() - now) / (24 * 60 * 60 * 1000));
 
       const directory = getAllStaffDirectory();
       const creatorEntry = directory.find(e => e.username === createdBy);
@@ -444,17 +438,16 @@ async function checkPlanDeadlines() {
             from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
             to: [creatorEntry.email],
             subject: `${planTitle} — target end in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
-            html: `<p>${planTitle} is due to complete on ${r.fields["Target End Date"]} — ${daysLeft} day${daysLeft !== 1 ? "s" : ""} away.</p>`,
+            html: `<p>${planTitle} is due to complete on ${r.target_end_date} — ${daysLeft} day${daysLeft !== 1 ? "s" : ""} away.</p>`,
           }),
         }).catch(err => console.error("Plan deadline email error:", err));
       }
 
-      await updateRecord(planTable, r.id, { "Deadline Alert Sent": true });
+      await update("planned_maintenance", r.id, { deadline_alert_sent: true });
 
-      let log = [];
-      try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
-      log.push({ text: `⏰ 7-day countdown alert sent — target end ${r.fields["Target End Date"]}`, by: "system", at: new Date().toISOString() });
-      await updateRecord(planTable, r.id, { "Activity Log": JSON.stringify(log) });
+      const log = Array.isArray(r.activity_log) ? r.activity_log : [];
+      log.push({ text: `⏰ 7-day countdown alert sent — target end ${r.target_end_date}`, by: "system", at: new Date().toISOString() });
+      await update("planned_maintenance", r.id, { activity_log: JSON.stringify(log) });
     }
 
     return dueSoon.length;
@@ -475,36 +468,43 @@ async function sendDailySummary(maintenanceTriggeredToday) {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
   try {
-    const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-    const woData = await listRecords(woTable, { pageSize: 100 }).catch(() => null);
+    // Targeted queries rather than pulling the whole table into memory
+    // and filtering in JS — more correct than the original Airtable
+    // version too, which only looked at Airtable's first 100 records
+    // (whatever order those happened to come back in), not a real
+    // "last 24 hours" or "all open work orders" view. Uses the real
+    // indexes already built for exactly these access patterns.
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+
+    const openCountsResult = await pgQuery(
+      `select
+         count(*) filter (where status != 'Completed') as total_open,
+         count(*) filter (where status != 'Completed' and urgency = 'OVERDUE') as overdue,
+         count(*) filter (where status != 'Completed' and urgency = 'URGENT') as urgent,
+         count(*) filter (where created >= $1) as opened_today,
+         count(*) filter (where status = 'Completed' and completed_date >= $1) as closed_today
+       from work_orders`,
+      [new Date(cutoff).toISOString()]
+    ).catch(() => null);
+
     let openedToday = 0, closedToday = 0, totalOpen = 0, overdue = 0, urgent = 0;
-    if (woData) {
-      (woData.records || []).forEach(r => {
-        const f = r.fields;
-        if (f["Status"] !== "Completed") {
-          totalOpen++;
-          if (f["Urgency"] === "OVERDUE") overdue++;
-          if (f["Urgency"] === "URGENT") urgent++;
-        }
-        if (f["Created"] && new Date(f["Created"]).getTime() >= cutoff) openedToday++;
-        if (f["Status"] === "Completed" && f["Completed Date"] && new Date(f["Completed Date"]).getTime() >= cutoff) closedToday++;
-      });
+    if (openCountsResult) {
+      const row = openCountsResult.rows[0];
+      totalOpen = Number(row.total_open) || 0;
+      overdue = Number(row.overdue) || 0;
+      urgent = Number(row.urgent) || 0;
+      openedToday = Number(row.opened_today) || 0;
+      closedToday = Number(row.closed_today) || 0;
     }
 
     // Sensor alerts specifically — anything in Alert Log whose Channel
     // mentions "sensor," within the last 24 hours, kept separate from
     // the asset-due maintenance alerts counted above.
-    const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-    const logData = await listRecords(logTable, { pageSize: 100 }).catch(() => null);
-    let sensorAlertsToday = 0;
-    if (logData) {
-      (logData.records || []).forEach(r => {
-        const f = r.fields;
-        const isRecent = f["Timestamp"] && new Date(f["Timestamp"]).getTime() >= cutoff;
-        const isSensor = (f["Channel"] || "").toLowerCase().includes("sensor");
-        if (isRecent && isSensor) sensorAlertsToday++;
-      });
-    }
+    const sensorCountResult = await pgQuery(
+      `select count(*) as count from alert_log where timestamp >= $1 and lower(channel) like '%sensor%'`,
+      [new Date(cutoff).toISOString()]
+    ).catch(() => null);
+    const sensorAlertsToday = sensorCountResult ? Number(sensorCountResult.rows[0].count) || 0 : 0;
 
     const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
@@ -542,18 +542,16 @@ async function sendDailySummary(maintenanceTriggeredToday) {
 }
 
 async function checkAndEscalateStaleWorkOrders() {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
-    const data = await listRecords(woTable, { pageSize: 100 }).catch(() => null);
-    if (!data) { console.error("Escalation check: could not fetch work orders"); return 0; }
+    const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
+    const workOrders = await pgListAllRecords("work_orders").catch(() => null);
+    if (!workOrders) { console.error("Escalation check: could not fetch work orders"); return 0; }
 
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const stale = (data.records || []).filter(r => {
-      const f = r.fields;
-      const isOpenState = f["Status"] === "Open" || f["Status"] === "In Progress";
-      const isOld = f["Created"] && new Date(f["Created"]).getTime() < cutoff;
-      const alreadyEscalated = f["Escalation Sent"] === true;
+    const stale = workOrders.filter(r => {
+      const isOpenState = r.status === "Open" || r.status === "In Progress";
+      const isOld = r.created && new Date(r.created).getTime() < cutoff;
+      const alreadyEscalated = r.escalation_sent === true;
       return isOpenState && isOld && !alreadyEscalated;
     });
 
@@ -564,11 +562,10 @@ async function checkAndEscalateStaleWorkOrders() {
     // stale work order internally and log it to its own Activity
     // thread, since that's silent record-keeping, not a notification.
     for (const r of stale) {
-      await updateRecord(woTable, r.id, { "Escalation Sent": true });
-      let log = [];
-      try { log = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { log = []; }
+      await update("work_orders", r.id, { escalation_sent: true });
+      const log = Array.isArray(r.activity_log) ? r.activity_log : [];
       log.push({ type: "system", text: "🚩 Escalated — open more than 24 hours, supervisor notified", by: "system", at: new Date().toISOString() });
-      await updateRecord(woTable, r.id, { "Activity Log": JSON.stringify(log) });
+      await update("work_orders", r.id, { activity_log: JSON.stringify(log) });
     }
 
     return stale.length;
@@ -618,52 +615,47 @@ function todayString() {
 // This is what was missing — the Alert Log table was being written to, but
 // the Component's own field was never touched, so it showed stale dates.
 async function updateComponentLastAlertSent(f, timestamp) {
-  const assetId = f["Asset ID"];
+  const assetId = f.asset_id;
   if (!assetId) return;
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
   try {
-    const findData = await listRecords(table, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => null);
-    const record = findData && findData.records && findData.records[0];
+    const { getByColumn, update } = await import("../lib/postgresClient.js");
+    const record = await getByColumn("components", "asset_id", assetId).catch(() => null);
     if (!record) return;
-    await updateRecord(table, record.id, { "Last Alert Sent": timestamp });
+    await update("components", record.id, { last_alert_sent: timestamp });
   } catch (e) {
     console.error("updateComponentLastAlertSent failed for", assetId, e.message);
   }
 }
 
 // Recalculates Current Value (TZS) for every asset that has an Acquisition
-// Cost on record, and writes it into Airtable's own "Current Value (TZS)"
-// column. Only updates records where the number actually changed, to avoid
+// Cost on record, and writes it into the current_value_tzs column. Only
+// updates records where the number actually changed, to avoid
 // unnecessary writes. Runs once daily as part of the existing cron — no new
 // scheduled function needed (Vercel Hobby plan caps serverless functions).
 async function syncCurrentValues(records) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+  const { update } = await import("../lib/postgresClient.js");
   let updated = 0;
 
   for (const record of records) {
-    const f = record.fields;
-    if (!f["Acquisition Cost (TZS)"]) continue; // nothing to depreciate
+    if (!record.acquisition_cost_tzs) continue; // nothing to depreciate
 
     const result = calculateCurrentValue({
-      acquisitionCost: f["Acquisition Cost (TZS)"],
-      residualValue: f["Residual Value (TZS)"],
-      economicLifeYears: Number(f["Expected Lifespan (Years)"]) || 15,
-      acquisitionDate: f["Install Date"],
+      acquisitionCost: Number(record.acquisition_cost_tzs),
+      residualValue: record.residual_value_tzs !== null ? Number(record.residual_value_tzs) : undefined,
+      economicLifeYears: Number(record.expected_lifespan_years) || 15,
+      acquisitionDate: record.install_date,
     });
 
     if (result.currentValue === null) continue;
 
-    const existing = f["Current Value (TZS)"];
+    const existing = record.current_value_tzs;
     if (Number(existing) === result.currentValue) continue; // already correct, skip the write
 
     try {
-      await updateRecord(table, record.id, { "Current Value (TZS)": result.currentValue });
+      await update("components", record.id, { current_value_tzs: result.currentValue });
       updated++;
     } catch (e) {
-      console.error(`Current Value sync failed for ${f["Asset ID"]}:`, e.message);
+      console.error(`Current Value sync failed for ${record.asset_id}:`, e.message);
     }
   }
 
