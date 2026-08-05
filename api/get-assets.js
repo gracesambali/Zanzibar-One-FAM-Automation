@@ -1265,6 +1265,52 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-off diagnostic to confirm Supabase Storage actually works once
+  // configured — same purpose and same admin-only gate as ?dbtest=true.
+  // Does a real round trip: uploads a tiny harmless test file,
+  // generates a signed URL for it, fetches that URL to confirm it's
+  // actually readable, then deletes the test file. Touches no real
+  // data. Safe to leave in place; remove once file storage is fully
+  // wired up and this has served its purpose.
+  if (req.query.storagetest === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    const testPath = `diagnostics/storagetest-${Date.now()}.txt`;
+    try {
+      const { uploadFile, getSignedUrl, deleteFiles } = await import("../lib/storageClient.js");
+
+      const testContent = `FAM storage connectivity test — ${new Date().toISOString()}`;
+      const testBase64 = Buffer.from(testContent).toString("base64");
+
+      await uploadFile(testPath, testBase64, "text/plain");
+      const signedUrl = await getSignedUrl(testPath, 60); // only needs to live for a few seconds
+
+      const fetchResp = await fetch(signedUrl);
+      const fetchedContent = await fetchResp.text();
+      const contentMatches = fetchedContent === testContent;
+
+      await deleteFiles([testPath]);
+
+      return res.status(200).json({
+        connected: true,
+        uploaded: true,
+        signedUrlGenerated: true,
+        signedUrlFetchable: fetchResp.ok,
+        contentMatches,
+        cleanedUp: true,
+      });
+    } catch (err) {
+      // Best-effort cleanup even on failure, so a broken test run
+      // doesn't leave junk files behind in the bucket.
+      try {
+        const { deleteFiles } = await import("../lib/storageClient.js");
+        await deleteFiles([testPath]);
+      } catch {}
+      return res.status(500).json({ connected: false, error: err.message });
+    }
+  }
+
   // Facility -> Building hierarchy, feeding the single global building
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
