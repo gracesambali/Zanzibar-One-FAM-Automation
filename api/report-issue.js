@@ -12,7 +12,6 @@
 // hear about it exactly the same way they would a system-generated
 // alert, with the reporter's name and exact location attached.
 
-import { getRecord, listRecords, listAllRecords, updateRecord, createRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { getAllStaffDirectory } from "../lib/staffDirectory.js";
 
@@ -22,28 +21,27 @@ async function handleSatisfactionResponse(req, res) {
     return res.status(400).send("Invalid link.");
   }
 
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-
   try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+
     const fields = {
-      "Satisfaction Status": satisfaction === "yes" ? "Satisfied" : "Not Satisfied",
+      satisfaction_status: satisfaction === "yes" ? "Satisfied" : "Not Satisfied",
     };
     if (satisfaction === "no") {
-      fields["Status"] = "Open"; // reopens — not a dead end
-      fields["Satisfaction Reason"] = reason || "(no reason given)";
+      fields.status = "Open"; // reopens — not a dead end
+      fields.satisfaction_reason = reason || "(no reason given)";
     }
 
-    const patchOk = await updateRecord(woTable, recordId, fields).then(() => true).catch(() => false);
+    const patchOk = await update("work_orders", recordId, fields).then(() => true).catch(() => false);
 
     if (!patchOk) {
       return res.status(500).send(simplePage("Something went wrong", "Please contact the technical team directly."));
     }
 
     // Log this into the same conversation thread as everything else.
-    const woData = await getRecord(woTable, recordId).catch(() => null);
+    const woData = await getById("work_orders", recordId).catch(() => null);
     if (woData) {
-      let log = [];
-      try { log = JSON.parse(woData.fields["Activity Log"] || "[]"); } catch { log = []; }
+      const log = Array.isArray(woData.activity_log) ? woData.activity_log : [];
       log.push({
         type: "system",
         text: satisfaction === "yes"
@@ -52,7 +50,7 @@ async function handleSatisfactionResponse(req, res) {
         by: "reporter",
         at: new Date().toISOString(),
       });
-      await updateRecord(woTable, recordId, { "Activity Log": JSON.stringify(log) }).catch(() => {});
+      await update("work_orders", recordId, { activity_log: JSON.stringify(log) }).catch(() => {});
     }
 
     if (satisfaction === "yes") {
@@ -63,7 +61,7 @@ async function handleSatisfactionResponse(req, res) {
       return res.status(200).send(reasonFormPage(recordId));
     }
 
-    await sendUnsatisfactionAlert(woData?.fields?.["Asset Name"] || "a reported issue", reason);
+    await sendUnsatisfactionAlert(woData?.asset_name || "a reported issue", reason);
 
     return res.status(200).send(simplePage("We've reopened this", "Thanks for letting us know — the team has been notified and will follow up."));
   } catch (err) {
@@ -187,42 +185,36 @@ async function handleGetUnitPortal(req, res) {
   const { unitId, phone } = req.body || {};
   if (!unitId) return res.status(400).json({ error: "unitId required" });
   try {
-    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
-    const data = await getRecord(table, unitId).catch(() => null);
-    if (!data) return res.status(404).json({ error: "Unit not found" });
-    const f = data.fields;
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const f = await getById("units", unitId).catch(() => null);
+    if (!f) return res.status(404).json({ error: "Unit not found" });
 
-    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    const storedPhone = normalizePhone(f.tenant_phone);
     // Fail closed: no phone on file yet means no access, not open
     // access — staff need to add the tenant's phone number first.
     if (!storedPhone || normalizePhone(phone) !== storedPhone) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
-    let chatLog = [];
-    try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+    const chatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
 
     // Confirmed: full parity with what the Property Manager sees —
     // the tenant sees every activity recorded on their own unit too.
-    let activityLog = [];
-    try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
+    const activityLog = Array.isArray(f.activity_log) ? f.activity_log : [];
 
-    const unitName = f["Unit Name"] || "";
+    const unitName = f.unit_name || "";
 
     // Assets covered under this unit — id/name/system only, nothing
     // financial (no acquisition cost, no depreciation, no maintenance
     // spend) — that stays staff-only regardless of whose unit it is.
     let unitAssets = [];
     try {
-      const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-      const assetsData = await listRecords(componentsTable, {
-        filterByFormula: `{Unit} = "${unitName.replace(/"/g, '\\"')}"`,
-      }).catch(() => null);
-      if (assetsData) {
-        unitAssets = (assetsData.records || []).map(r => ({
-          id: r.fields["Asset ID"] || "",
-          name: r.fields["Name"] || "",
-          system: r.fields["System"] || "",
+      const assetsResult = await pgQuery("select asset_id, name, system from components where unit = $1", [unitName]).catch(() => null);
+      if (assetsResult) {
+        unitAssets = assetsResult.rows.map(r => ({
+          id: r.asset_id || "",
+          name: r.name || "",
+          system: r.system || "",
         }));
       }
     } catch (err) {
@@ -231,14 +223,14 @@ async function handleGetUnitPortal(req, res) {
 
     return res.status(200).json({
       unitName,
-      building: f["Building"] || "",
-      unitType: f["Unit Type"] || "",
-      leaseStatus: f["Lease Status"] || "",
-      tenantName: f["Tenant Name"] || "",
-      tenantEmail: f["Tenant Email"] || "",
-      tenantPhone: f["Tenant Phone"] || "",
-      contractUrl: (f["Signed Contract"] || [])[0] ? f["Signed Contract"][0].url : null,
-      contractFilename: (f["Signed Contract"] || [])[0] ? f["Signed Contract"][0].filename : null,
+      building: f.building || "",
+      unitType: f.unit_type || "",
+      leaseStatus: f.lease_status || "",
+      tenantName: f.tenant_name || "",
+      tenantEmail: f.tenant_email || "",
+      tenantPhone: f.tenant_phone || "",
+      contractUrl: f.signed_contract_url || null,
+      contractFilename: f.signed_contract_filename || null,
       assets: unitAssets,
       chatLog,
       activityLog,
@@ -273,17 +265,16 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
 // duplicated here rather than imported since each Vercel function file
 // runs isolated; matches work-orders.js's own appendUnitActivityLog.
 async function appendUnitActivityLog(unitId, text, by, type) {
-  const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
+  const { getById, update } = await import("../lib/postgresClient.js");
 
-  const unitData = await getRecord(table, unitId).catch(() => null);
+  const unitData = await getById("units", unitId).catch(() => null);
   if (!unitData) { console.error("appendUnitActivityLog: could not read unit"); return null; }
 
-  let log = [];
-  try { log = JSON.parse(unitData.fields["Activity Log"] || "[]"); } catch { log = []; }
+  const log = Array.isArray(unitData.activity_log) ? unitData.activity_log : [];
   const entry = { type: type || "comment", text, by, at: new Date().toISOString() };
   log.push(entry);
 
-  const ok = await updateRecord(table, unitId, { "Activity Log": JSON.stringify(log) }).then(() => true).catch(() => false);
+  const ok = await update("units", unitId, { activity_log: JSON.stringify(log) }).then(() => true).catch(() => false);
   if (!ok) { console.error("appendUnitActivityLog: could not save entry"); return null; }
   return entry;
 }
@@ -297,18 +288,17 @@ async function handleUnitPortalReportIssue(req, res) {
   if (!assignedRole) return res.status(400).json({ error: "Invalid category" });
 
   try {
-    const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
-    const unitData = await getRecord(unitsTable, unitId).catch(() => null);
-    if (!unitData) return res.status(404).json({ error: "Unit not found" });
-    const f = unitData.fields;
+    const { getById } = await import("../lib/postgresClient.js");
+    const f = await getById("units", unitId).catch(() => null);
+    if (!f) return res.status(404).json({ error: "Unit not found" });
 
-    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    const storedPhone = normalizePhone(f.tenant_phone);
     if (!storedPhone || normalizePhone(phone) !== storedPhone) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
-    const unitName = f["Unit Name"] || "";
-    const building = f["Building"] || "";
+    const unitName = f.unit_name || "";
+    const building = f.building || "";
 
     const { woId, recordId } = await createReportedWorkOrder(
       senderName.trim(), "Tenant", "", building || unitName, unitName,
@@ -384,46 +374,30 @@ async function handleUnitPortalMessage(req, res) {
   if ((!message || !message.trim()) && !attachmentBase64) {
     return res.status(400).json({ error: "A message needs text or an attachment" });
   }
+  // KNOWN GAP, DELIBERATE: attachment uploads previously went through
+  // Airtable's content API. That mechanism no longer applies now that
+  // Units live in Postgres — no Airtable record to attach to. If an
+  // attachment-ONLY message came in with no text, there's nothing
+  // left to actually save — a clear error, not a silent no-op.
+  if (attachmentBase64 && (!message || !message.trim())) {
+    return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
+  }
   try {
-    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com attachment upload below
-    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
+    const { getById, update } = await import("../lib/postgresClient.js");
 
-    const unitData = await getRecord(table, unitId).catch(() => null);
-    if (!unitData) return res.status(404).json({ error: "Unit not found" });
-    const f = unitData.fields;
+    const f = await getById("units", unitId).catch(() => null);
+    if (!f) return res.status(404).json({ error: "Unit not found" });
 
-    const storedPhone = normalizePhone(f["Tenant Phone"]);
+    const storedPhone = normalizePhone(f.tenant_phone);
     if (!storedPhone || normalizePhone(phone) !== storedPhone) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
-    // Attachment upload uses Airtable's separate content API (different
-    // host, different semantics) — not covered by the shared client,
-    // left as a direct call on purpose.
-    let attachmentUrl = null;
-    if (attachmentBase64) {
-      const uploadResp = await fetch(
-        `https://content.airtable.com/v0/${base}/${unitId}/${encodeURIComponent("Chat Attachments")}/uploadAttachment`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ contentType: attachmentContentType || "application/octet-stream", filename: attachmentFilename || "file", file: attachmentBase64 }),
-        }
-      );
-      if (!uploadResp.ok) throw new Error(await uploadResp.text());
-      const uploadData = await uploadResp.json();
-      const uploaded = (uploadData.fields && uploadData.fields["Chat Attachments"]) || [];
-      const match = uploaded.find(x => x.filename === attachmentFilename) || uploaded[uploaded.length - 1];
-      attachmentUrl = match ? match.url : null;
-    }
-
-    let chatLog = [];
-    try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
+    const chatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
     const entry = { from: "tenant", senderName: senderName.trim(), message: (message || "").trim(), at: new Date().toISOString() };
-    if (attachmentUrl) { entry.attachmentUrl = attachmentUrl; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
     chatLog.push(entry);
 
-    const saved = await updateRecord(table, unitId, { "Chat Log": JSON.stringify(chatLog) }).then(() => true).catch(() => false);
+    const saved = await update("units", unitId, { chat_log: JSON.stringify(chatLog) }).then(() => true).catch(() => false);
     if (!saved) throw new Error("Could not save message");
 
     // Deliberately no email/SMS here — confirmed, per-message
@@ -433,7 +407,11 @@ async function handleUnitPortalMessage(req, res) {
     // still notify immediately, since those are the events that
     // actually need someone's attention right away.
 
-    return res.status(200).json({ success: true, chatLog });
+    return res.status(200).json({
+      success: true,
+      chatLog,
+      ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet on the new database." } : {}),
+    });
   } catch (err) {
     console.error("handleUnitPortalMessage error:", err);
     return res.status(500).json({ error: err.message });
@@ -442,15 +420,15 @@ async function handleUnitPortalMessage(req, res) {
 
 async function handleGetLocations(req, res) {
   try {
-    const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-    const allRecords = await listAllRecords(componentsTable, { fields: ["Floor/Level", "Room/Zone"] });
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery("select floor_level, room_zone from components");
 
     // Floor -> Set of rooms, using the same friendly labels the Asset
     // Register itself displays, deduplicated.
     const floorMap = {};
-    allRecords.forEach(r => {
-      const floorLabel = displayFloor(r.fields["Floor/Level"] || "");
-      const roomLabel = displayRoom(r.fields["Room/Zone"] || "");
+    result.rows.forEach(r => {
+      const floorLabel = displayFloor(r.floor_level || "");
+      const roomLabel = displayRoom(r.room_zone || "");
       if (!floorLabel) return;
       if (!floorMap[floorLabel]) floorMap[floorLabel] = new Set();
       if (roomLabel) floorMap[floorLabel].add(roomLabel);
@@ -527,9 +505,12 @@ export default async function handler(req, res) {
 
     const { woId, recordId } = await createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole);
 
-    if (photoBase64 && photoFilename) {
-      await uploadReporterPhoto(recordId, photoFilename, photoContentType, photoBase64);
-    }
+    // KNOWN GAP, DELIBERATE: photo upload previously went through
+    // Airtable's content API — no longer applies now that Work Orders
+    // live in Postgres. The report itself still goes through
+    // completely; only the photo is skipped, and the response says so
+    // rather than pretending it was saved.
+    const photoSkipped = !!(photoBase64 && photoFilename);
 
     await Promise.all([
       sendEmail(message, description, location),
@@ -538,7 +519,12 @@ export default async function handler(req, res) {
 
     await logAlert(description, location, recordId);
 
-    return res.status(200).json({ success: true, message: "Report submitted. The technical team has been notified.", woId });
+    return res.status(200).json({
+      success: true,
+      message: "Report submitted. The technical team has been notified.",
+      woId,
+      ...(photoSkipped ? { warning: "Your report was submitted, but the photo was NOT saved — file storage isn't wired up yet on the new database." } : {}),
+    });
   } catch (err) {
     console.error("report-issue error:", err);
     return res.status(500).json({ error: err.message });
@@ -546,67 +532,58 @@ export default async function handler(req, res) {
 }
 
 async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
   const baseFields = {
-    "WO ID": woId,
-    "Asset ID": "",
-    "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
-    "System": "",
-    "Assigned Role": assignedRole,
-    "Location": location,
-    "Status": "Open",
-    "Urgency": "REPORTED",
-    "Created": new Date().toISOString(),
-    "Last Reminder Sent": new Date().toISOString().split("T")[0],
-    "Notes": `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
-    "Reporter Contact": reporterContact || "",
-    "Satisfaction Status": "Pending",
+    wo_id: woId,
+    asset_id: null,
+    asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+    system: null,
+    assigned_role: assignedRole,
+    location,
+    status: "Open",
+    urgency: "REPORTED",
+    created: new Date().toISOString(),
+    last_reminder_sent: new Date().toISOString().split("T")[0],
+    notes: `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
+    reporter_contact: reporterContact || null,
+    satisfaction_status: "Pending",
+    maintenance_type: "Corrective",
+    activity_log: "[]",
   };
-  if (building) baseFields["Building"] = building;
-  if (unit) baseFields["Unit"] = unit;
+  if (building) baseFields.building = building;
+  if (unit) baseFields.unit = unit;
+
+  const { insert, update } = await import("../lib/postgresClient.js");
 
   let created;
   try {
-    created = await createRecord(woTable, { ...baseFields, "Maintenance Type": "Corrective" });
-  } catch (firstErr) {
-    console.error("Work order creation with Maintenance Type failed, retrying without it:", firstErr.message);
-    try {
-      created = await createRecord(woTable, baseFields);
-    } catch (secondErr) {
-      console.error("Work order creation failed:", secondErr.message);
-      throw new Error("Could not create the work order — please try again or contact the technical team directly.");
-    }
+    created = await insert("work_orders", baseFields);
+  } catch (e) {
+    console.error("Work order creation failed:", e.message);
+    throw new Error("Could not create the work order — please try again or contact the technical team directly.");
   }
 
   // The very first entry — every work order's story now genuinely
   // starts here, not partway through once procurement or a photo
   // happens to trigger the first log write.
   const openingLog = [{ text: `🆕 Work order opened — reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}`, by: reporterName, at: new Date().toISOString() }];
-  await updateRecord(woTable, created.id, { "Activity Log": JSON.stringify(openingLog) })
+  await update("work_orders", created.id, { activity_log: JSON.stringify(openingLog) })
     .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
   return { woId, recordId: created.id };
 }
 
+// KNOWN GAP, DELIBERATE: this function is entirely about uploading a
+// file to Airtable's content API, which requires an existing Airtable
+// record to attach to. That mechanism no longer applies now that Work
+// Orders live in Postgres. No longer called from the main handler
+// (see the photoSkipped handling above) — left in place, unused,
+// rather than deleted, since the call site already handles the gap
+// gracefully and this documents exactly what would need rebuilding.
 async function uploadReporterPhoto(recordId, filename, contentType, fileBase64) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  try {
-    const resp = await fetch(
-      `https://content.airtable.com/v0/${base}/${recordId}/Reporter%20Photo/uploadAttachment`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ contentType: contentType || "image/jpeg", filename, file: fileBase64 }),
-      }
-    );
-    if (!resp.ok) console.error("Reporter photo upload failed:", await resp.text());
-  } catch (err) {
-    // Non-fatal — the work order itself was already created successfully.
-    console.error("Reporter photo upload error:", err);
-  }
+  console.error("uploadReporterPhoto called but file storage isn't wired up yet — this should not happen, since the main handler no longer calls this function.");
 }
 
 async function sendEmail(message, description, location) {
@@ -685,15 +662,15 @@ async function sendSms(message) {
 // from. Without this, staff-reported issues were invisible in those
 // reports even though the notification and Work Order both worked.
 async function logAlert(description, location, recordId) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-  await createRecord(logTable, {
-    "Timestamp": new Date().toISOString(),
-    "Asset ID": "",
-    "Asset Name": description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
-    "System": "",
-    "Location": location,
-    "Urgency": "REPORTED",
-    "Channel": "Email + SMS (staff report)",
-    "Messages": `Staff-reported issue: ${description}`,
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("alert_log", {
+    timestamp: new Date().toISOString(),
+    asset_id: null,
+    asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+    system: null,
+    location,
+    urgency: "REPORTED",
+    channel: "Email + SMS (staff report)",
+    message: `Staff-reported issue: ${description}`,
   }).catch(e => console.error("Alert log write failed:", e.message));
 }
