@@ -1480,29 +1480,23 @@ function normalizeRecord(row, documents) {
 // internally in the dashboard.
 async function handleGetUnits(req, res) {
   try {
-    const table = process.env.AIRTABLE_UNITS_TABLE || "Units";
-    const records = await listAllRecords(table);
+    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const rows = await pgListAllRecords("units");
 
-    const units = records.map(r => {
-      let activityLog = [];
-      try { activityLog = JSON.parse(r.fields["Activity Log"] || "[]"); } catch { activityLog = []; }
-      let chatLog = [];
-      try { chatLog = JSON.parse(r.fields["Chat Log"] || "[]"); } catch { chatLog = []; }
-      return {
-        id: r.id,
-        name: r.fields["Unit Name"] || "",
-        building: r.fields["Building"] || "",
-        unitType: r.fields["Unit Type"] || "",
-        tenantName: r.fields["Tenant Name"] || "",
-        tenantEmail: r.fields["Tenant Email"] || "",
-        tenantPhone: r.fields["Tenant Phone"] || "",
-        leaseStatus: r.fields["Lease Status"] || "",
-        contractUrl: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].url : null,
-        contractFilename: (r.fields["Signed Contract"] || [])[0] ? r.fields["Signed Contract"][0].filename : null,
-        activityLog,
-        chatLog,
-      };
-    }).filter(u => u.name);
+    const units = rows.map(r => ({
+      id: r.id,
+      name: r.unit_name || "",
+      building: r.building || "",
+      unitType: r.unit_type || "",
+      tenantName: r.tenant_name || "",
+      tenantEmail: r.tenant_email || "",
+      tenantPhone: r.tenant_phone || "",
+      leaseStatus: r.lease_status || "",
+      contractUrl: r.signed_contract_url || null,
+      contractFilename: r.signed_contract_filename || null,
+      activityLog: r.activity_log || [],
+      chatLog: r.chat_log || [],
+    })).filter(u => u.name);
 
     return res.status(200).json({ units });
   } catch (err) {
@@ -1533,12 +1527,19 @@ async function handleGetExchangeRates(req, res) {
 
 async function handleGetFacilities(req, res) {
   try {
-    const table = process.env.AIRTABLE_FACILITIES_TABLE || "Facilities";
-    const records = await listAllRecords(table);
+    const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
+    const facilityRows = await pgListAllRecords("facilities");
+    const buildingRows = await pgQuery("select * from facility_buildings");
 
-    const facilities = records.map(r => ({
-      name: r.fields["Name"] || "",
-      buildings: (r.fields["Building"] || []).map(b => (typeof b === "string" ? b : b.name || "")),
+    const buildingsByFacility = {};
+    for (const b of buildingRows.rows) {
+      if (!buildingsByFacility[b.facility_id]) buildingsByFacility[b.facility_id] = [];
+      buildingsByFacility[b.facility_id].push(b.building_name);
+    }
+
+    const facilities = facilityRows.map(r => ({
+      name: r.name || "",
+      buildings: buildingsByFacility[r.id] || [],
     })).filter(f => f.name);
 
     return res.status(200).json({ facilities });
@@ -1571,57 +1572,45 @@ function guessChecklistClass(name, system) {
 async function handlePublicQuickview(req, res) {
   const assetId = req.query.id;
   try {
-    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-    const data = await listRecords(table, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    });
-    const record = data.records && data.records[0];
-    if (!record) return res.status(404).json({ error: "Asset not found" });
-    const f = record.fields;
+    const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+    const row = await getByColumn("components", "asset_id", assetId);
+    if (!row) return res.status(404).json({ error: "Asset not found" });
 
     // Checklist — same two-step matching the staff dashboard already
     // uses: guess a specific class from the asset's actual name/system
     // first (far more precise), falling back to Asset Category only if
     // that guess comes up empty, then to the universal generic
     // checklist if neither matches. Never returns nothing.
-    const guessedClass = guessChecklistClass(f["Name"], f["System"]);
-    const checklist = getChecklistForWorkOrder(guessedClass || f["Asset Category"] || null, null);
+    const guessedClass = guessChecklistClass(row.name, row.system);
+    const checklist = getChecklistForWorkOrder(guessedClass || row.asset_category || null, null);
 
     // Maintenance history — real work orders performed on this asset,
     // most recent first. Same financial-omission policy as the rest of
     // this endpoint: what was done and when, never what it cost.
     let history = [];
     try {
-      const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-      const woData = await listRecords(woTable, {
-        filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-        sort: [{ field: "Created", direction: "desc" }],
-        maxRecords: 20,
-      }).catch(() => null);
-      if (woData) {
-        history = (woData.records || []).map(r => ({
-          woId: r.fields["WO ID"] || "",
-          status: r.fields["Status"] || "",
-          maintenanceType: r.fields["Maintenance Type"] || "",
-          created: r.fields["Created"] || "",
-        }));
-      }
+      const woResult = await pgQuery(
+        "select wo_id, status, maintenance_type, created from work_orders where asset_id = $1 order by created desc limit 20",
+        [assetId]
+      );
+      history = woResult.rows.map(r => ({
+        woId: r.wo_id || "", status: r.status || "", maintenanceType: r.maintenance_type || "", created: r.created || "",
+      }));
     } catch (histErr) {
       console.error("handlePublicQuickview history error:", histErr);
     }
 
     return res.status(200).json({
-      id: f["Asset ID"] || "", name: f["Name"] || "", system: f["System"] || "",
-      category: f["Asset Category"] || "",
-      floor: f["Floor/Level"] || "", room: f["Room/Zone"] || "",
-      status: f["Status"] || "Good",
-      manufacturer: f["Manufacturer"] || "",
-      model: f["Model"] || "",
-      installDate: f["Install Date"] || "",
-      lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
-      lastService: f["Last Service"] || "",
-      nextService: f["Next Service Due"] || "",
+      id: row.asset_id || "", name: row.name || "", system: row.system || "",
+      category: row.asset_category || "",
+      floor: row.floor_level || "", room: row.room_zone || "",
+      status: row.status || "Good",
+      manufacturer: row.manufacturer || "",
+      model: row.model || "",
+      installDate: row.install_date || "",
+      lifespan: Number(row.expected_lifespan_years) || 15,
+      lastService: row.last_service || "",
+      nextService: row.next_service_due || "",
       checklist,
       history,
       // No acquisitionCost, currentValue, or residualValue — never sent here.
@@ -1633,18 +1622,18 @@ async function handlePublicQuickview(req, res) {
 
 async function handleEditLog(req, res) {
   const assetId = req.query.id;
-  const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
   try {
-    const data = await listRecords(logTable, {
-      filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-      sort: [{ field: "Timestamp", direction: "desc" }],
-    });
-    const entries = (data.records || []).map(r => ({
-      field: r.fields["Field Changed"] || "",
-      oldValue: r.fields["Old Value"] || "",
-      newValue: r.fields["New Value"] || "",
-      editedBy: r.fields["Edited By"] || "",
-      timestamp: r.fields["Timestamp"] || "",
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      "select * from edit_log where asset_id = $1 order by timestamp desc",
+      [assetId]
+    );
+    const entries = result.rows.map(r => ({
+      field: r.field_changed || "",
+      oldValue: r.old_value || "",
+      newValue: r.new_value || "",
+      editedBy: r.edited_by || "",
+      timestamp: r.timestamp || "",
     }));
     return res.status(200).json({ entries });
   } catch (err) {
@@ -1658,39 +1647,28 @@ async function handleEditLog(req, res) {
 // no separate file storage needed).
 async function handleGetFloorPlan(req, res) {
   const floor = req.query.floorplan;
-  const floorPlansTable = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
-  const positionsTable = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
 
   try {
+    const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+
     // 1. Find the floor plan image for this floor
-    const planData = await listRecords(floorPlansTable, {
-      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
-      maxRecords: 1,
-    }).catch(() => null);
-    let imageUrl = null;
-    let uploadedBy = null;
-    let uploadDate = null;
-    let activityLog = "[]";
-    if (planData) {
-      const record = planData.records && planData.records[0];
-      const attachment = record && record.fields["Image"] && record.fields["Image"][0];
-      imageUrl = attachment ? attachment.url : null;
-      uploadedBy = record ? record.fields["Uploaded By"] || null : null;
-      uploadDate = record ? record.fields["Uploaded Date"] || null : null;
-      activityLog = record ? (record.fields["Activity Log"] || "[]") : "[]";
-    }
+    const planRow = await getByColumn("floor_plans", "floor", floor).catch(() => null);
+    const imageUrl = planRow ? planRow.image_url : null;
+    const uploadedBy = planRow ? planRow.uploaded_by : null;
+    const uploadDate = planRow ? planRow.uploaded_date : null;
+    // Original sent this as a raw JSON string, not a parsed array — the
+    // frontend parses it itself. jsonb comes back already-parsed from
+    // Postgres, so it's re-stringified here to match exactly.
+    const activityLog = JSON.stringify(planRow ? (planRow.activity_log || []) : []);
 
     // 2. Find all saved marker positions for assets on this floor
-    const posData = await listRecords(positionsTable, {
-      filterByFormula: `{Floor} = "${floor.replace(/"/g, '\\"')}"`,
-      pageSize: 100,
-    }).catch(() => null);
+    const posResult = await pgQuery("select * from asset_positions where floor = $1", [floor]).catch(() => null);
     let positions = [];
-    if (posData) {
-      positions = (posData.records || []).map(r => ({
-        assetId: r.fields["Asset ID"] || "",
-        x: Number(r.fields["X%"]) || 0,
-        y: Number(r.fields["Y%"]) || 0,
+    if (posResult) {
+      positions = posResult.rows.map(r => ({
+        assetId: r.asset_id || "",
+        x: Number(r.x_pct) || 0,
+        y: Number(r.y_pct) || 0,
       }));
     }
 
@@ -1852,32 +1830,34 @@ function countBy(records, field) {
 
 async function handleGetPlannedMaintenance(req, res) {
   try {
-    const table = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
-    const records = await listAllRecords(table, { pageSize: 100 });
+    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const rows = await pgListAllRecords("planned_maintenance");
 
-    const plans = records.map(r => {
-      const f = r.fields;
-      let budgetItems = [], milestones = [], meetingLog = [], actionPoints = [];
-      try { budgetItems = JSON.parse(f["Budget Items"] || "[]"); } catch {}
-      try { milestones = JSON.parse(f["Milestones"] || "[]"); } catch {}
-      try { meetingLog = JSON.parse(f["Meeting Log"] || "[]"); } catch {}
-      try { actionPoints = JSON.parse(f["Action Points"] || "[]"); } catch {}
-
-      return {
-        recordId: r.id,
-        planId: f["Plan ID"] || "",
-        title: f["Name"] || "",
-        description: f["Description"] || "",
-        status: f["Plan Status"] || "Planning",
-        createdBy: f["Created By"] || "",
-        createdDate: f["Created Date"] || "",
-        targetStartDate: f["Target Start Date"] || "",
-        targetEndDate: f["Target End Date"] || "",
-        budgetItems, milestones, meetingLog, actionPoints,
-        documents: (f["Attachments"] || []).map(a => ({ url: a.url, filename: a.filename })),
-        activityLog: f["Activity Log"] || "[]",
-      };
-    });
+    const plans = rows.map(r => ({
+      recordId: r.id,
+      planId: r.plan_id || "",
+      title: r.name || "",
+      description: r.description || "",
+      status: r.plan_status || "Planning",
+      createdBy: r.created_by || "",
+      createdDate: r.created_date || "",
+      targetStartDate: r.target_start_date || "",
+      targetEndDate: r.target_end_date || "",
+      budgetItems: r.budget_items || [],
+      milestones: r.milestones || [],
+      meetingLog: r.meeting_log || [],
+      actionPoints: r.action_points || [],
+      // KNOWN GAP: Airtable's "Attachments" field was never captured
+      // in the Postgres schema during the original Planned Maintenance
+      // migration (Session 27) — no column or child table exists for
+      // it. Returning empty here rather than crashing; needs a real
+      // fix (a planned_maintenance_documents table, same pattern as
+      // component_documents) if this feature turns out to be used.
+      documents: [],
+      // Original sent this as a raw JSON string, not a parsed array —
+      // preserved exactly, same as handleGetFloorPlan.
+      activityLog: JSON.stringify(r.activity_log || []),
+    }));
 
     return res.status(200).json({ plans });
   } catch (err) {
