@@ -196,7 +196,9 @@ async function handleGetUnitPortal(req, res) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
-    const chatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
+    const rawChatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
+    const { signChatLogAttachments } = await import("../lib/storageClient.js");
+    const chatLog = await signChatLogAttachments(rawChatLog);
 
     // Confirmed: full parity with what the Property Manager sees —
     // the tenant sees every activity recorded on their own unit too.
@@ -374,14 +376,6 @@ async function handleUnitPortalMessage(req, res) {
   if ((!message || !message.trim()) && !attachmentBase64) {
     return res.status(400).json({ error: "A message needs text or an attachment" });
   }
-  // KNOWN GAP, DELIBERATE: attachment uploads previously went through
-  // Airtable's content API. That mechanism no longer applies now that
-  // Units live in Postgres — no Airtable record to attach to. If an
-  // attachment-ONLY message came in with no text, there's nothing
-  // left to actually save — a clear error, not a silent no-op.
-  if (attachmentBase64 && (!message || !message.trim())) {
-    return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
-  }
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
 
@@ -393,8 +387,16 @@ async function handleUnitPortalMessage(req, res) {
       return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
     }
 
+    let attachmentPath = null;
+    if (attachmentBase64) {
+      const { uploadFile } = await import("../lib/storageClient.js");
+      attachmentPath = `units/${unitId}/chat/${Date.now()}-${attachmentFilename || "file"}`;
+      await uploadFile(attachmentPath, attachmentBase64, attachmentContentType || "application/octet-stream");
+    }
+
     const chatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
     const entry = { from: "tenant", senderName: senderName.trim(), message: (message || "").trim(), at: new Date().toISOString() };
+    if (attachmentPath) { entry.attachmentPath = attachmentPath; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
     chatLog.push(entry);
 
     const saved = await update("units", unitId, { chat_log: JSON.stringify(chatLog) }).then(() => true).catch(() => false);
@@ -407,11 +409,10 @@ async function handleUnitPortalMessage(req, res) {
     // still notify immediately, since those are the events that
     // actually need someone's attention right away.
 
-    return res.status(200).json({
-      success: true,
-      chatLog,
-      ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet on the new database." } : {}),
-    });
+    const { signChatLogAttachments } = await import("../lib/storageClient.js");
+    const signedChatLog = await signChatLogAttachments(chatLog);
+
+    return res.status(200).json({ success: true, chatLog: signedChatLog });
   } catch (err) {
     console.error("handleUnitPortalMessage error:", err);
     return res.status(500).json({ error: err.message });

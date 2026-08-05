@@ -1565,24 +1565,33 @@ async function normalizeRecord(row, documents) {
 async function handleGetUnits(req, res) {
   try {
     const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const { signChatLogAttachments, getSignedUrlSafe } = await import("../lib/storageClient.js");
     const rows = await pgListAllRecords("units");
 
-    const units = rows.map(r => ({
-      id: r.id,
-      name: r.unit_name || "",
-      building: r.building || "",
-      unitType: r.unit_type || "",
-      tenantName: r.tenant_name || "",
-      tenantEmail: r.tenant_email || "",
-      tenantPhone: r.tenant_phone || "",
-      leaseStatus: r.lease_status || "",
-      contractUrl: r.signed_contract_url || null,
-      contractFilename: r.signed_contract_filename || null,
-      activityLog: r.activity_log || [],
-      chatLog: r.chat_log || [],
-    })).filter(u => u.name);
+    const units = await Promise.all(rows.map(async r => {
+      const chatLog = await signChatLogAttachments(r.chat_log || []);
+      const contractUrl = await getSignedUrlSafe(r.signed_contract_url).catch(err => {
+        console.error("handleGetUnits: could not sign contract URL for", r.unit_name, err.message);
+        return null;
+      });
+      return {
+        id: r.id,
+        name: r.unit_name || "",
+        building: r.building || "",
+        unitType: r.unit_type || "",
+        tenantName: r.tenant_name || "",
+        tenantEmail: r.tenant_email || "",
+        tenantPhone: r.tenant_phone || "",
+        leaseStatus: r.lease_status || "",
+        contractUrl,
+        contractFilename: r.signed_contract_filename || null,
+        activityLog: r.activity_log || [],
+        chatLog,
+      };
+    }));
+    const filteredUnits = units.filter(u => u.name);
 
-    return res.status(200).json({ units });
+    return res.status(200).json({ units: filteredUnits });
   } catch (err) {
     console.error("handleGetUnits error:", err);
     return res.status(500).json({ error: err.message });
