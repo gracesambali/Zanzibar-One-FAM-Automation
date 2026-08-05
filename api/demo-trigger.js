@@ -21,9 +21,7 @@
 // says it should — this proves the real pipeline works, it just
 // doesn't corrupt the asset's actual schedule to do it.
 
-import { listRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
-import { findOpenWorkOrder } from "../lib/workorders.js";
 import { buildFriendlyEmailHtml, buildGenericAlertEmailHtml } from "../lib/emailTemplate.js";
 
 const ALERT_WINDOW_DAYS = 7;
@@ -62,19 +60,27 @@ export default async function handler(req, res) {
   }
 
   try {
-    const record = await fetchRecordByAssetId(assetId);
-    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
+    const f = await fetchRecordByAssetId(assetId);
+    if (!f) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
-    const f = record.fields;
-    const realDueDate = f["Next Service Due"];
+    const realDueDate = f.next_service_due;
     if (!realDueDate) {
-      return res.status(200).json({ triggered: false, reason: `"${assetId}" has no due date set in Airtable — nothing to test against.` });
+      return res.status(200).json({ triggered: false, reason: `"${assetId}" has no due date set — nothing to test against.` });
     }
 
     // The real due date is READ, never written. daysUntil is computed
     // as if "testDate" were today.
     const daysUntil = daysBetween(new Date(testDate), new Date(realDueDate));
-    const existingWO = await findOpenWorkOrder(f["Asset ID"] || "");
+    // Local, file-scoped copy of the same check now in
+    // lib/workorders.js's findOpenWorkOrder (converted after this file
+    // was) — left duplicated rather than refactored to import it,
+    // since this local version is already tested and working.
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const existingWOResult = await pgQuery(
+      "select * from work_orders where asset_id = $1 and status in ('Open', 'In Progress') limit 1",
+      [f.asset_id || ""]
+    ).catch(() => null);
+    const existingWO = existingWOResult && existingWOResult.rows[0] ? existingWOResult.rows[0] : null;
 
     if (!existingWO) {
       if (daysUntil > ALERT_WINDOW_DAYS) {
@@ -86,7 +92,7 @@ export default async function handler(req, res) {
         });
       }
       const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
-      const message = `[${urgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${realDueDate}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"} (simulated as of ${testDate}).`;
+      const message = `[${urgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${realDueDate}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"} (simulated as of ${testDate}).`;
 
       const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, daysUntil, null, message), sendSms(message)]);
       const [logResult, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
@@ -104,21 +110,21 @@ export default async function handler(req, res) {
         workOrder: woId,
       });
     } else {
-      const lastReminder = existingWO.fields["Last Reminder Sent"];
+      const lastReminder = existingWO.last_reminder_sent;
       const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
 
       if (daysSinceReminder < REMINDER_INTERVAL_DAYS) {
         return res.status(200).json({
           triggered: false,
-          reason: `This asset already has an open Work Order (${existingWO.fields["WO ID"]}), last reminded ${daysSinceReminder} day(s) ago. Next reminder in ${REMINDER_INTERVAL_DAYS - daysSinceReminder} day(s) — this is the real reminder cadence working as intended.`,
-          existingWorkOrder: existingWO.fields["WO ID"],
+          reason: `This asset already has an open Work Order (${existingWO.wo_id}), last reminded ${daysSinceReminder} day(s) ago. Next reminder in ${REMINDER_INTERVAL_DAYS - daysSinceReminder} day(s) — this is the real reminder cadence working as intended.`,
+          existingWorkOrder: existingWO.wo_id,
         });
       }
 
-      const urgency = existingWO.fields["Urgency"] || "OVERDUE";
-      const message = `[REMINDER - ${existingWO.fields["WO ID"]} still open] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${realDueDate}.`;
+      const urgency = existingWO.urgency || "OVERDUE";
+      const message = `[REMINDER - ${existingWO.wo_id} still open] ${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${realDueDate}.`;
 
-      const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, daysUntil, existingWO.fields["WO ID"], message), sendSms(message)]);
+      const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, daysUntil, existingWO.wo_id, message), sendSms(message)]);
       await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
 
       return res.status(200).json({
@@ -129,7 +135,7 @@ export default async function handler(req, res) {
         message,
         email: emailResp.ok ? "sent" : `failed: ${await emailResp.text()}`,
         sms: smsResp.ok ? "sent" : `failed: ${await smsResp.text()}`,
-        workOrder: existingWO.fields["WO ID"],
+        workOrder: existingWO.wo_id,
       });
     }
   } catch (err) {
@@ -139,25 +145,22 @@ export default async function handler(req, res) {
 }
 
 async function fetchRecordByAssetId(assetId) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, {
-    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-  }).catch(() => null);
-  return data && data.records && data.records.length > 0 ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("components", "asset_id", assetId).catch(() => null);
 }
 
 async function logAlert(f, urgency, message) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
   try {
-    await createRecord(logTable, {
-      "Timestamp": new Date().toISOString(),
-      "Asset ID": f["Asset ID"] || "",
-      "Asset Name": f["Name"] || "",
-      "System": f["System"] || "",
-      "Location": f["Room/Zone"] || "",
-      "Urgency": urgency,
-      "Channel": "Email + SMS (public demo trigger — simulated date, real due date untouched)",
-      "Message": message,
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: f.asset_id || null,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      urgency,
+      channel: "Email + SMS (public demo trigger — simulated date, real due date untouched)",
+      message,
     });
     return true;
   } catch (e) {
@@ -166,20 +169,20 @@ async function logAlert(f, urgency, message) {
 }
 
 async function createWorkOrder(f, urgency) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
   const woId = `WO-${Date.now()}`;
   try {
-    await createRecord(woTable, {
-      "WO ID": woId,
-      "Asset ID": f["Asset ID"] || "",
-      "Asset Name": f["Name"] || "",
-      "System": f["System"] || "",
-      "Location": f["Room/Zone"] || "",
-      "Status": "Open",
-      "Urgency": urgency,
-      "Created": new Date().toISOString(),
-      "Last Reminder Sent": new Date().toISOString().split("T")[0],
-      "Notes": "",
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("work_orders", {
+      wo_id: woId,
+      asset_id: f.asset_id || null,
+      asset_name: f.name || null,
+      system: f.system || null,
+      location: f.room_zone || null,
+      status: "Open",
+      urgency,
+      created: new Date().toISOString(),
+      last_reminder_sent: new Date().toISOString().split("T")[0],
+      notes: null,
     });
     return woId;
   } catch (e) {
@@ -188,8 +191,8 @@ async function createWorkOrder(f, urgency) {
 }
 
 async function updateReminderTimestamp(recordId) {
-  const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-  await updateRecord(woTable, recordId, { "Last Reminder Sent": new Date().toISOString().split("T")[0] });
+  const { update } = await import("../lib/postgresClient.js");
+  await update("work_orders", recordId, { last_reminder_sent: new Date().toISOString().split("T")[0] });
 }
 
 async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
@@ -213,7 +216,7 @@ async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
     body: JSON.stringify({
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f["Name"] || f["Asset ID"]}`,
+      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
       html,
       text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
     }),
@@ -270,7 +273,7 @@ async function handleSimpleTestAlert(req, res) {
       : `Fire Pump FP-002 at Basement 1 - service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 
     if (!message) {
-      return res.status(404).json({ error: `Asset "${req.query.asset}" not found in Airtable.` });
+      return res.status(404).json({ error: `Asset "${req.query.asset}" not found.` });
     }
 
     const [emailResp, smsResp] = await Promise.all([sendSimpleTestEmail(message), sendSimpleTestSms(message)]);
@@ -293,38 +296,36 @@ async function handleSimpleTestAlert(req, res) {
 }
 
 async function buildRealMessage(assetId, forcedUrgency) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, { filterByFormula: `{Asset ID} = "${assetId}"` });
-  if (!data.records || data.records.length === 0) return null;
-
-  const f = data.records[0].fields;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  const f = await getByColumn("components", "asset_id", assetId);
+  if (!f) return null;
 
   if (forcedUrgency) {
     // Build a fully real message using the asset's real name/location,
     // but a SIMULATED urgency and day count — the actual "Next Service
-    // Due" field in Airtable is never read for this, so the real
-    // quarterly/annual schedule stays completely untouched.
+    // Due" field is never read for this, so the real quarterly/annual
+    // schedule stays completely untouched.
     const days = FAKE_DAYS[forcedUrgency];
     const timing = days < 0 ? `${Math.abs(days)} days overdue` : `${days} days remaining`;
     const fakeDate = new Date();
     fakeDate.setDate(fakeDate.getDate() + days);
-    return `[TEST] [${forcedUrgency}] ${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert - the real maintenance schedule for this asset has not been changed.`;
+    return `[TEST] [${forcedUrgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert - the real maintenance schedule for this asset has not been changed.`;
   }
 
-  return `${f["Name"]} (${f["Asset ID"]}) at ${f["Room/Zone"]} - service due ${f["Next Service Due"]}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
+  return `${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${f.next_service_due}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
 }
 
 async function logDemoAlert(message, assetId, forcedUrgency) {
-  const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-  await createRecord(logTable, {
-    "Timestamp": new Date().toISOString(),
-    "Asset ID": assetId || "DEMO",
-    "Asset Name": assetId ? assetId : "Demo Trigger",
-    "System": "",
-    "Location": "",
-    "Urgency": forcedUrgency ? `TEST-${forcedUrgency}` : "DEMO",
-    "Channel": "Email + SMS",
-    "Message": message,
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("alert_log", {
+    timestamp: new Date().toISOString(),
+    asset_id: assetId || "DEMO",
+    asset_name: assetId ? assetId : "Demo Trigger",
+    system: null,
+    location: null,
+    urgency: forcedUrgency ? `TEST-${forcedUrgency}` : "DEMO",
+    channel: "Email + SMS",
+    message,
   }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
