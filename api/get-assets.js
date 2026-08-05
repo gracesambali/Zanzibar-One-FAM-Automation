@@ -1474,6 +1474,23 @@ async function normalizeRecord(row, documents) {
     }
   }
 
+  // Compliance documents — same store-path-sign-at-read pattern as the
+  // nameplate photo, but a list instead of a single file. Signed in
+  // parallel; a single document failing to sign doesn't drop the
+  // whole list, just that one entry (falls back to a null url, still
+  // shows the filename so the gap is visible rather than silently
+  // vanishing).
+  const signedDocuments = await Promise.all(documents.map(async doc => {
+    let url = null;
+    try {
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+      url = await getSignedUrlSafe(doc.url);
+    } catch (err) {
+      console.error("normalizeRecord: could not sign document URL for", doc.filename, err.message);
+    }
+    return { filename: doc.filename, url, size: null, type: null };
+  }));
+
   return {
     recordId: row.id,
     id: row.asset_id || "",
@@ -1523,10 +1540,10 @@ async function normalizeRecord(row, documents) {
     // etc.) — actual files the client has uploaded, not system-generated.
     // size/type aren't captured in the Postgres schema (Airtable's
     // attachment objects carried them, component_documents doesn't) —
-    // a known, minor gap, null here rather than guessed.
-    documents: documents.map(doc => ({
-      filename: doc.filename, url: doc.url, size: null, type: null,
-    })),
+    // a known, minor gap, null here rather than guessed. url is signed
+    // fresh above (signedDocuments), same store-path pattern as the
+    // nameplate photo.
+    documents: signedDocuments,
     documentsUploadedBy: row.documents_uploaded_by || "",
     documentsUploadedDate: row.documents_uploaded_date || "",
     needsTechnicalReview: row.needs_technical_review === true,
@@ -1717,10 +1734,19 @@ async function handleGetFloorPlan(req, res) {
 
   try {
     const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
 
     // 1. Find the floor plan image for this floor
     const planRow = await getByColumn("floor_plans", "floor", floor).catch(() => null);
-    const imageUrl = planRow ? planRow.image_url : null;
+    // image_url stores a storage PATH, not a URL — signed fresh here,
+    // same reasoning as the nameplate photo pattern.
+    let imageUrl = null;
+    if (planRow && planRow.image_url) {
+      imageUrl = await getSignedUrlSafe(planRow.image_url).catch(err => {
+        console.error("handleGetFloorPlan: could not sign image URL:", err.message);
+        return null;
+      });
+    }
     const uploadedBy = planRow ? planRow.uploaded_by : null;
     const uploadDate = planRow ? planRow.uploaded_date : null;
     // Original sent this as a raw JSON string, not a parsed array — the

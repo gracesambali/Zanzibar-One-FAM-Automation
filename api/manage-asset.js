@@ -437,27 +437,80 @@ async function appendFloorPlanActivity(recordId, text, by) {
     .catch(() => console.error("appendFloorPlanActivity: could not save entry"));
 }
 
-// Uploads a floor plan drawing directly from the dashboard — no need to
-// touch Airtable manually. Finds (or creates) the Floor Plans record for
-// the given floor, uploads the image via Airtable's base64 upload API,
-// and stamps who uploaded it and when, for accountability.
-// KNOWN GAP, DELIBERATE: this function is entirely about uploading a
-// file to Airtable's content API, which requires an existing Airtable
-// record to attach to. That mechanism no longer applies now that Floor
-// Plans records live in Postgres. Returns a clear, honest error rather
-// than a broken Airtable call or a silent no-op. Needs Supabase Storage
-// (or equivalent) wired up before this can actually work again.
+// Uploads a floor plan drawing directly from the dashboard. Finds (or
+// creates) the Floor Plans record for the given floor, uploads the
+// image to storage, and stamps who uploaded it and when, for
+// accountability. The image_url column stores a storage PATH, not a
+// URL — see the comment on nameplate photos in get-assets.js for why.
 async function handleUploadFloorPlan(req, res, uploadedBy) {
-  return res.status(501).json({
-    error: "Floor plan image uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
-  });
+  const { floor, filename, contentType, fileBase64 } = req.body || {};
+  if (!floor || !filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "floor, filename, contentType, and fileBase64 are all required" });
+  }
+
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "Image is too large — the upload limit is 5MB. Try a smaller or more compressed image." });
+  }
+
+  try {
+    const recordId = await findOrCreateFloorPlanRecord(floor);
+
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const imagePath = `floor-plans/${recordId}/${filename}`;
+    await uploadFile(imagePath, fileBase64, contentType);
+
+    const { update } = await import("../lib/postgresClient.js");
+    await update("floor_plans", recordId, { image_url: imagePath, uploaded_by: uploadedBy, uploaded_date: new Date().toISOString() });
+
+    await appendFloorPlanActivity(recordId, `📎 Floor plan image uploaded: ${filename}`, uploadedBy);
+
+    return res.status(200).json({ success: true, floor, uploadedBy });
+  } catch (err) {
+    console.error("handleUploadFloorPlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
-// Same gap as handleUploadFloorPlan — see the comment there.
+// Uploads a real compliance document (Fire Safety Certificate, OSHA
+// Compliance Licence, etc.) — an actual file the client already has,
+// not a system-generated report. Multiple documents per asset, unlike
+// the single nameplate photo, so each upload adds a new row to
+// component_documents rather than overwriting a single column.
 async function handleUploadDocument(req, res, uploadedBy) {
-  return res.status(501).json({
-    error: "Compliance document uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
-  });
+  const { recordId, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
+  }
+
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "File is too large — the upload limit is 5MB." });
+  }
+
+  try {
+    const { uploadFile } = await import("../lib/storageClient.js");
+    // Timestamped so the same filename can be uploaded twice without colliding.
+    const docPath = `components/${recordId}/documents/${Date.now()}-${filename}`;
+    await uploadFile(docPath, fileBase64, contentType);
+
+    const { insert, update, getById } = await import("../lib/postgresClient.js");
+    await insert("component_documents", { component_id: recordId, url: docPath, filename });
+
+    // Stamp who uploaded it and when — same accountability pattern as
+    // floor plan uploads, relocations, and edits elsewhere in the system.
+    await update("components", recordId, { documents_uploaded_by: uploadedBy, documents_uploaded_date: new Date().toISOString() });
+
+    const current = await getById("components", recordId).catch(() => null);
+    if (current) {
+      await logAssetActivity(current.asset_id || "", "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy);
+    }
+
+    return res.status(200).json({ success: true, filename, uploadedBy });
+  } catch (err) {
+    console.error("handleUploadDocument error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 // Clears the "Needs Technical Review" flag once an Engineer has actually
