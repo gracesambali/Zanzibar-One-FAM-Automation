@@ -81,9 +81,6 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
     const prefix = a.buildingCode ? `${a.buildingCode}-${categoryPrefix}` : categoryPrefix;
     const assetId = await generateNextAssetId(prefix);
 
-    const base = process.env.AIRTABLE_BASE_ID; // still needed for the content.airtable.com attachment upload below
-    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-
     // Non-technical roles (Admin, Stock Keeper) can't be expected to
     // correctly judge classification/criticality on unfamiliar
     // equipment — flag it for an Engineer to confirm, rather than
@@ -93,64 +90,56 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
     const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
     const needsReview = nonTechnicalRoles.includes(addedByRole);
 
+    const { insert } = await import("../lib/postgresClient.js");
+
     let created;
     try {
-      created = await createRecord(table, {
-        "Asset ID": assetId,
-        "Name": a.name,
-        "System": a.system || "",
-        "Building": a.building || "",
-        "Facility": a.facility || "",
-        "Asset Nature": a.nature || "Tangible",
-        "Mobility": a.mobility || "",
-        "Asset Category": a.category || "",
-        "Floor/Level": a.floor || "",
-        "Room/Zone": a.room || "",
-        "Manufacturer": a.manufacturer || "",
-        "Model": a.model || "",
-        "Install Date": a.installDate || new Date().toISOString().split("T")[0],
-        "Expected Lifespan (Years)": Number(a.lifespan) || 15,
-        "Maintenance Interval (Days)": Number(a.maintenanceIntervalDays) || 90,
-        "Acquisition Cost (TZS)": a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : undefined,
-        "Residual Value (TZS)": a.residualValue !== undefined ? Number(a.residualValue) : 0,
-        "Current Value (TZS)": computeCurrentValue(a),
-        "Status": a.status || "Good",          // Good / Poor / Critical
-        "Criticality": a.criticality || "Medium", // High / Medium / Low
-        "Active": true,
-        "Added By": addedBy,
-        "Needs Technical Review": needsReview,
+      created = await insert("components", {
+        asset_id: assetId,
+        name: a.name,
+        system: a.system || null,
+        building: a.building || null,
+        facility: a.facility || null,
+        asset_nature: a.nature || "Tangible",
+        mobility: a.mobility || null,
+        asset_category: a.category || null,
+        floor_level: a.floor || null,
+        room_zone: a.room || null,
+        manufacturer: a.manufacturer || null,
+        model: a.model || null,
+        install_date: a.installDate || new Date().toISOString().split("T")[0],
+        expected_lifespan_years: Number(a.lifespan) || 15,
+        maintenance_interval_days: Number(a.maintenanceIntervalDays) || 90,
+        acquisition_cost_tzs: a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : null,
+        residual_value_tzs: a.residualValue !== undefined ? Number(a.residualValue) : 0,
+        current_value_tzs: computeCurrentValue(a),
+        status: a.status || "Good",          // Good / Poor / Critical
+        criticality: a.criticality || "Medium", // High / Medium / Low
+        active: true,
+        added_by: addedBy,
+        needs_technical_review: needsReview,
       });
     } catch (e) {
-      throw new Error(`Airtable create failed: ${e.message}`);
+      throw new Error(`Asset create failed: ${e.message}`);
     }
 
-    // Nameplate photo — a non-technical person can photograph the
-    // physical label instead of needing to correctly transcribe
-    // technical specs they may not understand. Uploaded after creation
-    // since it needs the new record's ID.
-    if (a.nameplatePhotoBase64 && a.nameplatePhotoFilename) {
-      try {
-        const uploadResp = await fetch(
-          `https://content.airtable.com/v0/${base}/${created.id}/Nameplate%20Photo/uploadAttachment`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contentType: a.nameplatePhotoContentType || "image/jpeg",
-              filename: a.nameplatePhotoFilename,
-              file: a.nameplatePhotoBase64,
-            }),
-          }
-        );
-        if (!uploadResp.ok) console.error("Nameplate photo upload failed:", await uploadResp.text());
-      } catch (photoErr) {
-        // Non-fatal — the asset itself was created successfully; a
-        // failed photo upload shouldn't fail the whole request.
-        console.error("Nameplate photo upload error:", photoErr);
-      }
-    }
+    // KNOWN GAP, DELIBERATE: nameplate photo upload previously went
+    // through Airtable's content API, which attaches a file to an
+    // existing Airtable record. That mechanism no longer applies now
+    // that assets are created in Postgres — there's no Airtable
+    // record to attach to. File storage (photos, documents) needs its
+    // own solution (Supabase Storage is the natural fit) before this
+    // can be wired up for real. Not silently dropped: if a photo was
+    // submitted, the response says so explicitly rather than pretending
+    // it was saved.
+    const photoSkipped = !!(a.nameplatePhotoBase64 && a.nameplatePhotoFilename);
 
-    return res.status(200).json({ success: true, assetId, needsTechnicalReview: needsReview });
+    return res.status(200).json({
+      success: true,
+      assetId,
+      needsTechnicalReview: needsReview,
+      ...(photoSkipped ? { warning: "Asset created, but the nameplate photo was NOT saved — photo/document storage isn't wired up yet on the new database. This needs to be added before uploads work again." } : {}),
+    });
   } catch (err) {
     console.error("manage-asset POST error:", err);
     return res.status(500).json({ error: err.message });
@@ -172,15 +161,15 @@ function getCategoryPrefix(category) {
 }
 
 async function generateNextAssetId(prefix) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, {
-    filterByFormula: `FIND("${prefix}-", {Asset ID}) = 1`,
-    fields: ["Asset ID"],
-  });
+  const { query: pgQuery } = await import("../lib/postgresClient.js");
+  const result = await pgQuery(
+    "select asset_id from components where asset_id like $1",
+    [`${prefix}-%`]
+  );
 
   let maxSeq = 0;
-  for (const record of data.records || []) {
-    const id = record.fields["Asset ID"] || "";
+  for (const row of result.rows) {
+    const id = row.asset_id || "";
     const match = id.match(new RegExp(`^${prefix}-(\\d+)$`));
     if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
   }
@@ -193,14 +182,14 @@ async function generateNextAssetId(prefix) {
 // the same Edit Log table, so the asset detail page has one consistent
 // place to pull a complete activity history from.
 async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedBy) {
-  const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
-  await createRecord(logTable, {
-    "Asset ID": assetId,
-    "Field Changed": fieldLabel,
-    "Old Value": String(oldValue ?? ""),
-    "New Value": String(newValue ?? ""),
-    "Edited By": editedBy,
-    "Timestamp": new Date().toISOString(),
+  const { insert } = await import("../lib/postgresClient.js");
+  await insert("edit_log", {
+    asset_id: assetId,
+    field_changed: fieldLabel,
+    old_value: String(oldValue ?? ""),
+    new_value: String(newValue ?? ""),
+    edited_by: editedBy,
+    timestamp: new Date().toISOString(),
   }).catch(e => console.error("logAssetActivity write failed (non-fatal):", e.message));
 }
 
@@ -211,17 +200,17 @@ async function handleDecommission(req, res, decommissionedBy) {
   }
 
   try {
-    const table = process.env.AIRTABLE_TABLE_NAME || "Components";
+    const { getById, update } = await import("../lib/postgresClient.js");
 
-    const ok = await updateRecord(table, recordId, {
-      "Active": false,
-      "Decommissioned By": decommissionedBy,
-      "Note": reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
-    }).then(() => true).catch(e => { throw new Error(`Airtable update failed: ${e.message}`); });
+    await update("components", recordId, {
+      active: false,
+      decommissioned_by: decommissionedBy,
+      note: reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
+    }).catch(e => { throw new Error(`Update failed: ${e.message}`); });
 
-    const current = await getRecord(table, recordId).catch(() => null);
+    const current = await getById("components", recordId).catch(() => null);
     if (current) {
-      const assetId = current.fields["Asset ID"] || "";
+      const assetId = current.asset_id || "";
       await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy);
     }
 
@@ -233,11 +222,8 @@ async function handleDecommission(req, res, decommissionedBy) {
 }
 
 async function findByAssetId(assetId) {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const data = await listRecords(table, {
-    filterByFormula: `{Asset ID} = "${assetId.replace(/"/g, '\\"')}"`,
-  });
-  return data.records && data.records.length > 0 ? data.records[0] : null;
+  const { getByColumn } = await import("../lib/postgresClient.js");
+  return getByColumn("components", "asset_id", assetId);
 }
 
 async function handleRelocate(req, res, relocatedBy) {
@@ -245,30 +231,29 @@ async function handleRelocate(req, res, relocatedBy) {
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (!newFloor && !newRoom) return res.status(400).json({ error: "At least a new floor or room/zone is required" });
 
-  const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-
   try {
-    const current = await getRecord(componentsTable, recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
-    const oldFloor = current.fields["Floor/Level"] || "";
-    const oldRoom = current.fields["Room/Zone"] || "";
-    const oldBuilding = current.fields["Building"] || "";
-    const assetId = current.fields["Asset ID"] || "";
-    const assetName = current.fields["Name"] || "";
+    const { getById, update, insert } = await import("../lib/postgresClient.js");
+
+    const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
+    const oldFloor = current.floor_level || "";
+    const oldRoom = current.room_zone || "";
+    const oldBuilding = current.building || "";
+    const assetId = current.asset_id || "";
+    const assetName = current.name || "";
 
     const updateFields = {};
-    if (newFloor) updateFields["Floor/Level"] = newFloor;
-    if (newRoom) updateFields["Room/Zone"] = newRoom;
-    if (newBuilding) updateFields["Building"] = newBuilding;
+    if (newFloor) updateFields.floor_level = newFloor;
+    if (newRoom) updateFields.room_zone = newRoom;
+    if (newBuilding) updateFields.building = newBuilding;
 
-    await updateRecord(componentsTable, recordId, updateFields)
+    await update("components", recordId, updateFields)
       .catch(e => { throw new Error("Failed to update asset location: " + e.message); });
 
-    const logTable = process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log";
-    await createRecord(logTable, {
-      "Asset ID": assetId, "Asset Name": assetName,
-      "Old Floor": oldFloor, "Old Room/Zone": oldRoom, "Old Building": oldBuilding,
-      "New Floor": newFloor || oldFloor, "New Room/Zone": newRoom || oldRoom, "New Building": newBuilding || oldBuilding,
-      "Relocated By": relocatedBy, "Date": new Date().toISOString(), "Reason": reason || "",
+    await insert("relocation_log", {
+      asset_id: assetId, asset_name: assetName,
+      old_floor: oldFloor, old_room_zone: oldRoom, old_building: oldBuilding,
+      new_floor: newFloor || oldFloor, new_room_zone: newRoom || oldRoom, new_building: newBuilding || oldBuilding,
+      relocated_by: relocatedBy, date: new Date().toISOString(), reason: reason || null,
     }).catch(e => console.error("Relocation log write failed (non-fatal):", e.message));
 
     const oldLocation = [oldFloor, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
@@ -282,7 +267,11 @@ async function handleRelocate(req, res, relocatedBy) {
   }
 }
 
-// Editable fields — only these can be changed via the edit form.
+// Editable fields — only these can be changed via the edit form. Kept
+// as the original Airtable field names since that's the contract the
+// frontend (dashboard.html) sends — not touched as part of this
+// conversion. EDITABLE_FIELD_COLUMNS below maps each one to its real
+// Postgres column, used only internally.
 const EDITABLE_FIELDS = [
   "Name", "System", "Asset Nature", "Mobility", "Asset Category",
   "Floor/Level", "Room/Zone", "Manufacturer", "Model", "Install Date",
@@ -292,27 +281,37 @@ const EDITABLE_FIELDS = [
   "Status", "Criticality", "Note",
 ];
 
+const EDITABLE_FIELD_COLUMNS = {
+  "Name": "name", "System": "system", "Asset Nature": "asset_nature", "Mobility": "mobility",
+  "Asset Category": "asset_category", "Floor/Level": "floor_level", "Room/Zone": "room_zone",
+  "Manufacturer": "manufacturer", "Model": "model", "Install Date": "install_date",
+  "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
+  "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
+  "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
+};
+
 async function handleEditAsset(req, res, editedBy) {
   const { recordId, changes } = req.body || {};
   if (!recordId || !changes || typeof changes !== "object") {
     return res.status(400).json({ error: "recordId and changes object required" });
   }
 
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-
   try {
+    const { getById, update, insert } = await import("../lib/postgresClient.js");
+
     // Read current values first (for the audit log)
-    const current = await getRecord(table, recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
-    const assetId = current.fields["Asset ID"] || "";
+    const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
+    const assetId = current.asset_id || "";
 
     // Filter to only allowed fields and build the update + audit entries
     const updateFields = {};
     const auditEntries = [];
     for (const [field, newValue] of Object.entries(changes)) {
       if (!EDITABLE_FIELDS.includes(field)) continue;
-      const oldValue = current.fields[field];
+      const column = EDITABLE_FIELD_COLUMNS[field];
+      const oldValue = current[column];
       if (String(oldValue || "") !== String(newValue || "")) {
-        updateFields[field] = newValue;
+        updateFields[column] = newValue;
         auditEntries.push({ field, oldValue: oldValue || "", newValue: newValue || "" });
       }
     }
@@ -323,35 +322,34 @@ async function handleEditAsset(req, res, editedBy) {
 
     // If any field that affects depreciation just changed, recalculate
     // Current Value immediately rather than waiting for tomorrow's cron.
-    const DEPRECIATION_FIELDS = ["Acquisition Cost (TZS)", "Residual Value (TZS)", "Expected Lifespan (Years)", "Install Date"];
-    if (DEPRECIATION_FIELDS.some(f => f in updateFields)) {
-      const merged = { ...current.fields, ...updateFields };
+    const DEPRECIATION_COLUMNS = ["acquisition_cost_tzs", "residual_value_tzs", "expected_lifespan_years", "install_date"];
+    if (DEPRECIATION_COLUMNS.some(c => c in updateFields)) {
+      const merged = { ...current, ...updateFields };
       const result = calculateCurrentValue({
-        acquisitionCost: merged["Acquisition Cost (TZS)"],
-        residualValue: merged["Residual Value (TZS)"],
-        economicLifeYears: Number(merged["Expected Lifespan (Years)"]) || 15,
-        acquisitionDate: merged["Install Date"],
+        acquisitionCost: merged.acquisition_cost_tzs !== null ? Number(merged.acquisition_cost_tzs) : undefined,
+        residualValue: merged.residual_value_tzs !== null ? Number(merged.residual_value_tzs) : undefined,
+        economicLifeYears: Number(merged.expected_lifespan_years) || 15,
+        acquisitionDate: merged.install_date,
       });
       if (result.currentValue !== null) {
-        updateFields["Current Value (TZS)"] = result.currentValue;
+        updateFields.current_value_tzs = result.currentValue;
       }
     }
 
     // Update the asset
-    await updateRecord(table, recordId, updateFields)
+    await update("components", recordId, updateFields)
       .catch(e => { throw new Error("Failed to update: " + e.message); });
 
     // Write audit log entries
-    const logTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
     const timestamp = new Date().toISOString();
     for (const entry of auditEntries) {
-      await createRecord(logTable, {
-        "Asset ID": assetId,
-        "Field Changed": entry.field,
-        "Old Value": String(entry.oldValue),
-        "New Value": String(entry.newValue),
-        "Edited By": editedBy,
-        "Timestamp": timestamp,
+      await insert("edit_log", {
+        asset_id: assetId,
+        field_changed: entry.field,
+        old_value: String(entry.oldValue),
+        new_value: String(entry.newValue),
+        edited_by: editedBy,
+        timestamp,
       }).catch(e => console.error("Edit log write failed (non-fatal):", e.message));
     }
 
