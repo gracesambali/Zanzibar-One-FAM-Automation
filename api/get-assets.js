@@ -1265,6 +1265,97 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time, pre-login-cutover step: unlike migrateUsers above (which
+  // only ever inserted NEW users, skipping anyone already present),
+  // this also UPDATES existing users whose credentials have changed in
+  // Airtable since the original migration — a password reset, a role
+  // change, anything. Needed because Login still reads from Airtable
+  // right now; the Postgres Users copy from the original migration is
+  // a one-time snapshot that could be stale by the time Login actually
+  // switches over. Same extra care as the original migration: the
+  // response never echoes a hash, salt, or token value, on any path.
+  if (req.query.resyncUsers === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords } = await import("../lib/airtableClient.js");
+      const { getByColumn, insert, update } = await import("../lib/postgresClient.js");
+
+      const usersTable = process.env.AIRTABLE_USERS_TABLE || "Users";
+      const airtableUsers = await listAllRecords(usersTable);
+
+      let inserted = 0, updated = 0, unchanged = 0, skipped = 0;
+      const errors = [];
+      const skipDetails = [];
+      const updatedUsernames = []; // usernames only — never the values that changed
+
+      for (const record of airtableUsers) {
+        const f = record.fields;
+        const username = (f["Username"] || "").trim();
+        const role = (f["Role"] || "").trim();
+        if (!username || !role) {
+          skipped++;
+          skipDetails.push({ recordId: record.id, reason: !username ? "no Username field set" : "no Role field set" });
+          continue;
+        }
+
+        const freshFields = {
+          username,
+          email: f["Email"] || null,
+          display_name: f["Display Name"] || null,
+          role,
+          password_hash: f["Password Hash"] || null,
+          password_salt: f["Password Salt"] || null,
+          reset_token: f["Reset Token"] || null,
+          reset_token_expires: f["Reset Token Expires"] || null,
+        };
+
+        try {
+          const existing = await getByColumn("users", "username", username);
+          if (!existing) {
+            await insert("users", freshFields);
+            inserted++;
+            continue;
+          }
+
+          // Compare every field that matters for authentication —
+          // update only if something actually changed, so a resync
+          // with nothing new to sync doesn't touch every row.
+          const changed = Object.keys(freshFields).some(
+            key => String(existing[key] ?? "") !== String(freshFields[key] ?? "")
+          );
+          if (changed) {
+            await update("users", existing.id, freshFields);
+            updated++;
+            updatedUsernames.push(username);
+          } else {
+            unchanged++;
+          }
+        } catch (rowErr) {
+          errors.push({ username, error: rowErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        totalInAirtable: airtableUsers.length,
+        inserted,
+        updated,
+        updatedUsernames,
+        unchanged,
+        skipped,
+        skipDetails,
+        errors,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm Supabase Storage actually works once
   // configured — same purpose and same admin-only gate as ?dbtest=true.
   // Does a real round trip: uploads a tiny harmless test file,
