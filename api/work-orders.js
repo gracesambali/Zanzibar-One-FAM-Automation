@@ -55,6 +55,22 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Property Manager": "property_manager",
 };
 
+// Signs a work order's three possible photo paths (before/after/
+// reporter) in parallel — shared by the main GET handler and
+// handleMaintenanceReport, which both need the identical mapping.
+// Each column stores a storage PATH, not a URL; a single photo
+// failing to sign falls back to null for that one field rather than
+// failing the whole row.
+async function signWorkOrderPhotos(r) {
+  const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+  const [beforePhoto, afterPhoto, reporterPhoto] = await Promise.all([
+    getSignedUrlSafe(r.before_photo_url).catch(err => { console.error("signWorkOrderPhotos: before photo", err.message); return null; }),
+    getSignedUrlSafe(r.after_photo_url).catch(err => { console.error("signWorkOrderPhotos: after photo", err.message); return null; }),
+    getSignedUrlSafe(r.reporter_photo_url).catch(err => { console.error("signWorkOrderPhotos: reporter photo", err.message); return null; }),
+  ]);
+  return { beforePhoto, afterPhoto, reporterPhoto };
+}
+
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) {
@@ -100,8 +116,9 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     try {
       const records = await fetchAllWorkOrders();
-      const workOrders = records
-        .map(r => ({
+      const workOrders = await Promise.all(records.map(async r => {
+        const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+        return {
           id: r.id,
           woId: r.wo_id || "",
           assetId: r.asset_id || "",
@@ -140,16 +157,17 @@ export default async function handler(req, res) {
           procurementRequestedBy: r.procurement_requested_by || "",
           procurementApprovedBy: r.procurement_approved_by || "",
           procurementRejectionReason: r.procurement_rejection_reason || "",
-          beforePhoto: r.before_photo_url || null,
-          afterPhoto: r.after_photo_url || null,
+          beforePhoto,
+          afterPhoto,
           reporterContact: r.reporter_contact || "",
-          reporterPhoto: r.reporter_photo_url || null,
+          reporterPhoto,
           satisfactionStatus: r.satisfaction_status || "",
           satisfactionReason: r.satisfaction_reason || "",
           closureRejectionReason: r.closure_rejection_reason || "",
           notes: r.notes || "",
-        }))
-        .sort((a, b) => new Date(b.created) - new Date(a.created));
+        };
+      }));
+      workOrders.sort((a, b) => new Date(b.created) - new Date(a.created));
       return res.status(200).json({ workOrders });
     } catch (err) {
       console.error("work-orders GET error:", err);
@@ -1072,14 +1090,35 @@ async function appendActivityLog(recordId, text, by, type) {
   return entry;
 }
 
-// KNOWN GAP, DELIBERATE: entirely about uploading a file to Airtable's
-// content API — no longer applies now that Work Orders live in
-// Postgres. Same clear-stub pattern as every other upload-only
-// function this cutover has hit.
+// Before/after photo upload — photoType is "before" or "after",
+// mapping to the matching column. Same store-path-sign-at-read
+// pattern as every other file in this cutover.
 async function handleUploadWorkOrderPhoto(req, res, uploadedBy) {
-  return res.status(501).json({
-    error: "Before/after photo uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
-  });
+  const { recordId, photoType, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !photoType || !filename || !fileBase64) {
+    return res.status(400).json({ error: "recordId, photoType, filename, and fileBase64 are required" });
+  }
+  if (photoType !== "before" && photoType !== "after") {
+    return res.status(400).json({ error: "photoType must be 'before' or 'after'" });
+  }
+
+  const column = photoType === "before" ? "before_photo_url" : "after_photo_url";
+
+  try {
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const photoPath = `work-orders/${recordId}/${photoType}-${filename}`;
+    await uploadFile(photoPath, fileBase64, contentType || "image/jpeg");
+
+    const { update } = await import("../lib/postgresClient.js");
+    await update("work_orders", recordId, { [column]: photoPath });
+
+    await appendActivityLog(recordId, `📷 ${photoType === "before" ? "Before" : "After"} photo uploaded by ${uploadedBy}`, uploadedBy, "system");
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("uploadWorkOrderPhoto error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 async function fetchAllWorkOrders() {
@@ -1651,7 +1690,9 @@ async function handleMaintenanceReport(req, res) {
     if (asset) filtered = filtered.filter(r => (r.asset_id || "") === asset);
     if (from) { const d = new Date(from); filtered = filtered.filter(r => r.created && new Date(r.created) >= d); }
     if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.created && new Date(r.created) <= d); }
-    const workOrders = filtered.map(r => ({
+    const workOrders = await Promise.all(filtered.map(async r => {
+      const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+      return {
       woId: r.wo_id || "", assetId: r.asset_id || "",
       assetName: r.asset_name || "", system: r.system || "",
       location: r.location || "", status: r.status || "Open",
@@ -1667,11 +1708,13 @@ async function handleMaintenanceReport(req, res) {
       assetIdSetBy: r.asset_id_set_by || "", assignmentStatus: r.assignment_status || "", procurementStatus: r.procurement_status || "None",
       costBreakdown: JSON.stringify(r.cost_breakdown || []), procurementRequestedBy: r.procurement_requested_by || "",
       procurementApprovedBy: r.procurement_approved_by || "", procurementRejectionReason: r.procurement_rejection_reason || "",
-      beforePhoto: r.before_photo_url || null, afterPhoto: r.after_photo_url || null, reporterContact: r.reporter_contact || "",
-      reporterPhoto: r.reporter_photo_url || null, satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
+      beforePhoto, afterPhoto, reporterContact: r.reporter_contact || "",
+      reporterPhoto, satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
       closureRejectionReason: r.closure_rejection_reason || "",
       notes: r.notes || "",
-    })).sort((a, b) => new Date(b.created) - new Date(a.created));
+      };
+    }));
+    workOrders.sort((a, b) => new Date(b.created) - new Date(a.created));
 
     // Cost totals by maintenance type — this is the actual "invisible
     // maintenance tax" comparison: scheduled (Preventive) spend vs.
