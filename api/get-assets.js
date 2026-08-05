@@ -5,7 +5,6 @@
 // offset token until every record is retrieved, however many there are).
 // Returns them in the exact shape the dashboard's JavaScript expects.
 
-import { getRecord, listRecords, listAllRecords, createRecord, updateRecord } from "../lib/airtableClient.js";
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
@@ -60,1299 +59,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ connected: true, ...result.rows[0] });
     } catch (err) {
       return res.status(500).json({ connected: false, error: err.message });
-    }
-  }
-
-  // One-time migration: copies Vendors from Airtable into the new
-  // Postgres vendors table. Read-only on the Airtable side — nothing
-  // in Airtable is touched, modified, or deleted. Safe to re-run:
-  // skips any vendor whose name already exists in Postgres rather
-  // than creating a duplicate, so re-running after a partial failure
-  // just picks up where it left off. Requires an explicit confirm=true
-  // on top of the admin gate, so this can't fire from an accidental
-  // click or a crawler hitting the URL.
-  if (req.query.migrateVendors === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const vendorsTable = process.env.AIRTABLE_VENDORS_TABLE || "Vendors";
-      const airtableVendors = await listAllRecords(vendorsTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableVendors) {
-        const f = record.fields;
-        const vendorName = (f["Vendor Name"] || "").trim();
-        if (!vendorName) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Vendor Name field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("vendors", "vendor_name", vendorName);
-          if (existing) { skipped++; skipDetails.push({ vendorName, reason: "already exists in Postgres" }); continue; }
-
-          await insert("vendors", {
-            vendor_name: vendorName,
-            email: f["Email"] || null,
-            phone: f["Phone"] || null,
-            categories: Array.isArray(f["Category/System"]) ? f["Category/System"] : [],
-            active: f["Active"] !== false,
-            added_by: f["Added By"] || null,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ vendorName, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableVendors.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Facilities from Airtable into Postgres. Same
-  // safety rules as migrateVendors — read-only on Airtable, idempotent
-  // (skips a facility whose name already exists), explicit confirm
-  // required. First table to also touch a child table
-  // (facility_buildings), since Airtable's "Building" field can hold
-  // several buildings per facility — either plain strings or
-  // linked-record objects, normalized the same way
-  // handleGetFacilities already does elsewhere in this file.
-  if (req.query.migrateFacilities === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const facilitiesTable = process.env.AIRTABLE_FACILITIES_TABLE || "Facilities";
-      const airtableFacilities = await listAllRecords(facilitiesTable);
-
-      let inserted = 0, skipped = 0, buildingsInserted = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableFacilities) {
-        const f = record.fields;
-        const name = (f["Name"] || "").trim();
-        if (!name) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Name field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("facilities", "name", name);
-          if (existing) { skipped++; skipDetails.push({ name, reason: "already exists in Postgres" }); continue; }
-
-          const created = await insert("facilities", { name });
-          inserted++;
-
-          // "Building" can hold plain strings or linked-record-shaped
-          // objects — same normalization already used elsewhere in
-          // this file. Deduplicated before insert since the child
-          // table's primary key is (facility_id, building_name).
-          const rawBuildings = f["Building"] || [];
-          const buildingNames = [...new Set(
-            rawBuildings.map(b => (typeof b === "string" ? b : b.name || "")).filter(Boolean)
-          )];
-          for (const buildingName of buildingNames) {
-            await insert("facility_buildings", { facility_id: created.id, building_name: buildingName });
-            buildingsInserted++;
-          }
-        } catch (rowErr) {
-          errors.push({ name, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableFacilities.length,
-        inserted,
-        buildingsInserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Components (the Asset Register) from Airtable
-  // into Postgres — the biggest and most central table so far. Same
-  // safety rules as Vendors/Facilities: read-only on Airtable,
-  // idempotent (skips an asset_id that already exists), explicit
-  // confirm required, Business Owner/System Admin only.
-  //
-  // Compliance Documents is a multi-attachment field — becomes rows in
-  // the component_documents child table, one per file. Nameplate
-  // Photo is single-attachment — stored directly as two columns on
-  // the component itself, matching the schema.
-  if (req.query.migrateComponents === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const componentsTable = process.env.AIRTABLE_TABLE_NAME || "Components";
-      const airtableComponents = await listAllRecords(componentsTable);
-
-      let inserted = 0, skipped = 0, documentsInserted = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableComponents) {
-        const f = record.fields;
-        const assetId = (f["Asset ID"] || "").trim();
-        if (!assetId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Asset ID field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("components", "asset_id", assetId);
-          if (existing) { skipped++; skipDetails.push({ assetId, reason: "already exists in Postgres" }); continue; }
-
-          const nameplatePhoto = (f["Nameplate Photo"] || [])[0] || null;
-
-          const created = await insert("components", {
-            asset_id: assetId,
-            name: f["Name"] || assetId,
-            system: f["System"] || null,
-            floor_level: f["Floor/Level"] || null,
-            room_zone: f["Room/Zone"] || null,
-            building: f["Building"] || null,
-            facility: f["Facility"] || null,
-            unit: f["Unit"] || null,
-            manufacturer: f["Manufacturer"] || null,
-            model: f["Model"] || null,
-            install_date: f["Install Date"] || null,
-            status: f["Status"] || "Good",
-            criticality: f["Criticality"] || "Medium",
-            last_service: f["Last Service"] || null,
-            next_service_due: f["Next Service Due"] || null,
-            expected_lifespan_years: f["Expected Lifespan (Years)"] ? Number(f["Expected Lifespan (Years)"]) : 15,
-            maintenance_interval_days: f["Maintenance Interval (Days)"] ? Number(f["Maintenance Interval (Days)"]) : 90,
-            note: f["Note"] || null,
-            active: f["Active"] !== false,
-            added_by: f["Added By"] || null,
-            decommissioned_by: f["Decommissioned By"] || null,
-            asset_nature: f["Asset Nature"] || null,
-            mobility: f["Mobility"] || null,
-            asset_category: f["Asset Category"] || null,
-            acquisition_cost_tzs: f["Acquisition Cost (TZS)"] !== undefined ? Number(f["Acquisition Cost (TZS)"]) : null,
-            residual_value_tzs: f["Residual Value (TZS)"] !== undefined ? Number(f["Residual Value (TZS)"]) : 0,
-            current_value_tzs: f["Current Value (TZS)"] !== undefined ? Number(f["Current Value (TZS)"]) : null,
-            needs_technical_review: f["Needs Technical Review"] === true,
-            nameplate_photo_url: nameplatePhoto ? nameplatePhoto.url : null,
-            nameplate_photo_filename: nameplatePhoto ? nameplatePhoto.filename : null,
-            warranty_expiry_date: f["Warranty Expiry Date"] || null,
-            target_range_temp: f["Target Range (Temp)"] || null,
-            target_range_humidity: f["Target Range (Humidity)"] || null,
-            last_alert_sent: f["Last Alert Sent"] || null,
-            documents_uploaded_by: f["Documents Last Uploaded By"] || null,
-            documents_uploaded_date: f["Documents Last Uploaded Date"] || null,
-          });
-          inserted++;
-
-          const complianceDocs = f["Compliance Documents"] || [];
-          for (const doc of complianceDocs) {
-            await insert("component_documents", {
-              component_id: created.id,
-              url: doc.url,
-              filename: doc.filename || null,
-            });
-            documentsInserted++;
-          }
-        } catch (rowErr) {
-          errors.push({ assetId, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableComponents.length,
-        inserted,
-        documentsInserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Sensors from Airtable into Postgres. Same
-  // safety rules as every migration before it — read-only on Airtable,
-  // idempotent (skips a sensor_id that already exists), explicit
-  // confirm required. First migration to carry a real Activity Log —
-  // Airtable stores it as a JSON-encoded text string, so it's parsed
-  // here (falling back to an empty array on anything malformed) rather
-  // than copied as a raw string, landing as genuine jsonb on the
-  // Postgres side. Assignee can be a plain string or a
-  // collaborator-shaped object ({name, email}) — normalized the same
-  // way handleGetReadings already does elsewhere in this codebase.
-  if (req.query.migrateSensors === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const sensorsTable = process.env.AIRTABLE_SENSORS_TABLE || "Sensors";
-      const airtableSensors = await listAllRecords(sensorsTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableSensors) {
-        const f = record.fields;
-        const sensorId = (f["Sensor ID"] || "").trim();
-        if (!sensorId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Sensor ID field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("sensors", "sensor_id", sensorId);
-          if (existing) { skipped++; skipDetails.push({ sensorId, reason: "already exists in Postgres" }); continue; }
-
-          let activityLog = [];
-          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
-
-          const rawAssignee = f["Assignee"];
-          const assignee = rawAssignee
-            ? (typeof rawAssignee === "string" ? rawAssignee : (rawAssignee.name || rawAssignee.email || ""))
-            : null;
-
-          await insert("sensors", {
-            sensor_id: sensorId,
-            asset_id: f["Asset ID"] || null,
-            sensor_type: f["Sensor Type"] || null,
-            notes: f["Notes"] || null,
-            status: f["Status"] || null,
-            assignee,
-            activity_log: JSON.stringify(activityLog),
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ sensorId, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableSensors.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Readings from Airtable into Postgres.
-  // Different shape from every migration before it, deliberately:
-  // a reading has no natural unique name to check one-by-one against
-  // (unlike Vendor Name or Asset ID), and this table can realistically
-  // hold hundreds or thousands of rows from the test sensors reporting
-  // periodically. Two adjustments follow from that:
-  //   1. Idempotency comes from a real database constraint
-  //      (sensor_id, timestamp) — added via `on conflict do nothing` —
-  //      instead of a per-row existence check.
-  //   2. Inserts are batched (500 rows per database round-trip)
-  //      instead of one row at a time, so this doesn't risk timing out
-  //      on a serverless function if there's real volume.
-  // Requires the readings_sensor_timestamp_unique constraint to exist
-  // first (added separately via SQL Editor) — fails clearly if it
-  // doesn't, rather than silently allowing duplicates.
-  if (req.query.migrateReadings === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { query } = await import("../lib/postgresClient.js");
-
-      const readingsTable = process.env.AIRTABLE_READINGS_TABLE || "Readings";
-      const airtableReadings = await listAllRecords(readingsTable);
-
-      let skippedNoSensorId = 0;
-      const validRecords = [];
-      for (const record of airtableReadings) {
-        const f = record.fields;
-        const sensorId = (f["Sensor ID"] || "").trim();
-        if (!sensorId) { skippedNoSensorId++; continue; }
-        validRecords.push({ sensorId, f });
-      }
-
-      const BATCH_SIZE = 500;
-      let totalInserted = 0;
-      const batchErrors = [];
-
-      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
-        const batch = validRecords.slice(i, i + BATCH_SIZE);
-        const placeholders = [];
-        const values = [];
-        batch.forEach((item, idx) => {
-          const { sensorId, f } = item;
-          const base = idx * 6;
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
-          values.push(
-            f["Timestamp"] || new Date().toISOString(),
-            sensorId,
-            f["Asset ID"] || null,
-            f["Value"] !== undefined && f["Value"] !== null && f["Value"] !== "" ? Number(f["Value"]) : null,
-            f["Unit"] || null,
-            f["Within Range"] === true ? true : (f["Within Range"] === false ? false : null)
-          );
-        });
-        try {
-          const result = await query(
-            `insert into readings (timestamp, sensor_id, asset_id, value, unit, within_range)
-             values ${placeholders.join(", ")}
-             on conflict (sensor_id, timestamp) do nothing
-             returning id`,
-            values
-          );
-          totalInserted += result.rows.length;
-        } catch (batchErr) {
-          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
-        }
-      }
-
-      const skippedAsDuplicate = validRecords.length - totalInserted -
-        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableReadings.length,
-        inserted: totalInserted,
-        skippedNoSensorId,
-        skippedAsDuplicate,
-        batchErrors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Units (tenant records) from Airtable into
-  // Postgres. Same safety rules as Vendors/Facilities/Components/
-  // Sensors — read-only on Airtable, idempotent (skips a unit_name
-  // that already exists), explicit confirm required. Carries two JSON
-  // fields (Activity Log, Chat Log — both parsed with a safe fallback
-  // to an empty array, same pattern as Sensors) and one attachment
-  // (Signed Contract, single file, same pattern as Nameplate Photo on
-  // Components).
-  if (req.query.migrateUnits === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const unitsTable = process.env.AIRTABLE_UNITS_TABLE || "Units";
-      const airtableUnits = await listAllRecords(unitsTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableUnits) {
-        const f = record.fields;
-        const unitName = (f["Unit Name"] || "").trim();
-        if (!unitName) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Unit Name field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("units", "unit_name", unitName);
-          if (existing) { skipped++; skipDetails.push({ unitName, reason: "already exists in Postgres" }); continue; }
-
-          let activityLog = [];
-          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
-          let chatLog = [];
-          try { chatLog = JSON.parse(f["Chat Log"] || "[]"); } catch { chatLog = []; }
-
-          const contract = (f["Signed Contract"] || [])[0] || null;
-
-          await insert("units", {
-            unit_name: unitName,
-            building: f["Building"] || null,
-            unit_type: f["Unit Type"] || null,
-            tenant_name: f["Tenant Name"] || null,
-            tenant_email: f["Tenant Email"] || null,
-            tenant_phone: f["Tenant Phone"] || null,
-            lease_status: f["Lease Status"] || "Vacant",
-            signed_contract_url: contract ? contract.url : null,
-            signed_contract_filename: contract ? contract.filename : null,
-            activity_log: JSON.stringify(activityLog),
-            chat_log: JSON.stringify(chatLog),
-            added_by: f["Added By"] || null,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ unitName, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableUnits.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Asset Positions (floor plan marker
-  // coordinates) from Airtable into Postgres. Same safety rules as
-  // every migration so far — read-only on Airtable, idempotent (skips
-  // an asset_id that already exists — matches the app's own "one row
-  // per asset" convention), explicit confirm required.
-  if (req.query.migrateAssetPositions === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const positionsTable = process.env.AIRTABLE_ASSET_POSITIONS_TABLE || "Asset Positions";
-      const airtablePositions = await listAllRecords(positionsTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtablePositions) {
-        const f = record.fields;
-        const assetId = (f["Asset ID"] || "").trim();
-        const floor = (f["Floor"] || "").trim();
-        if (!assetId || !floor) {
-          skipped++;
-          skipDetails.push({ recordId: record.id, reason: !assetId ? "no Asset ID field set" : "no Floor field set" });
-          continue;
-        }
-
-        try {
-          const existing = await getByColumn("asset_positions", "asset_id", assetId);
-          if (existing) { skipped++; skipDetails.push({ assetId, reason: "already exists in Postgres" }); continue; }
-
-          await insert("asset_positions", {
-            asset_id: assetId,
-            floor,
-            x_pct: Number(f["X%"]) || 0,
-            y_pct: Number(f["Y%"]) || 0,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ assetId, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtablePositions.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // Edit log for a specific asset (audit trail)
-  if (req.query.editlog && req.query.id) {
-    return handleEditLog(req, res);
-  }
-
-  // One-time migration: Floor Plans from Airtable into Postgres. Same
-  // safety rules as every migration so far — read-only on Airtable,
-  // idempotent (skips a floor that already exists, matching the app's
-  // own one-record-per-floor convention), explicit confirm required.
-  if (req.query.migrateFloorPlans === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const floorPlansTable = process.env.AIRTABLE_FLOOR_PLANS_TABLE || "Floor Plans";
-      const airtableFloorPlans = await listAllRecords(floorPlansTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableFloorPlans) {
-        const f = record.fields;
-        const floor = (f["Floor"] || "").trim();
-        if (!floor) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Floor field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("floor_plans", "floor", floor);
-          if (existing) { skipped++; skipDetails.push({ floor, reason: "already exists in Postgres" }); continue; }
-
-          let activityLog = [];
-          try { activityLog = JSON.parse(f["Activity Log"] || "[]"); } catch { activityLog = []; }
-
-          const image = (f["Image"] || [])[0] || null;
-
-          await insert("floor_plans", {
-            floor,
-            image_url: image ? image.url : null,
-            uploaded_by: f["Uploaded By"] || null,
-            uploaded_date: f["Uploaded Date"] || null,
-            activity_log: JSON.stringify(activityLog),
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ floor, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableFloorPlans.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Alert Log from Airtable into Postgres. Same
-  // shape as the Readings migration and for the same reason — no
-  // natural unique business key, and potentially a real volume of
-  // rows given how many alert-writing paths exist across this
-  // codebase (daily cron, webhook trigger, sensor ingestion, reported
-  // issues, demo/test triggers). Idempotent via a real database
-  // constraint (asset_id, timestamp) + on conflict do nothing, and
-  // batched (500 rows/round-trip) rather than one row at a time.
-  // Requires alert_log_asset_timestamp_unique to exist first (applied
-  // separately via SQL Editor, same as readings_sensor_timestamp_unique
-  // before it).
-  //
-  // One real inconsistency found in the source data while building
-  // this: the message field is called "Messages" in most of the
-  // alert-writing code, but "Message" (singular) in two of them
-  // (demo-trigger.js, run-real-test.js) — a genuine naming drift in
-  // the original codebase, not a migration bug. Checked for both.
-  if (req.query.migrateAlertLog === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { query } = await import("../lib/postgresClient.js");
-
-      const logTable = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-      const airtableAlerts = await listAllRecords(logTable);
-
-      const validRecords = airtableAlerts.map(record => ({ record, f: record.fields }));
-
-      const BATCH_SIZE = 500;
-      let totalInserted = 0;
-      const batchErrors = [];
-
-      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
-        const batch = validRecords.slice(i, i + BATCH_SIZE);
-        const placeholders = [];
-        const values = [];
-        batch.forEach((item, idx) => {
-          const { f } = item;
-          const base = idx * 8;
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`);
-          values.push(
-            f["Timestamp"] || new Date().toISOString(),
-            f["Asset ID"] || null,
-            f["Asset Name"] || null,
-            f["System"] || null,
-            f["Location"] || null,
-            f["Urgency"] || null,
-            f["Channel"] || null,
-            // "Messages" (plural) is the field used by most alert-writing
-            // code; "Message" (singular) is used by two call sites. Both
-            // checked, since either could be the one actually populated.
-            f["Messages"] || f["Message"] || null
-          );
-        });
-        try {
-          const result = await query(
-            `insert into alert_log (timestamp, asset_id, asset_name, system, location, urgency, channel, message)
-             values ${placeholders.join(", ")}
-             on conflict (asset_id, timestamp) do nothing
-             returning id`,
-            values
-          );
-          totalInserted += result.rows.length;
-        } catch (batchErr) {
-          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
-        }
-      }
-
-      const skippedAsDuplicate = validRecords.length - totalInserted -
-        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableAlerts.length,
-        inserted: totalInserted,
-        skippedAsDuplicate,
-        batchErrors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Edit Log from Airtable into Postgres. Same
-  // batched pattern as Readings/Alert Log — no natural unique business
-  // key, potentially real volume (every asset edit writes here). The
-  // uniqueness rule is (asset_id, field_changed, timestamp) rather
-  // than just (asset_id, timestamp) — see the schema comment: a single
-  // multi-field edit legitimately creates several rows sharing the
-  // exact same timestamp, so timestamp alone isn't enough to identify
-  // a real duplicate. Requires edit_log_asset_field_timestamp_unique
-  // to exist first (applied separately via SQL Editor).
-  if (req.query.migrateEditLog === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { query } = await import("../lib/postgresClient.js");
-
-      const editLogTable = process.env.AIRTABLE_EDIT_LOG_TABLE || "Edit Log";
-      const airtableEditLog = await listAllRecords(editLogTable);
-
-      let skippedNoAssetId = 0;
-      const validRecords = [];
-      for (const record of airtableEditLog) {
-        const f = record.fields;
-        const assetId = (f["Asset ID"] || "").trim();
-        if (!assetId) { skippedNoAssetId++; continue; }
-        validRecords.push({ assetId, f });
-      }
-
-      const BATCH_SIZE = 500;
-      let totalInserted = 0;
-      const batchErrors = [];
-
-      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
-        const batch = validRecords.slice(i, i + BATCH_SIZE);
-        const placeholders = [];
-        const values = [];
-        batch.forEach((item, idx) => {
-          const { assetId, f } = item;
-          const base = idx * 6;
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
-          values.push(
-            assetId,
-            f["Field Changed"] || null,
-            f["Old Value"] || null,
-            f["New Value"] || null,
-            f["Edited By"] || null,
-            f["Timestamp"] || new Date().toISOString()
-          );
-        });
-        try {
-          const result = await query(
-            `insert into edit_log (asset_id, field_changed, old_value, new_value, edited_by, timestamp)
-             values ${placeholders.join(", ")}
-             on conflict (asset_id, field_changed, timestamp) do nothing
-             returning id`,
-            values
-          );
-          totalInserted += result.rows.length;
-        } catch (batchErr) {
-          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
-        }
-      }
-
-      const skippedAsDuplicateEditLog = validRecords.length - totalInserted -
-        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableEditLog.length,
-        inserted: totalInserted,
-        skippedNoAssetId,
-        skippedAsDuplicate: skippedAsDuplicateEditLog,
-        batchErrors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Relocation Log from Airtable into Postgres.
-  // Same batched pattern as Readings/Alert Log — two-column uniqueness
-  // (asset_id, date), since handleRelocate writes exactly one entry
-  // per relocation action (unlike Edit Log's multi-row-per-action
-  // shape). Requires relocation_log_asset_date_unique to exist first
-  // (applied separately via SQL Editor).
-  if (req.query.migrateRelocationLog === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { query } = await import("../lib/postgresClient.js");
-
-      const relocationLogTable = process.env.AIRTABLE_RELOCATION_LOG_TABLE || "Relocation Log";
-      const airtableRelocationLog = await listAllRecords(relocationLogTable);
-
-      let skippedNoAssetId = 0;
-      const validRecords = [];
-      for (const record of airtableRelocationLog) {
-        const f = record.fields;
-        const assetId = (f["Asset ID"] || "").trim();
-        if (!assetId) { skippedNoAssetId++; continue; }
-        validRecords.push({ assetId, f });
-      }
-
-      const BATCH_SIZE = 500;
-      let totalInserted = 0;
-      const batchErrors = [];
-
-      for (let i = 0; i < validRecords.length; i += BATCH_SIZE) {
-        const batch = validRecords.slice(i, i + BATCH_SIZE);
-        const placeholders = [];
-        const values = [];
-        batch.forEach((item, idx) => {
-          const { assetId, f } = item;
-          const base = idx * 11;
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
-          values.push(
-            assetId,
-            f["Asset Name"] || null,
-            f["Old Floor"] || null,
-            f["Old Room/Zone"] || null,
-            f["Old Building"] || null,
-            f["New Floor"] || null,
-            f["New Room/Zone"] || null,
-            f["New Building"] || null,
-            f["Relocated By"] || null,
-            f["Date"] || new Date().toISOString(),
-            f["Reason"] || null
-          );
-        });
-        try {
-          const result = await query(
-            `insert into relocation_log (asset_id, asset_name, old_floor, old_room_zone, old_building, new_floor, new_room_zone, new_building, relocated_by, date, reason)
-             values ${placeholders.join(", ")}
-             on conflict (asset_id, date) do nothing
-             returning id`,
-            values
-          );
-          totalInserted += result.rows.length;
-        } catch (batchErr) {
-          batchErrors.push({ batchStartIndex: i, batchSize: batch.length, error: batchErr.message });
-        }
-      }
-
-      const skippedAsDuplicate = validRecords.length - totalInserted -
-        batchErrors.reduce((sum, e) => sum + e.batchSize, 0);
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableRelocationLog.length,
-        inserted: totalInserted,
-        skippedNoAssetId,
-        skippedAsDuplicate,
-        batchErrors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Procurement Responses (vendor quotes) from
-  // Airtable into Postgres. Same safety rules as Vendors/Facilities/
-  // Units — read-only on Airtable, explicit confirm required. Uses
-  // the simpler per-row existence-check pattern (not the batched
-  // pattern) since this table is realistically low-volume — one row
-  // per vendor quote submitted against a work order, a newer feature.
-  // Idempotency is via (wo_id, vendor_name) — see the schema comment
-  // for the known limitation this implies.
-  if (req.query.migrateProcurementResponses === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { query, insert } = await import("../lib/postgresClient.js");
-
-      const responsesTable = process.env.AIRTABLE_PROCUREMENT_RESPONSES_TABLE || "Procurement Responses";
-      const airtableResponses = await listAllRecords(responsesTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableResponses) {
-        const f = record.fields;
-        const woId = (f["WO ID"] || "").trim();
-        const vendorName = (f["Vendor Name"] || "").trim();
-        if (!woId || !vendorName) {
-          skipped++;
-          skipDetails.push({ recordId: record.id, reason: !woId ? "no WO ID field set" : "no Vendor Name field set" });
-          continue;
-        }
-
-        try {
-          const existingCheck = await query(
-            "select id from procurement_responses where wo_id = $1 and vendor_name = $2 limit 1",
-            [woId, vendorName]
-          );
-          if (existingCheck.rows.length > 0) {
-            skipped++;
-            skipDetails.push({ woId, vendorName, reason: "already exists in Postgres" });
-            continue;
-          }
-
-          const proforma = (f["Proforma Attachment"] || [])[0] || null;
-
-          await insert("procurement_responses", {
-            wo_id: woId,
-            vendor_name: vendorName,
-            chosen: f["Chosen"] === true,
-            proforma_attachment_url: proforma ? proforma.url : null,
-            proforma_attachment_filename: proforma ? proforma.filename : null,
-            total_cost_ai: f["Total Cost (AI)"] !== undefined && f["Total Cost (AI)"] !== null ? Number(f["Total Cost (AI)"]) : null,
-            vat_status_ai: f["VAT Status (AI)"] || null,
-            summary_ai: f["Summary (AI)"] || null,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ woId, vendorName, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableResponses.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Planned Maintenance from Airtable into
-  // Postgres. Same safety rules as Vendors/Facilities/Units — read-
-  // only on Airtable, idempotent (skips a plan_id that already
-  // exists), explicit confirm required. The most JSON-heavy table in
-  // this migration series — five separate JSON fields — but nothing
-  // new in kind, same safe-parse-with-fallback pattern already proven
-  // on Sensors and Units, just applied five times over.
-  if (req.query.migratePlannedMaintenance === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const planTable = process.env.AIRTABLE_PLANNED_MAINTENANCE_TABLE || "Planned Maintenance";
-      const airtablePlans = await listAllRecords(planTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      const safeParse = (raw) => { try { return JSON.parse(raw || "[]"); } catch { return []; } };
-
-      for (const record of airtablePlans) {
-        const f = record.fields;
-        const planId = (f["Plan ID"] || "").trim();
-        if (!planId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no Plan ID field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("planned_maintenance", "plan_id", planId);
-          if (existing) { skipped++; skipDetails.push({ planId, reason: "already exists in Postgres" }); continue; }
-
-          await insert("planned_maintenance", {
-            plan_id: planId,
-            name: f["Name"] || planId,
-            description: f["Description"] || null,
-            plan_status: f["Plan Status"] || "Planning",
-            created_by: f["Created By"] || null,
-            created_date: f["Created Date"] || null,
-            target_start_date: f["Target Start Date"] || null,
-            target_end_date: f["Target End Date"] || null,
-            budget_items: JSON.stringify(safeParse(f["Budget Items"])),
-            milestones: JSON.stringify(safeParse(f["Milestones"])),
-            meeting_log: JSON.stringify(safeParse(f["Meeting Log"])),
-            action_points: JSON.stringify(safeParse(f["Action Points"])),
-            activity_log: JSON.stringify(safeParse(f["Activity Log"])),
-            deadline_alert_sent: f["Deadline Alert Sent"] === true,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ planId, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtablePlans.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Work Orders from Airtable into Postgres — the
-  // largest and most JSON-heavy table in this whole migration series.
-  // Same safety rules as every migration before it: read-only on
-  // Airtable, idempotent (skips a wo_id that already exists — Work
-  // Orders already has a real, enforced-by-the-app unique ID, unlike
-  // Readings/Alert Log/Edit Log/Relocation Log which needed a new
-  // constraint), explicit confirm required. Six independent JSON
-  // fields (Checklist Progress, Activity Log, Chat Log, Chat
-  // Participants, Chat Read Receipts, Cost Breakdown), each parsed
-  // with its own safe fallback — one malformed field can't take down
-  // the row or any other field. Three photo attachments (Before,
-  // After, Reporter), each single-file, same pattern as Nameplate
-  // Photo on Components.
-  if (req.query.migrateWorkOrders === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const woTable = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-      const airtableWorkOrders = await listAllRecords(woTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      const safeParseObj = (raw) => { try { return JSON.parse(raw || "{}"); } catch { return {}; } };
-      const safeParseArr = (raw) => { try { return JSON.parse(raw || "[]"); } catch { return []; } };
-
-      for (const record of airtableWorkOrders) {
-        const f = record.fields;
-        const woId = (f["WO ID"] || "").trim();
-        if (!woId) { skipped++; skipDetails.push({ recordId: record.id, reason: "no WO ID field set" }); continue; }
-
-        try {
-          const existing = await getByColumn("work_orders", "wo_id", woId);
-          if (existing) { skipped++; skipDetails.push({ woId, reason: "already exists in Postgres" }); continue; }
-
-          const beforePhoto = (f["Before Photo"] || [])[0] || null;
-          const afterPhoto = (f["After Photo"] || [])[0] || null;
-          const reporterPhoto = (f["Reporter Photo"] || [])[0] || null;
-
-          await insert("work_orders", {
-            wo_id: woId,
-            asset_id: f["Asset ID"] || null,
-            asset_name: f["Asset Name"] || null,
-            system: f["System"] || null,
-            location: f["Location"] || null,
-            status: f["Status"] || "Open",
-            urgency: f["Urgency"] || null,
-            maintenance_type: f["Maintenance Type"] || null,
-            building: f["Building"] || null,
-            unit: f["Unit"] || null,
-            notes: f["Notes"] || null,
-            created: f["Created"] || new Date().toISOString(),
-            completed_date: f["Completed Date"] || null,
-            closed_by: f["Closed By"] || null,
-            cost_tzs: f["Cost (TZS)"] !== undefined && f["Cost (TZS)"] !== null ? Number(f["Cost (TZS)"]) : null,
-            cost_edited_by: f["Cost Edited By"] || null,
-            cost_edited_date: f["Cost Edited Date"] || null,
-            checklist_progress: JSON.stringify(safeParseObj(f["Checklist Progress"])),
-            activity_log: JSON.stringify(safeParseArr(f["Activity Log"])),
-            chat_log: JSON.stringify(safeParseArr(f["Chat Log"])),
-            chat_participants: JSON.stringify(safeParseArr(f["Chat Participants"])),
-            chat_read_receipts: JSON.stringify(safeParseObj(f["Chat Read Receipts"])),
-            assigned_role: f["Assigned Role"] || null,
-            assigned_role_set_by: f["Assigned Role Set By"] || null,
-            assigned_technician: f["Assigned Technician"] || null,
-            assigned_technician_set_by: f["Assigned Technician Set By"] || null,
-            assignment_status: f["Assignment Status"] || null,
-            non_asset_confirmed: f["Non-Asset Confirmed"] === true,
-            asset_id_set_by: f["Asset ID Set By"] || null,
-            procurement_status: f["Procurement Status"] || "None",
-            cost_breakdown: JSON.stringify(safeParseArr(f["Cost Breakdown"])),
-            procurement_requested_by: f["Procurement Requested By"] || null,
-            procurement_approved_by: f["Procurement Approved By"] || null,
-            procurement_rejection_reason: f["Procurement Rejection Reason"] || null,
-            before_photo_url: beforePhoto ? beforePhoto.url : null,
-            after_photo_url: afterPhoto ? afterPhoto.url : null,
-            reporter_contact: f["Reporter Contact"] || null,
-            reporter_photo_url: reporterPhoto ? reporterPhoto.url : null,
-            satisfaction_status: f["Satisfaction Status"] || null,
-            satisfaction_reason: f["Satisfaction Reason"] || null,
-            closure_rejection_reason: f["Closure Rejection Reason"] || null,
-            last_reminder_sent: f["Last Reminder Sent"] || null,
-            escalation_sent: f["Escalation Sent"] === true,
-          });
-          inserted++;
-        } catch (rowErr) {
-          errors.push({ woId, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableWorkOrders.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time migration: Users from Airtable into Postgres. Different
-  // in kind from every migration before it — this copies real
-  // credentials (password hashes and salts, reset tokens), even
-  // though nothing in the live app reads from this table yet. The
-  // actual login cutover is a deliberately separate, later decision;
-  // this endpoint only copies data, exactly like every other
-  // migration in this series, and changes nothing about how anyone
-  // currently logs in.
-  //
-  // Extra care taken specifically because of what this table holds:
-  // the response below reports only counts and skip reasons by
-  // username — never a hash, salt, or token value, in either the
-  // success path or an error path. Same safety rules as every other
-  // migration otherwise: read-only on Airtable, idempotent (skips a
-  // username that already exists), explicit confirm required,
-  // Business Owner/System Admin only.
-  if (req.query.migrateUsers === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert } = await import("../lib/postgresClient.js");
-
-      const usersTable = process.env.AIRTABLE_USERS_TABLE || "Users";
-      const airtableUsers = await listAllRecords(usersTable);
-
-      let inserted = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-
-      for (const record of airtableUsers) {
-        const f = record.fields;
-        const username = (f["Username"] || "").trim();
-        const role = (f["Role"] || "").trim();
-        if (!username || !role) {
-          skipped++;
-          skipDetails.push({ recordId: record.id, reason: !username ? "no Username field set" : "no Role field set" });
-          continue;
-        }
-
-        try {
-          const existing = await getByColumn("users", "username", username);
-          if (existing) { skipped++; skipDetails.push({ username, reason: "already exists in Postgres" }); continue; }
-
-          await insert("users", {
-            username,
-            email: f["Email"] || null,
-            display_name: f["Display Name"] || null,
-            role,
-            password_hash: f["Password Hash"] || null,
-            password_salt: f["Password Salt"] || null,
-            reset_token: f["Reset Token"] || null,
-            reset_token_expires: f["Reset Token Expires"] || null,
-          });
-          inserted++;
-        } catch (rowErr) {
-          // Deliberately not including rowErr.message verbatim here if
-          // it could ever echo a value back — Postgres error messages
-          // for a unique-violation only include the column/constraint
-          // name, never the value, so this is safe, but kept explicit
-          // rather than assumed.
-          errors.push({ username, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableUsers.length,
-        inserted,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-
-  // One-time, pre-login-cutover step: unlike migrateUsers above (which
-  // only ever inserted NEW users, skipping anyone already present),
-  // this also UPDATES existing users whose credentials have changed in
-  // Airtable since the original migration — a password reset, a role
-  // change, anything. Needed because Login still reads from Airtable
-  // right now; the Postgres Users copy from the original migration is
-  // a one-time snapshot that could be stale by the time Login actually
-  // switches over. Same extra care as the original migration: the
-  // response never echoes a hash, salt, or token value, on any path.
-  if (req.query.resyncUsers === "true") {
-    if (!can(session.r, "manageUsers")) {
-      return res.status(403).json({ error: "Not permitted." });
-    }
-    if (req.query.confirm !== "true") {
-      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
-    }
-    try {
-      const { listAllRecords } = await import("../lib/airtableClient.js");
-      const { getByColumn, insert, update } = await import("../lib/postgresClient.js");
-
-      const usersTable = process.env.AIRTABLE_USERS_TABLE || "Users";
-      const airtableUsers = await listAllRecords(usersTable);
-
-      let inserted = 0, updated = 0, unchanged = 0, skipped = 0;
-      const errors = [];
-      const skipDetails = [];
-      const updatedUsernames = []; // usernames only — never the values that changed
-
-      for (const record of airtableUsers) {
-        const f = record.fields;
-        const username = (f["Username"] || "").trim();
-        const role = (f["Role"] || "").trim();
-        if (!username || !role) {
-          skipped++;
-          skipDetails.push({ recordId: record.id, reason: !username ? "no Username field set" : "no Role field set" });
-          continue;
-        }
-
-        const freshFields = {
-          username,
-          email: f["Email"] || null,
-          display_name: f["Display Name"] || null,
-          role,
-          password_hash: f["Password Hash"] || null,
-          password_salt: f["Password Salt"] || null,
-          reset_token: f["Reset Token"] || null,
-          reset_token_expires: f["Reset Token Expires"] || null,
-        };
-
-        try {
-          const existing = await getByColumn("users", "username", username);
-          if (!existing) {
-            await insert("users", freshFields);
-            inserted++;
-            continue;
-          }
-
-          // Compare every field that matters for authentication —
-          // update only if something actually changed, so a resync
-          // with nothing new to sync doesn't touch every row.
-          const changed = Object.keys(freshFields).some(
-            key => String(existing[key] ?? "") !== String(freshFields[key] ?? "")
-          );
-          if (changed) {
-            await update("users", existing.id, freshFields);
-            updated++;
-            updatedUsernames.push(username);
-          } else {
-            unchanged++;
-          }
-        } catch (rowErr) {
-          errors.push({ username, error: rowErr.message });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        totalInAirtable: airtableUsers.length,
-        inserted,
-        updated,
-        updatedUsernames,
-        unchanged,
-        skipped,
-        skipDetails,
-        errors,
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
     }
   }
 
@@ -1918,21 +624,21 @@ async function buildPeriodReport(req, res, days) {
     cutoff.setDate(cutoff.getDate() - days);
 
     const recent = records
-      .filter(r => new Date(r.fields["Timestamp"]) >= cutoff)
-      .sort((a, b) => new Date(b.fields["Timestamp"]) - new Date(a.fields["Timestamp"]));
+      .filter(r => new Date(r.timestamp) >= cutoff)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
     // Work order data — maintenance types worked and real status counts,
     // not just raw alert events. This is what actually makes the report
     // a summary of the period, not just a slice of recent alerts.
     const allWorkOrders = await fetchAllWorkOrdersForReport();
-    const workOrdersInPeriod = allWorkOrders.filter(r => r.fields["Created"] && new Date(r.fields["Created"]) >= cutoff);
+    const workOrdersInPeriod = allWorkOrders.filter(r => r.created && new Date(r.created) >= cutoff);
 
     // Build a lookup by WO ID so alerts (which embed "Work Order WO-xxx"
     // in their message text) can be matched back to real open/close
     // dates, not just the moment the alert itself fired.
     const woByWoId = {};
     for (const r of allWorkOrders) {
-      const woId = r.fields["WO ID"];
+      const woId = r.wo_id;
       if (woId) woByWoId[woId] = r;
     }
     function findLinkedWO(messageText) {
@@ -1942,47 +648,47 @@ async function buildPeriodReport(req, res, days) {
 
     const summary = {
       totalAlerts: recent.length,
-      byUrgency: countBy(recent, "Urgency"),
-      bySystem: countBy(recent, "System"),
+      byUrgency: countBy(recent, "urgency"),
+      bySystem: countBy(recent, "system"),
       // Full list, uncapped. Each alert now carries the open/close
       // dates of whatever work order it actually generated, found by
       // matching the WO ID embedded in the alert's own message text.
       alerts: recent.map(r => {
-        const linkedWO = findLinkedWO(r.fields["Messages"]);
+        const linkedWO = findLinkedWO(r.message);
         return {
-          assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
-          urgency: r.fields["Urgency"] || "",
-          location: r.fields["Location"] || "",
-          dateOpened: linkedWO ? linkedWO.fields["Created"] : r.fields["Timestamp"],
-          dateClosed: linkedWO && linkedWO.fields["Status"] === "Completed" ? linkedWO.fields["Completed Date"] : null,
+          assetName: r.asset_name || r.asset_id || "Unnamed",
+          urgency: r.urgency || "",
+          location: r.location || "",
+          dateOpened: linkedWO ? linkedWO.created : r.timestamp,
+          dateClosed: linkedWO && linkedWO.status === "Completed" ? linkedWO.completed_date : null,
         };
       }),
-      maintenanceTypes: countBy(workOrdersInPeriod, "Maintenance Type"),
+      maintenanceTypes: countBy(workOrdersInPeriod, "maintenance_type"),
       // Named, with real open/close dates per item — not just a name.
       maintenanceItemsByType: (() => {
         const grouped = {};
         for (const r of workOrdersInPeriod) {
-          const type = r.fields["Maintenance Type"] || "Unspecified";
+          const type = r.maintenance_type || "Unspecified";
           (grouped[type] = grouped[type] || []).push({
-            name: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
-            dateOpened: r.fields["Created"] || null,
-            dateClosed: r.fields["Status"] === "Completed" ? (r.fields["Completed Date"] || null) : null,
+            name: r.asset_name || r.asset_id || "Unnamed",
+            dateOpened: r.created || null,
+            dateClosed: r.status === "Completed" ? (r.completed_date || null) : null,
           });
         }
         return grouped;
       })(),
       totalCost: workOrdersInPeriod.reduce((sum, r) => {
-        const cost = r.fields["Cost (TZS)"];
-        return sum + (typeof cost === "number" ? cost : 0);
+        const cost = r.cost_tzs !== null ? Number(r.cost_tzs) : 0;
+        return sum + (typeof cost === "number" && !isNaN(cost) ? cost : 0);
       }, 0),
       workOrderStatus: {
-        completed: allWorkOrders.filter(r => r.fields["Status"] === "Completed" && r.fields["Completed Date"] && new Date(r.fields["Completed Date"]) >= cutoff).length,
-        open: allWorkOrders.filter(r => r.fields["Status"] === "Open").length,
-        inProgress: allWorkOrders.filter(r => r.fields["Status"] === "In Progress").length,
-        readyForReview: allWorkOrders.filter(r => r.fields["Status"] === "Ready for Review").length,
-        overdue: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "OVERDUE").length,
-        urgent: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "URGENT").length,
-        upcoming: allWorkOrders.filter(r => r.fields["Status"] !== "Completed" && r.fields["Urgency"] === "UPCOMING").length,
+        completed: allWorkOrders.filter(r => r.status === "Completed" && r.completed_date && new Date(r.completed_date) >= cutoff).length,
+        open: allWorkOrders.filter(r => r.status === "Open").length,
+        inProgress: allWorkOrders.filter(r => r.status === "In Progress").length,
+        readyForReview: allWorkOrders.filter(r => r.status === "Ready for Review").length,
+        overdue: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "OVERDUE").length,
+        urgent: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "URGENT").length,
+        upcoming: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "UPCOMING").length,
       },
       periodStart: cutoff.toISOString(),
       periodEnd: new Date().toISOString(),
@@ -1996,19 +702,19 @@ async function buildPeriodReport(req, res, days) {
 }
 
 async function fetchAllWorkOrdersForReport() {
-  const table = process.env.AIRTABLE_WORK_ORDERS_TABLE || "Work Orders";
-  return listAllRecords(table, { pageSize: 100 });
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("work_orders");
 }
 
 async function fetchAllLogRecords() {
-  const table = process.env.AIRTABLE_LOG_TABLE_NAME || "Alert Log";
-  return listAllRecords(table, { pageSize: 100 });
+  const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+  return pgListAllRecords("alert_log");
 }
 
 function countBy(records, field) {
   const counts = {};
   for (const r of records) {
-    const key = r.fields[field] || "Unknown";
+    const key = r[field] || "Unknown";
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
@@ -2096,12 +802,12 @@ async function handleStaffPerformance(req, res) {
     // Completed Date — a real, honest measure of turnaround speed.
     const closedBy = {};
     for (const r of workOrders) {
-      const person = r.fields["Closed By"];
-      if (!person || r.fields["Status"] !== "Completed") continue;
+      const person = r.closed_by;
+      if (!person || r.status !== "Completed") continue;
       if (!closedBy[person]) closedBy[person] = { count: 0, totalDays: 0 };
       closedBy[person].count += 1;
-      if (r.fields["Created"] && r.fields["Completed Date"]) {
-        const days = (new Date(r.fields["Completed Date"]) - new Date(r.fields["Created"])) / 86400000;
+      if (r.created && r.completed_date) {
+        const days = (new Date(r.completed_date) - new Date(r.created)) / 86400000;
         closedBy[person].totalDays += days;
       }
     }
@@ -2115,11 +821,11 @@ async function handleStaffPerformance(req, res) {
     // ended up rejected — a real signal on cost-estimating accuracy.
     const requestedBy = {};
     for (const r of workOrders) {
-      const person = r.fields["Procurement Requested By"];
+      const person = r.procurement_requested_by;
       if (!person) continue;
       if (!requestedBy[person]) requestedBy[person] = { total: 0, rejected: 0 };
       requestedBy[person].total += 1;
-      if (r.fields["Procurement Status"] === "Rejected") requestedBy[person].rejected += 1;
+      if (r.procurement_status === "Rejected") requestedBy[person].rejected += 1;
     }
     const procurement = Object.entries(requestedBy).map(([person, d]) => ({
       person,
@@ -2139,7 +845,7 @@ async function handleStaffPerformance(req, res) {
 
     // Escalation frequency — tracked by routed role, not by individual
     // person, since that's the granularity the data actually supports.
-    const escalationsByRole = countBy(workOrders.filter(r => r.fields["Escalation Sent"] === true), "Assigned Role");
+    const escalationsByRole = countBy(workOrders.filter(r => r.escalation_sent === true), "assigned_role");
 
     return res.status(200).json({ performance, procurement, pending, escalationsByRole });
   } catch (err) {
@@ -2165,38 +871,38 @@ function computePendingItems(workOrders, role) {
   const items = [];
   const describe = (r, why) => ({
     recordId: r.id,
-    woId: r.fields["WO ID"],
-    assetName: r.fields["Asset Name"] || r.fields["Asset ID"] || "Unnamed",
+    woId: r.wo_id,
+    assetName: r.asset_name || r.asset_id || "Unnamed",
     why,
   });
 
   if (role === "technician") {
     for (const r of workOrders) {
-      if (r.fields["Status"] === "Open" || r.fields["Status"] === "In Progress") {
-        items.push(describe(r, r.fields["Status"] === "Open" ? "Needs to be started" : "In progress"));
+      if (r.status === "Open" || r.status === "In Progress") {
+        items.push(describe(r, r.status === "Open" ? "Needs to be started" : "In progress"));
       }
     }
   } else if (["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(role)) {
     const myLabel = Object.entries(ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING).find(([, v]) => v === role)?.[0];
     for (const r of workOrders) {
-      if (r.fields["Status"] === "Ready for Review" && r.fields["Assigned Role"] === myLabel) {
+      if (r.status === "Ready for Review" && r.assigned_role === myLabel) {
         items.push(describe(r, "Waiting on your review to close"));
       }
-      if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.fields["Procurement Status"] === "Requested" && r.fields["Assigned Role"] === myLabel) {
+      if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.procurement_status === "Requested" && r.assigned_role === myLabel) {
         items.push(describe(r, "Procurement request awaiting your approval"));
       }
     }
   } else if (role === "procurement") {
     for (const r of workOrders) {
-      if (r.fields["Procurement Status"] === "Approved") {
+      if (r.procurement_status === "Approved") {
         items.push(describe(r, "Approved — awaiting payment and fulfillment"));
       }
     }
   } else if (role === "business_owner" || role === "system_admin") {
     for (const r of workOrders) {
-      if (r.fields["Status"] === "Ready for Review") items.push(describe(r, `Waiting on ${r.fields["Assigned Role"] || "someone"}'s review`));
-      if (r.fields["Procurement Status"] === "Requested") items.push(describe(r, "Procurement awaiting approval"));
-      if (r.fields["Procurement Status"] === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
+      if (r.status === "Ready for Review") items.push(describe(r, `Waiting on ${r.assigned_role || "someone"}'s review`));
+      if (r.procurement_status === "Requested") items.push(describe(r, "Procurement awaiting approval"));
+      if (r.procurement_status === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
     }
   }
   return items;
