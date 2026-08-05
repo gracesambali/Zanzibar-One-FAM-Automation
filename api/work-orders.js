@@ -735,13 +735,31 @@ export default async function handler(req, res) {
     // create-then-upload pattern already used for vendor proforma
     // attachments, since Airtable's upload endpoint needs an existing
     // record to attach to.
-    // KNOWN GAP, DELIBERATE: entirely about uploading a file to
-    // Airtable's content API — no longer applies now that Units live
-    // in Postgres. Clear error rather than a broken call or silent
-    // no-op, same pattern as every other upload function this cutover
-    // has hit.
+    // Uploading the signed contract to an existing unit — same
+    // store-path-sign-at-read pattern as every other file in this
+    // cutover.
     if (req.body && req.body.uploadUnitContract) {
-      return res.status(501).json({ error: "Contract uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done." });
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to upload a contract." });
+      }
+      const { unitId, filename, contentType, fileBase64 } = req.body;
+      if (!unitId || !filename || !fileBase64) {
+        return res.status(400).json({ error: "unitId, filename, and fileBase64 are required" });
+      }
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const contractPath = `units/${unitId}/contract-${filename}`;
+        await uploadFile(contractPath, fileBase64, contentType || "application/pdf");
+
+        const { update } = await import("../lib/postgresClient.js");
+        await update("units", unitId, { signed_contract_url: contractPath, signed_contract_filename: filename });
+
+        await appendUnitActivityLog(unitId, `📄 Signed contract uploaded by ${session.u} — ${filename}`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadUnitContract error:", err);
+        return res.status(500).json({ error: err.message });
+      }
     }
 
     // Tagging an asset to a tenant unit — same permission rule as
