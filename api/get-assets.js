@@ -1374,79 +1374,101 @@ export default async function handler(req, res) {
 }
 
 async function fetchAllRecords() {
-  const table = process.env.AIRTABLE_TABLE_NAME || "Components";
-  const allRecords = await listAllRecords(table, { pageSize: 100 });
-  return allRecords.map(normalizeRecord);
+  const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
+
+  const components = await pgListAllRecords("components");
+
+  // Compliance Documents lived inline on the Airtable record; in
+  // Postgres they're a separate child table (component_documents).
+  // One query for all documents, grouped in memory by component —
+  // avoids a separate query per asset, which would be slow once
+  // there are dozens of assets on every dashboard load.
+  const docsResult = await pgQuery("select * from component_documents");
+  const docsByComponent = {};
+  for (const doc of docsResult.rows) {
+    if (!docsByComponent[doc.component_id]) docsByComponent[doc.component_id] = [];
+    docsByComponent[doc.component_id].push(doc);
+  }
+
+  return components.map(row => normalizeRecord(row, docsByComponent[row.id] || []));
 }
 
-// Converts an Airtable record (with its field names) into the exact
-// object shape the dashboard's JS already expects (id, name, system,
-// klass, level, location, manufacturer, model, installDate, status,
-// criticality, lastService, nextService, lifespan, note).
-function normalizeRecord(record) {
-  const f = record.fields;
-
+// Converts a Postgres components row into the exact same object shape
+// the dashboard's JS has always expected (id, name, system, floor,
+// location, manufacturer, model, installDate, status, criticality,
+// lastService, nextService, lifespan, note, ...). Deliberately kept
+// as close as possible to the pre-migration Airtable version below,
+// field for field, so nothing downstream needs to change.
+function normalizeRecord(row, documents) {
   const depreciation = calculateCurrentValue({
-    acquisitionCost: f["Acquisition Cost (TZS)"],
-    residualValue: f["Residual Value (TZS)"],
-    economicLifeYears: Number(f["Expected Lifespan (Years)"]) || 15,
-    acquisitionDate: f["Install Date"],
+    acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
+    residualValue: row.residual_value_tzs !== null ? Number(row.residual_value_tzs) : undefined,
+    economicLifeYears: Number(row.expected_lifespan_years) || 15,
+    acquisitionDate: row.install_date,
   });
 
   return {
-    recordId: record.id,
-    id: f["Asset ID"] || "",
-    name: f["Name"] || "",
-    system: f["System"] || "",
-    floor: f["Floor/Level"] || "",
-    room: f["Room/Zone"] || "",
-    building: f["Building"] || "",
-    facility: f["Facility"] || "",
-    unit: f["Unit"] || "",
-    manufacturer: f["Manufacturer"] || "",
-    model: f["Model"] || "",
-    installDate: f["Install Date"] || "",
-    status: f["Status"] || "Good",           // Good / Poor / Critical (merged with old Condition)
-    criticality: f["Criticality"] || "Medium", // High / Medium / Low
-    lastService: f["Last Service"] || "",
-    nextService: f["Next Service Due"] || "",
-    lifespan: Number(f["Expected Lifespan (Years)"]) || 15,
-    note: f["Note"] || undefined,
-    active: f["Active"] !== false,
-    addedBy: f["Added By"] || "",
-    decommissionedBy: f["Decommissioned By"] || "",
+    recordId: row.id,
+    id: row.asset_id || "",
+    name: row.name || "",
+    system: row.system || "",
+    floor: row.floor_level || "",
+    room: row.room_zone || "",
+    building: row.building || "",
+    facility: row.facility || "",
+    unit: row.unit || "",
+    manufacturer: row.manufacturer || "",
+    model: row.model || "",
+    installDate: row.install_date || "",
+    status: row.status || "Good",           // Good / Poor / Critical (merged with old Condition)
+    criticality: row.criticality || "Medium", // High / Medium / Low
+    lastService: row.last_service || "",
+    nextService: row.next_service_due || "",
+    lifespan: Number(row.expected_lifespan_years) || 15,
+    note: row.note || undefined,
+    active: row.active !== false,
+    addedBy: row.added_by || "",
+    decommissionedBy: row.decommissioned_by || "",
 
     // Classification hierarchy (page 10 of the guideline)
-    nature: f["Asset Nature"] || "",
-    mobility: f["Mobility"] || "",
-    category: f["Asset Category"] || "",
+    nature: row.asset_nature || "",
+    mobility: row.mobility || "",
+    category: row.asset_category || "",
 
     // QR code target
-    qrTarget: f["Asset ID"] || "",
+    qrTarget: row.asset_id || "",
 
     // Cost & depreciation (stripped out upstream for non-finance roles)
-    acquisitionCost: f["Acquisition Cost (TZS)"] || null,
-    residualValue: f["Residual Value (TZS)"] || null,
+    // Note: previously `f["Acquisition Cost (TZS)"] || null`, which
+    // would have also turned a real value of exactly 0 into null —
+    // this version checks for null explicitly instead, a small
+    // accuracy improvement now that it's visible during conversion,
+    // not a deliberate behavior change being hidden.
+    acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : null,
+    residualValue: row.residual_value_tzs !== null ? Number(row.residual_value_tzs) : null,
     currentValue: depreciation.currentValue,
     annualDepreciation: depreciation.annualDepreciation,
     fullyDepreciated: depreciation.fullyDepreciated,
 
-    maintenanceIntervalDays: Number(f["Maintenance Interval (Days)"]) || 90,
+    maintenanceIntervalDays: Number(row.maintenance_interval_days) || 90,
 
     // Real compliance documents (Fire Safety Certificate, OSHA Licence,
     // etc.) — actual files the client has uploaded, not system-generated.
-    documents: (f["Compliance Documents"] || []).map(doc => ({
-      filename: doc.filename, url: doc.url, size: doc.size, type: doc.type,
+    // size/type aren't captured in the Postgres schema (Airtable's
+    // attachment objects carried them, component_documents doesn't) —
+    // a known, minor gap, null here rather than guessed.
+    documents: documents.map(doc => ({
+      filename: doc.filename, url: doc.url, size: null, type: null,
     })),
-    documentsUploadedBy: f["Documents Last Uploaded By"] || "",
-    documentsUploadedDate: f["Documents Last Uploaded Date"] || "",
-    needsTechnicalReview: f["Needs Technical Review"] === true,
-    nameplatePhoto: (f["Nameplate Photo"] || [])[0] ? { url: f["Nameplate Photo"][0].url, filename: f["Nameplate Photo"][0].filename } : null,
+    documentsUploadedBy: row.documents_uploaded_by || "",
+    documentsUploadedDate: row.documents_uploaded_date || "",
+    needsTechnicalReview: row.needs_technical_review === true,
+    nameplatePhoto: row.nameplate_photo_url ? { url: row.nameplate_photo_url, filename: row.nameplate_photo_filename } : null,
 
     // Warranty — a separate clock from depreciation. An asset can still
     // be worth a lot on paper while its manufacturer warranty already
     // lapsed, meaning repairs that could've been free now aren't.
-    warrantyExpiryDate: f["Warranty Expiry Date"] || null,
+    warrantyExpiryDate: row.warranty_expiry_date || null,
   };
 }
 
