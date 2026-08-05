@@ -683,9 +683,56 @@ let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
 // only affects how it's DISPLAYED. Rates fetched once at init from a
 // live service, not hardcoded, so this stays current day to day.
 let currentCurrency = 'TZS';
-let exchangeRates = { USD: null, BWP: null };
+let exchangeRates = {}; // populated live from /api/get-assets?exchangeRates=true — every currency the rate service supports
 
-// The one shared formatter every cost display in the app should call —
+// Maps each currency code to its country/region name, so the switcher
+// can be searched by country ("Kenya") as well as by code ("KES") —
+// the rate service itself only ever returns bare codes, with no
+// country name attached.
+const CURRENCY_COUNTRIES = {
+  AED: "United Arab Emirates", AFN: "Afghanistan", ALL: "Albania", AMD: "Armenia",
+  ANG: "Curaçao & Sint Maarten", AOA: "Angola", ARS: "Argentina", AUD: "Australia",
+  AWG: "Aruba", AZN: "Azerbaijan", BAM: "Bosnia & Herzegovina", BBD: "Barbados",
+  BDT: "Bangladesh", BGN: "Bulgaria", BHD: "Bahrain", BIF: "Burundi",
+  BMD: "Bermuda", BND: "Brunei", BOB: "Bolivia", BRL: "Brazil",
+  BSD: "Bahamas", BTN: "Bhutan", BWP: "Botswana", BYN: "Belarus",
+  BZD: "Belize", CAD: "Canada", CDF: "DR Congo", CHF: "Switzerland",
+  CLP: "Chile", CNY: "China", COP: "Colombia", CRC: "Costa Rica",
+  CUP: "Cuba", CVE: "Cabo Verde", CZK: "Czechia", DJF: "Djibouti",
+  DKK: "Denmark", DOP: "Dominican Republic", DZD: "Algeria", EGP: "Egypt",
+  ERN: "Eritrea", ETB: "Ethiopia", EUR: "Eurozone", FJD: "Fiji",
+  FKP: "Falkland Islands", GBP: "United Kingdom", GEL: "Georgia", GGP: "Guernsey",
+  GHS: "Ghana", GIP: "Gibraltar", GMD: "Gambia", GNF: "Guinea",
+  GTQ: "Guatemala", GYD: "Guyana", HKD: "Hong Kong", HNL: "Honduras",
+  HRK: "Croatia", HTG: "Haiti", HUF: "Hungary", IDR: "Indonesia",
+  ILS: "Israel", IMP: "Isle of Man", INR: "India", IQD: "Iraq",
+  IRR: "Iran", ISK: "Iceland", JEP: "Jersey", JMD: "Jamaica",
+  JOD: "Jordan", JPY: "Japan", KES: "Kenya", KGS: "Kyrgyzstan",
+  KHR: "Cambodia", KID: "Kiribati", KMF: "Comoros", KRW: "South Korea",
+  KWD: "Kuwait", KYD: "Cayman Islands", KZT: "Kazakhstan", LAK: "Laos",
+  LBP: "Lebanon", LKR: "Sri Lanka", LRD: "Liberia", LSL: "Lesotho",
+  LYD: "Libya", MAD: "Morocco", MDL: "Moldova", MGA: "Madagascar",
+  MKD: "North Macedonia", MMK: "Myanmar", MNT: "Mongolia", MOP: "Macau",
+  MRU: "Mauritania", MUR: "Mauritius", MVR: "Maldives", MWK: "Malawi",
+  MXN: "Mexico", MYR: "Malaysia", MZN: "Mozambique", NAD: "Namibia",
+  NGN: "Nigeria", NIO: "Nicaragua", NOK: "Norway", NPR: "Nepal",
+  NZD: "New Zealand", OMR: "Oman", PAB: "Panama", PEN: "Peru",
+  PGK: "Papua New Guinea", PHP: "Philippines", PKR: "Pakistan", PLN: "Poland",
+  PYG: "Paraguay", QAR: "Qatar", RON: "Romania", RSD: "Serbia",
+  RUB: "Russia", RWF: "Rwanda", SAR: "Saudi Arabia", SBD: "Solomon Islands",
+  SCR: "Seychelles", SDG: "Sudan", SEK: "Sweden", SGD: "Singapore",
+  SHP: "Saint Helena", SLE: "Sierra Leone", SLL: "Sierra Leone (old)", SOS: "Somalia",
+  SRD: "Suriname", SSP: "South Sudan", STN: "São Tomé & Príncipe", SYP: "Syria",
+  SZL: "Eswatini", THB: "Thailand", TJS: "Tajikistan", TMT: "Turkmenistan",
+  TND: "Tunisia", TOP: "Tonga", TRY: "Turkey", TTD: "Trinidad & Tobago",
+  TVD: "Tuvalu", TWD: "Taiwan", TZS: "Tanzania", UAH: "Ukraine",
+  UGX: "Uganda", USD: "United States", UYU: "Uruguay", UZS: "Uzbekistan",
+  VES: "Venezuela", VND: "Vietnam", VUV: "Vanuatu", WST: "Samoa",
+  XAF: "Central African CFA (CEMAC)", XCD: "Eastern Caribbean", XDR: "IMF Special Drawing Rights", XOF: "West African CFA (UEMOA)",
+  XPF: "French Pacific (CFP franc)", YER: "Yemen", ZAR: "South Africa", ZMW: "Zambia",
+  ZWL: "Zimbabwe",
+};
+
 // converts and labels correctly for whichever currency is currently
 // selected. Amount is always in TZS (the real stored value); this
 // never mutates the underlying data, only the presentation.
@@ -707,17 +754,104 @@ function setCurrency(value) {
   }
 }
 
-// Reusable compact switcher — dropped into whichever panel actually
+// Reusable searchable switcher — dropped into whichever panel actually
 // shows prices, rather than sitting alone in the generic header
 // disconnected from any real numbers. Same global state either way,
 // so setting it in one place is reflected everywhere costs appear.
-function currencySwitcherHtml() {
-  return `<select onchange="setCurrency(this.value)" style="font-size:11px;font-weight:600;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">
-    <option value="TZS"${currentCurrency==='TZS'?' selected':''}>TZS</option>
-    <option value="USD"${currentCurrency==='USD'?' selected':''}>USD</option>
-    <option value="BWP"${currentCurrency==='BWP'?' selected':''}>BWP</option>
-  </select>`;
+// instanceId keeps each rendered copy's dropdown/search elements
+// distinct in the DOM (there are two on screen at once), while every
+// copy still reads and writes the one shared currentCurrency.
+function currencySwitcherHtml(instanceId) {
+  return `<div class="currency-switcher" style="position:relative;display:inline-block">
+    <button type="button" onclick="toggleCurrencyDropdown('${instanceId}')" style="font-size:11px;font-weight:600;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+      ${currentCurrency}<span style="font-size:8px;opacity:0.6">\u25BE</span>
+    </button>
+    <div id="curDropdown-${instanceId}" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;width:230px;max-height:300px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.14);z-index:1000;padding:8px;overflow:hidden;flex-direction:column">
+      <input type="text" placeholder="Search currency or country\u2026" oninput="filterCurrencyList('${instanceId}', this.value)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:6px;flex:0 0 auto">
+      <div id="curList-${instanceId}" style="overflow-y:auto;flex:1 1 auto"></div>
+    </div>
+  </div>`;
 }
+
+// Renders the currency list inside one dropdown instance — TZS and USD
+// pinned at the top (still searchable, not exempt from filtering),
+// everything else alphabetical by code below a divider. Search matches
+// against both the code itself and the country name, since a code
+// alone ("KES") isn't something everyone can search for by heart.
+function renderCurrencyList(instanceId, query) {
+  const listEl = document.getElementById('curList-' + instanceId);
+  if (!listEl) return;
+  const q = (query || '').trim().toLowerCase();
+
+  const pinned = ['TZS', 'USD'];
+  const knownCodes = new Set(['TZS', ...Object.keys(exchangeRates || {})]);
+  const otherCodes = [...knownCodes].filter(c => !pinned.includes(c)).sort();
+
+  function matches(code) {
+    if (!q) return true;
+    const country = (CURRENCY_COUNTRIES[code] || '').toLowerCase();
+    return code.toLowerCase().includes(q) || country.includes(q);
+  }
+
+  function itemHtml(code) {
+    const country = CURRENCY_COUNTRIES[code] || '';
+    const selected = code === currentCurrency;
+    return `<div onclick="selectCurrencyFromDropdown('${instanceId}','${code}')"
+      style="padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;${selected ? 'background:var(--navy);color:#fff' : 'color:var(--navy)'}"
+      onmouseover="if(${selected ? 'false' : 'true'})this.style.background='#F1F4F9'"
+      onmouseout="if(${selected ? 'false' : 'true'})this.style.background='transparent'">
+      <span style="font-weight:600;flex:0 0 auto">${code}</span>
+      <span style="opacity:0.7;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right">${country}</span>
+    </div>`;
+  }
+
+  const pinnedMatches = pinned.filter(matches);
+  const otherMatches = otherCodes.filter(matches);
+
+  let html = '';
+  if (pinnedMatches.length) html += pinnedMatches.map(itemHtml).join('');
+  if (pinnedMatches.length && otherMatches.length) html += `<div style="border-top:1px solid var(--border);margin:6px 0"></div>`;
+  if (otherMatches.length) {
+    html += otherMatches.map(itemHtml).join('');
+  } else if (!pinnedMatches.length) {
+    html += `<div style="padding:12px 8px;color:#9CA3AF;font-size:12px;text-align:center">No matching currency or country</div>`;
+  }
+  listEl.innerHTML = html;
+}
+
+function toggleCurrencyDropdown(instanceId) {
+  // Only one dropdown open at a time — close any other instance first.
+  document.querySelectorAll('[id^="curDropdown-"]').forEach(el => {
+    if (el.id !== 'curDropdown-' + instanceId) el.style.display = 'none';
+  });
+  const dropdown = document.getElementById('curDropdown-' + instanceId);
+  if (!dropdown) return;
+  const willOpen = dropdown.style.display !== 'flex';
+  dropdown.style.display = willOpen ? 'flex' : 'none';
+  if (willOpen) {
+    renderCurrencyList(instanceId, '');
+    const input = dropdown.querySelector('input');
+    if (input) { input.value = ''; setTimeout(function () { input.focus(); }, 0); }
+  }
+}
+
+function filterCurrencyList(instanceId, query) {
+  renderCurrencyList(instanceId, query);
+}
+
+function selectCurrencyFromDropdown(instanceId, code) {
+  setCurrency(code);
+  const dropdown = document.getElementById('curDropdown-' + instanceId);
+  if (dropdown) dropdown.style.display = 'none';
+}
+
+// Closes any open currency dropdown when clicking anywhere else on the
+// page — otherwise it would stay open until another currency panel
+// happens to re-render.
+document.addEventListener('click', function (e) {
+  if (e.target.closest('.currency-switcher')) return;
+  document.querySelectorAll('[id^="curDropdown-"]').forEach(el => { el.style.display = 'none'; });
+});
 
 function rerenderActiveTab() {
   const active = document.querySelector('.tab-btn.active');
@@ -1055,7 +1189,7 @@ function renderDashboard() {
     html += `<div class="dash-panel" style="margin-top:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
         <div class="dash-panel-title" style="margin-bottom:0">Maintenance Cost Overview</div>
-        ${currencySwitcherHtml()}
+        ${currencySwitcherHtml('dashboard')}
       </div>
       <div id="costOverviewContent" style="padding:8px 0;font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
@@ -1416,7 +1550,7 @@ function showDetail(idx) {
     html += `<div id="maintCostSection" style="padding:16px 24px;border-top:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div style="font-size:12px;font-weight:600;color:var(--navy)">Maintenance Cost Summary</div>
-        ${currencySwitcherHtml()}
+        ${currencySwitcherHtml('detail')}
       </div>
       <div id="maintCostContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
@@ -7042,7 +7176,7 @@ async function loadAssetsAndInit() {
     // regardless of whether the conversion service is reachable.
     if (ratesResp.ok) {
       const ratesData = await ratesResp.json();
-      exchangeRates = { USD: ratesData.tzsToUsd, BWP: ratesData.tzsToBwp };
+      exchangeRates = ratesData.rates || {};
     }
 
     // Work orders — non-fatal if this fails (dashboard still renders, just with empty WO data)

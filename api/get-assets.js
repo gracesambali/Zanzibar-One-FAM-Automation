@@ -404,8 +404,10 @@ async function handleGetExchangeRates(req, res) {
 
     return res.status(200).json({
       base: "TZS",
-      tzsToUsd: data.rates["USD"] || null,
-      tzsToBwp: data.rates["BWP"] || null,
+      // Full set now, not just USD/BWP — the currency switcher shows
+      // every currency the rate service supports (effectively every
+      // real-world currency), searchable by country.
+      rates: data.rates,
       lastUpdated: data.time_last_update_utc || null,
       attribution: "Rates by exchangerate-api.com",
     });
