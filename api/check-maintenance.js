@@ -77,11 +77,10 @@ export default async function handler(req, res) {
 
       const assetId = f.asset_id || "";
       const daysUntil = daysBetween(new Date(), new Date(dueDateRaw));
-      // Local, file-scoped check rather than the shared
-      // lib/workorders.js findOpenWorkOrder — that shared helper is
-      // still Airtable-based, used by 3 files not yet converted
-      // (webhook-trigger.js, demo-trigger.js, run-real-test.js).
-      // Changing its return shape now would silently break them.
+      // Local, file-scoped copy of the same check now in
+      // lib/workorders.js's findOpenWorkOrder (converted after this
+      // file was) — left duplicated rather than refactored to import
+      // it, since this local version is already tested and working.
       // Uses the same partial index (idx_work_orders_open_by_asset)
       // built specifically for this query shape.
       const { query: pgQuery } = await import("../lib/postgresClient.js");
