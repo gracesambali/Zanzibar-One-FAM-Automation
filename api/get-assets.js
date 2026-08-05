@@ -1436,7 +1436,11 @@ async function fetchAllRecords() {
     docsByComponent[doc.component_id].push(doc);
   }
 
-  return components.map(row => normalizeRecord(row, docsByComponent[row.id] || []));
+  // Signing is a real network call per asset (a fresh signed URL,
+  // never a stored one — see the comment on nameplatePhoto below) —
+  // run them all in parallel rather than one at a time, or a
+  // dashboard load with many assets would be slow.
+  return Promise.all(components.map(row => normalizeRecord(row, docsByComponent[row.id] || [])));
 }
 
 // Converts a Postgres components row into the exact same object shape
@@ -1445,13 +1449,30 @@ async function fetchAllRecords() {
 // lastService, nextService, lifespan, note, ...). Deliberately kept
 // as close as possible to the pre-migration Airtable version below,
 // field for field, so nothing downstream needs to change.
-function normalizeRecord(row, documents) {
+async function normalizeRecord(row, documents) {
   const depreciation = calculateCurrentValue({
     acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
     residualValue: row.residual_value_tzs !== null ? Number(row.residual_value_tzs) : undefined,
     economicLifeYears: Number(row.expected_lifespan_years) || 15,
     acquisitionDate: row.install_date,
   });
+
+  // The nameplate_photo_url column stores a storage PATH, not a URL —
+  // signed URLs expire, so a fresh one is generated here on every
+  // read rather than trusting whatever was signed at upload time.
+  // Failing to sign (storage misconfigured, network hiccup) shouldn't
+  // break the whole asset list — falls back to null, same as "no
+  // photo," logged but not thrown.
+  let nameplatePhoto = null;
+  if (row.nameplate_photo_url) {
+    try {
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+      const url = await getSignedUrlSafe(row.nameplate_photo_url);
+      if (url) nameplatePhoto = { url, filename: row.nameplate_photo_filename };
+    } catch (err) {
+      console.error("normalizeRecord: could not sign nameplate photo URL for", row.asset_id, err.message);
+    }
+  }
 
   return {
     recordId: row.id,
@@ -1509,7 +1530,7 @@ function normalizeRecord(row, documents) {
     documentsUploadedBy: row.documents_uploaded_by || "",
     documentsUploadedDate: row.documents_uploaded_date || "",
     needsTechnicalReview: row.needs_technical_review === true,
-    nameplatePhoto: row.nameplate_photo_url ? { url: row.nameplate_photo_url, filename: row.nameplate_photo_filename } : null,
+    nameplatePhoto,
 
     // Warranty — a separate clock from depreciation. An asset can still
     // be worth a lot on paper while its manufacturer warranty already

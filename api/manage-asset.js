@@ -122,22 +122,35 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
       throw new Error(`Asset create failed: ${e.message}`);
     }
 
-    // KNOWN GAP, DELIBERATE: nameplate photo upload previously went
-    // through Airtable's content API, which attaches a file to an
-    // existing Airtable record. That mechanism no longer applies now
-    // that assets are created in Postgres — there's no Airtable
-    // record to attach to. File storage (photos, documents) needs its
-    // own solution (Supabase Storage is the natural fit) before this
-    // can be wired up for real. Not silently dropped: if a photo was
-    // submitted, the response says so explicitly rather than pretending
-    // it was saved.
-    const photoSkipped = !!(a.nameplatePhotoBase64 && a.nameplatePhotoFilename);
+    // Nameplate photo — a non-technical person can photograph the
+    // physical label instead of needing to correctly transcribe
+    // technical specs they may not understand. Uploaded after creation
+    // since the storage path is scoped under the new record's own id.
+    // The column stores the storage PATH, not a URL — signed URLs
+    // expire, so a fresh one is generated wherever this photo is
+    // actually displayed (see get-assets.js's normalizeRecord), not
+    // once here and left to go stale.
+    let photoFailed = false;
+    if (a.nameplatePhotoBase64 && a.nameplatePhotoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const photoPath = `components/${created.id}/nameplate-${a.nameplatePhotoFilename}`;
+        await uploadFile(photoPath, a.nameplatePhotoBase64, a.nameplatePhotoContentType || "image/jpeg");
+        const { update } = await import("../lib/postgresClient.js");
+        await update("components", created.id, { nameplate_photo_url: photoPath, nameplate_photo_filename: a.nameplatePhotoFilename });
+      } catch (photoErr) {
+        // Non-fatal — the asset itself was created successfully; a
+        // failed photo upload shouldn't fail the whole request.
+        console.error("Nameplate photo upload error:", photoErr);
+        photoFailed = true;
+      }
+    }
 
     return res.status(200).json({
       success: true,
       assetId,
       needsTechnicalReview: needsReview,
-      ...(photoSkipped ? { warning: "Asset created, but the nameplate photo was NOT saved — photo/document storage isn't wired up yet on the new database. This needs to be added before uploads work again." } : {}),
+      ...(photoFailed ? { warning: "Asset created, but the nameplate photo failed to upload. You can add it later from the asset's edit page." } : {}),
     });
   } catch (err) {
     console.error("manage-asset POST error:", err);
