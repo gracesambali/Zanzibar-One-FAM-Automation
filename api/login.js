@@ -54,24 +54,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Username and password required" });
   }
 
-  // Real accounts, checked first — Airtable Users table, hashed
+  // Real accounts, checked first — Postgres users table, hashed
   // passwords, salted per user.
   try {
     const user = await findUserByUsername(username);
     if (user) {
-      const f = user.fields;
-      if (!f["Password Hash"]) {
+      if (!user.password_hash) {
         return res.status(401).json({ error: "No password set yet for this account. Use \u201cSet / change password\u201d on the login page." });
       }
-      if (!verifyPassword(password, f["Password Hash"], f["Password Salt"])) {
+      if (!verifyPassword(password, user.password_hash, user.password_salt)) {
         return res.status(401).json({ error: "Incorrect username or password" });
       }
-      const role = f["Role"];
+      const role = user.role;
       setSessionCookie(res, username, role);
       return res.status(200).json({ success: true, role, permissions: ROLES[role] });
     }
   } catch (err) {
-    console.error("Airtable user lookup failed, falling back to legacy credentials:", err);
+    console.error("Database user lookup failed, falling back to legacy credentials:", err);
   }
 
   // --- TEMPORARY legacy fallback --------------------------------------
@@ -129,8 +128,8 @@ async function handleRequestPasswordReset(req, res) {
 
     const token = generateResetToken();
     const expires = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000).toISOString();
-    await updateUserFields(user.id, { "Reset Token": token, "Reset Token Expires": expires });
-    await sendResetEmail(user.fields["Email"], user.fields["Display Name"] || user.fields["Username"], token);
+    await updateUserFields(user.id, { reset_token: token, reset_token_expires: expires });
+    await sendResetEmail(user.email, user.display_name || user.username, token);
 
     return res.status(200).json(GENERIC);
   } catch (err) {
@@ -151,17 +150,20 @@ async function handleConfirmPasswordReset(req, res) {
     const user = await findUserByResetToken(token);
     if (!user) return res.status(400).json({ error: "This link is invalid or has already been used." });
 
-    const expires = user.fields["Reset Token Expires"];
+    const expires = user.reset_token_expires;
     if (!expires || new Date(expires).getTime() < Date.now()) {
       return res.status(400).json({ error: "This link has expired \u2014 request a new one." });
     }
 
     const { hash, salt } = hashPassword(newPassword);
     await updateUserFields(user.id, {
-      "Password Hash": hash,
-      "Password Salt": salt,
-      "Reset Token": "",
-      "Reset Token Expires": "",
+      password_hash: hash,
+      password_salt: salt,
+      // null, not an empty string — findUserByResetToken's query
+      // relies on SQL's "NULL never equals anything" behavior so a
+      // cleared token can never accidentally match a lookup again.
+      reset_token: null,
+      reset_token_expires: null,
     });
 
     return res.status(200).json({ success: true });
