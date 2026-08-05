@@ -892,18 +892,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // KNOWN GAP, DELIBERATE — bigger than the usual file-storage gap:
-    // this wasn't just an upload. Uploading here is what triggered
-    // Airtable's own AI field type to automatically read the PDF and
-    // extract Total Cost, VAT Status, and a Summary onto the response
-    // row. That's an Airtable-native feature with no Postgres
-    // equivalent at all — file storage alone won't bring this back;
-    // replicating it needs a real document-extraction step built
-    // separately (e.g. calling an AI API directly on the uploaded
-    // file). Worth flagging to Grace specifically, not just folded
-    // into the general storage gap.
+    // Attaching the actual proforma file to a response row already
+    // created above. Storage-only now, not the full original feature:
+    // uploading here used to also trigger Airtable's own AI field type
+    // to automatically read the PDF and extract Total Cost, VAT
+    // Status, and a Summary onto the response row. That was an
+    // Airtable-native feature with no Postgres equivalent — the file
+    // now saves and is viewable, but total_cost_ai/vat_status_ai/
+    // summary_ai stay whatever they already were (null, for anything
+    // uploaded through this path) unless entered by hand elsewhere.
+    // Rebuilding the automatic extraction is its own separate feature,
+    // not something storage alone restores.
     if (req.body && req.body.uploadProcurementResponseAttachment) {
-      return res.status(501).json({ error: "Vendor quote uploads aren't available right now — file storage is being migrated to the new database, and the automatic cost/VAT extraction from the PDF needs to be rebuilt separately once it is." });
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can attach a vendor quote." });
+      }
+      const { responseId, filename, contentType, fileBase64 } = req.body;
+      if (!responseId || !filename || !fileBase64) {
+        return res.status(400).json({ error: "responseId, filename, and fileBase64 are required" });
+      }
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const attachmentPath = `procurement-responses/${responseId}/${filename}`;
+        await uploadFile(attachmentPath, fileBase64, contentType || "application/pdf");
+
+        const { update } = await import("../lib/postgresClient.js");
+        await update("procurement_responses", responseId, { proforma_attachment_url: attachmentPath, proforma_attachment_filename: filename });
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadProcurementResponseAttachment error:", err);
+        return res.status(500).json({ error: err.message });
+      }
     }
 
     // Marking the winning quote — single-select in effect: choosing one
@@ -1658,20 +1679,30 @@ async function advanceAssetNextService(assetId) {
 async function handleGetProcurementResponses(req, res, woId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
 
     const result = await pgQuery("select * from procurement_responses where wo_id = $1", [woId])
       .catch(() => { throw new Error("Could not load vendor quotes"); });
 
-    const responses = result.rows.map(r => ({
-      id: r.id,
-      vendorName: r.vendor_name || "",
-      attachmentUrl: r.proforma_attachment_url || null,
-      attachmentFilename: r.proforma_attachment_filename || null,
-      totalCost: r.total_cost_ai !== null ? Number(r.total_cost_ai) : null,
-      vatStatus: r.vat_status_ai || "",
-      summary: r.summary_ai || "",
-      chosen: !!r.chosen,
-    })).sort((a, b) => (a.totalCost ?? Infinity) - (b.totalCost ?? Infinity));
+    const responses = await Promise.all(result.rows.map(async r => {
+      let attachmentUrl = null;
+      try {
+        attachmentUrl = await getSignedUrlSafe(r.proforma_attachment_url);
+      } catch (err) {
+        console.error("handleGetProcurementResponses: could not sign attachment for", r.vendor_name, err.message);
+      }
+      return {
+        id: r.id,
+        vendorName: r.vendor_name || "",
+        attachmentUrl,
+        attachmentFilename: r.proforma_attachment_filename || null,
+        totalCost: r.total_cost_ai !== null ? Number(r.total_cost_ai) : null,
+        vatStatus: r.vat_status_ai || "",
+        summary: r.summary_ai || "",
+        chosen: !!r.chosen,
+      };
+    }));
+    responses.sort((a, b) => (a.totalCost ?? Infinity) - (b.totalCost ?? Infinity));
 
     return res.status(200).json({ responses });
   } catch (err) {
