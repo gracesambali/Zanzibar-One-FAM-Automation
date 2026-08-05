@@ -118,6 +118,8 @@ export default async function handler(req, res) {
       const records = await fetchAllWorkOrders();
       const workOrders = await Promise.all(records.map(async r => {
         const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+        const { signChatLogAttachments } = await import("../lib/storageClient.js");
+        const signedChatLog = await signChatLogAttachments(r.chat_log || []);
         return {
           id: r.id,
           woId: r.wo_id || "",
@@ -140,7 +142,7 @@ export default async function handler(req, res) {
           // same shape the frontend already expects.
           checklistProgress: JSON.stringify(r.checklist_progress || {}),
           activityLog: JSON.stringify(r.activity_log || []),
-          chatLog: JSON.stringify(r.chat_log || []),
+          chatLog: JSON.stringify(signedChatLog),
           chatParticipants: JSON.stringify(r.chat_participants || []),
           chatReadReceipts: JSON.stringify(r.chat_read_receipts || {}),
           assignedRole: r.assigned_role || "",
@@ -360,23 +362,25 @@ export default async function handler(req, res) {
       const { recordId, text, attachmentBase64, attachmentFilename, attachmentContentType } = req.body;
       if (!recordId) return res.status(400).json({ error: "recordId required" });
       if (!text && !attachmentBase64) return res.status(400).json({ error: "A message needs text or an attachment" });
-      // KNOWN GAP, DELIBERATE: attachment uploads previously went
-      // through Airtable's content API — no longer applies now that
-      // Work Orders live in Postgres. Text-only messages still work
-      // completely; an attachment-only message (no text) has nothing
-      // left to save, so it's rejected clearly rather than silently
-      // dropped.
-      if (attachmentBase64 && !text) {
-        return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
-      }
 
       try {
         const { getById, update } = await import("../lib/postgresClient.js");
+
+        // Upload first, if there's a file — the message entry just
+        // references the resulting path (signed into a real URL fresh
+        // on every read, not stored as a URL — see storageClient.js).
+        let attachmentPath = null;
+        if (attachmentBase64) {
+          const { uploadFile } = await import("../lib/storageClient.js");
+          attachmentPath = `work-orders/${recordId}/chat/${Date.now()}-${attachmentFilename || "file"}`;
+          await uploadFile(attachmentPath, attachmentBase64, attachmentContentType || "application/octet-stream");
+        }
 
         const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
 
         const chatLog = Array.isArray(woData.chat_log) ? woData.chat_log : [];
         const entry = { text: text || "", by: session.u, at: new Date().toISOString() };
+        if (attachmentPath) { entry.attachmentPath = attachmentPath; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
         chatLog.push(entry);
 
         // Sending a message means you've obviously seen everything up
@@ -388,12 +392,10 @@ export default async function handler(req, res) {
         await update("work_orders", recordId, { chat_log: JSON.stringify(chatLog), chat_read_receipts: JSON.stringify(readReceipts) })
           .catch(() => { throw new Error("Could not save chat message"); });
 
-        return res.status(200).json({
-          success: true,
-          chatLog,
-          chatReadReceipts: readReceipts,
-          ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet." } : {}),
-        });
+        const { signChatLogAttachments } = await import("../lib/storageClient.js");
+        const signedChatLog = await signChatLogAttachments(chatLog);
+
+        return res.status(200).json({ success: true, chatLog: signedChatLog, chatReadReceipts: readReceipts });
       } catch (err) {
         console.error("addChatMessage error:", err);
         return res.status(500).json({ error: err.message });
@@ -784,29 +786,30 @@ export default async function handler(req, res) {
       if ((!message || !message.trim()) && !attachmentBase64) {
         return res.status(400).json({ error: "A message needs text or an attachment" });
       }
-      // KNOWN GAP, DELIBERATE: same file-storage gap as every other
-      // attachment path this cutover has hit. Text-only messages still
-      // work completely.
-      if (attachmentBase64 && (!message || !message.trim())) {
-        return res.status(501).json({ error: "Attachments aren't available right now — file storage is being migrated. Please send your message as text for now." });
-      }
       try {
         const { getById, update } = await import("../lib/postgresClient.js");
+
+        let attachmentPath = null;
+        if (attachmentBase64) {
+          const { uploadFile } = await import("../lib/storageClient.js");
+          attachmentPath = `units/${unitId}/chat/${Date.now()}-${attachmentFilename || "file"}`;
+          await uploadFile(attachmentPath, attachmentBase64, attachmentContentType || "application/octet-stream");
+        }
 
         const unitData = await getById("units", unitId).catch(() => { throw new Error("Could not read unit"); });
 
         const chatLog = Array.isArray(unitData.chat_log) ? unitData.chat_log : [];
         const entry = { from: "pm", senderName: session.u, message: (message || "").trim(), at: new Date().toISOString() };
+        if (attachmentPath) { entry.attachmentPath = attachmentPath; entry.attachmentFilename = attachmentFilename || ""; entry.attachmentType = attachmentContentType || ""; }
         chatLog.push(entry);
 
         await update("units", unitId, { chat_log: JSON.stringify(chatLog) })
           .catch(() => { throw new Error("Could not save message"); });
 
-        return res.status(200).json({
-          success: true,
-          chatLog,
-          ...(attachmentBase64 ? { warning: "Your message was sent, but the attachment was NOT saved — file storage isn't wired up yet." } : {}),
-        });
+        const { signChatLogAttachments } = await import("../lib/storageClient.js");
+        const signedChatLog = await signChatLogAttachments(chatLog);
+
+        return res.status(200).json({ success: true, chatLog: signedChatLog });
       } catch (err) {
         console.error("sendUnitChatMessage error:", err);
         return res.status(500).json({ error: err.message });
@@ -1692,6 +1695,8 @@ async function handleMaintenanceReport(req, res) {
     if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.created && new Date(r.created) <= d); }
     const workOrders = await Promise.all(filtered.map(async r => {
       const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+      const { signChatLogAttachments } = await import("../lib/storageClient.js");
+      const signedChatLog = await signChatLogAttachments(r.chat_log || []);
       return {
       woId: r.wo_id || "", assetId: r.asset_id || "",
       assetName: r.asset_name || "", system: r.system || "",
@@ -1701,7 +1706,7 @@ async function handleMaintenanceReport(req, res) {
       cost: r.cost_tzs !== null ? Number(r.cost_tzs) : null,
       costEditedBy: r.cost_edited_by || "", costEditedDate: r.cost_edited_date || "",
       checklistProgress: JSON.stringify(r.checklist_progress || {}), activityLog: JSON.stringify(r.activity_log || []),
-      chatLog: JSON.stringify(r.chat_log || []), chatParticipants: JSON.stringify(r.chat_participants || []),
+      chatLog: JSON.stringify(signedChatLog), chatParticipants: JSON.stringify(r.chat_participants || []),
       chatReadReceipts: JSON.stringify(r.chat_read_receipts || {}), assignedRole: r.assigned_role || "",
       assignedRoleSetBy: r.assigned_role_set_by || "", building: r.building || "", assignedTechnician: r.assigned_technician || "",
       assignedTechnicianSetBy: r.assigned_technician_set_by || "", unit: r.unit || "", nonAssetConfirmed: r.non_asset_confirmed || false,
