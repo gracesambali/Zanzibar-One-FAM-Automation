@@ -505,12 +505,13 @@ export default async function handler(req, res) {
 
     const { woId, recordId } = await createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole);
 
-    // KNOWN GAP, DELIBERATE: photo upload previously went through
-    // Airtable's content API — no longer applies now that Work Orders
-    // live in Postgres. The report itself still goes through
-    // completely; only the photo is skipped, and the response says so
-    // rather than pretending it was saved.
-    const photoSkipped = !!(photoBase64 && photoFilename);
+    // Photo — same store-path-sign-at-read pattern as every other file
+    // in this cutover. Non-fatal if it fails: the report itself has
+    // already gone through, and a failed photo shouldn't undo that.
+    let photoFailed = false;
+    if (photoBase64 && photoFilename) {
+      photoFailed = !(await uploadReporterPhoto(recordId, photoFilename, photoContentType, photoBase64));
+    }
 
     await Promise.all([
       sendEmail(message, description, location),
@@ -523,7 +524,7 @@ export default async function handler(req, res) {
       success: true,
       message: "Report submitted. The technical team has been notified.",
       woId,
-      ...(photoSkipped ? { warning: "Your report was submitted, but the photo was NOT saved — file storage isn't wired up yet on the new database." } : {}),
+      ...(photoFailed ? { warning: "Your report was submitted, but the photo failed to upload." } : {}),
     });
   } catch (err) {
     console.error("report-issue error:", err);
@@ -575,15 +576,26 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   return { woId, recordId: created.id };
 }
 
-// KNOWN GAP, DELIBERATE: this function is entirely about uploading a
-// file to Airtable's content API, which requires an existing Airtable
-// record to attach to. That mechanism no longer applies now that Work
-// Orders live in Postgres. No longer called from the main handler
-// (see the photoSkipped handling above) — left in place, unused,
-// rather than deleted, since the call site already handles the gap
-// gracefully and this documents exactly what would need rebuilding.
+// Uploads the reporter's photo of the actual problem — the physical
+// evidence a non-technical reporter can capture even when they can't
+// describe the issue precisely. Returns true on success, false on
+// failure (never throws) — a failed photo shouldn't undo an
+// already-created work order, so the caller just needs a yes/no to
+// decide whether to warn the reporter, not an exception to catch.
 async function uploadReporterPhoto(recordId, filename, contentType, fileBase64) {
-  console.error("uploadReporterPhoto called but file storage isn't wired up yet — this should not happen, since the main handler no longer calls this function.");
+  try {
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const photoPath = `work-orders/${recordId}/reporter-${filename}`;
+    await uploadFile(photoPath, fileBase64, contentType || "image/jpeg");
+
+    const { update } = await import("../lib/postgresClient.js");
+    await update("work_orders", recordId, { reporter_photo_url: photoPath });
+    return true;
+  } catch (err) {
+    // Non-fatal — the work order itself was already created successfully.
+    console.error("Reporter photo upload error:", err);
+    return false;
+  }
 }
 
 async function sendEmail(message, description, location) {
