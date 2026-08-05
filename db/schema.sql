@@ -419,3 +419,19 @@ alter table relocation_log add constraint relocation_log_asset_date_unique uniqu
 -- Acceptable given how new and low-volume this feature is.
 -- ============================================================
 alter table procurement_responses add constraint procurement_responses_wo_vendor_unique unique (wo_id, vendor_name);
+
+-- ============================================================
+-- Added post-launch: planned_maintenance_documents. Flagged as a real
+-- gap back when Planned Maintenance was originally migrated (its
+-- Airtable "Attachments" field was never captured) - closing that gap
+-- now that file uploads are actually being built for real. Same
+-- one-row-per-file pattern as component_documents.
+-- ============================================================
+create table planned_maintenance_documents (
+  id            uuid primary key default gen_random_uuid(),
+  plan_id       uuid not null references planned_maintenance(id) on delete cascade,
+  url           text not null,
+  filename      text,
+  uploaded_at   timestamptz not null default now()
+);
+create index idx_planned_maintenance_documents_plan on planned_maintenance_documents (plan_id);

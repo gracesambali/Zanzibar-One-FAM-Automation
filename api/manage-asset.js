@@ -681,10 +681,31 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
   }
 }
 
-// KNOWN GAP, DELIBERATE: same file-storage gap as handleUploadFloorPlan
-// and handleUploadDocument — see the comment there.
+// Uploads a real document to an existing plan (a quote, a signed
+// approval, a photo of completed work). Same store-path-sign-at-read
+// pattern as every other file in this cutover. Multiple documents per
+// plan, so each upload adds a row to planned_maintenance_documents
+// rather than overwriting a single column, same shape as compliance
+// documents on an asset.
 async function handleUploadPlanDocument(req, res, uploadedBy) {
-  return res.status(501).json({
-    error: "Plan document uploads aren't available right now — file storage is being migrated to the new database and isn't wired up yet. This will be re-enabled once that's done.",
-  });
+  const { recordId, filename, contentType, fileBase64 } = req.body || {};
+  if (!recordId || !filename || !fileBase64) {
+    return res.status(400).json({ error: "recordId, filename, and fileBase64 are required" });
+  }
+  try {
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const docPath = `planned-maintenance/${recordId}/${Date.now()}-${filename}`;
+    await uploadFile(docPath, fileBase64, contentType || "application/pdf");
+
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("planned_maintenance_documents", { plan_id: recordId, url: docPath, filename });
+
+    await appendPlanActivityLog(recordId, `📎 Document uploaded: ${filename} (by ${uploadedBy})`, uploadedBy);
+    await notifyPlanCreator(recordId, uploadedBy, `A document was uploaded (${filename})`);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleUploadPlanDocument error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }

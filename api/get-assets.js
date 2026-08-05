@@ -1932,33 +1932,49 @@ function countBy(records, field) {
 
 async function handleGetPlannedMaintenance(req, res) {
   try {
-    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
     const rows = await pgListAllRecords("planned_maintenance");
 
-    const plans = rows.map(r => ({
-      recordId: r.id,
-      planId: r.plan_id || "",
-      title: r.name || "",
-      description: r.description || "",
-      status: r.plan_status || "Planning",
-      createdBy: r.created_by || "",
-      createdDate: r.created_date || "",
-      targetStartDate: r.target_start_date || "",
-      targetEndDate: r.target_end_date || "",
-      budgetItems: r.budget_items || [],
-      milestones: r.milestones || [],
-      meetingLog: r.meeting_log || [],
-      actionPoints: r.action_points || [],
-      // KNOWN GAP: Airtable's "Attachments" field was never captured
-      // in the Postgres schema during the original Planned Maintenance
-      // migration (Session 27) — no column or child table exists for
-      // it. Returning empty here rather than crashing; needs a real
-      // fix (a planned_maintenance_documents table, same pattern as
-      // component_documents) if this feature turns out to be used.
-      documents: [],
-      // Original sent this as a raw JSON string, not a parsed array —
-      // preserved exactly, same as handleGetFloorPlan.
-      activityLog: JSON.stringify(r.activity_log || []),
+    // Gap closed: planned_maintenance_documents now exists (added
+    // alongside the actual upload feature — see handleUploadPlanDocument
+    // in manage-asset.js). One query for all documents across every
+    // plan, grouped in memory, same batching approach as compliance
+    // documents on components.
+    const docsResult = await pgQuery("select * from planned_maintenance_documents");
+    const docsByPlan = {};
+    for (const doc of docsResult.rows) {
+      if (!docsByPlan[doc.plan_id]) docsByPlan[doc.plan_id] = [];
+      docsByPlan[doc.plan_id].push(doc);
+    }
+
+    const plans = await Promise.all(rows.map(async r => {
+      const planDocs = docsByPlan[r.id] || [];
+      const signedDocuments = await Promise.all(planDocs.map(async doc => {
+        let url = null;
+        try { url = await getSignedUrlSafe(doc.url); } catch (err) { console.error("handleGetPlannedMaintenance: could not sign document:", err.message); }
+        return { filename: doc.filename, url };
+      }));
+
+      return {
+        recordId: r.id,
+        planId: r.plan_id || "",
+        title: r.name || "",
+        description: r.description || "",
+        status: r.plan_status || "Planning",
+        createdBy: r.created_by || "",
+        createdDate: r.created_date || "",
+        targetStartDate: r.target_start_date || "",
+        targetEndDate: r.target_end_date || "",
+        budgetItems: r.budget_items || [],
+        milestones: r.milestones || [],
+        meetingLog: r.meeting_log || [],
+        actionPoints: r.action_points || [],
+        documents: signedDocuments,
+        // Original sent this as a raw JSON string, not a parsed array —
+        // preserved exactly, same as handleGetFloorPlan.
+        activityLog: JSON.stringify(r.activity_log || []),
+      };
     }));
 
     return res.status(200).json({ plans });
