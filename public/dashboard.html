@@ -819,6 +819,85 @@ function renderCurrencyList(instanceId, query) {
   listEl.innerHTML = html;
 }
 
+// Escapes text for safe use inside an HTML attribute or text node —
+// used wherever a real filename or name (which could contain quotes
+// or other characters) needs to land in markup without breaking it.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Shared by every uploaded document across the dashboard (unit
+// contracts, SLAs) — preview without leaving the page, and a real
+// download that works regardless of the file's actual origin.
+// Registered by ID rather than passed through inline onclick string
+// interpolation, so a filename containing a quote or other special
+// character can never break the button's own markup.
+let _docRegistry = {};
+function registerDoc(id, url, filename) {
+  _docRegistry[id] = { url, filename };
+}
+
+function previewDownloadButtonsHtml(docId, url, filename) {
+  registerDoc(docId, url, filename);
+  return `<span style="display:inline-flex;gap:10px;align-items:center">
+    <a href="#" onclick="previewDocument('${docId}'); return false;" style="font-size:13px;color:var(--navy);text-decoration:underline;cursor:pointer">👁 Preview</a>
+    <a href="#" onclick="downloadDocument('${docId}'); return false;" style="font-size:13px;color:var(--navy);text-decoration:underline;cursor:pointer">⬇ Download</a>
+  </span>`;
+}
+
+function previewDocument(docId) {
+  const doc = _docRegistry[docId];
+  if (!doc) return;
+  const isImage = /\.(jpe?g|png|gif|webp)$/i.test(doc.filename || '');
+  const overlay = document.createElement('div');
+  overlay.id = 'docPreviewOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(17,24,39,0.75);display:flex;align-items:center;justify-content:center;z-index:2000;padding:24px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;width:min(820px,100%);height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <div style="font-size:13px;font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(doc.filename || 'Document')}</div>
+        <div style="display:flex;gap:14px;align-items:center;flex-shrink:0">
+          <a href="#" onclick="downloadDocument('${docId}'); return false;" style="font-size:12.5px;color:var(--navy);text-decoration:underline;cursor:pointer">⬇ Download</a>
+          <button onclick="document.getElementById('docPreviewOverlay').remove()" style="border:none;background:none;font-size:20px;line-height:1;cursor:pointer;color:var(--muted)">×</button>
+        </div>
+      </div>
+      <div style="flex:1;overflow:auto;background:#F5F7FA">
+        ${isImage
+          ? `<img src="${doc.url}" style="width:100%;height:auto;display:block">`
+          : `<iframe src="${doc.url}" style="width:100%;height:100%;border:none"></iframe>`}
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+// Fetches the file and saves it via a blob URL rather than a plain
+// <a download> — the plain attribute is silently ignored by most
+// browsers for cross-origin URLs (which every stored document's
+// signed URL is, since it points at Supabase's own domain), so a
+// direct link would just open the file instead of actually saving it.
+async function downloadDocument(docId) {
+  const doc = _docRegistry[docId];
+  if (!doc) return;
+  try {
+    const resp = await fetch(doc.url);
+    if (!resp.ok) throw new Error('Could not fetch the file');
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = doc.filename || 'document';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    alert('Could not download the file: ' + err.message);
+  }
+}
+
 function toggleCurrencyDropdown(instanceId) {
   // Only one dropdown open at a time — close any other instance first.
   document.querySelectorAll('[id^="curDropdown-"]').forEach(el => {
@@ -2312,14 +2391,14 @@ async function showUnitDetail(unitId) {
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Signed Contract</div>
       ${u.contractUrl
-        ? `<a href="${u.contractUrl}" target="_blank" rel="noopener" style="font-size:13px;color:var(--navy);text-decoration:underline">📄 View signed contract${u.contractFilename ? ' — ' + u.contractFilename : ''}</a>`
+        ? previewDownloadButtonsHtml('unit-contract-' + u.id, u.contractUrl, u.contractFilename || 'contract.pdf')
         : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">SLA</div>
       ${u.slaUrl
-        ? `<a href="${u.slaUrl}" target="_blank" rel="noopener" style="font-size:13px;color:var(--navy);text-decoration:underline">📋 View SLA${u.slaFilename ? ' — ' + u.slaFilename : ''}</a>`
+        ? previewDownloadButtonsHtml('unit-sla-' + u.id, u.slaUrl, u.slaFilename || 'sla.pdf')
         : `<button onclick="openUploadSLAModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📋 Upload SLA</button>`}
     </div>
 
