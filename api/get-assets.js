@@ -482,6 +482,10 @@ async function handleGetUnits(req, res) {
         console.error("handleGetUnits: could not sign contract URL for", r.unit_name, err.message);
         return null;
       });
+      const slaUrl = await getSignedUrlSafe(r.sla_document_url).catch(err => {
+        console.error("handleGetUnits: could not sign SLA URL for", r.unit_name, err.message);
+        return null;
+      });
       return {
         id: r.id,
         name: r.unit_name || "",
@@ -493,6 +497,11 @@ async function handleGetUnits(req, res) {
         leaseStatus: r.lease_status || "",
         contractUrl,
         contractFilename: r.signed_contract_filename || null,
+        contractDate: r.contract_date || null,
+        lastRentNoticeSent: r.last_rent_notice_sent || null,
+        nextRentNoticeDue: r.next_rent_notice_due || null,
+        slaUrl,
+        slaFilename: r.sla_document_filename || null,
         activityLog: r.activity_log || [],
         chatLog,
       };
