@@ -1472,7 +1472,7 @@ function showDetail(idx) {
   const canRequestProcurement = currentUserPermissions && currentUserPermissions.requestProcurement;
   const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset.html?id=' + a.id)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset?id=' + a.id)}`;
 
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
@@ -1890,7 +1890,7 @@ async function renderSensorMonitor(isRefresh) {
 
   try {
     const resp = await fetch('/api/sensors');
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (resp.status === 401) { window.location.href = '/login'; return; }
     if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
     const data = await resp.json();
     const sensors = data.sensors || [];
@@ -2069,7 +2069,7 @@ async function runSensorTest() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sensorId, value }),
     });
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (resp.status === 401) { window.location.href = '/login'; return; }
     const data = await resp.json();
 
     if (resp.ok && data.success && data.triggered) {
@@ -2271,7 +2271,7 @@ async function showUnitDetail(unitId) {
   const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
   const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
   const unitAssets = assets.filter(a => a.unit === u.name);
-  const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/unit-portal.html?unit=' + u.id)}`;
+  const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/unit-portal?unit=' + u.id)}`;
 
   let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Units</button>
   <div class="wo-layout">
@@ -2409,7 +2409,7 @@ async function submitUnitDetailChat(unitId) {
 }
 
 function copyUnitPortalLink(unitId) {
-  const link = `${window.location.origin}/unit-portal.html?unit=${unitId}`;
+  const link = `${window.location.origin}/unit-portal?unit=${unitId}`;
   navigator.clipboard.writeText(link).then(() => {
     alert('Portal link copied — send this directly to the tenant. No login needed on their end.');
   }).catch(() => {
@@ -5917,7 +5917,7 @@ async function renderWorkOrders() {
 
   try {
     const resp = await fetch('/api/work-orders');
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (resp.status === 401) { window.location.href = '/login'; return; }
     if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
     const data = await resp.json();
     const orders = data.workOrders || [];
@@ -6290,7 +6290,7 @@ async function runRealTest(urgency) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ assetId, urgency }),
     });
-    if (resp.status === 401) { window.location.href = '/login.html'; return; }
+    if (resp.status === 401) { window.location.href = '/login'; return; }
     const data = await resp.json();
 
     if (resp.ok && data.success) {
@@ -7151,7 +7151,7 @@ async function loadAssetsAndInit() {
       fetch('/api/get-assets?exchangeRates=true'),
     ]);
     if (assetsResp.status === 401) {
-      window.location.href = '/login.html';
+      window.location.href = '/login';
       return;
     }
     if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
@@ -7272,7 +7272,7 @@ function startWorkOrderChatPolling() {
 
 async function logout() {
   await fetch('/api/login', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'logout'}) });
-  window.location.href = '/login.html';
+  window.location.href = '/login';
 }
 
 // Sidebar collapse state persists across sessions (real app, not a

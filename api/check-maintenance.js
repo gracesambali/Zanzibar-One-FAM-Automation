@@ -53,7 +53,7 @@ export default async function handler(req, res) {
 
     // --- Collect all actionable items first, then send ONE digest ---
     // Grace confirmed: daily check = single bulk notification, not per-asset spam.
-    // Breakdowns reported via /report.html still send immediately (that's in report-issue.js).
+    // Breakdowns reported via /report still send immediately (that's in report-issue.js).
     const digestItems = [];
     const warrantyItems = []; // separate from maintenance alerts — same email, own section
 
