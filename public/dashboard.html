@@ -2297,6 +2297,8 @@ async function showUnitDetail(unitId) {
           <div class="detail-field"><div class="detail-field-label">Email</div><div class="detail-field-value">${u.tenantEmail || '—'}</div></div>
           <div class="detail-field"><div class="detail-field-label">Phone</div><div class="detail-field-value">${u.tenantPhone || '—'}</div></div>
           <div class="detail-field"><div class="detail-field-label">Lease Status</div><div class="detail-field-value">${u.leaseStatus || '—'}</div></div>
+          <div class="detail-field"><div class="detail-field-label">Contract Date</div><div class="detail-field-value">${u.contractDate || '—'}</div></div>
+          <div class="detail-field"><div class="detail-field-label">Next Rent/Service Notice</div><div class="detail-field-value">${u.nextRentNoticeDue || (u.contractDate ? '—' : 'Set a contract date to start tracking')}</div></div>
         </div>
         <div style="text-align:center;width:100px;flex-shrink:0">
           <img src="${unitQrUrl}" alt="QR code to this unit's portal" style="width:100px;height:100px;border-radius:6px;border:1px solid var(--border)" title="Scan to open this unit's tenant portal">
@@ -2312,6 +2314,13 @@ async function showUnitDetail(unitId) {
       ${u.contractUrl
         ? `<a href="${u.contractUrl}" target="_blank" rel="noopener" style="font-size:13px;color:var(--navy);text-decoration:underline">📄 View signed contract${u.contractFilename ? ' — ' + u.contractFilename : ''}</a>`
         : `<button onclick="openUploadContractModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📄 Upload signed contract</button>`}
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">SLA</div>
+      ${u.slaUrl
+        ? `<a href="${u.slaUrl}" target="_blank" rel="noopener" style="font-size:13px;color:var(--navy);text-decoration:underline">📋 View SLA${u.slaFilename ? ' — ' + u.slaFilename : ''}</a>`
+        : `<button onclick="openUploadSLAModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📋 Upload SLA</button>`}
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
@@ -2371,7 +2380,7 @@ function onUnitChatFileSelected() {
   const fileInput = document.getElementById('unitDetailChatFile');
   const file = fileInput.files[0];
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { alert("File is larger than 5MB — Airtable's direct upload limit."); fileInput.value = ''; return; }
+  if (file.size > 5 * 1024 * 1024) { alert("File is larger than 5MB."); fileInput.value = ''; return; }
   unitChatPendingFile = file;
   const preview = document.getElementById('unitChatAttachPreview');
   preview.textContent = `📎 ${file.name} — ready to send`;
@@ -2569,6 +2578,9 @@ function openEditUnitModal(unitId) {
         <option value="Vacant" ${u.leaseStatus==='Vacant'?'selected':''}>Vacant</option>
         <option value="Notice Given" ${u.leaseStatus==='Notice Given'?'selected':''}>Notice Given</option>
       </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Contract Date</label>
+      <input id="eu_contractdate" type="date" value="${u.contractDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Bi-annual rent/service charge reminders are timed from this date — every 6 months, for this tenant specifically.</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:14px">The tenant signs into their portal with their name and the phone number above — no separate password to set.</div>
       <div id="eu_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -2584,6 +2596,7 @@ async function submitEditUnit(unitId) {
   const tenantEmail = document.getElementById('eu_email').value.trim();
   const tenantPhone = document.getElementById('eu_phone').value.trim();
   const leaseStatus = document.getElementById('eu_lease').value;
+  const contractDate = document.getElementById('eu_contractdate').value;
   const errorBox = document.getElementById('eu_error');
   const btn = document.getElementById('eu_submit');
   errorBox.style.display = 'none';
@@ -2591,7 +2604,7 @@ async function submitEditUnit(unitId) {
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ editUnit: true, unitId, tenantName, tenantEmail, tenantPhone, leaseStatus }),
+      body: JSON.stringify({ editUnit: true, unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
@@ -2628,7 +2641,7 @@ async function submitUploadContract(unitId) {
   const btn = document.getElementById('uc_submit');
   errorBox.style.display = 'none';
   if (!file) { errorBox.textContent = 'Choose a file first.'; errorBox.style.display = 'block'; return; }
-  if (file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
+  if (file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Uploading…';
   try {
@@ -2646,6 +2659,56 @@ async function submitUploadContract(unitId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not upload contract');
     document.getElementById('uploadContractOverlay')?.remove();
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
+}
+
+function openUploadSLAModal(unitId, unitName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'uploadSLAOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload SLA</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${unitName}</div>
+      <input id="usla_file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <div id="usla_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('uploadSLAOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="usla_submit" onclick="submitUploadSLA('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Upload</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitUploadSLA(unitId) {
+  const file = document.getElementById('usla_file').files[0];
+  const errorBox = document.getElementById('usla_error');
+  const btn = document.getElementById('usla_submit');
+  errorBox.style.display = 'none';
+  if (!file) { errorBox.textContent = 'Choose a file first.'; errorBox.style.display = 'block'; return; }
+  if (file.size > 5 * 1024 * 1024) { errorBox.textContent = 'File is larger than 5MB.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploadUnitSLA: true, unitId, filename: file.name, contentType: file.type || 'application/pdf', fileBase64: base64 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not upload SLA');
+    document.getElementById('uploadSLAOverlay')?.remove();
     renderUnits();
   } catch (err) {
     errorBox.textContent = err.message;
@@ -2718,7 +2781,7 @@ async function submitAddUnit() {
   const btn = document.getElementById('au_submit');
   errorBox.style.display = 'none';
   if (!unitName) { errorBox.textContent = 'Unit name is required.'; errorBox.style.display = 'block'; return; }
-  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
+  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
@@ -5100,7 +5163,7 @@ async function submitAddProcurementResponse(recordId, woId) {
   errorBox.style.display = 'none';
 
   if (!vendorName) { errorBox.textContent = 'Vendor name is required.'; errorBox.style.display = 'block'; return; }
-  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB — Airtable's direct upload limit."; errorBox.style.display = 'block'; return; }
+  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true;
   btn.textContent = 'Adding…';
@@ -5401,7 +5464,7 @@ function onWOChatFileSelected(recordId) {
   const fileInput = document.getElementById('woDetailChatFile');
   const file = fileInput.files[0];
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { alert("File is larger than 5MB — Airtable's direct upload limit."); fileInput.value = ''; return; }
+  if (file.size > 5 * 1024 * 1024) { alert("File is larger than 5MB."); fileInput.value = ''; return; }
   woChatPendingFile = file;
   const preview = document.getElementById('woChatAttachPreview');
   preview.textContent = `📎 ${file.name} — ready to send`;
@@ -5959,7 +6022,7 @@ async function submitWorkOrderPhoto(recordId, photoType, inputEl) {
   if (!file) return;
 
   if (file.size > 5 * 1024 * 1024) {
-    alert("File is larger than 5MB — Airtable's direct upload limit. Try a smaller photo.");
+    alert("File is larger than 5MB. Try a smaller photo.");
     return;
   }
 

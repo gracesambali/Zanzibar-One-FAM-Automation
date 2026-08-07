@@ -145,6 +145,12 @@ export default async function handler(req, res) {
     const escalatedCount = await checkAndEscalateStaleWorkOrders();
     const deadlineAlertCount = await checkPlanDeadlines();
 
+    // Bi-annual rent/service charge notices for tenant units — same
+    // "anchor date + interval, advanced once fired" pattern as
+    // everything else checked here, just applied to a lease's contract
+    // date instead of an asset's install date.
+    const rentNoticeCount = await checkRentNoticesDue();
+
     // One real Daily Summary, replacing what used to be two separate,
     // overlapping emails to the same audience. Always sends, even on a
     // quiet day — "nothing open, nothing triggered" is still a real,
@@ -160,7 +166,7 @@ export default async function handler(req, res) {
     // accurate figure too, not something computed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, results });
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, rentNoticesSent: rentNoticeCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -570,6 +576,106 @@ async function checkAndEscalateStaleWorkOrders() {
     return stale.length;
   } catch (err) {
     console.error("checkAndEscalateStaleWorkOrders error:", err);
+    return 0;
+  }
+}
+
+// Bi-annual rent/service charge notices — same anchor-date-plus-
+// interval pattern as advanceAssetNextService, applied to a tenant's
+// own contract date instead of an asset's install date. Each unit
+// advances independently based on when ITS OWN contract started, not
+// a fixed calendar date shared across every tenant — a lease signed
+// in March gets notices in March/September, one signed in July gets
+// notices in July/January, permanently offset from each other.
+async function checkRentNoticesDue() {
+  try {
+    const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
+    const units = await pgListAllRecords("units").catch(() => null);
+    if (!units) { console.error("Rent notice check: could not fetch units"); return 0; }
+
+    const today = new Date();
+    const due = units.filter(u => {
+      if (!u.next_rent_notice_due || !u.tenant_name) return false;
+      return new Date(u.next_rent_notice_due).getTime() <= today.getTime();
+    });
+
+    if (due.length === 0) return 0;
+
+    for (const u of due) {
+      const toEmail = u.tenant_email ? [u.tenant_email] : [];
+      const toPhone = u.tenant_phone ? [u.tenant_phone] : [];
+      const message = `Hi ${u.tenant_name}, this is a reminder that your rent and service charge review for ${u.unit_name} is now due. Please contact your Property Manager for your current statement.`;
+
+      if (toEmail.length > 0) {
+        try {
+          await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+              to: toEmail,
+              subject: `Rent & Service Charge Reminder — ${u.unit_name}`,
+              html: `
+                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#111827">
+                  <div style="background:#1A3566;color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
+                    <div style="font-size:12px;opacity:0.85;letter-spacing:0.5px;text-transform:uppercase">Rent &amp; Service Charge Reminder</div>
+                    <div style="font-size:18px;font-weight:700;margin-top:4px">${u.unit_name}</div>
+                  </div>
+                  <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
+                    <p style="font-size:14px;line-height:1.6;margin-top:0">Dear ${u.tenant_name},</p>
+                    <p style="font-size:14px;line-height:1.6">This is a reminder that your rent and service charge review for <strong>${u.unit_name}</strong> is now due, per your lease's bi-annual review schedule. Please contact your Property Manager for your current statement.</p>
+                    <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}</p>
+                  </div>
+                </div>`,
+            }),
+          });
+        } catch (emailErr) {
+          console.error("Rent notice email failed for", u.unit_name, emailErr.message);
+        }
+      }
+
+      if (toPhone.length > 0) {
+        try {
+          const recipients = buildBeemRecipients(parsePhoneList(u.tenant_phone));
+          await fetch("https://apisms.beem.africa/v1/send", {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              source_addr: process.env.BEEM_SENDER_ID || "INFO",
+              schedule_time: "",
+              encoding: 0,
+              message: message.slice(0, 320),
+              recipients,
+            }),
+          });
+        } catch (smsErr) {
+          console.error("Rent notice SMS failed for", u.unit_name, smsErr.message);
+        }
+      }
+
+      // Advance exactly like advanceAssetNextService does: today
+      // becomes the "last sent" date, the next due date moves 6
+      // months further out from itself, not from today — so a notice
+      // sent a few days late doesn't quietly compress the tenant's
+      // next interval.
+      const nextDue = new Date(u.next_rent_notice_due);
+      nextDue.setMonth(nextDue.getMonth() + 6);
+      await update("units", u.id, {
+        last_rent_notice_sent: today.toISOString().split("T")[0],
+        next_rent_notice_due: nextDue.toISOString().split("T")[0],
+      }).catch(e => console.error("Rent notice date advance failed for", u.unit_name, e.message));
+
+      const log = Array.isArray(u.activity_log) ? u.activity_log : [];
+      log.push({ type: "system", text: `💰 Bi-annual rent/service charge notice sent to ${u.tenant_name}`, by: "system", at: new Date().toISOString() });
+      await update("units", u.id, { activity_log: JSON.stringify(log) }).catch(() => {});
+    }
+
+    return due.length;
+  } catch (err) {
+    console.error("checkRentNoticesDue error:", err);
     return 0;
   }
 }

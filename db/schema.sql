@@ -492,3 +492,20 @@ alter table asset_positions add column organization_id uuid not null references 
 create index idx_components_org on components (organization_id);
 create index idx_work_orders_org on work_orders (organization_id);
 create index idx_facilities_org on facilities (organization_id);
+
+-- ============================================================
+-- Added: SLA document + contract-date-anchored bi-annual rent/service
+-- charge notices for tenant units. Deliberately mirrors the exact
+-- pattern already used for asset maintenance (install_date ->
+-- last_service/next_service_due, advanced by the daily cron) rather
+-- than inventing a new scheduling mechanism - contract_date is the
+-- anchor (like install_date), next_rent_notice_due is the computed
+-- next-due date (like next_service_due), advanced by 6 months each
+-- time the daily check fires a notice, same as advanceAssetNextService
+-- advances an asset's own next_service_due.
+-- ============================================================
+alter table units add column contract_date date;
+alter table units add column last_rent_notice_sent date;
+alter table units add column next_rent_notice_due date;
+alter table units add column sla_document_url text;
+alter table units add column sla_document_filename text;

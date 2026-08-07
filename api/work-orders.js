@@ -672,13 +672,13 @@ export default async function handler(req, res) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to add a unit." });
       }
-      const { unitName, building, unitType, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
+      const { unitName, building, unitType, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate } = req.body;
       if (!unitName || !unitName.trim() || !building) {
         return res.status(400).json({ error: "Unit name and building are required" });
       }
       try {
         const { insert } = await import("../lib/postgresClient.js");
-        const created = await insert("units", {
+        const fields = {
           unit_name: unitName.trim(),
           building,
           unit_type: unitType || null,
@@ -687,7 +687,14 @@ export default async function handler(req, res) {
           tenant_phone: tenantPhone || null,
           lease_status: leaseStatus || "Vacant",
           added_by: session.u,
-        }, { typecast: true });
+        };
+        if (contractDate) {
+          fields.contract_date = contractDate;
+          const nextDue = new Date(contractDate);
+          nextDue.setMonth(nextDue.getMonth() + 6);
+          fields.next_rent_notice_due = nextDue.toISOString().split("T")[0];
+        }
+        const created = await insert("units", fields, { typecast: true });
         await appendUnitActivityLog(created.id, `🏠 Unit created by ${session.u}${tenantName ? ` — tenant: ${tenantName}` : ''}`, session.u, "system");
         return res.status(200).json({ success: true, unit: {
           id: created.id, name: created.unit_name || "", building: created.building || "",
@@ -699,12 +706,17 @@ export default async function handler(req, res) {
     }
 
     // Editing tenant details — every change lands in Activity, showing
-    // exactly what changed, not just that something did.
+    // exactly what changed, not just that something did. Setting or
+    // changing the contract date recomputes next_rent_notice_due (6
+    // months out from that date) the same way editing an asset's
+    // Install Date recalculates its own next service date elsewhere in
+    // this app — one consistent pattern for "here's an anchor date,
+    // here's what's due next relative to it."
     if (req.body && req.body.editUnit) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to edit a unit." });
       }
-      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus } = req.body;
+      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate } = req.body;
       if (!unitId) return res.status(400).json({ error: "unitId required" });
       try {
         const { getById, update } = await import("../lib/postgresClient.js");
@@ -717,6 +729,17 @@ export default async function handler(req, res) {
         if (tenantEmail !== undefined && tenantEmail !== (before.tenant_email || "")) { fields.tenant_email = tenantEmail; changes.push(`Email: "${before.tenant_email || ""}" → "${tenantEmail}"`); }
         if (tenantPhone !== undefined && tenantPhone !== (before.tenant_phone || "")) { fields.tenant_phone = tenantPhone; changes.push(`Phone: "${before.tenant_phone || ""}" → "${tenantPhone}"`); }
         if (leaseStatus !== undefined && leaseStatus !== (before.lease_status || "")) { fields.lease_status = leaseStatus; changes.push(`Lease Status: "${before.lease_status || ""}" → "${leaseStatus}"`); }
+        if (contractDate !== undefined && contractDate !== (before.contract_date || "")) {
+          fields.contract_date = contractDate || null;
+          changes.push(`Contract Date: "${before.contract_date || ""}" → "${contractDate}"`);
+          if (contractDate) {
+            const nextDue = new Date(contractDate);
+            nextDue.setMonth(nextDue.getMonth() + 6);
+            fields.next_rent_notice_due = nextDue.toISOString().split("T")[0];
+          } else {
+            fields.next_rent_notice_due = null;
+          }
+        }
 
         if (Object.keys(fields).length > 0) {
           await update("units", unitId, fields, { typecast: true })
@@ -731,10 +754,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Uploading the signed contract to an existing unit — same
-    // create-then-upload pattern already used for vendor proforma
-    // attachments, since Airtable's upload endpoint needs an existing
-    // record to attach to.
     // Uploading the signed contract to an existing unit — same
     // store-path-sign-at-read pattern as every other file in this
     // cutover.
@@ -758,6 +777,33 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("uploadUnitContract error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Uploading the unit's SLA document — same pattern as the signed
+    // contract, its own dedicated slot rather than overloading the
+    // contract upload with a second, different kind of document.
+    if (req.body && req.body.uploadUnitSLA) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to upload an SLA." });
+      }
+      const { unitId, filename, contentType, fileBase64 } = req.body;
+      if (!unitId || !filename || !fileBase64) {
+        return res.status(400).json({ error: "unitId, filename, and fileBase64 are required" });
+      }
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const slaPath = `units/${unitId}/sla-${filename}`;
+        await uploadFile(slaPath, fileBase64, contentType || "application/pdf");
+
+        const { update } = await import("../lib/postgresClient.js");
+        await update("units", unitId, { sla_document_url: slaPath, sla_document_filename: filename });
+
+        await appendUnitActivityLog(unitId, `📋 SLA document uploaded by ${session.u} — ${filename}`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadUnitSLA error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
