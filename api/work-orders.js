@@ -55,20 +55,21 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Property Manager": "property_manager",
 };
 
-// Signs a work order's three possible photo paths (before/after/
-// reporter) in parallel — shared by the main GET handler and
-// handleMaintenanceReport, which both need the identical mapping.
-// Each column stores a storage PATH, not a URL; a single photo
-// failing to sign falls back to null for that one field rather than
-// failing the whole row.
+// Signs a work order's four possible file paths (before/after/
+// reporter photo, plus the delivery note) in parallel — shared by the
+// main GET handler and handleMaintenanceReport, which both need the
+// identical mapping. Each column stores a storage PATH, not a URL; a
+// single file failing to sign falls back to null for that one field
+// rather than failing the whole row.
 async function signWorkOrderPhotos(r) {
   const { getSignedUrlSafe } = await import("../lib/storageClient.js");
-  const [beforePhoto, afterPhoto, reporterPhoto] = await Promise.all([
+  const [beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl] = await Promise.all([
     getSignedUrlSafe(r.before_photo_url).catch(err => { console.error("signWorkOrderPhotos: before photo", err.message); return null; }),
     getSignedUrlSafe(r.after_photo_url).catch(err => { console.error("signWorkOrderPhotos: after photo", err.message); return null; }),
     getSignedUrlSafe(r.reporter_photo_url).catch(err => { console.error("signWorkOrderPhotos: reporter photo", err.message); return null; }),
+    getSignedUrlSafe(r.delivery_note_url).catch(err => { console.error("signWorkOrderPhotos: delivery note", err.message); return null; }),
   ]);
-  return { beforePhoto, afterPhoto, reporterPhoto };
+  return { beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl };
 }
 
 export default async function handler(req, res) {
@@ -117,7 +118,7 @@ export default async function handler(req, res) {
     try {
       const records = await fetchAllWorkOrders();
       const workOrders = await Promise.all(records.map(async r => {
-        const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+        const { beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl } = await signWorkOrderPhotos(r);
         const { signChatLogAttachments } = await import("../lib/storageClient.js");
         const signedChatLog = await signChatLogAttachments(r.chat_log || []);
         return {
@@ -163,6 +164,9 @@ export default async function handler(req, res) {
           afterPhoto,
           reporterContact: r.reporter_contact || "",
           reporterPhoto,
+          deliveryNoteUrl,
+          deliveryNoteFilename: r.delivery_note_filename || null,
+          deliveryConfirmationNote: r.delivery_confirmation_note || null,
           satisfactionStatus: r.satisfaction_status || "",
           satisfactionReason: r.satisfaction_reason || "",
           closureRejectionReason: r.closure_rejection_reason || "",
@@ -281,17 +285,39 @@ export default async function handler(req, res) {
     // block on the technician completing the job — same "visible,
     // logged, not a wall" principle used elsewhere in this system.
     // Reuses the existing "Procurement Approved By" field to record who
-    // confirmed — same field, repurposed meaning, no new Airtable field.
+    // confirmed — same field, repurposed meaning, no new field needed.
+    //
+    // A photo/scan of the physical delivery note and a short text note
+    // are both optional here on purpose — sometimes there's no paper
+    // handed over, sometimes there's nothing worth remarking on. Either
+    // or both can be attached; neither is required to confirm.
     if (req.body && req.body.confirmDelivery) {
-      const { recordId } = req.body;
+      const { recordId, deliveryNote, filename, contentType, fileBase64 } = req.body;
       if (!recordId) return res.status(400).json({ error: "recordId required" });
       const roleError = await checkRoutedRoleMatch(session, recordId);
       if (roleError) return res.status(403).json({ error: roleError });
       try {
         const { update } = await import("../lib/postgresClient.js");
-        await update("work_orders", recordId, { procurement_status: "Delivered", procurement_approved_by: session.u })
+
+        const fields = { procurement_status: "Delivered", procurement_approved_by: session.u };
+        if (deliveryNote && deliveryNote.trim()) fields.delivery_confirmation_note = deliveryNote.trim();
+
+        if (fileBase64 && filename) {
+          const { uploadFile } = await import("../lib/storageClient.js");
+          const notePath = `work-orders/${recordId}/delivery-note-${filename}`;
+          await uploadFile(notePath, fileBase64, contentType || "application/octet-stream");
+          fields.delivery_note_url = notePath;
+          fields.delivery_note_filename = filename;
+        }
+
+        await update("work_orders", recordId, fields)
           .catch(() => { throw new Error("Could not confirm delivery"); });
-        await appendActivityLog(recordId, `📬 Delivery confirmed by ${session.u}`, session.u, "system");
+
+        const logParts = [`📬 Delivery confirmed by ${session.u}`];
+        if (fields.delivery_note_filename) logParts.push(`delivery note attached (${fields.delivery_note_filename})`);
+        if (fields.delivery_confirmation_note) logParts.push(`note: "${fields.delivery_confirmation_note}"`);
+        await appendActivityLog(recordId, logParts.join(" — "), session.u, "system");
+
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("confirmDelivery error:", err);
@@ -1810,7 +1836,7 @@ async function handleMaintenanceReport(req, res) {
     if (from) { const d = new Date(from); filtered = filtered.filter(r => r.created && new Date(r.created) >= d); }
     if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.created && new Date(r.created) <= d); }
     const workOrders = await Promise.all(filtered.map(async r => {
-      const { beforePhoto, afterPhoto, reporterPhoto } = await signWorkOrderPhotos(r);
+      const { beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl } = await signWorkOrderPhotos(r);
       const { signChatLogAttachments } = await import("../lib/storageClient.js");
       const signedChatLog = await signChatLogAttachments(r.chat_log || []);
       return {
@@ -1830,7 +1856,9 @@ async function handleMaintenanceReport(req, res) {
       costBreakdown: JSON.stringify(r.cost_breakdown || []), procurementRequestedBy: r.procurement_requested_by || "",
       procurementApprovedBy: r.procurement_approved_by || "", procurementRejectionReason: r.procurement_rejection_reason || "",
       beforePhoto, afterPhoto, reporterContact: r.reporter_contact || "",
-      reporterPhoto, satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
+      reporterPhoto, deliveryNoteUrl, deliveryNoteFilename: r.delivery_note_filename || null,
+      deliveryConfirmationNote: r.delivery_confirmation_note || null,
+      satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
       closureRejectionReason: r.closure_rejection_reason || "",
       notes: r.notes || "",
       };

@@ -519,3 +519,15 @@ alter table units add column sla_document_filename text;
 -- notice can fire again in its own turn.
 -- ============================================================
 alter table units add column rent_advance_notice_sent boolean not null default false;
+
+-- ============================================================
+-- Added: real delivery-note evidence when the technical team confirms
+-- a procurement delivery, rather than a bare confirmation click with
+-- nothing behind it. Both optional at the moment of confirming - a
+-- photo/scan of the physical delivery note or receipt, and a short
+-- text note (accuracy, condition, discrepancies). Same
+-- store-path-sign-at-read pattern as every other file in this app.
+-- ============================================================
+alter table work_orders add column delivery_note_url text;
+alter table work_orders add column delivery_note_filename text;
+alter table work_orders add column delivery_confirmation_note text;
