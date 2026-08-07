@@ -5031,11 +5031,22 @@ async function renderWODetailProcurementResponses(o) {
       return;
     }
 
-    listEl.innerHTML = responses.map(r => `
-      <div style="border:1px solid ${r.chosen ? 'var(--green)' : 'var(--border)'};background:${r.chosen ? '#F0FDF4' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+    // Lowest bidder gets a clear visual flag — procurement still has
+    // to click Choose themselves (confirmed: no auto-selection), this
+    // just saves them doing the comparison math by eye. Only shown
+    // when there's more than one quote with an actual extracted cost
+    // to compare against — flagging "the lowest" among a single quote
+    // says nothing useful.
+    const extractedCosts = responses.filter(r => r.totalCost != null).map(r => r.totalCost);
+    const lowestCost = extractedCosts.length > 1 ? Math.min(...extractedCosts) : null;
+
+    listEl.innerHTML = responses.map(r => {
+      const isLowest = lowestCost !== null && r.totalCost === lowestCost && !r.chosen;
+      return `
+      <div style="border:1px solid ${r.chosen ? 'var(--green)' : isLowest ? 'var(--navy)' : 'var(--border)'};background:${r.chosen ? '#F0FDF4' : isLowest ? '#F0F5FC' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}${isLowest ? ' <span style="color:var(--navy);font-weight:700;font-size:11px">● Lowest bid</span>' : ''}</div>
             ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">${formatCurrency(r.totalCost)}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
             ${r.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${r.vatStatus}</div>` : ''}
             ${r.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${r.summary}</div>` : ''}
@@ -5043,7 +5054,8 @@ async function renderWODetailProcurementResponses(o) {
           </div>
           ${canManage && stillOpen && !r.chosen ? `<button onclick="chooseProcurementResponse('${o.id}', '${o.woId}', '${r.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Choose</button>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (err) {
     const listEl = document.getElementById('procurementResponsesList');
     if (listEl) listEl.innerHTML = `<div style="color:var(--red)">Could not load vendor quotes: ${err.message}</div>`;
