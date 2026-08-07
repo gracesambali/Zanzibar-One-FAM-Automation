@@ -70,14 +70,23 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
   }
 
   try {
-    // Auto-generate ID from building code + category prefix — the
-    // building code is prepended INTO the prefix itself, so the
-    // sequence naturally scopes per-building-per-category (Mall 1's
-    // ACC units count 001, 002... independently from Villa 7's).
-    // generateNextAssetId doesn't need to know about buildings at all;
-    // it just searches for whatever full prefix it's given.
+    // Auto-generate ID from facility code + building code + category
+    // prefix. The facility code is what actually guarantees no
+    // collision across campuses — two buildings named "Offices" at two
+    // different facilities now produce different prefixes entirely
+    // (MLC-O-ACC-001 vs GC-O-ACC-001), not the same one. Falls back to
+    // the old building-only scheme if this asset's facility somehow
+    // has no code yet (shouldn't happen once the one-time backfill has
+    // run, but fails safe rather than blocking asset creation over it).
     const categoryPrefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
-    const prefix = a.buildingCode ? `${a.buildingCode}-${categoryPrefix}` : categoryPrefix;
+    let facilityCode = null;
+    if (a.facility) {
+      const { getByColumn } = await import("../lib/postgresClient.js");
+      const facilityRecord = await getByColumn("facilities", "name", a.facility).catch(() => null);
+      facilityCode = facilityRecord ? facilityRecord.facility_code : null;
+    }
+    const prefixParts = [facilityCode, a.buildingCode, categoryPrefix].filter(Boolean);
+    const prefix = prefixParts.join("-");
     const assetId = await generateNextAssetId(prefix);
 
     // Non-technical roles (Admin, Stock Keeper) can't be expected to

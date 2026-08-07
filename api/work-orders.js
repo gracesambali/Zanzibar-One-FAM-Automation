@@ -688,6 +688,57 @@ export default async function handler(req, res) {
       }
     }
 
+    // Adding a new facility — a whole new campus/site. Business
+    // Owner/System Admin only, confirmed: this is foundational
+    // structure that shows up in every Facility/Building dropdown
+    // across the app, not routine day-to-day data entry. The facility
+    // code is generated automatically, not entered — confirmed
+    // directly — using the same generator the one-time backfill uses,
+    // so a brand-new facility's code can never collide with an
+    // existing one.
+    if (req.body && req.body.addFacility) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to add a facility." });
+      }
+      const { name } = req.body;
+      if (!name || !name.trim()) return res.status(400).json({ error: "Facility name is required" });
+      try {
+        const { listAllRecords: pgListAllRecords, insert } = await import("../lib/postgresClient.js");
+        const { generateFacilityCode } = await import("../lib/facilityCode.js");
+
+        const existing = await pgListAllRecords("facilities");
+        const existingCodes = new Set(existing.filter(f => f.facility_code).map(f => f.facility_code));
+        const code = generateFacilityCode(name.trim(), existingCodes);
+
+        const created = await insert("facilities", { name: name.trim(), facility_code: code });
+        return res.status(200).json({ success: true, facility: { id: created.id, name: created.name, code: created.facility_code } });
+      } catch (err) {
+        console.error("addFacility error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Adding a new building to an existing facility. Same permission
+    // gate as addFacility, same reasoning — this is structure, not
+    // routine entry.
+    if (req.body && req.body.addBuilding) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to add a building." });
+      }
+      const { facilityId, buildingName } = req.body;
+      if (!facilityId || !buildingName || !buildingName.trim()) {
+        return res.status(400).json({ error: "facilityId and buildingName are required" });
+      }
+      try {
+        const { insert } = await import("../lib/postgresClient.js");
+        await insert("facility_buildings", { facility_id: facilityId, building_name: buildingName.trim() });
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("addBuilding error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Adding a vendor — Procurement only, confirmed. This is the
     // foundation the new procurement workflow sits on: vendors have to
     // actually exist in the system before quotes/invoices can be

@@ -173,6 +173,43 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-time: assigns a real, guaranteed-unique short code to every
+  // existing facility that doesn't have one yet. Needed once, before
+  // asset IDs start incorporating the facility code — safe to re-run,
+  // skips any facility that already has a code rather than
+  // regenerating or overwriting it.
+  if (req.query.backfillFacilityCodes === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
+      const { generateFacilityCode } = await import("../lib/facilityCode.js");
+
+      const facilities = await pgListAllRecords("facilities");
+      const existingCodes = new Set(facilities.filter(f => f.facility_code).map(f => f.facility_code));
+
+      let assigned = 0, skipped = 0;
+      const results = [];
+
+      for (const f of facilities) {
+        if (f.facility_code) { skipped++; continue; }
+        const code = generateFacilityCode(f.name, existingCodes);
+        existingCodes.add(code); // reserve it immediately so the NEXT facility in this same loop can't also claim it
+        await update("facilities", f.id, { facility_code: code });
+        results.push({ name: f.name, code });
+        assigned++;
+      }
+
+      return res.status(200).json({ success: true, totalFacilities: facilities.length, assigned, skipped, results });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm Supabase Storage actually works once
   // configured — same purpose and same admin-only gate as ?dbtest=true.
   // Does a real round trip: uploads a tiny harmless test file,
@@ -550,7 +587,9 @@ async function handleGetFacilities(req, res) {
     }
 
     const facilities = facilityRows.map(r => ({
+      id: r.id,
       name: r.name || "",
+      code: r.facility_code || null,
       buildings: buildingsByFacility[r.id] || [],
     })).filter(f => f.name);
 

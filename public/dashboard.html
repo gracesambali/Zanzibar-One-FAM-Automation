@@ -7100,11 +7100,17 @@ function openAddAssetForm() {
 
       <div style="background:#f0f4fa;border-radius:8px;padding:10px 12px;font-size:11.5px;color:var(--navy);margin-bottom:14px">The Asset ID is generated automatically from the building and category below — you never type it.</div>
 
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility *</label>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy)">Facility *</label>
+        <a href="#" onclick="openAddFacilityModal(); return false;" style="font-size:11px;color:var(--navy);text-decoration:underline">+ Add facility</a>
+      </div>
       <select id="na_facility" onchange="onAddAssetFacilityChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${facilitiesData.map(f => `<option value="${f.name}">${f.name}</option>`).join('')}
       </select>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy)">Building *</label>
+        <a href="#" onclick="openAddBuildingModal(); return false;" style="font-size:11px;color:var(--navy);text-decoration:underline">+ Add building</a>
+      </div>
       <select id="na_building" onchange="onCategoryChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Asset Nature *</label>
@@ -7207,6 +7213,137 @@ function onAddAssetFacilityChange() {
   const buildings = facility ? facility.buildings : [];
   buildingSel.innerHTML = buildings.map(b => `<option value="${b}">${b}</option>`).join('');
   onCategoryChange();
+}
+
+// Refetches the Facility -> Building structure after adding either one,
+// so the newly-created entry shows up in the dropdowns immediately
+// without needing a full page reload.
+async function refreshFacilitiesData() {
+  try {
+    const resp = await fetch('/api/get-assets?facilities=true');
+    if (resp.ok) {
+      const data = await resp.json();
+      facilitiesData = data.facilities || [];
+    }
+  } catch (err) {
+    console.error('Could not refresh facilities:', err);
+  }
+}
+
+function openAddFacilityModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addFacilityOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Add Facility</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A new campus or site. Its short code is generated automatically — you don't choose it.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility Name *</label>
+      <input id="af_name" type="text" placeholder="e.g. Game City" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="af_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addFacilityOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="af_submit" onclick="submitAddFacility()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Facility</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('af_name').focus();
+}
+
+async function submitAddFacility() {
+  const name = document.getElementById('af_name').value.trim();
+  const errorBox = document.getElementById('af_error');
+  const btn = document.getElementById('af_submit');
+  errorBox.style.display = 'none';
+  if (!name) { errorBox.textContent = 'Enter a facility name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addFacility: true, name }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add facility');
+
+    await refreshFacilitiesData();
+    document.getElementById('addFacilityOverlay')?.remove();
+
+    // Reflect the new facility straight into the Add Asset form it was
+    // opened from, selected and ready, rather than leaving the person
+    // to find it in the list themselves.
+    const facilitySel = document.getElementById('na_facility');
+    if (facilitySel) {
+      facilitySel.innerHTML = facilitiesData.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+      facilitySel.value = data.facility.name;
+      onAddAssetFacilityChange();
+    }
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Facility';
+  }
+}
+
+function openAddBuildingModal() {
+  const facilityName = document.getElementById('na_facility')?.value;
+  const facility = facilitiesData.find(f => f.name === facilityName);
+  if (!facility) { alert('Choose a facility first.'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'addBuildingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Add Building</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Adding to <strong>${escapeHtml(facilityName)}</strong>.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building Name *</label>
+      <input id="ab_name" type="text" placeholder="e.g. Mall 2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="ab_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addBuildingOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ab_submit" onclick="submitAddBuilding('${facility.id || ''}', '${facilityName.replace(/'/g, "\\'")}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Building</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('ab_name').focus();
+}
+
+async function submitAddBuilding(facilityId, facilityName) {
+  const buildingName = document.getElementById('ab_name').value.trim();
+  const errorBox = document.getElementById('ab_error');
+  const btn = document.getElementById('ab_submit');
+  errorBox.style.display = 'none';
+  if (!buildingName) { errorBox.textContent = 'Enter a building name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addBuilding: true, facilityId, buildingName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add building');
+
+    await refreshFacilitiesData();
+    document.getElementById('addBuildingOverlay')?.remove();
+
+    // Refresh the Building dropdown for the currently-selected facility
+    // and select the new one directly, same convenience as the
+    // facility flow above.
+    const facilitySel = document.getElementById('na_facility');
+    if (facilitySel && facilitySel.value === facilityName) {
+      onAddAssetFacilityChange();
+      const buildingSel = document.getElementById('na_building');
+      if (buildingSel) { buildingSel.value = buildingName; onCategoryChange(); }
+    }
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Building';
+  }
 }
 
 // --- Classification hierarchy — exact match to page 10 of the guideline, each branch ends with "Others" ---
