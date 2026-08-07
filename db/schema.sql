@@ -435,3 +435,60 @@ create table planned_maintenance_documents (
   uploaded_at   timestamptz not null default now()
 );
 create index idx_planned_maintenance_documents_plan on planned_maintenance_documents (plan_id);
+
+-- ============================================================
+-- Added for future multi-tenancy: prep only, no enforcement yet.
+-- Every table that holds real client-owned data gets an
+-- organization_id, tagging which client that row belongs to. This
+-- does NOT filter any queries or restrict any access by itself -
+-- every row currently defaults to the one seeded "internal" org
+-- below (all of Grace's own existing data), and the app keeps
+-- reading/writing across every organization exactly as it does today
+-- until real enforcement (query filtering + Postgres Row Level
+-- Security) is deliberately built later, once there's an actual
+-- second client to isolate.
+--
+-- Deliberately NOT added to users: GVC's own staff work across
+-- multiple clients, not just one, so a single organization_id column
+-- on a user would encode the wrong relationship (one org per user,
+-- when the real shape is many-to-many - which staff can access which
+-- clients). That mapping needs its own join table, built alongside
+-- the real enforcement work, not guessed at here.
+-- ============================================================
+
+create table organizations (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null,
+  created_at   timestamptz not null default now()
+);
+
+-- Fixed, known id (not a random gen_random_uuid()) specifically so
+-- every table below can reference the exact same row as a column
+-- default - every existing and future row is automatically tagged as
+-- belonging to this org unless a real client's data explicitly says
+-- otherwise. Rename the row itself anytime; the id never needs to
+-- change once tables are already defaulting to it.
+insert into organizations (id, name) values
+  ('73ae9f3b-bbef-4f4a-b3df-3cca81c49063', 'Gracing Ventures (internal)');
+
+alter table facilities add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table facility_buildings add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table components add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table component_documents add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table work_orders add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table sensors add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table readings add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table alert_log add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table edit_log add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table relocation_log add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table units add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table vendors add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table procurement_responses add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table planned_maintenance add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table planned_maintenance_documents add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table floor_plans add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table asset_positions add column organization_id uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+
+create index idx_components_org on components (organization_id);
+create index idx_work_orders_org on work_orders (organization_id);
+create index idx_facilities_org on facilities (organization_id);
