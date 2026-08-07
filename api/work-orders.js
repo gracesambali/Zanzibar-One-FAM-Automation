@@ -893,16 +893,15 @@ export default async function handler(req, res) {
     }
 
     // Attaching the actual proforma file to a response row already
-    // created above. Storage-only now, not the full original feature:
-    // uploading here used to also trigger Airtable's own AI field type
-    // to automatically read the PDF and extract Total Cost, VAT
-    // Status, and a Summary onto the response row. That was an
-    // Airtable-native feature with no Postgres equivalent — the file
-    // now saves and is viewable, but total_cost_ai/vat_status_ai/
-    // summary_ai stay whatever they already were (null, for anything
-    // uploaded through this path) unless entered by hand elsewhere.
-    // Rebuilding the automatic extraction is its own separate feature,
-    // not something storage alone restores.
+    // created above. Uploading here also runs AI extraction on the
+    // PDF — the total cost, VAT status, and a short summary — the
+    // piece of the original Airtable AI field type that had no direct
+    // Postgres equivalent, now rebuilt as a real Claude API call. This
+    // step is deliberately non-fatal: if extraction fails for any
+    // reason (a bad scan, a network hiccup, ANTHROPIC_API_KEY not set
+    // yet), the file itself still saves successfully — those three
+    // fields just stay whatever they already were, same graceful
+    // degradation as before this was rebuilt.
     if (req.body && req.body.uploadProcurementResponseAttachment) {
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && session.r !== "procurement") {
@@ -918,9 +917,25 @@ export default async function handler(req, res) {
         await uploadFile(attachmentPath, fileBase64, contentType || "application/pdf");
 
         const { update } = await import("../lib/postgresClient.js");
-        await update("procurement_responses", responseId, { proforma_attachment_url: attachmentPath, proforma_attachment_filename: filename });
+        const fields = { proforma_attachment_url: attachmentPath, proforma_attachment_filename: filename };
 
-        return res.status(200).json({ success: true });
+        let extracted = null;
+        if ((contentType || "").includes("pdf") || filename.toLowerCase().endsWith(".pdf")) {
+          const { extractInvoiceData } = await import("../lib/invoiceExtraction.js");
+          extracted = await extractInvoiceData(fileBase64).catch(err => {
+            console.error("Invoice extraction failed (non-fatal):", err.message);
+            return null;
+          });
+        }
+        if (extracted) {
+          fields.total_cost_ai = extracted.totalCost;
+          fields.vat_status_ai = extracted.vatStatus;
+          fields.summary_ai = extracted.summary;
+        }
+
+        await update("procurement_responses", responseId, fields);
+
+        return res.status(200).json({ success: true, extracted: !!extracted });
       } catch (err) {
         console.error("uploadProcurementResponseAttachment error:", err);
         return res.status(500).json({ error: err.message });
