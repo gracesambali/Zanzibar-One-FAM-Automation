@@ -5076,7 +5076,9 @@ function openDeclineAssignmentModal(recordId) {
 // actually shown to people changes, to "Payment Processed", which is
 // what procurement staff are really doing at that step.
 function procStatusLabel(status) {
-  return status === 'Fulfilled' ? 'Payment Processed' : status;
+  if (status === 'Requested') return 'Procurement in Progress';
+  if (status === 'Fulfilled') return 'Procurement Complete';
+  return status;
 }
 
 function renderWODetailProcurement(o) {
@@ -5119,7 +5121,7 @@ function renderWODetailProcurement(o) {
 
     if (procStatus === 'Requested' && canFulfill) {
       html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <button onclick="openFulfillProcurementModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Fulfilled</button>
+        <button onclick="openFulfillProcurementModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Procurement Complete</button>
         <button onclick="openDelayNoticeModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">⏳ Send Delay Notice</button>
       </div>`;
     } else if (procStatus === 'Requested') {
@@ -5127,13 +5129,19 @@ function renderWODetailProcurement(o) {
     }
 
     if (procStatus === 'Fulfilled' && canConfirmDelivery) {
-      html += `<button onclick="confirmDelivery('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📬 Confirm Delivery</button>`;
+      html += `<button onclick="openConfirmDeliveryModal('${o.id}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📬 Confirm Delivery</button>`;
     } else if (procStatus === 'Fulfilled') {
       html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">Paid — waiting on the routed role to confirm delivery</div>`;
     }
 
     if (procStatus === 'Delivered') {
       html += `<div style="margin-top:10px;font-size:12px;color:var(--green)">📬 Delivery confirmed${o.procurementApprovedBy ? ' by ' + o.procurementApprovedBy : ''}</div>`;
+      if (o.deliveryConfirmationNote) {
+        html += `<div style="margin-top:6px;font-size:12px;color:var(--muted);background:#F7F8FA;border-radius:8px;padding:8px 10px">"${escapeHtml(o.deliveryConfirmationNote)}"</div>`;
+      }
+      if (o.deliveryNoteUrl) {
+        html += `<div style="margin-top:6px">${previewDownloadButtonsHtml('delivery-note-' + o.id, o.deliveryNoteUrl, o.deliveryNoteFilename || 'delivery-note.pdf')}</div>`;
+      }
     }
   }
   el.innerHTML = html;
@@ -6283,13 +6291,13 @@ function openFulfillProcurementModal(recordId) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Mark Fulfilled</div>
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Mark Procurement Complete</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Enter what was actually paid — this unblocks the work order and notifies the routed role that delivery is on its way.</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Final Cost (TZS) *</label>
       <input id="fp_cost" type="number" min="0" step="any" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('fulfillProcurementOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
-        <button onclick="submitFulfillProcurement('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Mark Fulfilled</button>
+        <button onclick="submitFulfillProcurement('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Mark Complete</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -6305,11 +6313,81 @@ async function submitFulfillProcurement(recordId) {
       body: JSON.stringify({ fulfillProcurement: true, recordId, finalCost }),
     });
     const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark fulfilled');
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not mark complete');
     document.getElementById('fulfillProcurementOverlay')?.remove();
     refreshWorkOrdersView(recordId);
   } catch (err) {
-    alert('Could not mark fulfilled: ' + err.message);
+    alert('Could not mark complete: ' + err.message);
+  }
+}
+
+// Confirming delivery — a photo/scan of the physical delivery note and
+// a short accuracy/condition note are both optional here on purpose,
+// confirmed directly: sometimes there's no paper handed over,
+// sometimes nothing's worth remarking on. Either, both, or neither can
+// be attached; delivery can still be confirmed with just the click.
+function openConfirmDeliveryModal(recordId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'confirmDeliveryOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Confirm Delivery</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Confirms the item has physically arrived. A photo of the delivery note and a short remark are both optional — add either, both, or neither.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Delivery note / receipt photo (optional)</label>
+      <input id="cd_file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note (optional)</label>
+      <textarea id="cd_note" rows="3" placeholder="e.g. matches order, no issues — or note any discrepancy" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:14px"></textarea>
+      <div id="cd_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('confirmDeliveryOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="cd_submit" onclick="submitConfirmDelivery('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Confirm Delivery</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitConfirmDelivery(recordId) {
+  const fileInput = document.getElementById('cd_file');
+  const file = fileInput.files[0];
+  const deliveryNote = document.getElementById('cd_note').value.trim();
+  const errorBox = document.getElementById('cd_error');
+  const btn = document.getElementById('cd_submit');
+  errorBox.style.display = 'none';
+
+  if (file && file.size > 5 * 1024 * 1024) {
+    errorBox.textContent = 'File is larger than 5MB.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Confirming…';
+  try {
+    const body = { confirmDelivery: true, recordId };
+    if (deliveryNote) body.deliveryNote = deliveryNote;
+    if (file) {
+      body.filename = file.name;
+      body.contentType = file.type || 'application/octet-stream';
+      body.fileBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not confirm delivery');
+    document.getElementById('confirmDeliveryOverlay')?.remove();
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Confirm Delivery';
   }
 }
 
