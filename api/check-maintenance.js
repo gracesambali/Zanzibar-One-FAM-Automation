@@ -587,97 +587,177 @@ async function checkAndEscalateStaleWorkOrders() {
 // a fixed calendar date shared across every tenant — a lease signed
 // in March gets notices in March/September, one signed in July gets
 // notices in July/January, permanently offset from each other.
+//
+// Two separate firing points per cycle, confirmed: a 7-day advance
+// heads-up, then a second notice on the exact due date itself — both
+// go to the tenant AND to whoever currently holds the Property
+// Manager role, not the tenant alone. The PM is looked up by role
+// (getContactsForRole), the same mechanism used elsewhere in this app
+// for "notify whoever's responsible" — units aren't assigned to a
+// specific named PM, so this means every current property_manager,
+// not one hardcoded person.
 async function checkRentNoticesDue() {
   try {
     const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
     const units = await pgListAllRecords("units").catch(() => null);
     if (!units) { console.error("Rent notice check: could not fetch units"); return 0; }
 
+    const pmContacts = getContactsForRole("property_manager");
+    const pmEmails = pmContacts.map(c => c.email).filter(Boolean);
+    const pmPhones = pmContacts.map(c => c.phone).filter(Boolean);
+
     const today = new Date();
-    const due = units.filter(u => {
-      if (!u.next_rent_notice_due || !u.tenant_name) return false;
-      return new Date(u.next_rent_notice_due).getTime() <= today.getTime();
-    });
+    let notifiedCount = 0;
 
-    if (due.length === 0) return 0;
+    for (const u of units) {
+      if (!u.next_rent_notice_due || !u.tenant_name) continue;
 
-    for (const u of due) {
-      const toEmail = u.tenant_email ? [u.tenant_email] : [];
-      const toPhone = u.tenant_phone ? [u.tenant_phone] : [];
-      const message = `Hi ${u.tenant_name}, this is a reminder that your rent and service charge review for ${u.unit_name} is now due. Please contact your Property Manager for your current statement.`;
+      const dueDate = new Date(u.next_rent_notice_due);
+      const daysUntilDue = Math.round((dueDate.getTime() - today.getTime()) / 86400000);
+      const dueDateStr = u.next_rent_notice_due;
 
-      if (toEmail.length > 0) {
-        try {
-          await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
-              to: toEmail,
-              subject: `Rent & Service Charge Reminder — ${u.unit_name}`,
-              html: `
-                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#111827">
-                  <div style="background:#1A3566;color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
-                    <div style="font-size:12px;opacity:0.85;letter-spacing:0.5px;text-transform:uppercase">Rent &amp; Service Charge Reminder</div>
-                    <div style="font-size:18px;font-weight:700;margin-top:4px">${u.unit_name}</div>
-                  </div>
-                  <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
-                    <p style="font-size:14px;line-height:1.6;margin-top:0">Dear ${u.tenant_name},</p>
-                    <p style="font-size:14px;line-height:1.6">This is a reminder that your rent and service charge review for <strong>${u.unit_name}</strong> is now due, per your lease's bi-annual review schedule. Please contact your Property Manager for your current statement.</p>
-                    <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}</p>
-                  </div>
-                </div>`,
-            }),
-          });
-        } catch (emailErr) {
-          console.error("Rent notice email failed for", u.unit_name, emailErr.message);
-        }
+      // 7-day advance heads-up — fires once per cycle. Using <= 7
+      // rather than an exact match on purpose: if the cron ever
+      // misses a day, this still fires late rather than silently
+      // never firing at all, and rent_advance_notice_sent stops it
+      // firing again on every day between day 7 and day 0.
+      if (daysUntilDue <= 7 && daysUntilDue > 0 && !u.rent_advance_notice_sent) {
+        await sendRentNotice(u, pmEmails, pmPhones, {
+          tenantSubject: `Upcoming Rent & Service Charge Review — ${u.unit_name}`,
+          tenantMessage: `Hi ${u.tenant_name}, a heads-up that your rent and service charge review for ${u.unit_name} is coming up on ${dueDateStr} — in ${daysUntilDue} day${daysUntilDue === 1 ? "" : "s"}.`,
+          pmSubject: `Rent Review Coming Up — ${u.unit_name}`,
+          pmMessage: `${u.tenant_name}'s rent and service charge review for ${u.unit_name} is due on ${dueDateStr} — ${daysUntilDue} day${daysUntilDue === 1 ? "" : "s"} from now. Worth planning the follow-up.`,
+          activityText: `📣 7-day advance rent/service charge notice sent to ${u.tenant_name} and Property Manager`,
+        });
+        await update("units", u.id, { rent_advance_notice_sent: true }).catch(() => {});
+        notifiedCount++;
       }
 
-      if (toPhone.length > 0) {
-        try {
-          const recipients = buildBeemRecipients(parsePhoneList(u.tenant_phone));
-          await fetch("https://apisms.beem.africa/v1/send", {
-            method: "POST",
-            headers: {
-              Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              source_addr: process.env.BEEM_SENDER_ID || "INFO",
-              schedule_time: "",
-              encoding: 0,
-              message: message.slice(0, 320),
-              recipients,
-            }),
-          });
-        } catch (smsErr) {
-          console.error("Rent notice SMS failed for", u.unit_name, smsErr.message);
-        }
+      // Exact-due-date notice — fires once, then advances the whole
+      // cycle 6 months from ITS OWN previous due date (not from
+      // today), so a notice sent a day or two late doesn't quietly
+      // compress the tenant's next interval. Resets the advance flag
+      // so next cycle's 7-day heads-up can fire again in its own turn.
+      if (daysUntilDue <= 0) {
+        await sendRentNotice(u, pmEmails, pmPhones, {
+          tenantSubject: `Rent & Service Charge Reminder — ${u.unit_name}`,
+          tenantMessage: `Hi ${u.tenant_name}, this is a reminder that your rent and service charge review for ${u.unit_name} is now due. Please contact your Property Manager for your current statement.`,
+          pmSubject: `Rent Review Due Today — ${u.unit_name}`,
+          pmMessage: `${u.tenant_name}'s rent and service charge review for ${u.unit_name} is due today (${dueDateStr}). Please follow up.`,
+          activityText: `💰 Rent/service charge notice sent to ${u.tenant_name} and Property Manager — due today`,
+        });
+
+        const nextDue = new Date(u.next_rent_notice_due);
+        nextDue.setMonth(nextDue.getMonth() + 6);
+        await update("units", u.id, {
+          last_rent_notice_sent: today.toISOString().split("T")[0],
+          next_rent_notice_due: nextDue.toISOString().split("T")[0],
+          rent_advance_notice_sent: false,
+        }).catch(e => console.error("Rent notice date advance failed for", u.unit_name, e.message));
+        notifiedCount++;
       }
-
-      // Advance exactly like advanceAssetNextService does: today
-      // becomes the "last sent" date, the next due date moves 6
-      // months further out from itself, not from today — so a notice
-      // sent a few days late doesn't quietly compress the tenant's
-      // next interval.
-      const nextDue = new Date(u.next_rent_notice_due);
-      nextDue.setMonth(nextDue.getMonth() + 6);
-      await update("units", u.id, {
-        last_rent_notice_sent: today.toISOString().split("T")[0],
-        next_rent_notice_due: nextDue.toISOString().split("T")[0],
-      }).catch(e => console.error("Rent notice date advance failed for", u.unit_name, e.message));
-
-      const log = Array.isArray(u.activity_log) ? u.activity_log : [];
-      log.push({ type: "system", text: `💰 Bi-annual rent/service charge notice sent to ${u.tenant_name}`, by: "system", at: new Date().toISOString() });
-      await update("units", u.id, { activity_log: JSON.stringify(log) }).catch(() => {});
     }
 
-    return due.length;
+    return notifiedCount;
   } catch (err) {
     console.error("checkRentNoticesDue error:", err);
     return 0;
   }
+}
+
+// Shared by both firing points above — sends the tenant's email/SMS
+// and the PM's email/SMS, then logs one activity entry on the unit.
+// Each send is independently wrapped so one failure (a bad email, a
+// down SMS gateway) doesn't stop the others in the same notice from
+// going out.
+async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMessage, pmSubject, pmMessage, activityText }) {
+  const { update } = await import("../lib/postgresClient.js");
+
+  if (u.tenant_email) {
+    try {
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: [u.tenant_email],
+          subject: tenantSubject,
+          html: buildRentNoticeEmailHtml(tenantSubject, u.tenant_name, tenantMessage),
+        }),
+      });
+    } catch (err) { console.error("Rent notice tenant email failed for", u.unit_name, err.message); }
+  }
+
+  if (u.tenant_phone) {
+    try {
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: tenantMessage.slice(0, 320),
+          recipients: buildBeemRecipients(parsePhoneList(u.tenant_phone)),
+        }),
+      });
+    } catch (err) { console.error("Rent notice tenant SMS failed for", u.unit_name, err.message); }
+  }
+
+  if (pmEmails.length > 0) {
+    try {
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: pmEmails,
+          subject: pmSubject,
+          html: buildRentNoticeEmailHtml(pmSubject, "Property Manager", pmMessage),
+        }),
+      });
+    } catch (err) { console.error("Rent notice PM email failed for", u.unit_name, err.message); }
+  }
+
+  if (pmPhones.length > 0) {
+    try {
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: pmMessage.slice(0, 320),
+          recipients: buildBeemRecipients(pmPhones),
+        }),
+      });
+    } catch (err) { console.error("Rent notice PM SMS failed for", u.unit_name, err.message); }
+  }
+
+  const log = Array.isArray(u.activity_log) ? u.activity_log : [];
+  log.push({ type: "system", text: activityText, by: "system", at: new Date().toISOString() });
+  await update("units", u.id, { activity_log: JSON.stringify(log) }).catch(() => {});
+}
+
+function buildRentNoticeEmailHtml(subject, recipientName, message) {
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;color:#111827">
+      <div style="background:#1A3566;color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
+        <div style="font-size:12px;opacity:0.85;letter-spacing:0.5px;text-transform:uppercase">${subject}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
+        <p style="font-size:14px;line-height:1.6;margin-top:0">Dear ${recipientName},</p>
+        <p style="font-size:14px;line-height:1.6">${message}</p>
+        <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}</p>
+      </div>
+    </div>`;
 }
 
 async function sendHeartbeat(checkedCount, results, errorMessage) {
