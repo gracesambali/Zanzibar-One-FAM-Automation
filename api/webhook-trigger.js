@@ -163,8 +163,18 @@ async function sendEmail(f, urgency, message) {
       from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
-      html: `<p>${message}</p><p style="color:#888;font-size:12px;">Sent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.</p>`,
-      text: `${message}\n\nSent instantly by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}, triggered by a live Airtable update.`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+          <div style="background:${urgency === "OVERDUE" ? "#dc2626" : urgency === "URGENT" ? "#d97706" : "#1A3566"};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Maintenance Alert — ${urgency}</div>
+            <div style="font-size:18px;font-weight:700;margin-top:4px">${f.name || f.asset_id}</div>
+          </div>
+          <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+            <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
+            <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${message}</p>
+          </div>
+        </div>`,
+      text: `${message}`,
     }),
   });
   if (!resp.ok) console.error("Resend error:", await resp.text());

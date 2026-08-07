@@ -109,6 +109,7 @@ async function sendUnsatisfactionAlert(assetName, reason) {
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
         <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">The reporter said the work wasn't done to their satisfaction. The work order has been reopened.</p>
         <p style="margin:12px 0 0;color:#6B7280;font-size:13px"><strong>Reason:</strong> ${reason || "(no reason given)"}</p>
       </div>
@@ -349,6 +350,7 @@ async function handleUnitPortalReportIssue(req, res) {
             <div style="font-size:18px;font-weight:700;margin-top:4px">${unitName}</div>
           </div>
           <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+            <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
             <p style="margin:0 0 8px;color:#1A1A2E;font-size:14px;line-height:1.6">${description.trim()}</p>
             <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${senderName.trim()} — ${woId}</p>
           </div>
@@ -631,6 +633,7 @@ async function sendEmail(message, description, location) {
         <div style="font-size:18px;font-weight:700;margin-top:4px">${location}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
         <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
         <p style="margin:0;color:#6B7280;font-size:12.5px">${message.match(/Reported by [^:]+/)?.[0] || ""}</p>
       </div>
