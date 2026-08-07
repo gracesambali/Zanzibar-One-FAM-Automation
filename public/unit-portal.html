@@ -81,6 +81,9 @@
             <div class="detail-item"><div class="label">Email</div><div class="value" id="detailTenantEmail">—</div></div>
             <div class="detail-item"><div class="label">Phone</div><div class="value" id="detailTenantPhone">—</div></div>
             <div class="detail-item"><div class="label">Contract</div><div class="value" id="detailContract">—</div></div>
+            <div class="detail-item"><div class="label">Contract Date</div><div class="value" id="detailContractDate">—</div></div>
+            <div class="detail-item"><div class="label">Next Rent/Service Notice</div><div class="value" id="detailNextNotice">—</div></div>
+            <div class="detail-item"><div class="label">SLA</div><div class="value" id="detailSLA">—</div></div>
           </div>
           <div style="width:170px;flex-shrink:0;text-align:center">
             <img id="unitPortalQrImg" src="" alt="QR code to this portal" style="width:110px;height:110px;border-radius:6px;border:1px solid #E2E6ED">
@@ -198,6 +201,11 @@
       document.getElementById('detailTenantPhone').textContent = data.tenantPhone || '—';
       document.getElementById('detailContract').innerHTML = data.contractUrl
         ? `<a href="${data.contractUrl}" target="_blank" rel="noopener" style="color:#1A3566">View contract</a>`
+        : 'Not uploaded yet';
+      document.getElementById('detailContractDate').textContent = data.contractDate || '—';
+      document.getElementById('detailNextNotice').textContent = data.nextRentNoticeDue || '—';
+      document.getElementById('detailSLA').innerHTML = data.slaUrl
+        ? `<a href="${data.slaUrl}" target="_blank" rel="noopener" style="color:#1A3566">View SLA</a>`
         : 'Not uploaded yet';
 
       const assets = data.assets || [];

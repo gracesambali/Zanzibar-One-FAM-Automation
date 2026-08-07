@@ -197,8 +197,24 @@ async function handleGetUnitPortal(req, res) {
     }
 
     const rawChatLog = Array.isArray(f.chat_log) ? f.chat_log : [];
-    const { signChatLogAttachments } = await import("../lib/storageClient.js");
+    const { signChatLogAttachments, getSignedUrlSafe } = await import("../lib/storageClient.js");
     const chatLog = await signChatLogAttachments(rawChatLog);
+
+    // Contract and SLA URLs both need signing fresh here, same as the
+    // staff-side handleGetUnits — these columns hold storage PATHS,
+    // not URLs. contractUrl specifically was never updated when that
+    // pattern was introduced (Session 39), so it's been returning a
+    // raw, non-functional path this whole time — a real, separate bug
+    // from what's actually being fixed here, caught and fixed
+    // alongside it rather than left for later.
+    const contractUrl = await getSignedUrlSafe(f.signed_contract_url).catch(err => {
+      console.error("handleGetUnitPortal: could not sign contract URL:", err.message);
+      return null;
+    });
+    const slaUrl = await getSignedUrlSafe(f.sla_document_url).catch(err => {
+      console.error("handleGetUnitPortal: could not sign SLA URL:", err.message);
+      return null;
+    });
 
     // Confirmed: full parity with what the Property Manager sees —
     // the tenant sees every activity recorded on their own unit too.
@@ -231,8 +247,12 @@ async function handleGetUnitPortal(req, res) {
       tenantName: f.tenant_name || "",
       tenantEmail: f.tenant_email || "",
       tenantPhone: f.tenant_phone || "",
-      contractUrl: f.signed_contract_url || null,
+      contractUrl,
       contractFilename: f.signed_contract_filename || null,
+      contractDate: f.contract_date || null,
+      nextRentNoticeDue: f.next_rent_notice_due || null,
+      slaUrl,
+      slaFilename: f.sla_document_filename || null,
       assets: unitAssets,
       chatLog,
       activityLog,
