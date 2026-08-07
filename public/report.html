@@ -105,7 +105,7 @@
   </div>
 
 <script>
-  const pageQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(window.location.origin + '/report.html')}`;
+  const pageQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(window.location.origin + '/report')}`;
   document.getElementById('pageQrImg').src = pageQrUrl;
 
   async function downloadPageQr() {

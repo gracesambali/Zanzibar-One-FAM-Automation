@@ -264,7 +264,7 @@
     try {
       const res = await fetch("/api/get-sensor-readings");
       if (res.status === 401) {
-        window.location.href = "/login.html";
+        window.location.href = "/login";
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
