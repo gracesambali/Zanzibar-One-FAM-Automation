@@ -183,7 +183,8 @@ async function sendResetEmail(email, displayName, token) {
         <div style="font-size:18px;font-weight:700">Set Your Password</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0 0 16px;color:#1A1A2E;font-size:14px;line-height:1.6">Hi ${displayName}, click below to set a new password for your account. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.</p>
+        <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${displayName},</p>
+        <p style="margin:0 0 16px;color:#1A1A2E;font-size:14px;line-height:1.6">Click below to set a new password for your account. This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.</p>
         <a href="${link}" style="display:inline-block;background:#1A3566;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Set Password</a>
         <p style="margin:16px 0 0;color:#9CA3AF;font-size:11.5px">If you didn't request this, you can ignore this email \u2014 your password won't change.</p>
       </div>

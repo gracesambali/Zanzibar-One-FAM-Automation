@@ -1387,6 +1387,7 @@ async function notifyTechnicianOfAssignment(technicianContact, woId, assetName) 
           <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${technicianContact.displayName || technicianContact.username || "Technician"},</p>
           <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">Please confirm or decline this assignment in the app before starting work.</p>
         </div>
       </div>`;
@@ -1435,6 +1436,7 @@ async function notifyAssignerConfirmation(assignerUsername, technicianUsername, 
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${assignerContact.displayName || assignerContact.username || "Team"},</p>
         <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">You assigned ${technicianUsername} to this job. They've been notified and asked to confirm.</p>
       </div>
     </div>`;
@@ -1465,6 +1467,7 @@ async function notifyAssignerOfDecline(assignerContact, technicianUsername, reas
           <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${assignerContact.displayName || assignerContact.username || "Team"},</p>
           <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${technicianUsername} declined this assignment: "${reason}". Please assign someone else.</p>
         </div>
       </div>`;
@@ -1525,6 +1528,7 @@ async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, 
           <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
           <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${message}</p>
         </div>
       </div>`;
@@ -1575,6 +1579,7 @@ async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
         <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
       </div>
       <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Procurement,</p>
         <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">Requested by ${requestedBy}: <strong>${spec.description}</strong> — quantity ${spec.quantity}${spec.unit ? " " + spec.unit : ""}.</p>
       </div>
     </div>`;
@@ -1611,6 +1616,7 @@ async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, 
           <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
           <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">TZS ${total.toLocaleString()} paid and fulfilled. Please confirm the delivery in the app once it's arrived, so the technician can proceed.</p>
         </div>
       </div>`;

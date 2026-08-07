@@ -662,6 +662,7 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
           <div style="font-size:18px;font-weight:700;margin-top:4px">${planTitle}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${creatorEntry.displayName || creatorEntry.username || "Team"},</p>
           <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${whatChanged}, by ${editedBy}.</p>
         </div>
       </div>`;

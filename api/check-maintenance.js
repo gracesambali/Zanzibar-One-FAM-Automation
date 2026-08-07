@@ -443,7 +443,17 @@ async function checkPlanDeadlines() {
             from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
             to: [creatorEntry.email],
             subject: `${planTitle} — target end in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
-            html: `<p>${planTitle} is due to complete on ${r.target_end_date} — ${daysLeft} day${daysLeft !== 1 ? "s" : ""} away.</p>`,
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+                <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+                  <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Plan Deadline Approaching</div>
+                  <div style="font-size:18px;font-weight:700;margin-top:4px">${planTitle}</div>
+                </div>
+                <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+                  <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${creatorEntry.displayName || creatorEntry.username || "Team"},</p>
+                  <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">${planTitle} is due to complete on ${r.target_end_date} — ${daysLeft} day${daysLeft !== 1 ? "s" : ""} away.</p>
+                </div>
+              </div>`,
           }),
         }).catch(err => console.error("Plan deadline email error:", err));
       }
@@ -522,6 +532,7 @@ async function sendDailySummary(maintenanceTriggeredToday) {
           <div style="font-size:18px;font-weight:700;margin-top:4px">${dateLabel}</div>
         </div>
         <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 12px;font-size:14px;color:#1A1A2E">Dear Team,</p>
           <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${openedToday}</strong> work order${openedToday !== 1 ? "s" : ""} opened today.</p>
           <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${closedToday}</strong> work order${closedToday !== 1 ? "s" : ""} closed today.</p>
           <p style="margin:0 0 8px;font-size:14px;color:#1A1A2E"><strong>${maintenanceTriggeredToday}</strong> maintenance alert${maintenanceTriggeredToday !== 1 ? "s" : ""} triggered.</p>
