@@ -531,3 +531,14 @@ alter table units add column rent_advance_notice_sent boolean not null default f
 alter table work_orders add column delivery_note_url text;
 alter table work_orders add column delivery_note_filename text;
 alter table work_orders add column delivery_confirmation_note text;
+
+-- ============================================================
+-- Added: a real, guaranteed-unique short code per facility, so asset
+-- IDs can be prefixed with it and never collide across facilities
+-- even when two campuses happen to have identically-named buildings
+-- ("Offices" at both Mlimani City and Game City, for example). Every
+-- existing facility gets backfilled with an auto-generated code
+-- (?backfillFacilityCodes=true); every new facility created from now
+-- on gets one assigned automatically at creation time.
+-- ============================================================
+alter table facilities add column facility_code text unique;
