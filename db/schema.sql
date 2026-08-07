@@ -509,3 +509,13 @@ alter table units add column last_rent_notice_sent date;
 alter table units add column next_rent_notice_due date;
 alter table units add column sla_document_url text;
 alter table units add column sla_document_filename text;
+
+-- ============================================================
+-- Added: tracks whether the 7-day advance rent/service charge notice
+-- has already fired for the CURRENT cycle, separately from the
+-- exact-due-date notice - a unit now gets notified twice per cycle
+-- (7 days before, and on the day itself), not once. This flag resets
+-- to false whenever the cycle advances, so the next cycle's advance
+-- notice can fire again in its own turn.
+-- ============================================================
+alter table units add column rent_advance_notice_sent boolean not null default false;
