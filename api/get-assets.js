@@ -187,7 +187,7 @@ export default async function handler(req, res) {
     }
     try {
       const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
-      const { generateFacilityCode } = await import("../lib/facilityCode.js");
+      const { generateUniqueCode } = await import("../lib/uniqueCode.js");
 
       const facilities = await pgListAllRecords("facilities");
       const existingCodes = new Set(facilities.filter(f => f.facility_code).map(f => f.facility_code));
@@ -197,7 +197,7 @@ export default async function handler(req, res) {
 
       for (const f of facilities) {
         if (f.facility_code) { skipped++; continue; }
-        const code = generateFacilityCode(f.name, existingCodes);
+        const code = generateUniqueCode(f.name, existingCodes);
         existingCodes.add(code); // reserve it immediately so the NEXT facility in this same loop can't also claim it
         await update("facilities", f.id, { facility_code: code });
         results.push({ name: f.name, code });
@@ -205,6 +205,51 @@ export default async function handler(req, res) {
       }
 
       return res.status(200).json({ success: true, totalFacilities: facilities.length, assigned, skipped, results });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  // Same purpose as the facility backfill above, but for buildings —
+  // and this is actually the code that matters most for telling
+  // campuses apart, confirmed directly: facility names like "Malls"
+  // turned out to be shared buckets across every site, not one
+  // specific campus, so the facility code alone can't distinguish
+  // sites. Buildings have distinct, site-specific names ("Mlimani
+  // Mall 1" vs "Game City Mall 1") and now get the same real,
+  // database-guaranteed-unique code treatment, closing the gap one
+  // level down from where it was first fixed.
+  if (req.query.backfillBuildingCodes === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Not permitted." });
+    }
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({ error: "Add &confirm=true to actually run this." });
+    }
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { generateUniqueCode } = await import("../lib/uniqueCode.js");
+
+      const buildingsResult = await pgQuery("select * from facility_buildings");
+      const buildings = buildingsResult.rows;
+      const existingCodes = new Set(buildings.filter(b => b.building_code).map(b => b.building_code));
+
+      let assigned = 0, skipped = 0;
+      const results = [];
+
+      for (const b of buildings) {
+        if (b.building_code) { skipped++; continue; }
+        const code = generateUniqueCode(b.building_name, existingCodes);
+        existingCodes.add(code); // reserve it immediately, same reasoning as the facility backfill
+        await pgQuery(
+          "update facility_buildings set building_code = $1 where facility_id = $2 and building_name = $3",
+          [code, b.facility_id, b.building_name]
+        );
+        results.push({ building: b.building_name, code });
+        assigned++;
+      }
+
+      return res.status(200).json({ success: true, totalBuildings: buildings.length, assigned, skipped, results });
     } catch (err) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -581,9 +626,12 @@ async function handleGetFacilities(req, res) {
     const buildingRows = await pgQuery("select * from facility_buildings");
 
     const buildingsByFacility = {};
+    const buildingCodesByFacility = {};
     for (const b of buildingRows.rows) {
       if (!buildingsByFacility[b.facility_id]) buildingsByFacility[b.facility_id] = [];
       buildingsByFacility[b.facility_id].push(b.building_name);
+      if (!buildingCodesByFacility[b.facility_id]) buildingCodesByFacility[b.facility_id] = {};
+      buildingCodesByFacility[b.facility_id][b.building_name] = b.building_code || null;
     }
 
     const facilities = facilityRows.map(r => ({
@@ -591,6 +639,7 @@ async function handleGetFacilities(req, res) {
       name: r.name || "",
       code: r.facility_code || null,
       buildings: buildingsByFacility[r.id] || [],
+      buildingCodes: buildingCodesByFacility[r.id] || {},
     })).filter(f => f.name);
 
     return res.status(200).json({ facilities });

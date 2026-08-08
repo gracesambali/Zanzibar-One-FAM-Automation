@@ -704,11 +704,11 @@ export default async function handler(req, res) {
       if (!name || !name.trim()) return res.status(400).json({ error: "Facility name is required" });
       try {
         const { listAllRecords: pgListAllRecords, insert } = await import("../lib/postgresClient.js");
-        const { generateFacilityCode } = await import("../lib/facilityCode.js");
+        const { generateUniqueCode } = await import("../lib/uniqueCode.js");
 
         const existing = await pgListAllRecords("facilities");
         const existingCodes = new Set(existing.filter(f => f.facility_code).map(f => f.facility_code));
-        const code = generateFacilityCode(name.trim(), existingCodes);
+        const code = generateUniqueCode(name.trim(), existingCodes);
 
         const created = await insert("facilities", { name: name.trim(), facility_code: code });
         return res.status(200).json({ success: true, facility: { id: created.id, name: created.name, code: created.facility_code } });
@@ -720,7 +720,12 @@ export default async function handler(req, res) {
 
     // Adding a new building to an existing facility. Same permission
     // gate as addFacility, same reasoning — this is structure, not
-    // routine entry.
+    // routine entry. The building code is what actually guarantees two
+    // identically-styled building names across different facilities
+    // ("Mall 1" at two different sites) can never collide — confirmed
+    // this matters more than the facility code alone, since facility
+    // names turned out to be shared buckets across sites, not one
+    // specific campus each.
     if (req.body && req.body.addBuilding) {
       if (!can(session.r, "manageUsers")) {
         return res.status(403).json({ error: "Not permitted to add a building." });
@@ -730,9 +735,15 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "facilityId and buildingName are required" });
       }
       try {
-        const { insert } = await import("../lib/postgresClient.js");
-        await insert("facility_buildings", { facility_id: facilityId, building_name: buildingName.trim() });
-        return res.status(200).json({ success: true });
+        const { insert, query: pgQuery } = await import("../lib/postgresClient.js");
+        const { generateUniqueCode } = await import("../lib/uniqueCode.js");
+
+        const existingResult = await pgQuery("select building_code from facility_buildings where building_code is not null");
+        const existingCodes = new Set(existingResult.rows.map(r => r.building_code));
+        const code = generateUniqueCode(buildingName.trim(), existingCodes);
+
+        const created = await insert("facility_buildings", { facility_id: facilityId, building_name: buildingName.trim(), building_code: code });
+        return res.status(200).json({ success: true, building: { name: created.building_name, code: created.building_code } });
       } catch (err) {
         console.error("addBuilding error:", err);
         return res.status(500).json({ error: err.message });
