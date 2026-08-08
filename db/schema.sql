@@ -557,3 +557,34 @@ alter table facilities add column facility_code text unique;
 -- for real: a globally-unique building_code, database-enforced.
 -- ============================================================
 alter table facility_buildings add column building_code text unique;
+
+-- ============================================================
+-- Added: a plain-language "what they supply" field, replacing the
+-- rigid 10-item technical system checklist as the primary way vendors
+-- get described. Confirmed directly: forcing a confident technical
+-- category choice (HVAC, Fire Detection, etc.) at the moment of entry
+-- assumes whoever's adding the vendor already has that engineering
+-- judgment, which isn't a safe assumption for non-technical
+-- Procurement staff. categories (the old multi-select) is left in
+-- place, untouched, for any vendor that already has real tags from
+-- before - not required or shown as a checklist going forward, but
+-- not thrown away either.
+-- ============================================================
+alter table vendors add column supplies text;
+
+-- ============================================================
+-- Added: groundwork for a future external vendor sync, discussed but
+-- deliberately not built as working sync logic yet - there's no real
+-- source system identified to connect to. Same "prep now, without
+-- enforcement, so nothing needs retrofitting later" discipline as the
+-- organization_id work: these columns exist so that once a real
+-- system is chosen, a vendor's sync history can be tracked from day
+-- one rather than needing to be backfilled onto vendors that already
+-- existed. Confirmed conflict rule for whenever this is actually
+-- built: most-recently-edited wins, which is exactly what
+-- last_edited_in_fam_at and last_synced_at exist to compare.
+-- ============================================================
+alter table vendors add column source_system text;
+alter table vendors add column external_id text;
+alter table vendors add column last_edited_in_fam_at timestamptz;
+alter table vendors add column last_synced_at timestamptz;
