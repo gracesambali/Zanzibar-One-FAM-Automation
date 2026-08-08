@@ -4790,9 +4790,12 @@ function closeAssetLinkModal() {
 }
 
 // Vendor management — the foundation the new procurement workflow
-// sits on. Procurement-only to add (enforced server-side too, this is
-// just the matching UI gate) — everyone who can see this panel at all
-// can still view the existing vendor list.
+// sits on. Add/edit gated to Business Owner, System Admin, or
+// Procurement (enforced server-side too, this is just the matching UI
+// gate) — everyone who can see this panel at all can still view and
+// search the existing vendor list.
+let vendorListCache = []; // fetched once per modal open, filtered locally without refetching
+
 async function openManageVendorsModal() {
   const overlay = document.createElement('div');
   overlay.id = 'vendorModalOverlay';
@@ -4801,6 +4804,11 @@ async function openManageVendorsModal() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Vendors</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <input id="vn_search" type="text" placeholder="Search by name or what they supply…" oninput="renderVendorList()" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <button onclick="runAIVendorSearch()" title="Smart search — finds matches even with different wording" style="padding:8px 12px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✨ Smart Search</button>
+      </div>
+      <div id="vn_aiStatus" style="display:none;font-size:11px;color:var(--muted);margin-bottom:8px;font-style:italic"></div>
       <div id="vendorListArea" style="margin-bottom:${canAdd ? '18px' : '0'}"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
       ${canAdd ? `
       <div style="border-top:1px solid var(--border);padding-top:16px">
@@ -4811,13 +4819,11 @@ async function openManageVendorsModal() {
         <input id="vn_email" type="email" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Phone</label>
         <input id="vn_phone" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
-        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">What they supply</label>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
-          ${systemDefs.map((s, i) => `<label style="display:flex;align-items:center;gap:4px;font-size:11.5px;border:1px solid var(--border);border-radius:14px;padding:4px 10px;cursor:pointer">
-            <input type="checkbox" class="vn-cat" value="${s.name}" style="margin:0"> ${s.name}
-          </label>`).join('')}
-        </div>
-        <button onclick="submitAddVendor()" style="width:100%;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Vendor</button>
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What they supply</label>
+        <input id="vn_supplies" type="text" placeholder="e.g. AC repair and gas refill, in your own words" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+        <div style="font-size:10.5px;color:var(--muted);margin-bottom:12px">No fixed categories to choose from — just describe it. A technical tag may be suggested automatically afterward.</div>
+        <button id="vn_addBtn" onclick="submitAddVendor()" style="width:100%;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Vendor</button>
+        <div id="vn_addResult" style="display:none;margin-top:8px;font-size:11.5px;color:var(--muted)"></div>
       </div>` : ''}
       <button onclick="closeVendorModal()" style="width:100%;margin-top:12px;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
     </div>`;
@@ -4835,19 +4841,77 @@ async function loadVendorList() {
   try {
     const resp = await fetch('/api/work-orders?vendors=true');
     const data = await resp.json();
-    const vendors = data.vendors || [];
-    if (vendors.length === 0) {
-      area.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No vendors added yet.</div>`;
-      return;
-    }
-    area.innerHTML = vendors.map(v => `
-      <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${v.name}</div>
-        <div style="font-size:11px;color:var(--muted)">${[v.email, v.phone].filter(Boolean).join(' · ') || 'No contact on file'}</div>
-        ${v.categories && v.categories.length ? `<div style="margin-top:4px">${v.categories.map(c => `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3;margin-right:4px">${c}</span>`).join('')}</div>` : ''}
-      </div>`).join('');
+    vendorListCache = data.vendors || [];
+    renderVendorList();
   } catch (err) {
     area.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load vendors: ${err.message}</div>`;
+  }
+}
+
+// Fast, free, instant — runs on every keystroke, matching name and
+// supplies text directly. This is the default; Smart Search below is
+// the deliberate extra step for when this comes up empty.
+function renderVendorList(highlightIds) {
+  const area = document.getElementById('vendorListArea');
+  if (!area) return;
+  const q = (document.getElementById('vn_search')?.value || '').toLowerCase().trim();
+
+  let vendors = vendorListCache;
+  if (q) {
+    vendors = vendorListCache.filter(v =>
+      v.name.toLowerCase().includes(q) || (v.supplies || '').toLowerCase().includes(q)
+    );
+  }
+  if (highlightIds && highlightIds.length) {
+    const idSet = new Set(highlightIds);
+    vendors = vendorListCache.filter(v => idSet.has(v.id))
+      .sort((a, b) => highlightIds.indexOf(a.id) - highlightIds.indexOf(b.id));
+  }
+
+  if (vendorListCache.length === 0) {
+    area.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No vendors added yet.</div>`;
+    return;
+  }
+  if (vendors.length === 0) {
+    area.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No matches — try Smart Search for a broader match.</div>`;
+    return;
+  }
+  area.innerHTML = vendors.map(v => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(v.name)}</div>
+      <div style="font-size:11px;color:var(--muted)">${[v.email, v.phone].filter(Boolean).map(escapeHtml).join(' · ') || 'No contact on file'}</div>
+      ${v.supplies ? `<div style="font-size:11.5px;color:var(--text);margin-top:3px">${escapeHtml(v.supplies)}</div>` : ''}
+      ${v.categories && v.categories.length ? `<div style="margin-top:4px">${v.categories.map(c => `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3;margin-right:4px">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+    </div>`).join('');
+}
+
+// Explicit, deliberate step — never runs automatically. Sends the
+// query plus the whole active vendor list to Claude in one call, asks
+// which vendors could plausibly match even with completely different
+// wording ("aircon guy" finding "climate control servicing").
+async function runAIVendorSearch() {
+  const q = document.getElementById('vn_search')?.value.trim();
+  const statusEl = document.getElementById('vn_aiStatus');
+  if (!q) { alert('Type something to search for first.'); return; }
+  statusEl.style.display = 'block';
+  statusEl.textContent = 'Searching…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ searchVendorsAI: true, searchQuery: q }),
+    });
+    const data = await resp.json();
+    const matchingIds = data.matchingIds || [];
+    if (matchingIds.length === 0) {
+      statusEl.textContent = 'No smart matches found either.';
+      renderVendorList();
+    } else {
+      statusEl.textContent = `${matchingIds.length} smart match${matchingIds.length === 1 ? '' : 'es'} found.`;
+      renderVendorList(matchingIds);
+    }
+  } catch (err) {
+    statusEl.textContent = 'Smart search failed — try the regular search above instead.';
   }
 }
 
@@ -4855,24 +4919,36 @@ async function submitAddVendor() {
   const name = document.getElementById('vn_name').value.trim();
   const email = document.getElementById('vn_email').value.trim();
   const phone = document.getElementById('vn_phone').value.trim();
-  const categories = [...document.querySelectorAll('.vn-cat:checked')].map(c => c.value);
+  const supplies = document.getElementById('vn_supplies').value.trim();
+  const resultEl = document.getElementById('vn_addResult');
+  const btn = document.getElementById('vn_addBtn');
   if (!name) { alert('Vendor name is required.'); return; }
 
+  resultEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Adding…';
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addVendor: true, name, email, phone, categories }),
+      body: JSON.stringify({ addVendor: true, name, email, phone, supplies }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add vendor');
     document.getElementById('vn_name').value = '';
     document.getElementById('vn_email').value = '';
     document.getElementById('vn_phone').value = '';
-    document.querySelectorAll('.vn-cat:checked').forEach(c => c.checked = false);
-    loadVendorList();
+    document.getElementById('vn_supplies').value = '';
+
+    if (data.vendor && data.vendor.suggestedCategory) {
+      resultEl.textContent = `Added — tagged "${data.vendor.suggestedCategory}" automatically based on what you described. You can remove this tag later if it's not right.`;
+      resultEl.style.display = 'block';
+    }
+
+    await loadVendorList();
   } catch (err) {
     alert('Could not add vendor: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add Vendor';
   }
 }
 

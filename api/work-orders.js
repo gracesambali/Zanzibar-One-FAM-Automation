@@ -971,9 +971,9 @@ export default async function handler(req, res) {
     if (req.body && req.body.addVendor) {
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && session.r !== "procurement") {
-        return res.status(403).json({ error: "Only Procurement can add a vendor." });
+        return res.status(403).json({ error: "Only Business Owner, System Admin, or Procurement can add a vendor." });
       }
-      const { name, email, phone, categories } = req.body;
+      const { name, email, phone, supplies } = req.body;
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Vendor name is required" });
       }
@@ -981,25 +981,101 @@ export default async function handler(req, res) {
       try {
         const { insert } = await import("../lib/postgresClient.js");
 
+        // Quiet, optional category suggestion from the free-text supply
+        // description — confirmed directly: never required, never
+        // blocking, just a suggested tag Procurement can accept or
+        // ignore. Non-fatal if it fails; the vendor still saves either
+        // way, same graceful-degradation pattern as invoice extraction.
+        let suggestedCategory = null;
+        if (supplies && supplies.trim()) {
+          const { suggestVendorCategory } = await import("../lib/vendorAI.js");
+          suggestedCategory = await suggestVendorCategory(supplies.trim()).catch(err => {
+            console.error("Category suggestion failed (non-fatal):", err.message);
+            return null;
+          });
+        }
+
         const created = await insert("vendors", {
           vendor_name: name.trim(),
           email: (email || "").trim() || null,
           phone: (phone || "").trim() || null,
-          categories: Array.isArray(categories) ? categories : [],
+          supplies: (supplies || "").trim() || null,
+          categories: suggestedCategory ? [suggestedCategory] : [],
           active: true,
           added_by: session.u,
-        }, { typecast: true }); // lets a new category value be added on the fly without a manual step each time
+          last_edited_in_fam_at: new Date().toISOString(),
+        }, { typecast: true });
 
         return res.status(200).json({ success: true, vendor: {
           id: created.id,
           name: created.vendor_name || "",
           email: created.email || "",
           phone: created.phone || "",
+          supplies: created.supplies || "",
           categories: created.categories || [],
+          suggestedCategory,
         } });
       } catch (err) {
         console.error("addVendor error:", err);
         return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Editing an existing vendor — same permission gate as adding one.
+    // Stamps last_edited_in_fam_at on every real change — not used by
+    // anything yet, but this is exactly the timestamp a future sync
+    // would need to fairly compare "who changed this more recently,"
+    // per the most-recent-wins rule already agreed for that later
+    // feature. Recording it now, on every edit from today onward,
+    // means no vendor's edit history needs to be reconstructed
+    // retroactively once that sync actually gets built.
+    if (req.body && req.body.editVendor) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Business Owner, System Admin, or Procurement can edit a vendor." });
+      }
+      const { vendorId, name, email, phone, supplies } = req.body;
+      if (!vendorId) return res.status(400).json({ error: "vendorId required" });
+      try {
+        const { update } = await import("../lib/postgresClient.js");
+        const fields = { last_edited_in_fam_at: new Date().toISOString() };
+        if (name !== undefined) fields.vendor_name = name.trim();
+        if (email !== undefined) fields.email = (email || "").trim() || null;
+        if (phone !== undefined) fields.phone = (phone || "").trim() || null;
+        if (supplies !== undefined) fields.supplies = (supplies || "").trim() || null;
+
+        await update("vendors", vendorId, fields)
+          .catch(() => { throw new Error("Could not update vendor"); });
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editVendor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // AI-powered vendor search — explicitly triggered, never run on
+    // every keystroke (that would mean an API call per character
+    // typed). Meant as a second pass after the fast, free, instant
+    // client-side keyword search, for exactly the case that search
+    // can't handle: completely different wording for the same thing
+    // ("aircon guy" finding a vendor described as "climate control
+    // servicing"). Available to anyone who can view vendors at all,
+    // not gated further — this is read-only.
+    if (req.body && req.body.searchVendorsAI) {
+      const { searchQuery } = req.body;
+      try {
+        const { query: pgQuery } = await import("../lib/postgresClient.js");
+        const { searchVendorsSemantic } = await import("../lib/vendorAI.js");
+
+        const result = await pgQuery("select id, vendor_name, supplies from vendors where active = true");
+        const vendors = result.rows.map(r => ({ id: r.id, name: r.vendor_name, supplies: r.supplies }));
+
+        const matchingIds = await searchVendorsSemantic(searchQuery, vendors);
+        return res.status(200).json({ success: true, matchingIds });
+      } catch (err) {
+        console.error("searchVendorsAI error:", err);
+        return res.status(200).json({ success: true, matchingIds: [] }); // fails quiet, not an error the user needs to see
       }
     }
 
@@ -1878,6 +1954,7 @@ async function handleGetVendors(req, res) {
       name: r.vendor_name || "",
       email: r.email || "",
       phone: r.phone || "",
+      supplies: r.supplies || "",
       categories: r.categories || [],
     })).sort((a, b) => a.name.localeCompare(b.name));
 
