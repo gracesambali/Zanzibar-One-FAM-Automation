@@ -71,21 +71,33 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
 
   try {
     // Auto-generate ID from facility code + building code + category
-    // prefix. The facility code is what actually guarantees no
-    // collision across campuses — two buildings named "Offices" at two
-    // different facilities now produce different prefixes entirely
-    // (MLC-O-ACC-001 vs GC-O-ACC-001), not the same one. Falls back to
-    // the old building-only scheme if this asset's facility somehow
-    // has no code yet (shouldn't happen once the one-time backfill has
-    // run, but fails safe rather than blocking asset creation over it).
+    // prefix — both codes looked up fresh from the database here, not
+    // trusted from whatever the client sent. The facility code alone
+    // turned out not to be enough: facility names like "Malls" are
+    // shared buckets across every site, not one specific campus each,
+    // so it's the BUILDING code that actually guarantees no collision
+    // across campuses — two buildings named "Mall 1" at two different
+    // facilities now produce genuinely different prefixes
+    // (MC-MLM1-ACC-001 vs MC-GCM1-ACC-001), not the same one. Falls
+    // back to whatever's actually available if either code is missing
+    // (shouldn't happen once the backfills have run, but fails safe
+    // rather than blocking asset creation over it).
     const categoryPrefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
     let facilityCode = null;
+    let buildingCode = null;
     if (a.facility) {
-      const { getByColumn } = await import("../lib/postgresClient.js");
+      const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
       const facilityRecord = await getByColumn("facilities", "name", a.facility).catch(() => null);
       facilityCode = facilityRecord ? facilityRecord.facility_code : null;
+      if (facilityRecord && a.building) {
+        const buildingResult = await pgQuery(
+          "select building_code from facility_buildings where facility_id = $1 and building_name = $2",
+          [facilityRecord.id, a.building]
+        ).catch(() => null);
+        buildingCode = buildingResult && buildingResult.rows[0] ? buildingResult.rows[0].building_code : null;
+      }
     }
-    const prefixParts = [facilityCode, a.buildingCode, categoryPrefix].filter(Boolean);
+    const prefixParts = [facilityCode, buildingCode, categoryPrefix].filter(Boolean);
     const prefix = prefixParts.join("-");
     const assetId = await generateNextAssetId(prefix);
 

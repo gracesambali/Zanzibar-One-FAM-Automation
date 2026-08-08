@@ -7194,17 +7194,6 @@ function openAddAssetForm() {
   onAddAssetFacilityChange();
 }
 
-// Derives a short building code from its name — "Mall 1" -> "M1",
-// "Villa 7" -> "V7". Falls back to initials if a building's name
-// doesn't follow the simple "Word Number" pattern (e.g. "Zanzibar One
-// Tower"), so this never throws, just produces something reasonable.
-function buildingShortCode(name) {
-  if (!name) return '';
-  const match = name.match(/^([A-Za-z])\S*\s+(\d+)$/);
-  if (match) return (match[1] + match[2]).toUpperCase();
-  return name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 4);
-}
-
 function onAddAssetFacilityChange() {
   const facilityName = document.getElementById('na_facility')?.value;
   const buildingSel = document.getElementById('na_building');
@@ -7398,9 +7387,14 @@ function onCategoryChange() {
   const othersWrap = document.getElementById('na_othersWrap');
   othersWrap.style.display = category === 'Others' ? 'block' : 'none';
   const prefix = CATEGORY_PREFIXES[category] || 'AST';
+  const facilityName = document.getElementById('na_facility')?.value;
   const buildingSel = document.getElementById('na_building');
-  const bCode = buildingSel && buildingSel.value ? buildingShortCode(buildingSel.value) + '-' : '';
-  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${bCode}${prefix}-0XX`;
+  const facility = facilitiesData.find(f => f.name === facilityName);
+  const facilityCode = facility && facility.code ? facility.code + '-' : '';
+  const buildingCode = facility && buildingSel && buildingSel.value && facility.buildingCodes
+    ? (facility.buildingCodes[buildingSel.value] ? facility.buildingCodes[buildingSel.value] + '-' : '')
+    : '';
+  document.getElementById('na_prefixHint').textContent = category === 'Others' ? '' : `ID will be auto-generated as ${facilityCode}${buildingCode}${prefix}-0XX`;
 }
 
 function closeAddAssetForm() {
@@ -7461,7 +7455,6 @@ async function submitNewAsset() {
         name, nature, mobility, category, customPrefix,
         building: document.getElementById('na_building').value,
         facility: document.getElementById('na_facility').value,
-        buildingCode: buildingShortCode(document.getElementById('na_building').value),
         system: document.getElementById('na_system').value,
         floor: document.getElementById('na_floor').value,
         room: document.getElementById('na_room').value.trim(),

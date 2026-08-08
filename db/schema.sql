@@ -542,3 +542,18 @@ alter table work_orders add column delivery_confirmation_note text;
 -- on gets one assigned automatically at creation time.
 -- ============================================================
 alter table facilities add column facility_code text unique;
+
+-- ============================================================
+-- Added: buildings get the same guaranteed-unique code treatment as
+-- facilities did in the previous change - and this is the one that
+-- actually matters for telling campuses apart. Confirmed directly:
+-- "Malls" and similar facility names are shared buckets across every
+-- site (every mall you manage, not one specific mall), so the
+-- facility code alone can't distinguish sites. Buildings, by
+-- contrast, will have distinct, site-specific names ("Mlimani Mall
+-- 1" vs "Game City Mall 1") - but the code for those was still just
+-- guessed from the name client-side, the same fragile approach that
+-- caused the original problem one level down. This closes that gap
+-- for real: a globally-unique building_code, database-enforced.
+-- ============================================================
+alter table facility_buildings add column building_code text unique;
