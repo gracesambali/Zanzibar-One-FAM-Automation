@@ -327,6 +327,12 @@ export default async function handler(req, res) {
     return handleGetUnits(req, res);
   }
 
+  // Full invoice + payment history for one unit — the detail view
+  // behind the summary numbers already in the main units list.
+  if (req.query.unitFinancials === "true") {
+    return handleGetUnitFinancials(req, res);
+  }
+
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
     return handleGetFloorPlan(req, res);
@@ -554,9 +560,20 @@ async function normalizeRecord(row, documents) {
 // internally in the dashboard.
 async function handleGetUnits(req, res) {
   try {
-    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
     const { signChatLogAttachments, getSignedUrlSafe } = await import("../lib/storageClient.js");
     const rows = await pgListAllRecords("units");
+
+    // Balance per unit — computed here from two batched queries (all
+    // invoices, all payments) rather than one query per unit, same
+    // discipline as compliance documents and planned maintenance
+    // documents elsewhere in this app.
+    const invoicedResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_invoices group by unit_id");
+    const paidResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_payments group by unit_id");
+    const invoicedByUnit = {};
+    for (const r of invoicedResult.rows) invoicedByUnit[r.unit_id] = Number(r.total);
+    const paidByUnit = {};
+    for (const r of paidResult.rows) paidByUnit[r.unit_id] = Number(r.total);
 
     const units = await Promise.all(rows.map(async r => {
       const chatLog = await signChatLogAttachments(r.chat_log || []);
@@ -568,6 +585,8 @@ async function handleGetUnits(req, res) {
         console.error("handleGetUnits: could not sign SLA URL for", r.unit_name, err.message);
         return null;
       });
+      const totalInvoiced = invoicedByUnit[r.id] || 0;
+      const totalPaid = paidByUnit[r.id] || 0;
       return {
         id: r.id,
         name: r.unit_name || "",
@@ -584,6 +603,12 @@ async function handleGetUnits(req, res) {
         nextRentNoticeDue: r.next_rent_notice_due || null,
         slaUrl,
         slaFilename: r.sla_document_filename || null,
+        rentAmount: r.rent_amount_tzs !== null ? Number(r.rent_amount_tzs) : null,
+        serviceChargeAmount: r.service_charge_amount_tzs !== null ? Number(r.service_charge_amount_tzs) : null,
+        billingFrequency: r.billing_frequency || "Monthly",
+        totalInvoiced,
+        totalPaid,
+        balance: totalInvoiced - totalPaid,
         activityLog: r.activity_log || [],
         chatLog,
       };
@@ -593,6 +618,51 @@ async function handleGetUnits(req, res) {
     return res.status(200).json({ units: filteredUnits });
   } catch (err) {
     console.error("handleGetUnits error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Full invoice + payment history for one unit, most recent first —
+// the detail behind the summary balance already shown in the main
+// units list. Invoice status stored (Unpaid/Partially Paid/Paid) is
+// used as-is; whether something is additionally "Overdue" is computed
+// here at read time by comparing due_date to today, rather than
+// requiring a separate cron job to keep that label current.
+async function handleGetUnitFinancials(req, res) {
+  const unitId = req.query.unitId;
+  if (!unitId) return res.status(400).json({ error: "unitId is required" });
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+
+    const invoicesResult = await pgQuery("select * from unit_invoices where unit_id = $1 order by period_start desc", [unitId]);
+    const paymentsResult = await pgQuery("select * from unit_payments where unit_id = $1 order by payment_date desc", [unitId]);
+
+    const today = new Date().toISOString().split("T")[0];
+    const invoices = invoicesResult.rows.map(r => ({
+      id: r.id,
+      periodStart: r.period_start,
+      periodEnd: r.period_end,
+      amount: Number(r.amount_tzs),
+      dueDate: r.due_date,
+      status: r.status,
+      isOverdue: r.status !== "Paid" && r.due_date < today,
+      generatedBy: r.generated_by || null,
+    }));
+
+    const payments = paymentsResult.rows.map(r => ({
+      id: r.id,
+      invoiceId: r.invoice_id,
+      amount: Number(r.amount_tzs),
+      paymentDate: r.payment_date,
+      paymentMethod: r.payment_method,
+      paymentReference: r.payment_reference || null,
+      notes: r.notes || null,
+      recordedBy: r.recorded_by || null,
+    }));
+
+    return res.status(200).json({ invoices, payments });
+  } catch (err) {
+    console.error("handleGetUnitFinancials error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

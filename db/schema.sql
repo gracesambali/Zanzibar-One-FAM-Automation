@@ -588,3 +588,64 @@ alter table vendors add column source_system text;
 alter table vendors add column external_id text;
 alter table vendors add column last_edited_in_fam_at timestamptz;
 alter table vendors add column last_synced_at timestamptz;
+
+-- ============================================================
+-- Phase 1 of rent collection: real lease financial terms, invoicing,
+-- and payment recording - the tracking foundation, deliberately
+-- built before any actual payment processing. Nothing here moves
+-- money; it only records what's owed and what's been received, the
+-- same distinction discussed and confirmed before starting this.
+--
+-- rent_amount_tzs and service_charge_amount_tzs are separate, not
+-- combined - matching how the existing bi-annual notice already
+-- treats "rent and service charges" as two related but distinct
+-- things throughout this whole feature area.
+-- ============================================================
+alter table units add column rent_amount_tzs numeric;
+alter table units add column service_charge_amount_tzs numeric;
+alter table units add column billing_frequency text default 'Monthly';
+
+-- One row per billing period per unit. status is computed and stored
+-- (not derived live on every read) so a unit's invoice history shows
+-- a clear, stable record of what it looked like as of each check,
+-- same reasoning the rest of this app already uses for status fields
+-- generally.
+create table unit_invoices (
+  id                uuid primary key default gen_random_uuid(),
+  unit_id           uuid not null references units(id) on delete cascade,
+  period_start      date not null,
+  period_end        date not null,
+  amount_tzs        numeric not null,
+  due_date          date not null,
+  status            text not null default 'Unpaid',  -- Unpaid, Partially Paid, Paid, Overdue
+  generated_by      text,
+  created_at        timestamptz not null default now(),
+  organization_id   uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063'
+);
+create index idx_unit_invoices_unit on unit_invoices (unit_id);
+
+-- A payment can exist without being tied to one specific invoice yet
+-- (invoice_id nullable) - money sometimes arrives before anyone's had
+-- a chance to allocate it. payment_provider/provider_transaction_id/
+-- provider_status stay null for every manually-recorded payment;
+-- they're reserved for Phase 2, so a payment that DID come through a
+-- real mobile money provider is distinguishable from one recorded by
+-- hand, without needing a second table later.
+create table unit_payments (
+  id                    uuid primary key default gen_random_uuid(),
+  unit_id               uuid not null references units(id) on delete cascade,
+  invoice_id            uuid references unit_invoices(id) on delete set null,
+  amount_tzs            numeric not null,
+  payment_date          date not null,
+  payment_method        text not null,  -- Bank Transfer, Mobile Money, Cash, Cheque, Other
+  payment_reference     text,
+  recorded_by           text,
+  notes                 text,
+  payment_provider      text,  -- reserved for Phase 2: mpesa, mixx_by_yas, airtel_money, selcom
+  provider_transaction_id  text,
+  provider_status       text,
+  created_at            timestamptz not null default now(),
+  organization_id       uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063'
+);
+create index idx_unit_payments_unit on unit_payments (unit_id);
+create index idx_unit_payments_invoice on unit_payments (invoice_id);
