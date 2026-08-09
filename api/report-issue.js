@@ -247,9 +247,18 @@ async function handleGetUnitPortal(req, res) {
       paymentDate: r.payment_date,
       paymentMethod: r.payment_method,
       paymentReference: r.payment_reference || null,
+      paymentProvider: r.payment_provider || null,
+      providerStatus: r.provider_status || null,
     })) : [];
     const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.amount, 0);
-    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+    // Only a manually-recorded payment (no provider) or a Phase 2
+    // payment that's actually CONFIRMED counts toward the balance —
+    // shown in full in the list above either way, including pending
+    // and failed attempts, since the tenant should see their own
+    // in-progress payment, not just have it silently missing.
+    const totalPaid = payments
+      .filter(p => !p.paymentProvider || p.providerStatus === "Completed")
+      .reduce((sum, p) => sum + p.amount, 0);
 
     // Assets covered under this unit — id/name/system only, nothing
     // financial (no acquisition cost, no depreciation, no maintenance
@@ -424,6 +433,64 @@ async function handleUnitPortalReportIssue(req, res) {
   }
 }
 
+// Tenant-initiated payment — Phase 2, confirmed: no money moves
+// through FAM itself, and card details never touch it either (a
+// hosted checkout URL is handed back for that path instead). Creates
+// a PENDING record immediately, so a payment that never completes
+// (USSD prompt ignored, card checkout abandoned) shows up as pending
+// rather than silently vanishing — the webhook is what moves it to
+// Completed or Failed once the provider actually reports back.
+async function handleUnitPortalInitiatePayment(req, res) {
+  const { unitId, phone, providerId, amount, method } = req.body || {};
+  if (!unitId || !providerId || !amount || Number(amount) <= 0) {
+    return res.status(400).json({ error: "unitId, providerId, and a valid amount are required" });
+  }
+  try {
+    const { getById, insert } = await import("../lib/postgresClient.js");
+    const { initiatePayment } = await import("../lib/paymentProviders/index.js");
+
+    const f = await getById("units", unitId).catch(() => null);
+    if (!f) return res.status(404).json({ error: "Unit not found" });
+
+    const storedPhone = normalizePhone(f.tenant_phone);
+    if (!storedPhone || normalizePhone(phone) !== storedPhone) {
+      return res.status(401).json({ error: "That phone number doesn't match our records — check with your Property Manager.", requiresPassword: true });
+    }
+
+    const reference = `${f.unit_name}-${Date.now()}`;
+    const result = await initiatePayment(providerId, {
+      amount: Number(amount),
+      phone: f.tenant_phone,
+      reference,
+      description: `Rent/service charge payment — ${f.unit_name}`,
+      method: method || "mobile",
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Could not start the payment" });
+    }
+
+    // Recorded as Pending immediately — this is what makes the payment
+    // visible on the tenant's own history right away, even before the
+    // provider confirms it, rather than only appearing once completed.
+    await insert("unit_payments", {
+      unit_id: unitId,
+      amount_tzs: Number(amount),
+      payment_date: new Date().toISOString().split("T")[0],
+      payment_method: "Mobile Money",
+      payment_reference: reference,
+      payment_provider: providerId,
+      provider_transaction_id: result.providerReference || reference,
+      provider_status: "Pending",
+    }, { typecast: true });
+
+    return res.status(200).json({ success: true, checkoutUrl: result.checkoutUrl || null });
+  } catch (err) {
+    console.error("handleUnitPortalInitiatePayment error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleUnitPortalMessage(req, res) {
   const { unitId, senderName, message, phone, attachmentBase64, attachmentFilename, attachmentContentType } = req.body || {};
   if (!unitId || !senderName || !senderName.trim()) {
@@ -542,6 +609,15 @@ export default async function handler(req, res) {
 
   if (req.method === "POST" && req.body && req.body.unitPortalReportIssue) {
     return handleUnitPortalReportIssue(req, res);
+  }
+
+  // Tenant-initiated payment — Phase 2, confirmed: FAM never touches
+  // real money or card data itself, this just triggers a USSD prompt
+  // (mobile money) or hands back a hosted checkout URL (cards, via
+  // Selcom) and records a PENDING payment until the provider's own
+  // webhook confirms it actually went through.
+  if (req.method === "POST" && req.body && req.body.unitPortalInitiatePayment) {
+    return handleUnitPortalInitiatePayment(req, res);
   }
 
   if (req.method !== "POST") {

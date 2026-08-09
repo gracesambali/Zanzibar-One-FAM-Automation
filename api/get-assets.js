@@ -569,7 +569,13 @@ async function handleGetUnits(req, res) {
     // discipline as compliance documents and planned maintenance
     // documents elsewhere in this app.
     const invoicedResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_invoices group by unit_id");
-    const paidResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_payments group by unit_id");
+    // Only payments that are either manually recorded (no provider
+    // involved at all, always trusted) or a provider payment that's
+    // actually been CONFIRMED count toward the balance — a Pending
+    // Phase 2 payment (USSD prompt not yet answered, card checkout not
+    // yet completed) must not silently reduce what a tenant appears to
+    // owe before the provider has actually confirmed it went through.
+    const paidResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_payments where payment_provider is null or provider_status = 'Completed' group by unit_id");
     const invoicedByUnit = {};
     for (const r of invoicedResult.rows) invoicedByUnit[r.unit_id] = Number(r.total);
     const paidByUnit = {};
@@ -658,6 +664,8 @@ async function handleGetUnitFinancials(req, res) {
       paymentReference: r.payment_reference || null,
       notes: r.notes || null,
       recordedBy: r.recorded_by || null,
+      paymentProvider: r.payment_provider || null,
+      providerStatus: r.provider_status || null,
     }));
 
     return res.status(200).json({ invoices, payments });
