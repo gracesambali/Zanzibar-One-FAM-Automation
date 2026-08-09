@@ -105,6 +105,11 @@
       </div>
 
       <div class="panel">
+        <div class="panel-title">Lease Documents</div>
+        <div id="leaseDocumentsList"><div class="empty-state" style="padding:0">No lease documents added yet.</div></div>
+      </div>
+
+      <div class="panel">
         <div class="panel-title">Assets Covered</div>
         <div id="assetsList"><div class="empty-state" style="padding:0">Loading…</div></div>
       </div>
@@ -290,6 +295,16 @@
         }
       }
       document.getElementById('financialsHistory').innerHTML = financialsHtml;
+
+      const leaseDocs = data.leaseDocuments || [];
+      document.getElementById('leaseDocumentsList').innerHTML = leaseDocs.length > 0
+        ? leaseDocs.map(d => `
+            <div style="padding:8px 0;border-bottom:1px solid #E2E6ED">
+              <div style="font-size:13px;font-weight:600;color:#1A3566">${escapeHtml(d.description || 'Untitled')}</div>
+              <div style="font-size:10.5px;color:#6B7280;margin-bottom:4px">${new Date(d.uploadedAt).toLocaleDateString()}</div>
+              ${d.url ? previewDownloadButtonsHtml('lease-doc-' + d.id, d.url, d.filename || 'document.pdf') : ''}
+            </div>`).join('')
+        : `<div class="empty-state" style="padding:0">No lease documents added yet.</div>`;
 
       const assets = data.assets || [];
       document.getElementById('assetsList').innerHTML = assets.length > 0

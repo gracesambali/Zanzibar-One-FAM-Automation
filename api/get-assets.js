@@ -581,6 +581,15 @@ async function handleGetUnits(req, res) {
     const paidByUnit = {};
     for (const r of paidResult.rows) paidByUnit[r.unit_id] = Number(r.total);
 
+    // Lease document history — same batched-query approach as
+    // invoices/payments above, rather than one query per unit.
+    const leaseDocsResult = await pgQuery("select * from unit_lease_documents order by uploaded_at desc");
+    const leaseDocsByUnit = {};
+    for (const d of leaseDocsResult.rows) {
+      if (!leaseDocsByUnit[d.unit_id]) leaseDocsByUnit[d.unit_id] = [];
+      leaseDocsByUnit[d.unit_id].push(d);
+    }
+
     const units = await Promise.all(rows.map(async r => {
       const chatLog = await signChatLogAttachments(r.chat_log || []);
       const contractUrl = await getSignedUrlSafe(r.signed_contract_url).catch(err => {
@@ -591,6 +600,12 @@ async function handleGetUnits(req, res) {
         console.error("handleGetUnits: could not sign SLA URL for", r.unit_name, err.message);
         return null;
       });
+      const rawLeaseDocs = leaseDocsByUnit[r.id] || [];
+      const leaseDocuments = await Promise.all(rawLeaseDocs.map(async d => {
+        let url = null;
+        try { url = await getSignedUrlSafe(d.url); } catch (err) { console.error("handleGetUnits: could not sign lease document for", r.unit_name, err.message); }
+        return { id: d.id, url, filename: d.filename, description: d.description, uploadedBy: d.uploaded_by, uploadedAt: d.uploaded_at };
+      }));
       const totalInvoiced = invoicedByUnit[r.id] || 0;
       const totalPaid = paidByUnit[r.id] || 0;
       return {
@@ -609,6 +624,7 @@ async function handleGetUnits(req, res) {
         nextRentNoticeDue: r.next_rent_notice_due || null,
         slaUrl,
         slaFilename: r.sla_document_filename || null,
+        leaseDocuments,
         rentAmount: r.rent_amount_tzs !== null ? Number(r.rent_amount_tzs) : null,
         serviceChargeAmount: r.service_charge_amount_tzs !== null ? Number(r.service_charge_amount_tzs) : null,
         billingFrequency: r.billing_frequency || "Monthly",

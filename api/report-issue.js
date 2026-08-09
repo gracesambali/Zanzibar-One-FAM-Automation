@@ -217,6 +217,17 @@ async function handleGetUnitPortal(req, res) {
       return null;
     });
 
+    // Lease document history — read-only here, same as everything
+    // else on this portal. A tenant seeing their own amendments and
+    // renewal letters is genuinely useful transparency, not a risk;
+    // uploading a new one stays a staff-only action.
+    const leaseDocsResult = await pgQuery("select * from unit_lease_documents where unit_id = $1 order by uploaded_at desc", [unitId]).catch(() => null);
+    const leaseDocuments = leaseDocsResult ? await Promise.all(leaseDocsResult.rows.map(async d => {
+      let url = null;
+      try { url = await getSignedUrlSafe(d.url); } catch (err) { console.error("handleGetUnitPortal: could not sign lease document:", err.message); }
+      return { id: d.id, url, filename: d.filename, description: d.description, uploadedAt: d.uploaded_at };
+    })) : [];
+
     // Confirmed: full parity with what the Property Manager sees —
     // the tenant sees every activity recorded on their own unit too.
     const activityLog = Array.isArray(f.activity_log) ? f.activity_log : [];
@@ -297,6 +308,7 @@ async function handleGetUnitPortal(req, res) {
       nextRentNoticeDue: f.next_rent_notice_due || null,
       slaUrl,
       slaFilename: f.sla_document_filename || null,
+      leaseDocuments,
       assets: unitAssets,
       chatLog,
       activityLog,
