@@ -161,7 +161,9 @@
       <input id="payAmount" type="number" min="0" step="any" style="width:100%;padding:11px 14px;border:1px solid #E2E6ED;border-radius:8px;font-size:14px;margin-bottom:14px">
       <label style="font-size:12px;font-weight:600;color:#1A3566;display:block;margin-bottom:6px">Pay With</label>
       <select id="payMethod" style="width:100%;padding:11px 14px;border:1px solid #E2E6ED;border-radius:8px;font-size:14px;margin-bottom:14px">
-        <option value="mobile">Mobile Money (a prompt will be sent to your phone)</option>
+        <option value="mpesa">M-Pesa</option>
+        <option value="mixx_by_yas">Mixx by Yas</option>
+        <option value="airtel_money">Airtel Money</option>
         <option value="card">Card (Visa / Mastercard)</option>
       </select>
       <div id="payStatus" style="font-size:12.5px;color:#1A3566;margin-bottom:10px;display:none"></div>
@@ -554,7 +556,13 @@
 
   async function submitPayNow() {
     const amount = document.getElementById('payAmount').value;
-    const method = document.getElementById('payMethod').value;
+    const selectedNetwork = document.getElementById('payMethod').value; // 'mpesa' | 'mixx_by_yas' | 'airtel_money' | 'card'
+    // Each mobile network routes to its own distinct provider — only
+    // Card goes through Selcom, which is the one confirmed option
+    // here for Visa/Mastercard specifically, not a stand-in for the
+    // others.
+    const providerId = selectedNetwork === 'card' ? 'selcom' : selectedNetwork;
+    const method = selectedNetwork === 'card' ? 'card' : 'mobile';
     const errBox = document.getElementById('payError');
     const statusBox = document.getElementById('payStatus');
     const btn = document.getElementById('paySubmitBtn');
@@ -567,7 +575,7 @@
       const resp = await fetch('/api/report-issue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ unitPortalInitiatePayment: true, unitId, phone: tenantPhone, providerId: 'selcom', amount, method }),
+        body: JSON.stringify({ unitPortalInitiatePayment: true, unitId, phone: tenantPhone, providerId, amount, method }),
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || 'Could not start the payment');
