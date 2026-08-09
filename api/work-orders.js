@@ -952,6 +952,40 @@ export default async function handler(req, res) {
       }
     }
 
+    // Lease document HISTORY — separate from the single Signed
+    // Contract slot above, which stays exactly as it is. Confirmed
+    // directly: real leases accumulate documents over their life (an
+    // amendment, a renewal letter, a rent adjustment) that shouldn't
+    // overwrite each other. A short description is required, not
+    // optional — a growing list of files named only by their original
+    // upload filename becomes unreadable fast; "Rent Amendment - Jan
+    // 2027" means something, "scan0042.pdf" doesn't.
+    if (req.body && req.body.uploadUnitLeaseDocument) {
+      if (session.r === "technician") {
+        return res.status(403).json({ error: "Not permitted to upload a lease document." });
+      }
+      const { unitId, filename, contentType, fileBase64, description } = req.body;
+      if (!unitId || !filename || !fileBase64 || !description || !description.trim()) {
+        return res.status(400).json({ error: "unitId, filename, fileBase64, and a short description are all required" });
+      }
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const docPath = `units/${unitId}/lease-docs/${Date.now()}-${filename}`;
+        await uploadFile(docPath, fileBase64, contentType || "application/pdf");
+
+        const { insert } = await import("../lib/postgresClient.js");
+        await insert("unit_lease_documents", {
+          unit_id: unitId, url: docPath, filename, description: description.trim(), uploaded_by: session.u,
+        });
+
+        await appendUnitActivityLog(unitId, `📎 Lease document uploaded by ${session.u} — ${description.trim()} (${filename})`, session.u, "system");
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("uploadUnitLeaseDocument error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Generating a real invoice for a unit — Phase 1 of rent
     // collection, confirmed: tracking only, no money moves here. The
     // amount is the unit's rent plus service charge, whichever of the

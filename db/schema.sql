@@ -649,3 +649,27 @@ create table unit_payments (
 );
 create index idx_unit_payments_unit on unit_payments (unit_id);
 create index idx_unit_payments_invoice on unit_payments (invoice_id);
+
+-- ============================================================
+-- Real lease document HISTORY, separate from the existing single
+-- "Signed Contract" slot which is left completely untouched -
+-- confirmed directly this stays contractual and manual, no auto-
+-- computed escalation or renewal logic. Real leases accumulate
+-- documents over their life (an amendment, a renewal letter, a term
+-- change) that shouldn't overwrite each other the way a single slot
+-- would. Same one-row-per-file pattern already proven for compliance
+-- documents on assets, with a short description field added since
+-- "what is this document" matters more here than it does for a
+-- compliance certificate.
+-- ============================================================
+create table unit_lease_documents (
+  id                uuid primary key default gen_random_uuid(),
+  unit_id           uuid not null references units(id) on delete cascade,
+  url               text not null,
+  filename          text,
+  description       text,
+  uploaded_by       text,
+  uploaded_at       timestamptz not null default now(),
+  organization_id   uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063'
+);
+create index idx_unit_lease_documents_unit on unit_lease_documents (unit_id);
