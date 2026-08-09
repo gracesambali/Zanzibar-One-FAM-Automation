@@ -93,6 +93,17 @@
       </div>
 
       <div class="panel">
+        <div class="panel-title">Rent & Service Charges</div>
+        <div class="detail-grid">
+          <div class="detail-item"><div class="label">Rent (per period)</div><div class="value" id="detailRentAmount">—</div></div>
+          <div class="detail-item"><div class="label">Service Charge (per period)</div><div class="value" id="detailServiceCharge">—</div></div>
+          <div class="detail-item"><div class="label">Billing Frequency</div><div class="value" id="detailBillingFreq">—</div></div>
+          <div class="detail-item"><div class="label">Current Balance</div><div class="value" id="detailBalance">—</div></div>
+        </div>
+        <div id="financialsHistory" style="margin-top:14px"></div>
+      </div>
+
+      <div class="panel">
         <div class="panel-title">Assets Covered</div>
         <div id="assetsList"><div class="empty-state" style="padding:0">Loading…</div></div>
       </div>
@@ -207,6 +218,47 @@
       document.getElementById('detailSLA').innerHTML = data.slaUrl
         ? previewDownloadButtonsHtml('sla', data.slaUrl, data.slaFilename || 'sla.pdf')
         : 'Not uploaded yet';
+
+      // Rent & Service Charges — read-only here on purpose, confirmed
+      // directly: the tenant sees their own terms, invoices, payments,
+      // and balance, but generating an invoice or recording a payment
+      // stays a staff-only action, done from FAM itself.
+      function formatTzs(n) { return 'TZS ' + Math.round(n).toLocaleString(); }
+      document.getElementById('detailRentAmount').textContent = data.rentAmount != null ? formatTzs(data.rentAmount) : 'Not set';
+      document.getElementById('detailServiceCharge').textContent = data.serviceChargeAmount != null ? formatTzs(data.serviceChargeAmount) : 'Not set';
+      document.getElementById('detailBillingFreq').textContent = data.billingFrequency || 'Monthly';
+      const balanceEl = document.getElementById('detailBalance');
+      const balance = data.balance || 0;
+      balanceEl.textContent = balance > 0 ? formatTzs(balance) + ' owed' : balance < 0 ? formatTzs(Math.abs(balance)) + ' in credit' : formatTzs(0);
+      balanceEl.style.color = balance > 0 ? '#DC2626' : balance < 0 ? '#16A34A' : '';
+      balanceEl.style.fontWeight = '700';
+
+      const invoices = data.invoices || [];
+      const payments = data.payments || [];
+      let financialsHtml = '';
+      if (invoices.length === 0 && payments.length === 0) {
+        financialsHtml = `<div class="empty-state" style="padding:0">No invoices or payments recorded yet.</div>`;
+      } else {
+        if (invoices.length > 0) {
+          financialsHtml += `<div style="font-size:12px;font-weight:600;color:#1A3566;margin-bottom:6px">Invoices</div>` +
+            invoices.map(inv => {
+              const statusColor = inv.status === 'Paid' ? '#16A34A' : inv.isOverdue ? '#DC2626' : '#B45309';
+              const label = inv.isOverdue && inv.status !== 'Paid' ? 'Overdue' : inv.status;
+              return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #E2E6ED;font-size:12px">
+                <span>${inv.periodStart} → ${inv.periodEnd}</span>
+                <span style="display:flex;gap:8px"><strong>${formatTzs(inv.amount)}</strong><span style="color:${statusColor};font-weight:700">${label}</span></span>
+              </div>`;
+            }).join('');
+        }
+        if (payments.length > 0) {
+          financialsHtml += `<div style="font-size:12px;font-weight:600;color:#1A3566;margin:10px 0 6px">Payments</div>` +
+            payments.map(p => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #E2E6ED;font-size:12px">
+              <span>${p.paymentDate} — ${p.paymentMethod}</span>
+              <strong>${formatTzs(p.amount)}</strong>
+            </div>`).join('');
+        }
+      }
+      document.getElementById('financialsHistory').innerHTML = financialsHtml;
 
       const assets = data.assets || [];
       document.getElementById('assetsList').innerHTML = assets.length > 0

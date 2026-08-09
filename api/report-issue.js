@@ -223,6 +223,34 @@ async function handleGetUnitPortal(req, res) {
 
     const unitName = f.unit_name || "";
 
+    // Rent/service charge terms and history — read-only for the
+    // tenant, confirmed directly: they see their own invoices,
+    // payments, and current balance, but generating an invoice or
+    // recording a payment stays a staff-only action. No portfolio-wide
+    // rent-roll data here either — that's every OTHER tenant's
+    // balance too, staff-only regardless of whose portal this is.
+    const invoicesResult = await pgQuery("select * from unit_invoices where unit_id = $1 order by period_start desc", [unitId]).catch(() => null);
+    const paymentsResult = await pgQuery("select * from unit_payments where unit_id = $1 order by payment_date desc", [unitId]).catch(() => null);
+    const today = new Date().toISOString().split("T")[0];
+    const invoices = invoicesResult ? invoicesResult.rows.map(r => ({
+      id: r.id,
+      periodStart: r.period_start,
+      periodEnd: r.period_end,
+      amount: Number(r.amount_tzs),
+      dueDate: r.due_date,
+      status: r.status,
+      isOverdue: r.status !== "Paid" && r.due_date < today,
+    })) : [];
+    const payments = paymentsResult ? paymentsResult.rows.map(r => ({
+      id: r.id,
+      amount: Number(r.amount_tzs),
+      paymentDate: r.payment_date,
+      paymentMethod: r.payment_method,
+      paymentReference: r.payment_reference || null,
+    })) : [];
+    const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.amount, 0);
+    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
     // Assets covered under this unit — id/name/system only, nothing
     // financial (no acquisition cost, no depreciation, no maintenance
     // spend) — that stays staff-only regardless of whose unit it is.
@@ -248,6 +276,12 @@ async function handleGetUnitPortal(req, res) {
       tenantName: f.tenant_name || "",
       tenantEmail: f.tenant_email || "",
       tenantPhone: f.tenant_phone || "",
+      rentAmount: f.rent_amount_tzs !== null ? Number(f.rent_amount_tzs) : null,
+      serviceChargeAmount: f.service_charge_amount_tzs !== null ? Number(f.service_charge_amount_tzs) : null,
+      billingFrequency: f.billing_frequency || "Monthly",
+      balance: totalInvoiced - totalPaid,
+      invoices,
+      payments,
       contractUrl,
       contractFilename: f.signed_contract_filename || null,
       contractDate: f.contract_date || null,

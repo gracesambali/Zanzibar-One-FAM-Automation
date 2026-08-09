@@ -2403,6 +2403,22 @@ async function showUnitDetail(unitId) {
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Financials</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="detail-field"><div class="detail-field-label">Rent (per period)</div><div class="detail-field-value">${u.rentAmount != null ? formatCurrency(u.rentAmount) : '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Service Charge (per period)</div><div class="detail-field-value">${u.serviceChargeAmount != null ? formatCurrency(u.serviceChargeAmount) : '—'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Billing Frequency</div><div class="detail-field-value">${u.billingFrequency || 'Monthly'}</div></div>
+        <div class="detail-field"><div class="detail-field-label">Balance</div><div class="detail-field-value" style="font-weight:700;color:${u.balance > 0 ? 'var(--red)' : u.balance < 0 ? 'var(--green)' : 'var(--text)'}">${formatCurrency(Math.abs(u.balance || 0))}${u.balance > 0 ? ' owed' : u.balance < 0 ? ' in credit' : ''}</div></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button onclick="openGenerateInvoiceModal('${u.id}', '${u.name}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧾 Generate Invoice</button>
+        <button onclick="openRecordPaymentModal('${u.id}', '${u.name}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">💵 Record Payment</button>
+        <button onclick="toggleUnitFinancialsHistory('${u.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">View History</button>
+      </div>
+      <div id="unitFinancialsHistory-${u.id}" style="display:none"></div>
+    </div>
+
+    <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div style="font-size:12px;font-weight:700;color:var(--navy)">Assets (${unitAssets.length})</div>
         <button onclick="openManageUnitAssetsModal('${u.id}', '${u.name}', '${u.building}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Assets</button>
@@ -2523,6 +2539,28 @@ async function renderUnits() {
       </div>
       <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
     </div>`;
+
+    // Rent Roll — portfolio-wide balance across every unit, confirmed
+    // to live as a section here on Tenant Units rather than the
+    // overall dashboard/reports. Sorted by who owes the most, so the
+    // people actually behind surface first rather than needing to be
+    // found by scanning every unit individually.
+    const unitsOwing = lastUnits.filter(u => (u.balance || 0) > 0).sort((a, b) => b.balance - a.balance);
+    const totalOwed = unitsOwing.reduce((sum, u) => sum + u.balance, 0);
+    if (unitsOwing.length > 0) {
+      html += `<div class="dash-panel" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <div class="dash-panel-title" style="margin-bottom:0">Rent Roll — ${unitsOwing.length} unit${unitsOwing.length === 1 ? '' : 's'} owing, ${formatCurrency(totalOwed)} total</div>
+          ${currencySwitcherHtml('rentroll')}
+        </div>
+        <div style="margin-top:10px">` + unitsOwing.map(u => `
+          <button onclick="showUnitDetail('${u.id}')" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer;font:inherit">
+            <span style="font-size:12.5px;color:var(--text)">${u.name}${u.tenantName ? ' — ' + escapeHtml(u.tenantName) : ''}</span>
+            <strong style="font-size:12.5px;color:var(--red)">${formatCurrency(u.balance)}</strong>
+          </button>`).join('') + `
+        </div>
+      </div>`;
+    }
 
     if (units.length === 0) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No units yet${currentBuildingFilter !== '__all__' || currentFacilityFilter !== '__all__' ? ' in this selection' : ''}.</div>`;
@@ -2660,6 +2698,17 @@ function openEditUnitModal(unitId) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Contract Date</label>
       <input id="eu_contractdate" type="date" value="${u.contractDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Bi-annual rent/service charge reminders are timed from this date — every 6 months, for this tenant specifically.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Rent Amount (TZS/period)</label>
+      <input id="eu_rentamount" type="number" min="0" step="any" value="${u.rentAmount != null ? u.rentAmount : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Service Charge Amount (TZS/period)</label>
+      <input id="eu_servicecharge" type="number" min="0" step="any" value="${u.serviceChargeAmount != null ? u.serviceChargeAmount : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Billing Frequency</label>
+      <select id="eu_billingfreq" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+        <option value="Monthly" ${(u.billingFrequency||'Monthly')==='Monthly'?'selected':''}>Monthly</option>
+        <option value="Quarterly" ${u.billingFrequency==='Quarterly'?'selected':''}>Quarterly</option>
+        <option value="Bi-Annual" ${u.billingFrequency==='Bi-Annual'?'selected':''}>Bi-Annual</option>
+        <option value="Annual" ${u.billingFrequency==='Annual'?'selected':''}>Annual</option>
+      </select>
       <div style="font-size:11px;color:var(--muted);margin-bottom:14px">The tenant signs into their portal with their name and the phone number above — no separate password to set.</div>
       <div id="eu_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -2676,6 +2725,9 @@ async function submitEditUnit(unitId) {
   const tenantPhone = document.getElementById('eu_phone').value.trim();
   const leaseStatus = document.getElementById('eu_lease').value;
   const contractDate = document.getElementById('eu_contractdate').value;
+  const rentAmount = document.getElementById('eu_rentamount').value;
+  const serviceChargeAmount = document.getElementById('eu_servicecharge').value;
+  const billingFrequency = document.getElementById('eu_billingfreq').value;
   const errorBox = document.getElementById('eu_error');
   const btn = document.getElementById('eu_submit');
   errorBox.style.display = 'none';
@@ -2683,7 +2735,7 @@ async function submitEditUnit(unitId) {
   try {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ editUnit: true, unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate }),
+      body: JSON.stringify({ editUnit: true, unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate, rentAmount, serviceChargeAmount, billingFrequency }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
@@ -2793,6 +2845,178 @@ async function submitUploadSLA(unitId) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Upload';
+  }
+}
+
+// Loads invoice/payment history on demand rather than pre-loading it
+// for every unit up front — most units won't have this panel open at
+// once, so this keeps the main unit list fast.
+let unitFinancialsLoaded = {};
+async function toggleUnitFinancialsHistory(unitId) {
+  const el = document.getElementById('unitFinancialsHistory-' + unitId);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  if (isOpen) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  if (unitFinancialsLoaded[unitId]) return; // already fetched once, no need to refetch on every toggle
+  el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">Loading…</div>`;
+  try {
+    const resp = await fetch(`/api/get-assets?unitFinancials=true&unitId=${unitId}`);
+    const data = await resp.json();
+    renderUnitFinancialsHistory(unitId, data.invoices || [], data.payments || []);
+    unitFinancialsLoaded[unitId] = true;
+  } catch (err) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load history: ${err.message}</div>`;
+  }
+}
+
+function renderUnitFinancialsHistory(unitId, invoices, payments) {
+  const el = document.getElementById('unitFinancialsHistory-' + unitId);
+  if (!el) return;
+  let html = `<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">`;
+
+  html += `<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:6px">Invoices</div>`;
+  if (invoices.length === 0) {
+    html += `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">No invoices generated yet.</div>`;
+  } else {
+    html += `<div style="margin-bottom:12px">` + invoices.map(inv => {
+      const statusColor = inv.status === 'Paid' ? 'var(--green)' : inv.isOverdue ? 'var(--red)' : 'var(--amber)';
+      const label = inv.isOverdue && inv.status !== 'Paid' ? 'Overdue' : inv.status;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:11.5px">
+        <span>${inv.periodStart} → ${inv.periodEnd} <span style="color:var(--muted)">(due ${inv.dueDate})</span></span>
+        <span style="display:flex;align-items:center;gap:8px"><strong>${formatCurrency(inv.amount)}</strong><span style="font-weight:700;color:${statusColor}">${label}</span></span>
+      </div>`;
+    }).join('') + `</div>`;
+  }
+
+  html += `<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:6px">Payments</div>`;
+  if (payments.length === 0) {
+    html += `<div style="font-size:11.5px;color:var(--muted);font-style:italic">No payments recorded yet.</div>`;
+  } else {
+    html += payments.map(p => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:11.5px">
+      <span>${p.paymentDate} — ${p.paymentMethod}${p.paymentReference ? ' (ref: ' + escapeHtml(p.paymentReference) + ')' : ''}</span>
+      <strong>${formatCurrency(p.amount)}</strong>
+    </div>`).join('');
+  }
+
+  html += `</div>`;
+  el.innerHTML = html;
+}
+
+function openGenerateInvoiceModal(unitId, unitName) {
+  const today = new Date();
+  const periodStartDefault = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const periodEndDefault = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+  const dueDateDefault = new Date(today.getFullYear(), today.getMonth(), 5).toISOString().split('T')[0];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'generateInvoiceOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Generate Invoice</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${escapeHtml(unitName)} — amount is rent plus service charge, from what's set on this unit.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Period Start</label>
+      <input id="gi_start" type="date" value="${periodStartDefault}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Period End</label>
+      <input id="gi_end" type="date" value="${periodEndDefault}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Due Date</label>
+      <input id="gi_due" type="date" value="${dueDateDefault}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="gi_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('generateInvoiceOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="gi_submit" onclick="submitGenerateInvoice('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Generate</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitGenerateInvoice(unitId) {
+  const periodStart = document.getElementById('gi_start').value;
+  const periodEnd = document.getElementById('gi_end').value;
+  const dueDate = document.getElementById('gi_due').value;
+  const errorBox = document.getElementById('gi_error');
+  const btn = document.getElementById('gi_submit');
+  errorBox.style.display = 'none';
+  if (!periodStart || !periodEnd || !dueDate) { errorBox.textContent = 'All three dates are required.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generateInvoice: true, unitId, periodStart, periodEnd, dueDate }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not generate invoice');
+    document.getElementById('generateInvoiceOverlay')?.remove();
+    delete unitFinancialsLoaded[unitId]; // force a refetch next time history is opened
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Generate';
+  }
+}
+
+function openRecordPaymentModal(unitId, unitName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'recordPaymentOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Record Payment</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${escapeHtml(unitName)} — records that a payment was received. Does not process or move money.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Amount (TZS) *</label>
+      <input id="rp_amount" type="number" min="0" step="any" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Payment Date *</label>
+      <input id="rp_date" type="date" value="${new Date().toISOString().split('T')[0]}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Payment Method *</label>
+      <select id="rp_method" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+        <option value="Bank Transfer">Bank Transfer</option>
+        <option value="Mobile Money">Mobile Money</option>
+        <option value="Cash">Cash</option>
+        <option value="Cheque">Cheque</option>
+        <option value="Other">Other</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reference (optional)</label>
+      <input id="rp_reference" type="text" placeholder="e.g. transaction ID" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note (optional)</label>
+      <input id="rp_notes" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="rp_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('recordPaymentOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="rp_submit" onclick="submitRecordPayment('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitRecordPayment(unitId) {
+  const amount = document.getElementById('rp_amount').value;
+  const paymentDate = document.getElementById('rp_date').value;
+  const paymentMethod = document.getElementById('rp_method').value;
+  const paymentReference = document.getElementById('rp_reference').value.trim();
+  const notes = document.getElementById('rp_notes').value.trim();
+  const errorBox = document.getElementById('rp_error');
+  const btn = document.getElementById('rp_submit');
+  errorBox.style.display = 'none';
+  if (!amount || Number(amount) <= 0 || !paymentDate) { errorBox.textContent = 'A valid amount and date are required.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Recording…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordPayment: true, unitId, amount, paymentDate, paymentMethod, paymentReference, notes }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record payment');
+    document.getElementById('recordPaymentOverlay')?.remove();
+    delete unitFinancialsLoaded[unitId];
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Record';
   }
 }
 
