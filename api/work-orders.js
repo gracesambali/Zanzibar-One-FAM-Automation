@@ -279,7 +279,45 @@ export default async function handler(req, res) {
       }
     }
 
-    // Delivery confirmation — the new replacement for the old approval
+    // Rejecting a procurement request — a real, working action from
+    // here on, not just the display/gate logic that already existed
+    // for it. Discussed and confirmed: this can genuinely happen at
+    // two different points, and the reason means something different
+    // at each. Before any quotes exist, it's Procurement saying the
+    // request itself isn't actionable (unclear, looks duplicated).
+    // After quotes exist, it's Procurement saying the real pricing
+    // they found came back unreasonable — a judgment only possible
+    // once they've actually done the sourcing, since the requester
+    // never supplies pricing themselves. Either way, a reason is
+    // required — the requester deserves to know why, not just that it
+    // happened. Same permission as fulfilling, confirmed: this is
+    // Procurement's call to make, not the requester's.
+    if (req.body && req.body.rejectProcurement) {
+      if (!can(session.r, "fulfillProcurement")) return res.status(403).json({ error: "Not permitted to reject procurement" });
+      const { recordId, rejectionReason } = req.body;
+      if (!recordId || !rejectionReason || !rejectionReason.trim()) {
+        return res.status(400).json({ error: "recordId and rejectionReason are required" });
+      }
+      try {
+        const { getById, update } = await import("../lib/postgresClient.js");
+
+        const current = await getById("work_orders", recordId).catch(() => ({}));
+
+        await update("work_orders", recordId, { procurement_status: "Rejected", procurement_rejection_reason: rejectionReason.trim() })
+          .catch(() => { throw new Error("Could not reject procurement request"); });
+        await appendActivityLog(recordId, `🚫 Procurement rejected by ${session.u} — ${rejectionReason.trim()}`, session.u, "system");
+
+        if (current.procurement_requested_by) {
+          await notifyRequesterOfRejection(current.procurement_requested_by, current.wo_id || "", current.asset_name || "Unnamed", rejectionReason.trim());
+        }
+
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("rejectProcurement error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // gate, but at the END of the flow instead of the beginning, and
     // it confirms receipt rather than authorizing spend. Not a hard
     // block on the technician completing the job — same "visible,
@@ -1817,6 +1855,38 @@ async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, 
       console.error("notifyRoutedRoleOfDeliveryArrival SMS error:", err);
     }
   }
+}
+
+// A real, single, identifiable recipient — the person who originally
+// asked for this — gets a proper personal greeting, not "Dear Team".
+async function notifyRequesterOfRejection(requesterUsername, woId, assetName, reason) {
+  const contact = getContactForUsername(requesterUsername);
+  if (!contact || !contact.email) return;
+
+  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#dc2626;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Procurement Request Rejected</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${contact.displayName || contact.username || "Team"},</p>
+        <p style="margin:0 0 8px;color:#1A1A2E;font-size:14px;line-height:1.6">Your procurement request for this work order was rejected. If it still needs sourcing, revise and resubmit it from the work order.</p>
+        <p style="margin:0;color:#6B7280;font-size:13px"><strong>Reason:</strong> ${reason}</p>
+      </div>
+    </div>`;
+
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+      to: [contact.email],
+      subject: `Procurement Rejected — ${assetName} (${woId})`,
+      html,
+    }),
+  }).catch(err => console.error("notifyRequesterOfRejection email error:", err));
 }
 
 async function sendSatisfactionRequest(contact, recordId, assetName) {
