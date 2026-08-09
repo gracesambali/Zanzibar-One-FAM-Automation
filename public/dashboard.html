@@ -5177,10 +5177,21 @@ function renderWODetailProcurement(o) {
   if (procStatus === 'None') {
     html += `<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Not requested for this work order.</div>
       ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
+  } else if (procStatus === 'Rejected') {
+    // Rejected is a real, reachable state again — Procurement can
+    // reject a request either before any quotes exist (unclear,
+    // duplicated) or after real quotes come back unreasonable, a
+    // judgment only possible once pricing actually exists. The
+    // requester needs a real way back from here, not a dead end.
+    html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#FEE2E2;color:#991B1B">Rejected</span>
+      <div style="margin-top:10px;background:#FEF2F2;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#991B1B">${escapeHtml(o.procurementRejectionReason || 'No reason given')}</div>
+      ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Revise and Resubmit</button>` : ''}`;
   } else {
-    // Approved/Rejected kept in the color map purely for safe display
-    // of any historical record from before this flow changed — those
-    // two states can never be reached again going forward.
+    // Approved kept in the color map purely for safe display of any
+    // historical record from before this flow changed — that state
+    // can never be reached again going forward. Rejected, unlike
+    // Approved, IS reachable again (see the branch above) — a real,
+    // working action, not just legacy display.
     const procColors = { Requested: ['#FEF3C7','#92400E'], Approved: ['#DBEAFE','#1E40AF'], Rejected: ['#FEE2E2','#991B1B'], Fulfilled: ['#DCFCE7','#166534'], Delivered: ['#DCFCE7','#166534'] };
     html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">${procStatusLabel(procStatus)}</span>`;
 
@@ -5199,6 +5210,7 @@ function renderWODetailProcurement(o) {
       html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button onclick="openFulfillProcurementModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📦 Mark Procurement Complete</button>
         <button onclick="openDelayNoticeModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">⏳ Send Delay Notice</button>
+        <button onclick="openRejectProcurementModal('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">🚫 Reject Request</button>
       </div>`;
     } else if (procStatus === 'Requested') {
       html += `<div style="margin-top:10px;font-size:12px;color:var(--muted);font-style:italic">Waiting on Procurement to source and fulfill</div>`;
@@ -6358,6 +6370,57 @@ async function submitDelayNotice(recordId) {
     errorBox.style.display = 'block';
     btn.disabled = false;
     btn.textContent = 'Send';
+  }
+}
+
+// Confirmed and built as discussed: rejection can genuinely happen
+// either before any quotes exist (unclear, duplicated request) or
+// after real quotes have come back unreasonable — either way, a
+// reason is required, since the requester deserves to know why, not
+// just that it happened.
+function openRejectProcurementModal(recordId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'rejectProcurementOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Reject Procurement Request</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">The requester will be notified by email, with your reason.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Why is this being rejected? *</label>
+      <textarea id="rp_reason" rows="3" placeholder="e.g. Quotes came back well over budget for what this is, or: request unclear — please specify the part number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;margin-bottom:14px"></textarea>
+      <div id="rp_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('rejectProcurementOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="rp_submit" onclick="submitRejectProcurement('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--red);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Reject</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitRejectProcurement(recordId) {
+  const rejectionReason = document.getElementById('rp_reason').value.trim();
+  const errorBox = document.getElementById('rp_error');
+  const btn = document.getElementById('rp_submit');
+  errorBox.style.display = 'none';
+  if (!rejectionReason) { errorBox.textContent = 'A reason is required.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Rejecting…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejectProcurement: true, recordId, rejectionReason }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not reject the request');
+    document.getElementById('rejectProcurementOverlay')?.remove();
+    refreshWorkOrdersView(recordId);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Reject';
   }
 }
 
