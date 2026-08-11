@@ -673,3 +673,17 @@ create table unit_lease_documents (
   organization_id   uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063'
 );
 create index idx_unit_lease_documents_unit on unit_lease_documents (unit_id);
+
+-- ============================================================
+-- Marketing lead capture from the landing page's email-capture form
+-- (grace.gracingventures.com) - a lower-commitment alternative to the
+-- WhatsApp-booked Facility Risk Audit, for cold ad traffic that isn't
+-- ready for a direct conversation yet. Kept separate from every
+-- FAM operational table - this is marketing data, not facility data.
+-- ============================================================
+create table leads (
+  id            uuid primary key default gen_random_uuid(),
+  email         text not null,
+  source        text,
+  created_at    timestamptz not null default now()
+);
