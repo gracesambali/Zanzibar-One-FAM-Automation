@@ -590,6 +590,93 @@ const CATEGORY_TO_ROLE = {
 };
 
 export default async function handler(req, res) {
+  // Payment provider webhook confirmations — merged in here from what
+  // was a standalone api/payment-webhook.js, specifically to stay
+  // under Vercel's Hobby plan 12-function cap (the same constraint
+  // this project already solved once before for sensors.js). Lives
+  // alongside handleUnitPortalInitiatePayment below on purpose — the
+  // whole tenant-facing payment flow, initiate through confirm, in
+  // one file. Routed by query param rather than a body flag since
+  // this is called by an external provider posting its own payload
+  // shape, not a body this app controls. No real provider is
+  // configured yet, so nothing external depends on the old URL this
+  // moved from.
+  if (req.method === "POST" && req.query.paymentWebhook === "true") {
+    const providerId = req.query.provider;
+    if (!providerId) return res.status(400).json({ error: "provider is required" });
+    try {
+      const { verifyAndParseWebhook } = await import("../lib/paymentProviders/index.js");
+      const result = await verifyAndParseWebhook(providerId, req);
+      if (!result.valid) {
+        console.error(`payment webhook: invalid or unverifiable callback from ${providerId}`);
+        return res.status(200).json({ received: true, processed: false });
+      }
+
+      const { getByColumn, update } = await import("../lib/postgresClient.js");
+      let payment = await getByColumn("unit_payments", "provider_transaction_id", result.providerTransactionId).catch(() => null);
+      if (!payment && result.reference) {
+        payment = await getByColumn("unit_payments", "payment_reference", result.reference).catch(() => null);
+      }
+      if (!payment) {
+        console.error(`payment webhook: no matching pending payment found for ${providerId} transaction ${result.providerTransactionId}`);
+        return res.status(200).json({ received: true, processed: false });
+      }
+
+      await update("unit_payments", payment.id, { provider_status: result.status })
+        .catch(err => console.error("payment webhook: could not update payment status:", err.message));
+
+      return res.status(200).json({ received: true, processed: true });
+    } catch (err) {
+      console.error(`payment webhook (${req.query.provider}) error:`, err);
+      return res.status(200).json({ received: true, processed: false });
+    }
+  }
+
+  // Lead capture from the marketing landing page's checklist offer —
+  // merged in here from what was a standalone api/lead-capture.js,
+  // same Vercel Hobby function-cap reasoning as the payment webhook
+  // above. This is the only route in this file that needs explicit
+  // CORS handling (called cross-origin from
+  // grace.gracingventures.com) — every other route here is only ever
+  // called same-origin from fam.gracingventures.com itself, so the
+  // CORS headers are set only inside this one block, not globally for
+  // the whole file.
+  if (req.query.leadCapture === "true") {
+    res.setHeader("Access-Control-Allow-Origin", "https://grace.gracingventures.com");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.status(204).end();
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+    const { email } = req.body || {};
+    const isValidEmail = typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    if (!isValidEmail) return res.status(400).json({ error: "A valid email address is required" });
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+      const { insert } = await import("../lib/postgresClient.js");
+      await insert("leads", { email: cleanEmail, source: "facility-risk-checklist" });
+    } catch (err) {
+      console.error("lead capture: could not store lead:", err.message);
+    }
+    try {
+      const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: [process.env.ALERT_FROM_EMAIL],
+          subject: `New lead: Facility Risk Checklist — ${cleanEmail}`,
+          html: `<p>New checklist request from the landing page.</p><p><strong>Email:</strong> ${cleanEmail}</p><p>Follow up with the checklist directly — this isn't sent automatically yet.</p>`,
+        }),
+      });
+    } catch (err) {
+      console.error("lead capture: could not send notification email:", err.message);
+    }
+    return res.status(200).json({ success: true });
+  }
+
   // Satisfaction confirmation — the link sent to the reporter once
   // their work order is marked Completed. No login: this is the same
   // "no account needed" principle as the report form itself. A "no"
