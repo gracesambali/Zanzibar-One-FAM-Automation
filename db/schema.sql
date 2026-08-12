@@ -687,3 +687,31 @@ create table leads (
   source        text,
   created_at    timestamptz not null default now()
 );
+
+-- ============================================================
+-- Real SLA tracking, picked back up after being derailed by the
+-- announcement-feature discussion. One shared SLA framework across
+-- the whole business - the open question about per-tenant/per-system
+-- targets was never answered, so this proceeds with the simpler,
+-- more likely default, which is a strict subset extensible later
+-- rather than a dead end.
+--
+-- One row per urgency tier (OVERDUE/URGENT/UPCOMING - the three real,
+-- already-existing tiers work orders are already categorized by).
+-- response_hours / resolution_hours are the promised targets;
+-- everything ELSE needed to measure against them - creation time,
+-- completion time, the full timestamped activity log - already
+-- exists on every work order and required no new columns there at
+-- all.
+-- ============================================================
+create table sla_targets (
+  urgency           text primary key,
+  response_hours    numeric not null,
+  resolution_hours  numeric not null,
+  updated_by        text,
+  updated_at        timestamptz not null default now()
+);
+insert into sla_targets (urgency, response_hours, resolution_hours) values
+  ('OVERDUE', 2, 24),
+  ('URGENT', 4, 48),
+  ('UPCOMING', 24, 168);

@@ -1014,6 +1014,32 @@ function filterByBuilding(items) {
 
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
+
+// Response and resolution are shown as two separate signals, not one
+// combined badge — they mean genuinely different things (did staff
+// act quickly vs was the job actually finished in time), and
+// collapsing them loses real information, especially for an open
+// work order where response might already be Met while resolution is
+// still pending. Each only renders once it's actually measurable —
+// no badge for "not yet responded to" or "not yet completed", since
+// that's the normal state of most open work, not something worth
+// flagging.
+function renderSLABadges(sla) {
+  if (!sla || !sla.hasTarget) return '';
+  let html = '';
+  if (sla.responseMet !== null) {
+    html += sla.responseMet
+      ? `<span title="Responded in ${sla.responseHours}h (target ${sla.targetResponseHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#DCFCE7;color:#166534">✓ Response</span>`
+      : `<span title="Responded in ${sla.responseHours}h (target was ${sla.targetResponseHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#FEE2E2;color:#991B1B">⚠ Response Breached</span>`;
+  }
+  if (sla.resolutionMet !== null) {
+    html += sla.resolutionMet
+      ? `<span title="Resolved in ${sla.resolutionHours}h (target ${sla.targetResolutionHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#DCFCE7;color:#166534">✓ Resolution</span>`
+      : `<span title="Resolved in ${sla.resolutionHours}h (target was ${sla.targetResolutionHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#FEE2E2;color:#991B1B">⚠ Resolution Breached</span>`;
+  }
+  return html;
+}
+
 function statusBg(s) { return s==="Good"?"var(--green-bg)":s==="Poor"?"var(--amber-bg)":"var(--red-bg)"; }
 function barColor(pct) { return pct>75?"var(--red)":pct>50?"var(--amber)":"var(--green)"; }
 function fmt(n) { return n.toLocaleString(); }
@@ -4904,6 +4930,7 @@ async function showWorkOrderDetail(recordId) {
         <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
+        ${renderSLABadges(o.sla)}
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
       </div>
     </div>
@@ -5092,6 +5119,96 @@ function closeAssetLinkModal() {
 // gate) — everyone who can see this panel at all can still view and
 // search the existing vendor list.
 let vendorListCache = []; // fetched once per modal open, filtered locally without refetching
+
+// Editing the actual promised SLA numbers — Business Owner/System
+// Admin only, confirmed by nature: this is a business policy
+// decision, not routine entry. Fetches the real current targets
+// first rather than assuming defaults, since they may already have
+// been edited by someone else.
+async function openSLASettingsModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'slaSettingsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">SLA Targets</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Response = how quickly staff acts after a request comes in. Resolution = how quickly it's actually finished. Both measured automatically from real work order activity — nothing to log separately.</div>
+      <div id="slaSettingsBody"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
+      <div id="sla_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button onclick="document.getElementById('slaSettingsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="sla_submit" onclick="submitSLATargets()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save Targets</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/get-assets?slaTargets=true');
+    const data = await resp.json();
+    const targets = data.targets || [];
+    const order = ['OVERDUE', 'URGENT', 'UPCOMING'];
+    const sorted = order.map(u => targets.find(t => t.urgency === u)).filter(Boolean);
+    document.getElementById('slaSettingsBody').innerHTML = sorted.map(t => `
+      <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+        <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">${t.urgency}</div>
+        <div style="display:flex;gap:10px">
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Response (hours)</label>
+            <input id="sla_${t.urgency}_response" type="number" min="0" step="any" value="${t.responseHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          </div>
+          <div style="flex:1">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Resolution (hours)</label>
+            <input id="sla_${t.urgency}_resolution" type="number" min="0" step="any" value="${t.resolutionHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          </div>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    document.getElementById('slaSettingsBody').innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load current targets: ${err.message}</div>`;
+  }
+}
+
+async function submitSLATargets() {
+  const errorBox = document.getElementById('sla_error');
+  const btn = document.getElementById('sla_submit');
+  errorBox.style.display = 'none';
+
+  const targets = [];
+  for (const urgency of ['OVERDUE', 'URGENT', 'UPCOMING']) {
+    const responseEl = document.getElementById(`sla_${urgency}_response`);
+    const resolutionEl = document.getElementById(`sla_${urgency}_resolution`);
+    if (!responseEl || !resolutionEl) continue; // not loaded successfully, skip rather than send incomplete data
+    const responseHours = Number(responseEl.value);
+    const resolutionHours = Number(resolutionEl.value);
+    if (!responseEl.value || !resolutionEl.value || responseHours < 0 || resolutionHours < 0) {
+      errorBox.textContent = `${urgency} needs a valid response and resolution time.`;
+      errorBox.style.display = 'block';
+      return;
+    }
+    targets.push({ urgency, responseHours, resolutionHours });
+  }
+  if (targets.length === 0) {
+    errorBox.textContent = 'Targets did not load correctly — close this and try again.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updateSLATargets: true, targets }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save targets');
+    document.getElementById('slaSettingsOverlay')?.remove();
+    renderWorkOrders();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save Targets';
+  }
+}
 
 async function openManageVendorsModal() {
   const overlay = document.createElement('div');
@@ -6277,6 +6394,16 @@ async function buildWorkOrdersHtml(orders) {
         <div style="font-size:11.5px;color:var(--muted)">Vendors need to exist here before quotes can be attached to a procurement request.</div>
       </div>
       <button onclick="openManageVendorsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Vendors</button>
+    </div>`;
+  }
+
+  if (currentUserRole === 'business_owner' || currentUserRole === 'system_admin') {
+    html += `<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">SLA Targets</div>
+        <div style="font-size:11.5px;color:var(--muted)">What you're actually promising, per urgency tier — shown as a badge on every work order once it's measurable.</div>
+      </div>
+      <button onclick="openSLASettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit SLA Targets</button>
     </div>`;
   }
 

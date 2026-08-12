@@ -117,10 +117,13 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     try {
       const records = await fetchAllWorkOrders();
+      const { computeSLACompliance, loadSLATargetsMap } = await import("../lib/slaTracking.js");
+      const slaTargetsMap = await loadSLATargetsMap();
       const workOrders = await Promise.all(records.map(async r => {
         const { beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl } = await signWorkOrderPhotos(r);
         const { signChatLogAttachments } = await import("../lib/storageClient.js");
         const signedChatLog = await signChatLogAttachments(r.chat_log || []);
+        const sla = computeSLACompliance(r, slaTargetsMap);
         return {
           id: r.id,
           woId: r.wo_id || "",
@@ -167,6 +170,7 @@ export default async function handler(req, res) {
           deliveryNoteUrl,
           deliveryNoteFilename: r.delivery_note_filename || null,
           deliveryConfirmationNote: r.delivery_confirmation_note || null,
+          sla,
           satisfactionStatus: r.satisfaction_status || "",
           satisfactionReason: r.satisfaction_reason || "",
           closureRejectionReason: r.closure_rejection_reason || "",
@@ -279,7 +283,38 @@ export default async function handler(req, res) {
       }
     }
 
-    // Rejecting a procurement request — a real, working action from
+    // Updating the promised SLA numbers — Business Owner/System Admin
+    // only, confirmed by nature: this is a business policy decision
+    // (what you're actually promising clients), not routine data
+    // entry. Requires all three tiers to update together in one call
+    // rather than piecemeal, so the set of targets is never left
+    // half-updated mid-request.
+    if (req.body && req.body.updateSLATargets) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to update SLA targets." });
+      }
+      const { targets } = req.body;
+      if (!Array.isArray(targets) || targets.length === 0) {
+        return res.status(400).json({ error: "targets array is required" });
+      }
+      try {
+        const { query: pgQuery } = await import("../lib/postgresClient.js");
+        for (const t of targets) {
+          if (!t.urgency || t.responseHours == null || t.resolutionHours == null) {
+            return res.status(400).json({ error: `Each target needs urgency, responseHours, and resolutionHours (got: ${JSON.stringify(t)})` });
+          }
+          await pgQuery(
+            "update sla_targets set response_hours = $1, resolution_hours = $2, updated_by = $3, updated_at = now() where urgency = $4",
+            [Number(t.responseHours), Number(t.resolutionHours), session.u, t.urgency]
+          );
+        }
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("updateSLATargets error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // here on, not just the display/gate logic that already existed
     // for it. Discussed and confirmed: this can genuinely happen at
     // two different points, and the reason means something different
@@ -2184,10 +2219,13 @@ async function handleMaintenanceReport(req, res) {
     if (asset) filtered = filtered.filter(r => (r.asset_id || "") === asset);
     if (from) { const d = new Date(from); filtered = filtered.filter(r => r.created && new Date(r.created) >= d); }
     if (to) { const d = new Date(to); d.setHours(23,59,59,999); filtered = filtered.filter(r => r.created && new Date(r.created) <= d); }
+    const { computeSLACompliance, loadSLATargetsMap } = await import("../lib/slaTracking.js");
+    const slaTargetsMap = await loadSLATargetsMap();
     const workOrders = await Promise.all(filtered.map(async r => {
       const { beforePhoto, afterPhoto, reporterPhoto, deliveryNoteUrl } = await signWorkOrderPhotos(r);
       const { signChatLogAttachments } = await import("../lib/storageClient.js");
       const signedChatLog = await signChatLogAttachments(r.chat_log || []);
+      const sla = computeSLACompliance(r, slaTargetsMap);
       return {
       woId: r.wo_id || "", assetId: r.asset_id || "",
       assetName: r.asset_name || "", system: r.system || "",
@@ -2207,6 +2245,7 @@ async function handleMaintenanceReport(req, res) {
       beforePhoto, afterPhoto, reporterContact: r.reporter_contact || "",
       reporterPhoto, deliveryNoteUrl, deliveryNoteFilename: r.delivery_note_filename || null,
       deliveryConfirmationNote: r.delivery_confirmation_note || null,
+      sla,
       satisfactionStatus: r.satisfaction_status || "", satisfactionReason: r.satisfaction_reason || "",
       closureRejectionReason: r.closure_rejection_reason || "",
       notes: r.notes || "",
