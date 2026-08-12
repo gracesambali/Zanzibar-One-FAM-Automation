@@ -40,6 +40,27 @@ export default async function handler(req, res) {
   }
   setSessionCookie(res, session.u, session.r);
 
+  // Real SLA targets — the promised response/resolution numbers per
+  // urgency tier, editable by staff (write side lives in
+  // work-orders.js), readable by anyone who can see work orders at
+  // all since compliance is shown right on them.
+  if (req.query.slaTargets === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const targets = await pgListAllRecords("sla_targets");
+      return res.status(200).json({ targets: targets.map(t => ({
+        urgency: t.urgency,
+        responseHours: Number(t.response_hours),
+        resolutionHours: Number(t.resolution_hours),
+        updatedBy: t.updated_by || null,
+        updatedAt: t.updated_at,
+      })) });
+    } catch (err) {
+      console.error("slaTargets read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm DATABASE_URL actually works once set
   // in Vercel — restricted to Business Owner/System Admin since this
   // is infrastructure testing, not something day-to-day staff need.
