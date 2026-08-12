@@ -877,7 +877,7 @@ export default async function handler(req, res) {
       if (session.r === "technician") {
         return res.status(403).json({ error: "Not permitted to edit a unit." });
       }
-      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate, rentAmount, serviceChargeAmount, billingFrequency } = req.body;
+      const { unitId, tenantName, tenantEmail, tenantPhone, leaseStatus, contractDate, rentAmount, serviceChargeAmount, billingFrequency, slaResponseHours, slaResolutionHours } = req.body;
       if (!unitId) return res.status(400).json({ error: "unitId required" });
       try {
         const { getById, update } = await import("../lib/postgresClient.js");
@@ -918,6 +918,26 @@ export default async function handler(req, res) {
         if (billingFrequency !== undefined && billingFrequency !== (before.billing_frequency || "Monthly")) {
           fields.billing_frequency = billingFrequency;
           changes.push(`Billing Frequency: "${before.billing_frequency || "Monthly"}" → "${billingFrequency}"`);
+        }
+        // The unit's own real SLA agreement — when both are set, this
+        // is what actually gets measured against, taking precedence
+        // over the shared portfolio-wide default. Setting either one
+        // back to blank clears the whole override, falling back to
+        // the shared default rather than leaving a half-complete
+        // agreement in place.
+        if (slaResponseHours !== undefined) {
+          const newVal = slaResponseHours === "" || slaResponseHours === null ? null : Number(slaResponseHours);
+          if (newVal !== (before.sla_response_hours !== null ? Number(before.sla_response_hours) : null)) {
+            fields.sla_response_hours = newVal;
+            changes.push(`SLA Response Target: "${before.sla_response_hours || "using shared default"}" → "${newVal || "using shared default"}"`);
+          }
+        }
+        if (slaResolutionHours !== undefined) {
+          const newVal = slaResolutionHours === "" || slaResolutionHours === null ? null : Number(slaResolutionHours);
+          if (newVal !== (before.sla_resolution_hours !== null ? Number(before.sla_resolution_hours) : null)) {
+            fields.sla_resolution_hours = newVal;
+            changes.push(`SLA Resolution Target: "${before.sla_resolution_hours || "using shared default"}" → "${newVal || "using shared default"}"`);
+          }
         }
 
         if (Object.keys(fields).length > 0) {

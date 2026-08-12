@@ -217,6 +217,21 @@ async function handleGetUnitPortal(req, res) {
       return null;
     });
 
+    // The tenant's own real SLA compliance — the actual point of this
+    // whole feature. Their own agreement's numbers if they have one
+    // set, falling back to the shared default otherwise, measured
+    // against every work order tied to their own unit specifically.
+    let slaSummary = { responseMetCount: 0, responseTotal: 0, responseRate: null, resolutionMetCount: 0, resolutionTotal: 0, resolutionRate: null, usingUnitAgreement: false };
+    try {
+      const { computeUnitSLASummary, loadSLATargetsMap } = await import("../lib/slaTracking.js");
+      const slaTargetsMap = await loadSLATargetsMap();
+      const unitOverride = { responseHours: f.sla_response_hours !== null ? Number(f.sla_response_hours) : null, resolutionHours: f.sla_resolution_hours !== null ? Number(f.sla_resolution_hours) : null };
+      const woResult = await pgQuery("select urgency, created, completed_date, activity_log from work_orders where unit = $1", [f.unit_name]).catch(() => null);
+      if (woResult) slaSummary = computeUnitSLASummary(woResult.rows, slaTargetsMap, unitOverride);
+    } catch (err) {
+      console.error("handleGetUnitPortal: could not compute SLA summary:", err.message);
+    }
+
     // Lease document history — read-only here, same as everything
     // else on this portal. A tenant seeing their own amendments and
     // renewal letters is genuinely useful transparency, not a risk;
@@ -309,6 +324,9 @@ async function handleGetUnitPortal(req, res) {
       slaUrl,
       slaFilename: f.sla_document_filename || null,
       leaseDocuments,
+      slaResponseHours: f.sla_response_hours !== null ? Number(f.sla_response_hours) : null,
+      slaResolutionHours: f.sla_resolution_hours !== null ? Number(f.sla_resolution_hours) : null,
+      slaSummary,
       assets: unitAssets,
       chatLog,
       activityLog,

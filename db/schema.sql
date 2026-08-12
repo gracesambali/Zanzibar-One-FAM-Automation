@@ -715,3 +715,18 @@ insert into sla_targets (urgency, response_hours, resolution_hours) values
   ('OVERDUE', 2, 24),
   ('URGENT', 4, 48),
   ('UPCOMING', 24, 168);
+
+-- ============================================================
+-- Real per-tenant SLA agreement targets - confirmed directly: the
+-- earlier build tracked response/resolution against a single,
+-- portfolio-wide set of numbers by urgency tier, with no connection
+-- to any actual tenant's real agreement. This is the actual
+-- connection - optional per-unit override numbers, reflecting the
+-- real terms in that unit's uploaded SLA document, which take
+-- precedence over the shared default when set. Nullable: a unit
+-- with no override still gets measured against the shared tier
+-- defaults, so nothing breaks for units that haven't had a custom
+-- agreement entered yet.
+-- ============================================================
+alter table units add column sla_response_hours numeric;
+alter table units add column sla_resolution_hours numeric;

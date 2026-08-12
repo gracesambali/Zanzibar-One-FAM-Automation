@@ -93,6 +93,12 @@
       </div>
 
       <div class="panel">
+        <div class="panel-title">SLA Performance</div>
+        <div id="slaAgreementNote" style="font-size:12.5px;color:#6B7280;margin-bottom:12px">—</div>
+        <div id="slaComplianceStats" style="display:flex;gap:20px"></div>
+      </div>
+
+      <div class="panel">
         <div class="panel-title">Rent & Service Charges</div>
         <div class="detail-grid">
           <div class="detail-item"><div class="label">Rent (per period)</div><div class="value" id="detailRentAmount">—</div></div>
@@ -248,6 +254,31 @@
       document.getElementById('detailSLA').innerHTML = data.slaUrl
         ? previewDownloadButtonsHtml('sla', data.slaUrl, data.slaFilename || 'sla.pdf')
         : 'Not uploaded yet';
+
+      // The actual point of this feature — real performance against
+      // this tenant's own agreement, not a generic number. Falls back
+      // to noting the shared default is being used if no custom terms
+      // have been entered for this unit yet.
+      const slaSummary = data.slaSummary || { responseTotal: 0, resolutionTotal: 0 };
+      document.getElementById('slaAgreementNote').textContent =
+        (data.slaResponseHours != null && data.slaResolutionHours != null)
+          ? `Your agreement: respond within ${data.slaResponseHours}h, resolve within ${data.slaResolutionHours}h.`
+          : `Measured against our standard commitment — no custom terms set for this unit yet.`;
+      const statsEl = document.getElementById('slaComplianceStats');
+      if (slaSummary.responseTotal > 0 || slaSummary.resolutionTotal > 0) {
+        const rateColor = r => r == null ? '#6B7280' : r >= 80 ? '#16A34A' : r >= 50 ? '#B45309' : '#DC2626';
+        statsEl.innerHTML = `
+          <div>
+            <div style="font-size:20px;font-weight:700;color:${rateColor(slaSummary.responseRate)}">${slaSummary.responseRate != null ? slaSummary.responseRate + '%' : '—'}</div>
+            <div style="font-size:11px;color:#6B7280">Response met (${slaSummary.responseMetCount}/${slaSummary.responseTotal})</div>
+          </div>
+          <div>
+            <div style="font-size:20px;font-weight:700;color:${rateColor(slaSummary.resolutionRate)}">${slaSummary.resolutionRate != null ? slaSummary.resolutionRate + '%' : '—'}</div>
+            <div style="font-size:11px;color:#6B7280">Resolution met (${slaSummary.resolutionMetCount}/${slaSummary.resolutionTotal})</div>
+          </div>`;
+      } else {
+        statsEl.innerHTML = `<div class="empty-state" style="padding:0">No completed work orders yet to measure against.</div>`;
+      }
 
       // Rent & Service Charges — read-only here on purpose, confirmed
       // directly: the tenant sees their own terms, invoices, payments,

@@ -598,6 +598,21 @@ async function handleGetUnits(req, res) {
     // owe before the provider has actually confirmed it went through.
     const paidResult = await pgQuery("select unit_id, coalesce(sum(amount_tzs), 0) as total from unit_payments where payment_provider is null or provider_status = 'Completed' group by unit_id");
     const invoicedByUnit = {};
+
+    // SLA compliance per unit — the real thing this was missing.
+    // Batched: one query for every work order that has a unit
+    // attached at all, then grouped in memory by unit name (how work
+    // orders reference a unit — there's no unit_id foreign key on
+    // work_orders, just the plain name), same batching discipline as
+    // the financial queries above.
+    const { computeUnitSLASummary, loadSLATargetsMap } = await import("../lib/slaTracking.js");
+    const slaTargetsMap = await loadSLATargetsMap();
+    const woByUnitResult = await pgQuery("select unit, urgency, created, completed_date, activity_log from work_orders where unit is not null and unit != ''");
+    const workOrdersByUnitName = {};
+    for (const wo of woByUnitResult.rows) {
+      if (!workOrdersByUnitName[wo.unit]) workOrdersByUnitName[wo.unit] = [];
+      workOrdersByUnitName[wo.unit].push(wo);
+    }
     for (const r of invoicedResult.rows) invoicedByUnit[r.unit_id] = Number(r.total);
     const paidByUnit = {};
     for (const r of paidResult.rows) paidByUnit[r.unit_id] = Number(r.total);
@@ -629,6 +644,8 @@ async function handleGetUnits(req, res) {
       }));
       const totalInvoiced = invoicedByUnit[r.id] || 0;
       const totalPaid = paidByUnit[r.id] || 0;
+      const unitOverride = { responseHours: r.sla_response_hours !== null ? Number(r.sla_response_hours) : null, resolutionHours: r.sla_resolution_hours !== null ? Number(r.sla_resolution_hours) : null };
+      const slaSummary = computeUnitSLASummary(workOrdersByUnitName[r.unit_name] || [], slaTargetsMap, unitOverride);
       return {
         id: r.id,
         name: r.unit_name || "",
@@ -645,6 +662,9 @@ async function handleGetUnits(req, res) {
         nextRentNoticeDue: r.next_rent_notice_due || null,
         slaUrl,
         slaFilename: r.sla_document_filename || null,
+        slaResponseHours: unitOverride.responseHours,
+        slaResolutionHours: unitOverride.resolutionHours,
+        slaSummary,
         leaseDocuments,
         rentAmount: r.rent_amount_tzs !== null ? Number(r.rent_amount_tzs) : null,
         serviceChargeAmount: r.service_charge_amount_tzs !== null ? Number(r.service_charge_amount_tzs) : null,
