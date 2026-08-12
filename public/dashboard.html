@@ -8160,7 +8160,18 @@ async function loadAssetsAndInit() {
     const data = await assetsResp.json();
     assets = data.assets || [];
     currentUserRole = data.role || "technician";
-    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole] || ROLE_PERMISSIONS.technician;
+    currentUserPermissions = ROLE_PERMISSIONS[currentUserRole];
+    if (!currentUserPermissions) {
+      // A role string that doesn't match any known role should never
+      // silently fall back to reduced permissions with no trace of
+      // what happened — that's exactly the class of bug that hid
+      // undetected in the backend's own session creation until it was
+      // reported as "edit buttons just disappeared." Loud in the
+      // console at minimum, so this is diagnosable next time rather
+      // than invisible again.
+      console.error(`Unknown role "${currentUserRole}" — no matching entry in ROLE_PERMISSIONS. Falling back to technician-level permissions.`);
+      currentUserPermissions = ROLE_PERMISSIONS.technician;
+    }
     currentUsername = data.username || "";
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
