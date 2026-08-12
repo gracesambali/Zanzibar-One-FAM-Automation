@@ -2426,6 +2426,25 @@ async function showUnitDetail(unitId) {
       ${u.slaUrl
         ? previewDownloadButtonsHtml('unit-sla-' + u.id, u.slaUrl, u.slaFilename || 'sla.pdf')
         : `<button onclick="openUploadSLAModal('${u.id}', '${u.name}')" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">📋 Upload SLA</button>`}
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+          ${u.slaResponseHours != null && u.slaResolutionHours != null
+            ? `Real agreement: respond within ${u.slaResponseHours}h, resolve within ${u.slaResolutionHours}h.`
+            : `No custom terms set — measured against the shared portfolio default until this unit's real numbers are entered.`}
+          <button onclick="openEditUnitSLAModal('${u.id}', '${u.name}', ${u.slaResponseHours != null ? u.slaResponseHours : 'null'}, ${u.slaResolutionHours != null ? u.slaResolutionHours : 'null'})" style="margin-left:6px;font-size:11px;color:var(--navy);text-decoration:underline;background:none;border:none;cursor:pointer;padding:0">Edit</button>
+        </div>
+        ${u.slaSummary && (u.slaSummary.responseTotal > 0 || u.slaSummary.resolutionTotal > 0) ? `
+        <div style="display:flex;gap:16px">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:${u.slaSummary.responseRate == null ? 'var(--muted)' : u.slaSummary.responseRate >= 80 ? 'var(--green)' : u.slaSummary.responseRate >= 50 ? 'var(--amber)' : 'var(--red)'}">${u.slaSummary.responseRate != null ? u.slaSummary.responseRate + '%' : '—'}</div>
+            <div style="font-size:10px;color:var(--muted)">Response met (${u.slaSummary.responseMetCount}/${u.slaSummary.responseTotal})</div>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:700;color:${u.slaSummary.resolutionRate == null ? 'var(--muted)' : u.slaSummary.resolutionRate >= 80 ? 'var(--green)' : u.slaSummary.resolutionRate >= 50 ? 'var(--amber)' : 'var(--red)'}">${u.slaSummary.resolutionRate != null ? u.slaSummary.resolutionRate + '%' : '—'}</div>
+            <div style="font-size:10px;color:var(--muted)">Resolution met (${u.slaSummary.resolutionMetCount}/${u.slaSummary.resolutionTotal})</div>
+          </div>
+        </div>` : `<div style="font-size:11.5px;color:var(--muted);font-style:italic">No measurable work orders for this unit yet.</div>`}
+      </div>
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
@@ -2894,6 +2913,64 @@ async function submitUploadSLA(unitId) {
 // Contract above — a growing list of lease documents needs to be
 // scannable by what each one actually is ("Rent Amendment - Jan
 // 2027"), not just an original upload filename.
+// Setting a unit's own real SLA agreement — confirmed directly: this
+// is what makes tracking mean something specific to that tenant,
+// rather than a generic shared number. Leaving both fields blank
+// clears the override entirely, falling back to the shared default
+// rather than leaving a half-set agreement.
+function openEditUnitSLAModal(unitId, unitName, currentResponse, currentResolution) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editUnitSLAOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:360px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">SLA Agreement — ${escapeHtml(unitName)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">This tenant's own real, negotiated terms — takes over from the shared portfolio default once both are set. Leave both blank to go back to the shared default.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Response Target (hours)</label>
+      <input id="eus_response" type="number" min="0" step="any" value="${currentResponse != null ? currentResponse : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Resolution Target (hours)</label>
+      <input id="eus_resolution" type="number" min="0" step="any" value="${currentResolution != null ? currentResolution : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="eus_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editUnitSLAOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="eus_submit" onclick="submitEditUnitSLA('${unitId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditUnitSLA(unitId) {
+  const responseVal = document.getElementById('eus_response').value;
+  const resolutionVal = document.getElementById('eus_resolution').value;
+  const errorBox = document.getElementById('eus_error');
+  const btn = document.getElementById('eus_submit');
+  errorBox.style.display = 'none';
+
+  // Both set, or both blank — never a half-complete agreement.
+  if ((responseVal === '') !== (resolutionVal === '')) {
+    errorBox.textContent = 'Set both fields, or leave both blank to use the shared default.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editUnit: true, unitId, slaResponseHours: responseVal, slaResolutionHours: resolutionVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('editUnitSLAOverlay')?.remove();
+    renderUnits();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
 function openUploadLeaseDocModal(unitId, unitName) {
   const overlay = document.createElement('div');
   overlay.id = 'uploadLeaseDocOverlay';
