@@ -1015,6 +1015,40 @@ function filterByBuilding(items) {
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
 
+// A plain total-duration line, deliberately separate from SLA — this
+// is just "how long has this actually been open," with no target
+// attached, no Met/Breached judgment. Phrased differently for an open
+// vs a completed work order so there's no ambiguity about whether the
+// number is still growing or final. Always spells out days AND hours
+// together, specifically to avoid the exact confusion a bare number
+// caused before — "34" alone doesn't say if that's hours or days,
+// this never leaves that to guesswork.
+function formatWorkOrderDuration(createdAt, completedAt) {
+  if (!createdAt) return '';
+  const created = new Date(createdAt);
+  if (isNaN(created)) return '';
+  const end = completedAt ? new Date(completedAt) : new Date();
+  const totalMs = end - created;
+  if (totalMs < 0) return '';
+
+  const totalHours = totalMs / (1000 * 60 * 60);
+  const days = Math.floor(totalHours / 24);
+  const hours = Math.floor(totalHours % 24);
+  let durationText;
+  if (days === 0 && hours === 0) {
+    durationText = 'less than 1 hour';
+  } else {
+    const parts = [];
+    if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+    if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+    durationText = parts.join(', ');
+  }
+
+  return completedAt
+    ? `Took ${durationText} to complete`
+    : `Open for ${durationText} so far`;
+}
+
 // Response and resolution are shown as two separate signals, not one
 // combined badge — they mean genuinely different things (did staff
 // act quickly vs was the job actually finished in time), and
@@ -5011,6 +5045,8 @@ async function showWorkOrderDetail(recordId) {
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
       </div>
     </div>
+
+    <div style="padding:10px 24px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)">${formatWorkOrderDuration(o.created, o.completedDate)}</div>
 
     <div id="woDetailAssetLink" style="padding:20px 24px;border-bottom:1px solid var(--border)"></div>
 
