@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --navy: #1A3566; --navy-light: #2A4A7F; --navy-pale: #E8EDF4;
+  --navy: #FF0A0A; --navy-light: #FF4040; --navy-pale: #FFE5E5;
   --red: #E74C3C; --red-bg: #FDE8E6;
   --green: #27AE60; --green-bg: #E8F8EF;
   --amber: #F39C12; --amber-bg: #FEF5E7;
@@ -308,7 +308,7 @@ button { font-family: inherit; cursor: pointer; }
 
 <div class="header">
   <div class="header-left">
-    <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
+    <div class="header-logo"><img src="/selian-logo.png" alt="GVC"></div>
     <div>
       <div class="header-title">Facility Asset Manager</div>
       <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
@@ -423,12 +423,12 @@ button { font-family: inherit; cursor: pointer; }
 // already showing, so nothing breaks.
 // ============================================================
 const CLIENT_CONFIG = {
-  clientName: "Zanzibar One Tower",
-  buildingLabel: "Zanzibar One Tower",
-  region: "Zanzibar",
-  district: "Zanzibar Urban",
-  building: "Zanzibar One Tower",
-  accentColor: "#1A3566",
+  clientName: "Selian Lutheran Hospital",
+  buildingLabel: "Selian Lutheran Hospital",
+  region: "Arusha",
+  district: "Arusha",
+  building: "Selian Lutheran Hospital",
+  accentColor: "#FF0A0A",
   pageTitle: "GVC Facility Asset Manager"
 };
 
@@ -7250,7 +7250,7 @@ function generateCertificate(recordId) {
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <div class="border">
         <div class="header">
-          <img class="logo" src="/logo.png" alt="GVC">
+          <img class="logo" src="/selian-logo.png" alt="GVC">
           <div class="title">Certificate of Maintenance</div>
           <div class="subtitle">${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel}</div>
         </div>
@@ -7340,7 +7340,7 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     const qrBlob = await qrResp.blob();
     const qrObjUrl = URL.createObjectURL(qrBlob);
 
-    const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/logo.png')]);
+    const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/selian-logo.png')]);
 
     // Inter is already the app's own font — canvas won't use a webfont
     // until it's explicitly confirmed loaded, otherwise text silently
@@ -7589,7 +7589,7 @@ function buildPeriodReportHtml(data, title, periodLabel) {
     <body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <div class="report-header">
-        <img src="/logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
+        <img src="/selian-logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
         <div>
           <h1>${title}</h1>
           <div class="sub" style="margin-bottom:0">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
