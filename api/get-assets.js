@@ -19,12 +19,12 @@ export default async function handler(req, res) {
   // existing pilot unless these env vars are deliberately set.
   if (req.query.clientconfig === "true") {
     return res.status(200).json({
-      clientName: process.env.CLIENT_NAME || "Zanzibar One Tower",
-      buildingLabel: process.env.CLIENT_BUILDING_LABEL || "Zanzibar One Tower",
-      region: process.env.CLIENT_REGION || "Zanzibar",
-      district: process.env.CLIENT_DISTRICT || "Zanzibar Urban",
-      building: process.env.CLIENT_BUILDING || "Zanzibar One Tower",
-      accentColor: process.env.CLIENT_ACCENT_COLOR || "#1A3566",
+      clientName: process.env.CLIENT_NAME || "Selian Lutheran Hospital",
+      buildingLabel: process.env.CLIENT_BUILDING_LABEL || "Selian Lutheran Hospital",
+      region: process.env.CLIENT_REGION || "Arusha",
+      district: process.env.CLIENT_DISTRICT || "Arusha",
+      building: process.env.CLIENT_BUILDING || "Selian Lutheran Hospital",
+      accentColor: process.env.CLIENT_ACCENT_COLOR || "#FF0A0A",
       pageTitle: process.env.CLIENT_PAGE_TITLE || "GVC Facility Asset Manager",
     });
   }
