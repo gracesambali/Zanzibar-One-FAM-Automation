@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       region: process.env.CLIENT_REGION || "Arusha",
       district: process.env.CLIENT_DISTRICT || "Arusha",
       building: process.env.CLIENT_BUILDING || "Selian Lutheran Hospital",
-      accentColor: process.env.CLIENT_ACCENT_COLOR || "#FF0A0A",
+      accentColor: process.env.CLIENT_ACCENT_COLOR || "#8B1A1A",
       pageTitle: process.env.CLIENT_PAGE_TITLE || "GVC Facility Asset Manager",
     });
   }
