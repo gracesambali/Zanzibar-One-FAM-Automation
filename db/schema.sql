@@ -783,3 +783,21 @@ insert into tra_classes (label, rate) values
 -- orphan every asset that referenced it by name.
 alter table components drop column if exists tra_class;
 alter table components add column tra_class_id uuid references tra_classes(id) on delete set null;
+
+-- ============================================================
+-- Unified activity log for the Asset Tracking page specifically -
+-- confirmed directly: every edit happening on that page, who did it,
+-- recorded and visible together. Deliberately separate from the
+-- existing asset-centric edit_log, since TRA category changes aren't
+-- tied to any one specific asset - a single, simple timeline covering
+-- everything this page does, not force-fit into a table built around
+-- individual asset records.
+-- ============================================================
+create table asset_tracking_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  action          text not null,
+  details         text not null,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index idx_asset_tracking_log_time on asset_tracking_activity_log (performed_at desc);

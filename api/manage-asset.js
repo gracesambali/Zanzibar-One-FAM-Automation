@@ -390,6 +390,9 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
       updated++;
     }
 
+    if (updated > 0) {
+      await logAssetTrackingActivity("Bulk Imported TRA Classes", `${updated} asset${updated === 1 ? '' : 's'} updated from CSV${notFound.length ? `, ${notFound.length} not found` : ''}${invalidClass.length ? `, ${invalidClass.length} unrecognized categor${invalidClass.length === 1 ? 'y' : 'ies'}` : ''}`, editedBy);
+    }
     return res.status(200).json({ success: true, updated, notFound, invalidClass });
   } catch (err) {
     console.error("bulkImportTraClasses error:", err);
@@ -401,6 +404,19 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
 // Selian's actual finance-provided item types and rates get entered,
 // once, rather than being fixed in code. Rate is stored as a decimal
 // (0.20 for 20%), same convention the calculation itself expects.
+// Shared logging for every action on the Asset Tracking page,
+// confirmed directly: all of it recorded, who did it, visible
+// together. Non-fatal on purpose — a logging failure should never
+// block the actual action it's describing.
+async function logAssetTrackingActivity(action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("asset_tracking_activity_log", { action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logAssetTrackingActivity failed (non-fatal):", err.message);
+  }
+}
+
 async function handleAddTraClass(req, res, addedBy) {
   const { label, rate } = req.body || {};
   if (!label || !label.trim() || rate == null || isNaN(Number(rate)) || Number(rate) <= 0 || Number(rate) > 1) {
@@ -409,6 +425,7 @@ async function handleAddTraClass(req, res, addedBy) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const created = await insert("tra_classes", { label: label.trim(), rate: Number(rate), created_by: addedBy });
+    await logAssetTrackingActivity("Added Category", `"${created.label}" at ${(Number(created.rate)*100).toFixed(1)}%`, addedBy);
     return res.status(200).json({ success: true, class: { id: created.id, label: created.label, rate: Number(created.rate) } });
   } catch (err) {
     // A duplicate label hits the table's unique constraint - surfaced
@@ -425,8 +442,13 @@ async function handleEditTraClass(req, res, editedBy) {
     return res.status(400).json({ error: "classId, a label, and a rate between 0 and 1 are required" });
   }
   try {
-    const { update } = await import("../lib/postgresClient.js");
+    const { update, getById } = await import("../lib/postgresClient.js");
+    const before = await getById("tra_classes", classId).catch(() => null);
     await update("tra_classes", classId, { label: label.trim(), rate: Number(rate), updated_at: new Date().toISOString() });
+    const detailParts = [];
+    if (before && before.label !== label.trim()) detailParts.push(`name "${before.label}" → "${label.trim()}"`);
+    if (before && Number(before.rate) !== Number(rate)) detailParts.push(`rate ${(Number(before.rate)*100).toFixed(1)}% → ${(Number(rate)*100).toFixed(1)}%`);
+    await logAssetTrackingActivity("Edited Category", detailParts.length ? detailParts.join(", ") : `"${label.trim()}"`, editedBy);
     return res.status(200).json({ success: true });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `A category named "${label.trim()}" already exists.` : err.message;
@@ -439,11 +461,13 @@ async function handleDeleteTraClass(req, res, deletedBy) {
   const { classId } = req.body || {};
   if (!classId) return res.status(400).json({ error: "classId is required" });
   try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, getById } = await import("../lib/postgresClient.js");
+    const before = await getById("tra_classes", classId).catch(() => null);
     // Any asset referencing this class has tra_class_id set to null
     // automatically (on delete set null, in the schema) — deleting a
     // category never leaves an asset silently pointing at nothing.
     await pgQuery("delete from tra_classes where id = $1", [classId]);
+    await logAssetTrackingActivity("Deleted Category", before ? `"${before.label}" (was ${(Number(before.rate)*100).toFixed(1)}%)` : classId, deletedBy);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteTraClass error:", err);
@@ -512,6 +536,20 @@ async function handleEditAsset(req, res, editedBy) {
         edited_by: editedBy,
         timestamp,
       }).catch(e => console.error("Edit log write failed (non-fatal):", e.message));
+    }
+
+    // TRA Class changes specifically also get a real, resolved entry
+    // in the unified Asset Tracking activity log — the raw UUID
+    // stored in edit_log above isn't meaningful on its own; this
+    // records the actual category name instead.
+    const traClassChange = auditEntries.find(e => e.field === "TRA Class");
+    if (traClassChange) {
+      const newClass = traClassChange.newValue ? await getById("tra_classes", traClassChange.newValue).catch(() => null) : null;
+      await logAssetTrackingActivity(
+        "Assigned TRA Class",
+        `${assetId} → ${newClass ? `"${newClass.label}"` : "(cleared)"}`,
+        editedBy
+      );
     }
 
     return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId });

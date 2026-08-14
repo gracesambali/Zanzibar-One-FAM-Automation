@@ -376,6 +376,22 @@ export default async function handler(req, res) {
     }
   }
 
+  // Everything that's happened on the Asset Tracking page - category
+  // additions/edits/deletes, TRA class assignments, bulk imports - one
+  // unified timeline, most recent first.
+  if (req.query.assetTrackingLog === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from asset_tracking_activity_log order by performed_at desc limit 200");
+      return res.status(200).json({
+        entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
+      });
+    } catch (err) {
+      console.error("assetTrackingLog read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Full invoice + payment history for one unit — the detail view
   // behind the summary numbers already in the main units list.
   if (req.query.unitFinancials === "true") {
