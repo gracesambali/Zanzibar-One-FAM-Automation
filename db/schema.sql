@@ -746,3 +746,40 @@ alter table units add column sla_resolution_hours numeric;
 -- compute-fresh discipline used for the existing depreciation.
 -- ============================================================
 alter table components add column tra_class text;
+
+-- ============================================================
+-- Real, editable TRA depreciation categories - replacing the fixed
+-- placeholder Class 1-4 list from the previous session. Confirmed
+-- directly: Selian's finance contact gives item type + rate, a short
+-- list defined once, not a per-asset mapping - she has no involvement
+-- with individual asset IDs at all. Each category's rate is real data
+-- entered directly, not forced into a generic bucket that might not
+-- match what she actually provides. Which asset belongs to which
+-- category is a separate, Grace-owned decision, made per asset or in
+-- bulk via CSV (matched by category name, not a fixed code).
+-- ============================================================
+create table tra_classes (
+  id            uuid primary key default gen_random_uuid(),
+  label         text not null unique,
+  rate          numeric not null,   -- decimal, e.g. 0.20 for 20% declining balance
+  created_by    text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+-- Seeded with the same starting placeholders as before, purely so
+-- there's something to demo with immediately - fully editable from
+-- here on, meant to be replaced with Selian's real categories, not
+-- fixed code like the previous version.
+insert into tra_classes (label, rate) values
+  ('Computers & data equipment', 0.375),
+  ('Vehicles & earthmoving equipment', 0.25),
+  ('Other machinery & equipment', 0.125),
+  ('Buildings & structures', 0.05);
+
+-- Migrating components.tra_class from a fixed-code text field (Session
+-- 84's placeholder design) to a real foreign key into tra_classes -
+-- safe to do now since nothing has real data in this column yet.
+-- A real foreign key means renaming a category later doesn't silently
+-- orphan every asset that referenced it by name.
+alter table components drop column if exists tra_class;
+alter table components add column tra_class_id uuid references tra_classes(id) on delete set null;
