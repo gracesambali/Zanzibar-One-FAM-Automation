@@ -683,6 +683,13 @@ let currentSearch = "";
 let currentFacilityFilter = "__all__";
 let currentBuildingFilter = "__all__";
 let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
+// A narrow, targeted exception to where saving an edit normally lands
+// (loadAssetsAndInit's tail always goes to the Dashboard) — editing an
+// asset from Asset Tracking specifically should return there, not
+// bounce someone to a different tab and lose their place/filters.
+// Deliberately not changing loadAssetsAndInit's general behavior for
+// every other caller, just adding one narrow, flagged exception.
+let returnToAssetTrackingAfterEdit = false;
 let traClassesCache = []; // [{ id, label, rate }], fetched once at init, refreshed after any TRA category edit
 
 // Currency switcher — TZS is what's actually stored everywhere; this
@@ -1896,7 +1903,7 @@ function openEditForm(idx) {
       <textarea id="ea_note" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px">${(a.note||'').replace(/</g,'&lt;')}</textarea>
 
       <div style="display:flex;gap:8px;margin-top:6px">
-        <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="returnToAssetTrackingAfterEdit = false; closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
         <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
       </div>
     </div>
@@ -2678,6 +2685,19 @@ async function renderFixedAssetRegister() {
   }
 }
 
+// Reuses the existing, already-proven asset edit form rather than
+// building separate inline-editing logic — confirmed directly: doer
+// and timestamp need to be recorded for any edit made here, which
+// this form already does correctly (edit_log for every field, plus
+// the Asset Tracking activity log specifically for TRA Class), so
+// this connects to that rather than duplicating it.
+function openEditFormFromAssetTracking(assetId) {
+  const idx = assets.findIndex(a => a.assetId === assetId);
+  if (idx === -1) { alert(`Could not find ${assetId} — try refreshing the page.`); return; }
+  returnToAssetTrackingAfterEdit = true;
+  openEditForm(idx);
+}
+
 function renderFixedAssetRegisterTable(data) {
   const container = document.getElementById('view-fixedassets');
   const { totals, traClasses } = data;
@@ -2734,11 +2754,6 @@ function renderFixedAssetRegisterTable(data) {
       ⚠️ ${data.placeholderNotice}
     </div>` : ''}
 
-    <div id="assetTrackingLogPanel" style="display:none;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
-      <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
-    </div>
-
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
       <select id="at_categoryFilter" onchange="renderFixedAssetRegisterTable(fixedAssetRegisterCache)" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;background:#fff">
         <option value="">All Categories</option>
@@ -2772,11 +2787,12 @@ function renderFixedAssetRegisterTable(data) {
             <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Book Value</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">TRA Class</th>
             <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">TRA Value</th>
+            <th style="padding:10px 12px"></th>
           </tr>
         </thead>
         <tbody>
           ${register.length === 0
-            ? `<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">${(categoryFilter||traFilter) ? 'No assets match this filter.' : 'No assets yet.'}</td></tr>`
+            ? `<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">${(categoryFilter||traFilter) ? 'No assets match this filter.' : 'No assets yet.'}</td></tr>`
             : register.map(a => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.assetId)}</td>
@@ -2791,6 +2807,7 @@ function renderFixedAssetRegisterTable(data) {
                     : `<span style="font-size:11px;color:var(--red);font-style:italic">Not set</span>`}
                 </td>
                 <td style="padding:9px 12px;text-align:right;color:var(--amber)">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
+                <td style="padding:9px 12px;text-align:right"><button onclick="openEditFormFromAssetTracking('${a.assetId}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button></td>
               </tr>`).join('')}
         </tbody>
       </table>
@@ -2812,6 +2829,11 @@ function renderFixedAssetRegisterTable(data) {
               <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
             </div>` : ''}
           </div>`).join('')}
+    </div>
+
+    <div id="assetTrackingLogPanel" style="display:none;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>
   </div>`;
 
@@ -2975,7 +2997,10 @@ function exportFixedAssetRegisterPdf() {
       th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
       th { background: #F7F8FA; }
       .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      @media print { .download-btn { display:none; } }
     </style></head><body>
+    <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
     <h1>Asset Tracking — ${escapeHtml(CLIENT_CONFIG.clientName)}</h1>
     <div class="meta">Generated ${new Date().toLocaleString()} · ${register.length} asset${register.length === 1 ? '' : 's'}</div>
     <table>
@@ -2987,7 +3012,7 @@ function exportFixedAssetRegisterPdf() {
     </body></html>
   `);
   printWindow.document.close();
-  printWindow.onload = () => { printWindow.print(); };
+  printWindow.focus();
 }
 
 // Bulk TRA class import — built specifically so filling in real
@@ -3073,9 +3098,9 @@ function openImportTraClassesModal() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Import TRA Classes</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV with two columns: Asset ID, then TRA Class. First row is treated as a header and skipped. If you have an Excel file, use "Save As → CSV" first.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file with two columns: Asset ID, then TRA Class. First row is treated as a header and skipped.</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:14px">The TRA Class column should exactly match one of your real category names (set up under "Manage TRA Categories" below the register) — not case-sensitive. Leave blank to clear a class.</div>
-      <input id="tra_csvFile" type="file" accept=".csv" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <input id="tra_csvFile" type="file" accept=".csv,.xlsx,.xls" style="width:100%;font-size:12.5px;margin-bottom:14px">
       <div id="tra_importStatus" style="display:none;font-size:12.5px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('importTraOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -3105,17 +3130,36 @@ function parseTraCsv(text) {
   return rows;
 }
 
+// Real Excel parsing, not a "convert to CSV first" workaround — uses
+// the same SheetJS library already loaded on demand for the Excel
+// export, so a person handing over a genuine .xlsx file doesn't need
+// an extra manual step before this accepts it.
+async function parseTraExcel(file) {
+  await ensureSheetJsLoaded();
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+  const rows = [];
+  for (let i = 1; i < data.length; i++) { // skip header row
+    const row = data[i];
+    if (!row || !row[0]) continue;
+    rows.push({ assetId: String(row[0]).trim(), traClass: normalizeTraClassInput(row[1] != null ? String(row[1]) : '') });
+  }
+  return rows;
+}
+
 async function submitTraClassImport() {
   const fileInput = document.getElementById('tra_csvFile');
   const statusEl = document.getElementById('tra_importStatus');
   const btn = document.getElementById('tra_importSubmit');
   const file = fileInput.files[0];
-  if (!file) { statusEl.textContent = 'Choose a CSV file first.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+  if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Importing…';
   try {
-    const text = await file.text();
-    const rows = parseTraCsv(text);
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    const rows = isExcel ? await parseTraExcel(file) : parseTraCsv(await file.text());
     if (rows.length === 0) throw new Error('No rows found — check the file has an Asset ID in the first column.');
 
     const resp = await fetch('/api/manage-asset', {
@@ -8780,7 +8824,13 @@ async function loadAssetsAndInit() {
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.content').style.display = 'block';
     applySimplifiedNavIfNeeded();
-    if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
+    if (returnToAssetTrackingAfterEdit) {
+      // A narrow, targeted exception — checked and cleared together
+      // right here, so it can never linger stale into an unrelated
+      // later reload.
+      returnToAssetTrackingAfterEdit = false;
+      switchTab('fixedassets');
+    } else if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
       switchTab('workorders');
     } else {
       renderDashboard();
