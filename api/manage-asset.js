@@ -30,7 +30,17 @@ export default async function handler(req, res) {
   }
   if (req.method === "PATCH") {
     const action = (req.body && req.body.action) || "decommission";
-    if (action === "edit") return handleEditAsset(req, res, session.u);
+    // Managing TRA categories and assigning them to assets is real
+    // editing, confirmed directly: everyone who can see the Asset
+    // Tracking tab can view it, but only Procurement, System Admin,
+    // and Business Owner can actually change anything on it —
+    // enforced here, not just hidden in the UI, since a hidden button
+    // doesn't stop a direct API call.
+    const TRA_MANAGEMENT_ACTIONS = ["bulkImportTraClasses", "addTraClass", "editTraClass", "deleteTraClass"];
+    if (TRA_MANAGEMENT_ACTIONS.includes(action) && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
+      return res.status(403).json({ error: "Only Procurement, System Admin, or Business Owner can manage TRA categories." });
+    }
+    if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
     if (action === "addTraClass") return handleAddTraClass(req, res, session.u);
@@ -475,10 +485,22 @@ async function handleDeleteTraClass(req, res, deletedBy) {
   }
 }
 
-async function handleEditAsset(req, res, editedBy) {
+async function handleEditAsset(req, res, editedBy, editorRole) {
   const { recordId, changes } = req.body || {};
   if (!recordId || !changes || typeof changes !== "object") {
     return res.status(400).json({ error: "recordId and changes object required" });
+  }
+
+  // TRA Class specifically stays restricted to Procurement, System
+  // Admin, and Business Owner, confirmed directly — enforced here at
+  // the field level rather than blocking this whole action, since
+  // every other role should still be able to edit an asset's other
+  // fields normally. A request trying to change TRA Class without
+  // permission is rejected outright rather than silently dropping
+  // just that one field, so it's an obvious error, not a confusing
+  // partial save.
+  if (Object.prototype.hasOwnProperty.call(changes, "TRA Class") && !["procurement", "system_admin", "business_owner"].includes(editorRole)) {
+    return res.status(403).json({ error: "Only Procurement, System Admin, or Business Owner can assign a TRA Class." });
   }
 
   try {
