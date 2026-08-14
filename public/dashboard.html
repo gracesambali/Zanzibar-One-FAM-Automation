@@ -623,7 +623,7 @@ const ROLE_PERMISSIONS = {
   mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
-  procurement: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  procurement: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true },
   system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
@@ -1100,8 +1100,12 @@ function applySimplifiedNavIfNeeded() {
   // Asset Tracking — confirmed directly: visible to everyone except
   // Technician, same rule already used for Tenant Units, not tied to
   // cost/depreciation visibility specifically.
+  // Asset Tracking — confirmed directly: the tab itself is visible to
+  // everyone, no role exceptions at the nav level at all. Real access
+  // control happens once someone actually opens it — the data behind
+  // it is what's genuinely restricted, enforced on the backend.
   const fixedAssetsBtn = document.getElementById('fixedAssetsNavBtn');
-  if (fixedAssetsBtn && currentUserRole !== 'technician') fixedAssetsBtn.style.display = '';
+  if (fixedAssetsBtn) fixedAssetsBtn.style.display = '';
 
   if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
   SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
@@ -2655,6 +2659,16 @@ async function renderFixedAssetRegister() {
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
     const resp = await fetch('/api/get-assets?fixedAssetRegister=true');
+    if (resp.status === 403) {
+      // A real restriction, not an error — shown as a clear,
+      // deliberate message rather than something that looks broken.
+      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔒</div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+        <div style="font-size:13px;color:var(--muted);max-width:360px;margin:0 auto">Asset Tracking is only available to Procurement, System Admin, and Business Owner.</div>
+      </div>`;
+      return;
+    }
     if (!resp.ok) throw new Error('Failed to load the register (' + resp.status + ')');
     const data = await resp.json();
     fixedAssetRegisterCache = data;
