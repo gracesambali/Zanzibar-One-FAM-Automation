@@ -355,6 +355,18 @@ export default async function handler(req, res) {
   // separate endpoint from the main asset list rather than folding
   // this into every asset read everywhere — most of the app never
   // needs TRA figures, only this dedicated register view does.
+  //
+  // Confirmed directly: everyone sees the Asset Tracking tab itself,
+  // but the actual data behind it — the register, the categories,
+  // the activity log — is restricted to Procurement, System Admin,
+  // and Business Owner. A restricted role isn't shown a stripped-down
+  // version; the real data is never sent to them at all.
+  const ASSET_TRACKING_DATA_ROUTES = ["fixedAssetRegister", "traClasses", "assetTrackingLog"];
+  const requestedAssetTrackingRoute = ASSET_TRACKING_DATA_ROUTES.find(r => req.query[r] === "true");
+  if (requestedAssetTrackingRoute && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
+    return res.status(403).json({ error: "Asset Tracking is restricted to Procurement, System Admin, and Business Owner." });
+  }
+
   if (req.query.fixedAssetRegister === "true") {
     return handleGetFixedAssetRegister(req, res);
   }
