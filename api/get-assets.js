@@ -348,6 +348,17 @@ export default async function handler(req, res) {
     return handleGetUnits(req, res);
   }
 
+  // Organization-wide Fixed Asset Register — every asset with BOTH
+  // book value (straight-line, Public Assets Management Guideline
+  // 2019) and TRA value (declining balance, PLACEHOLDER classes/
+  // rates — see lib/traDepreciation.js) side by side. Deliberately a
+  // separate endpoint from the main asset list rather than folding
+  // this into every asset read everywhere — most of the app never
+  // needs TRA figures, only this dedicated register view does.
+  if (req.query.fixedAssetRegister === "true") {
+    return handleGetFixedAssetRegister(req, res);
+  }
+
   // Full invoice + payment history for one unit — the detail view
   // behind the summary numbers already in the main units list.
   if (req.query.unitFinancials === "true") {
@@ -550,6 +561,7 @@ async function normalizeRecord(row, documents) {
     currentValue: depreciation.currentValue,
     annualDepreciation: depreciation.annualDepreciation,
     fullyDepreciated: depreciation.fullyDepreciated,
+    traClass: row.tra_class || null,
 
     maintenanceIntervalDays: Number(row.maintenance_interval_days) || 90,
 
@@ -681,6 +693,66 @@ async function handleGetUnits(req, res) {
     return res.status(200).json({ units: filteredUnits });
   } catch (err) {
     console.error("handleGetUnits error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Every active asset, with book value (straight-line) and TRA value
+// (declining balance, placeholder classes) computed side by side —
+// the organization-wide register view, distinct from the per-asset
+// detail already available elsewhere. Deliberately includes assets
+// with no TRA class assigned yet (traValue null) rather than
+// excluding them — an incomplete register is more useful to see and
+// fix than a silently filtered one.
+async function handleGetFixedAssetRegister(req, res) {
+  try {
+    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const { calculateTRAValue, TRA_CLASSES } = await import("../lib/traDepreciation.js");
+
+    const rows = await pgListAllRecords("components");
+    const active = rows.filter(r => r.active !== false);
+
+    const register = active.map(r => {
+      const bookDepreciation = calculateCurrentValue({
+        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
+        residualValue: r.residual_value_tzs !== null ? Number(r.residual_value_tzs) : undefined,
+        economicLifeYears: Number(r.expected_lifespan_years) || 15,
+        acquisitionDate: r.install_date,
+      });
+      const tra = calculateTRAValue({
+        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
+        acquisitionDate: r.install_date,
+        traClass: r.tra_class,
+      });
+      return {
+        assetId: r.asset_id || "",
+        name: r.name || "",
+        category: r.asset_category || "",
+        building: r.building || "",
+        acquisitionDate: r.install_date || null,
+        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : null,
+        bookValue: bookDepreciation.currentValue,
+        traClass: r.tra_class || null,
+        traClassLabel: tra.traClassLabel,
+        traValue: tra.traCurrentValue,
+      };
+    });
+
+    const totals = {
+      totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
+      totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
+      totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
+      assetsWithNoTraClass: register.filter(a => !a.traClass).length,
+    };
+
+    return res.status(200).json({
+      register,
+      totals,
+      traClasses: TRA_CLASSES,
+      placeholderNotice: "TRA classes and rates shown here are PLACEHOLDER values for demonstration only, not yet confirmed against the official current TRA schedule.",
+    });
+  } catch (err) {
+    console.error("handleGetFixedAssetRegister error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
