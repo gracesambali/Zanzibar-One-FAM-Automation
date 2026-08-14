@@ -1097,12 +1097,11 @@ function applySimplifiedNavIfNeeded() {
   const unitsBtn = document.getElementById('unitsNavBtn');
   if (unitsBtn && currentUserRole !== 'technician') unitsBtn.style.display = '';
 
-  // Fixed Assets — a financial/auditor-facing register (acquisition
-  // cost, book value, TRA value), gated the same way cost and
-  // depreciation visibility already works everywhere else in this
-  // app, rather than inventing a new permission for it.
+  // Asset Tracking — confirmed directly: visible to everyone except
+  // Technician, same rule already used for Tenant Units, not tied to
+  // cost/depreciation visibility specifically.
   const fixedAssetsBtn = document.getElementById('fixedAssetsNavBtn');
-  if (fixedAssetsBtn && currentUserPermissions && currentUserPermissions.viewCostAndDepreciation) fixedAssetsBtn.style.display = '';
+  if (fixedAssetsBtn && currentUserRole !== 'technician') fixedAssetsBtn.style.display = '';
 
   if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
   SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
