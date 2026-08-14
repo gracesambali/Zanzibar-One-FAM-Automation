@@ -33,6 +33,9 @@ export default async function handler(req, res) {
     if (action === "edit") return handleEditAsset(req, res, session.u);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
+    if (action === "addTraClass") return handleAddTraClass(req, res, session.u);
+    if (action === "editTraClass") return handleEditTraClass(req, res, session.u);
+    if (action === "deleteTraClass") return handleDeleteTraClass(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -322,7 +325,7 @@ const EDITABLE_FIELD_COLUMNS = {
   "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
   "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
   "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
-  "TRA Class": "tra_class",
+  "TRA Class": "tra_class_id",
 };
 
 // Bulk-assigns TRA classes from a CSV a person uploads — the
@@ -332,8 +335,11 @@ const EDITABLE_FIELD_COLUMNS = {
 // assets. Rows are matched by asset_id; unmatched IDs and invalid
 // class values are both reported back clearly rather than silently
 // skipped, so a person can see exactly what didn't apply and why.
-const VALID_TRA_CLASSES = ["CLASS_1", "CLASS_2", "CLASS_3", "CLASS_4"];
-
+// Matches by category LABEL now, not a fixed code — the real
+// categories live in the editable tra_classes table, so "invalid" now
+// means "no category with this name exists yet," reported back the
+// same way an unmatched asset ID is, rather than validated against
+// anything hardcoded.
 async function handleBulkImportTraClasses(req, res, editedBy) {
   const { rows } = req.body || {};
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -341,7 +347,11 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
   }
 
   try {
-    const { getByColumn, update, insert } = await import("../lib/postgresClient.js");
+    const { getByColumn, update, insert, listAllRecords } = await import("../lib/postgresClient.js");
+
+    const classes = await listAllRecords("tra_classes");
+    const classByLabel = {};
+    for (const c of classes) classByLabel[c.label.trim().toLowerCase()] = c;
 
     let updated = 0;
     const notFound = [];
@@ -350,12 +360,16 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
 
     for (const row of rows) {
       const assetId = (row.assetId || "").trim();
-      const traClass = (row.traClass || "").trim().toUpperCase();
+      const categoryName = (row.traClass || "").trim();
       if (!assetId) continue;
 
-      if (traClass && !VALID_TRA_CLASSES.includes(traClass)) {
-        invalidClass.push({ assetId, traClass: row.traClass });
-        continue;
+      let matchedClass = null;
+      if (categoryName) {
+        matchedClass = classByLabel[categoryName.toLowerCase()];
+        if (!matchedClass) {
+          invalidClass.push({ assetId, traClass: row.traClass });
+          continue;
+        }
       }
 
       const asset = await getByColumn("components", "asset_id", assetId).catch(() => null);
@@ -364,14 +378,14 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
         continue;
       }
 
-      const oldValue = asset.tra_class || "";
-      const newValue = traClass || null;
+      const oldValue = asset.tra_class_id || "";
+      const newValue = matchedClass ? matchedClass.id : null;
       if (String(oldValue) === String(newValue || "")) continue; // no real change, skip the write and the log entry
 
-      await update("components", asset.id, { tra_class: newValue });
+      await update("components", asset.id, { tra_class_id: newValue });
       await insert("edit_log", {
-        asset_id: assetId, field_changed: "TRA Class", old_value: oldValue || "(not set)",
-        new_value: newValue || "(cleared)", edited_by: editedBy, timestamp,
+        asset_id: assetId, field_changed: "TRA Class", old_value: oldValue ? "(previously set)" : "(not set)",
+        new_value: matchedClass ? matchedClass.label : "(cleared)", edited_by: editedBy, timestamp,
       }).catch(e => console.error("Bulk TRA import log write failed (non-fatal):", e.message));
       updated++;
     }
@@ -379,6 +393,60 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
     return res.status(200).json({ success: true, updated, notFound, invalidClass });
   } catch (err) {
     console.error("bulkImportTraClasses error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Managing the real, editable TRA categories themselves — where
+// Selian's actual finance-provided item types and rates get entered,
+// once, rather than being fixed in code. Rate is stored as a decimal
+// (0.20 for 20%), same convention the calculation itself expects.
+async function handleAddTraClass(req, res, addedBy) {
+  const { label, rate } = req.body || {};
+  if (!label || !label.trim() || rate == null || isNaN(Number(rate)) || Number(rate) <= 0 || Number(rate) > 1) {
+    return res.status(400).json({ error: "A label and a rate between 0 and 1 (e.g. 0.20 for 20%) are required" });
+  }
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("tra_classes", { label: label.trim(), rate: Number(rate), created_by: addedBy });
+    return res.status(200).json({ success: true, class: { id: created.id, label: created.label, rate: Number(created.rate) } });
+  } catch (err) {
+    // A duplicate label hits the table's unique constraint - surfaced
+    // as a clear message rather than a raw database error.
+    const message = /unique/i.test(err.message) ? `A category named "${label.trim()}" already exists.` : err.message;
+    console.error("addTraClass error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+async function handleEditTraClass(req, res, editedBy) {
+  const { classId, label, rate } = req.body || {};
+  if (!classId || !label || !label.trim() || rate == null || isNaN(Number(rate)) || Number(rate) <= 0 || Number(rate) > 1) {
+    return res.status(400).json({ error: "classId, a label, and a rate between 0 and 1 are required" });
+  }
+  try {
+    const { update } = await import("../lib/postgresClient.js");
+    await update("tra_classes", classId, { label: label.trim(), rate: Number(rate), updated_at: new Date().toISOString() });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `A category named "${label.trim()}" already exists.` : err.message;
+    console.error("editTraClass error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+async function handleDeleteTraClass(req, res, deletedBy) {
+  const { classId } = req.body || {};
+  if (!classId) return res.status(400).json({ error: "classId is required" });
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    // Any asset referencing this class has tra_class_id set to null
+    // automatically (on delete set null, in the schema) — deleting a
+    // category never leaves an asset silently pointing at nothing.
+    await pgQuery("delete from tra_classes where id = $1", [classId]);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteTraClass error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

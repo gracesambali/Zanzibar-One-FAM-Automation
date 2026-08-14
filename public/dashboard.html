@@ -683,6 +683,7 @@ let currentSearch = "";
 let currentFacilityFilter = "__all__";
 let currentBuildingFilter = "__all__";
 let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
+let traClassesCache = []; // [{ id, label, rate }], fetched once at init, refreshed after any TRA category edit
 
 // Currency switcher — TZS is what's actually stored everywhere; this
 // only affects how it's DISPLAYED. Rates fetched once at init from a
@@ -1879,11 +1880,9 @@ function openEditForm(idx) {
       <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class <span style="font-weight:400;color:var(--muted)">(for the Fixed Asset Register)</span></label>
       <select id="ea_traClass" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option value=""${!a.traClass?' selected':''}>— Not set —</option>
-        <option value="CLASS_1"${a.traClass==='CLASS_1'?' selected':''}>Class 1 — Computers & data equipment</option>
-        <option value="CLASS_2"${a.traClass==='CLASS_2'?' selected':''}>Class 2 — Vehicles & earthmoving equipment</option>
-        <option value="CLASS_3"${a.traClass==='CLASS_3'?' selected':''}>Class 3 — Other machinery & equipment</option>
-        <option value="CLASS_4"${a.traClass==='CLASS_4'?' selected':''}>Class 4 — Buildings & structures</option>
+        <option value=""${!a.traClassId?' selected':''}>— Not set —</option>
+        ${traClassesCache.map(c => `<option value="${c.id}"${a.traClassId===c.id?' selected':''}>${escapeHtml(c.label)} (${(c.rate*100).toFixed(1)}%)</option>`).join('')}
+        ${traClassesCache.length === 0 ? `<option value="" disabled>No categories set up yet — add one from the Fixed Assets tab</option>` : ''}
       </select>
       ` : ''}
 
@@ -2676,9 +2675,9 @@ function renderFixedAssetRegisterTable(data) {
       </div>
     </div>
 
-    <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:12px;color:#92400E">
-      ⚠️ TRA classes and rates shown here are <strong>placeholder values for demonstration only</strong> — not yet confirmed against the official current TRA schedule. Confirm the real figures before this is used for any actual tax filing or audit submission.
-    </div>
+    ${data.placeholderNotice ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:12px;color:#92400E">
+      ⚠️ ${data.placeholderNotice}
+    </div>` : ''}
 
     <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${register.length}</div><div class="summary-label">Total Assets</div></div>
@@ -2723,9 +2722,28 @@ function renderFixedAssetRegisterTable(data) {
         </tbody>
       </table>
     </div>
+
+    <div style="margin-top:24px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Categories</div>
+        <button onclick="openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">The real item types and rates your finance contact provides, entered here once — this is what every asset's TRA Class dropdown pulls from, and what the register calculates against.</div>
+      ${traClasses.length === 0
+        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet — add the first one above.</div>`
+        : traClasses.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
+            <div style="display:flex;gap:6px">
+              <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
+              <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
+            </div>
+          </div>`).join('')}
+    </div>
   </div>`;
 
   container.innerHTML = html;
+  traClassesCache = traClasses; // keep the asset edit form's dropdown in sync with whatever's real right now
 }
 
 function exportFixedAssetRegister() {
@@ -2761,6 +2779,75 @@ function exportFixedAssetRegister() {
 // so the class column is read leniently — "Class 1", "class1", "1",
 // and "CLASS_1" all resolve the same way, rather than requiring exact
 // formatting nobody would naturally type.
+// Add/edit a real TRA category — the actual place Selian's finance-
+// provided item type and rate get entered, once, rather than being
+// fixed in code. One shared modal for both add and edit; classId
+// present means editing an existing one.
+function openAddTraClassModal(classId, currentLabel, currentRate) {
+  const isEdit = !!classId;
+  const overlay = document.createElement('div');
+  overlay.id = 'addTraClassOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:360px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">${isEdit ? 'Edit' : 'Add'} TRA Category</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Item Type / Category Name *</label>
+      <input id="tc_label" type="text" placeholder="e.g. Medical Equipment" value="${isEdit ? escapeHtml(currentLabel) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Depreciation Rate (%) *</label>
+      <input id="tc_rate" type="number" min="0.1" max="100" step="0.1" placeholder="e.g. 20" value="${isEdit ? (currentRate*100) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="tc_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addTraClassOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="tc_submit" onclick="submitTraClass(${isEdit ? `'${classId}'` : 'null'})" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">${isEdit ? 'Save' : 'Add'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitTraClass(classId) {
+  const label = document.getElementById('tc_label').value.trim();
+  const ratePercent = document.getElementById('tc_rate').value;
+  const errorBox = document.getElementById('tc_error');
+  const btn = document.getElementById('tc_submit');
+  errorBox.style.display = 'none';
+  if (!label) { errorBox.textContent = 'Enter a category name.'; errorBox.style.display = 'block'; return; }
+  const rate = Number(ratePercent) / 100;
+  if (!ratePercent || rate <= 0 || rate > 1) { errorBox.textContent = 'Enter a rate between 0.1% and 100%.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(classId ? { action: 'editTraClass', classId, label, rate } : { action: 'addTraClass', label, rate }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('addTraClassOverlay')?.remove();
+    renderFixedAssetRegister();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = classId ? 'Save' : 'Add';
+  }
+}
+
+async function deleteTraClass(classId, label) {
+  if (!confirm(`Delete "${label}"? Any asset currently assigned to it will show as unset, not broken — its category will just need reassigning.`)) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteTraClass', classId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    renderFixedAssetRegister();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
+
 function openImportTraClassesModal() {
   const overlay = document.createElement('div');
   overlay.id = 'importTraOverlay';
@@ -2769,7 +2856,7 @@ function openImportTraClassesModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Import TRA Classes</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV with two columns: Asset ID, then TRA Class. First row is treated as a header and skipped. If you have an Excel file, use "Save As → CSV" first.</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Accepted class values: 1 / Class 1, 2 / Class 2, 3 / Class 3, 4 / Class 4 (not case-sensitive). Leave blank to clear a class.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">The TRA Class column should exactly match one of your real category names (set up under "Manage TRA Categories" below the register) — not case-sensitive. Leave blank to clear a class.</div>
       <input id="tra_csvFile" type="file" accept=".csv" style="width:100%;font-size:12.5px;margin-bottom:14px">
       <div id="tra_importStatus" style="display:none;font-size:12.5px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -2780,15 +2867,13 @@ function openImportTraClassesModal() {
   document.body.appendChild(overlay);
 }
 
-// Normalizes messy real-world input ("Class 1", "class1", "1",
-// "CLASS_1") down to the exact code the backend expects. Returns null
-// for anything unrecognized, letting the backend's own validation
-// report it clearly rather than guessing wrong silently.
+// Just trims now — categories are real, arbitrary names (whatever
+// Selian's finance contact actually calls them), not a fixed set of
+// codes to map onto. The backend matches case-insensitively against
+// the real tra_classes table and reports back anything that doesn't
+// match a real category, rather than this guessing at one.
 function normalizeTraClassInput(raw) {
-  const cleaned = (raw || '').trim().toUpperCase().replace(/[\s_-]/g, '');
-  if (!cleaned) return '';
-  const map = { CLASS1: 'CLASS_1', '1': 'CLASS_1', CLASS2: 'CLASS_2', '2': 'CLASS_2', CLASS3: 'CLASS_3', '3': 'CLASS_3', CLASS4: 'CLASS_4', '4': 'CLASS_4' };
-  return map[cleaned] || raw.trim(); // fall through unrecognized input as-is, so the backend's real validation catches and reports it
+  return (raw || '').trim();
 }
 
 function parseTraCsv(text) {
@@ -8441,6 +8526,19 @@ async function loadAssetsAndInit() {
     if (facResp.ok) {
       const facData = await facResp.json();
       facilitiesData = facData.facilities || [];
+    }
+
+    // TRA categories for the asset edit dropdown — cached the same way
+    // facilities are, since the edit form builds its HTML synchronously
+    // and can't wait on a fetch mid-render.
+    try {
+      const traResp = await fetch('/api/get-assets?traClasses=true');
+      if (traResp.ok) {
+        const traData = await traResp.json();
+        traClassesCache = traData.classes || [];
+      }
+    } catch (err) {
+      console.error('Could not load TRA classes at init:', err);
     }
 
     // Live exchange rates for the currency switcher — non-fatal if this

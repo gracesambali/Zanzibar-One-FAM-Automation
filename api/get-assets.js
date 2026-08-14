@@ -359,6 +359,23 @@ export default async function handler(req, res) {
     return handleGetFixedAssetRegister(req, res);
   }
 
+  // The editable TRA categories themselves — used by the asset edit
+  // dropdown and the Fixed Assets tab's category management section.
+  if (req.query.traClasses === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const classes = await pgListAllRecords("tra_classes");
+      return res.status(200).json({
+        classes: classes
+          .map(c => ({ id: c.id, label: c.label, rate: Number(c.rate) }))
+          .sort((a, b) => a.label.localeCompare(b.label)),
+      });
+    } catch (err) {
+      console.error("traClasses read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Full invoice + payment history for one unit — the detail view
   // behind the summary numbers already in the main units list.
   if (req.query.unitFinancials === "true") {
@@ -561,7 +578,7 @@ async function normalizeRecord(row, documents) {
     currentValue: depreciation.currentValue,
     annualDepreciation: depreciation.annualDepreciation,
     fullyDepreciated: depreciation.fullyDepreciated,
-    traClass: row.tra_class || null,
+    traClassId: row.tra_class_id || null,
 
     maintenanceIntervalDays: Number(row.maintenance_interval_days) || 90,
 
@@ -707,10 +724,13 @@ async function handleGetUnits(req, res) {
 async function handleGetFixedAssetRegister(req, res) {
   try {
     const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-    const { calculateTRAValue, TRA_CLASSES } = await import("../lib/traDepreciation.js");
+    const { calculateTRAValue } = await import("../lib/traDepreciation.js");
 
     const rows = await pgListAllRecords("components");
     const active = rows.filter(r => r.active !== false);
+    const classes = await pgListAllRecords("tra_classes");
+    const classById = {};
+    for (const c of classes) classById[c.id] = c;
 
     const register = active.map(r => {
       const bookDepreciation = calculateCurrentValue({
@@ -719,10 +739,11 @@ async function handleGetFixedAssetRegister(req, res) {
         economicLifeYears: Number(r.expected_lifespan_years) || 15,
         acquisitionDate: r.install_date,
       });
+      const matchedClass = r.tra_class_id ? classById[r.tra_class_id] : null;
       const tra = calculateTRAValue({
         acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
         acquisitionDate: r.install_date,
-        traClass: r.tra_class,
+        rate: matchedClass ? matchedClass.rate : null,
       });
       return {
         assetId: r.asset_id || "",
@@ -732,8 +753,8 @@ async function handleGetFixedAssetRegister(req, res) {
         acquisitionDate: r.install_date || null,
         acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : null,
         bookValue: bookDepreciation.currentValue,
-        traClass: r.tra_class || null,
-        traClassLabel: tra.traClassLabel,
+        traClassId: r.tra_class_id || null,
+        traClassLabel: matchedClass ? matchedClass.label : null,
         traValue: tra.traCurrentValue,
       };
     });
@@ -742,14 +763,16 @@ async function handleGetFixedAssetRegister(req, res) {
       totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
       totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
       totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
-      assetsWithNoTraClass: register.filter(a => !a.traClass).length,
+      assetsWithNoTraClass: register.filter(a => !a.traClassId).length,
     };
 
     return res.status(200).json({
       register,
       totals,
-      traClasses: TRA_CLASSES,
-      placeholderNotice: "TRA classes and rates shown here are PLACEHOLDER values for demonstration only, not yet confirmed against the official current TRA schedule.",
+      traClasses: classes.map(c => ({ id: c.id, label: c.label, rate: Number(c.rate) })),
+      placeholderNotice: classes.length === 4 && classes.every(c => ["Computers & data equipment", "Vehicles & earthmoving equipment", "Other machinery & equipment", "Buildings & structures"].includes(c.label))
+        ? "These are still the starting placeholder categories — replace them with Selian's real item types and rates under \"Manage TRA Categories\" below."
+        : null,
     });
   } catch (err) {
     console.error("handleGetFixedAssetRegister error:", err);
