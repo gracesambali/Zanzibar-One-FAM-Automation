@@ -1877,6 +1877,9 @@ function openEditForm(idx) {
       <input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label>
       <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      ` : ''}
+
+      ${['procurement', 'system_admin', 'business_owner'].includes(currentUserRole) ? `
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class <span style="font-weight:400;color:var(--muted)">(for Asset Tracking)</span></label>
       <select id="ea_traClass" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value=""${!a.traClassId?' selected':''}>— Not set —</option>
@@ -1950,7 +1953,10 @@ async function submitAssetEdit(recordId) {
   if (costField) {
     changes["Acquisition Cost (TZS)"] = costField.value;
     changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
-    changes["TRA Class"] = document.getElementById('ea_traClass').value;
+  }
+  const traClassField = document.getElementById('ea_traClass');
+  if (traClassField) {
+    changes["TRA Class"] = traClassField.value;
   }
 
   try {
@@ -2661,6 +2667,13 @@ async function renderFixedAssetRegister() {
 function renderFixedAssetRegisterTable(data) {
   const container = document.getElementById('view-fixedassets');
   const { totals, traClasses } = data;
+  // Everyone (except Technician) can see this tab, but managing the
+  // actual categories or assigning them to assets is restricted to
+  // Procurement, System Admin, and Business Owner, confirmed
+  // directly — enforced for real on the backend too, this is just
+  // the matching UI so restricted roles see a genuine view-only page
+  // rather than buttons that would just fail if clicked.
+  const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
 
   // Filtering is entirely client-side — the full register is already
   // loaded, so a filter change just re-renders from the same cached
@@ -2690,7 +2703,7 @@ function renderFixedAssetRegisterTable(data) {
         <div style="font-size:12px;color:var(--muted)">Book value (straight-line) and TRA value (declining balance) side by side, for every asset — the organization-wide view for audit, tax, and management reporting.</div>
       </div>
       <div style="display:flex;gap:8px;position:relative">
-        <button onclick="openImportTraClassesModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import TRA Classes</button>
+        ${canManageTra ? `<button onclick="openImportTraClassesModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import TRA Classes</button>` : ''}
         <button onclick="toggleAssetTrackingLog()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐 Activity Log</button>
         <div style="position:relative">
           <button onclick="toggleExportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Export ▾</button>
@@ -2772,18 +2785,18 @@ function renderFixedAssetRegisterTable(data) {
     <div style="margin-top:24px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Categories</div>
-        <button onclick="openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>
+        ${canManageTra ? `<button onclick="openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>` : ''}
       </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">The real item types and rates your finance contact provides, entered here once — this is what every asset's TRA Class dropdown pulls from, and what the register calculates against.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">${canManageTra ? 'The real item types and rates your finance contact provides, entered here once — this is what every asset\'s TRA Class dropdown pulls from, and what the register calculates against.' : 'View only — only Procurement, System Admin, or Business Owner can add, edit, or delete these categories.'}</div>
       ${traClasses.length === 0
-        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet — add the first one above.</div>`
+        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet${canManageTra ? ' — add the first one above.' : '.'}</div>`
         : traClasses.map(c => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
             <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
-            <div style="display:flex;gap:6px">
+            ${canManageTra ? `<div style="display:flex;gap:6px">
               <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
               <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
-            </div>
+            </div>` : ''}
           </div>`).join('')}
     </div>
   </div>`;
