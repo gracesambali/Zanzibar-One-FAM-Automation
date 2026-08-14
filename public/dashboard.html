@@ -385,6 +385,10 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
     <span class="tab-label">Tenant Units</span>
   </button>
+  <button class="tab-btn" data-tab="fixedassets" data-label="Fixed Assets" id="fixedAssetsNavBtn" onclick="switchTab('fixedassets')" onmouseenter="showSidebarTooltip(this, 'Fixed Assets')" onmouseleave="hideSidebarTooltip()" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+    <span class="tab-label">Fixed Assets</span>
+  </button>
   </div>
 </div>
 </div>
@@ -406,6 +410,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-workorders" class="view"></div>
   <div id="view-plannedmaintenance" class="view"></div>
   <div id="view-units" class="view"></div>
+  <div id="view-fixedassets" class="view"></div>
 </div>
 </div>
 
@@ -1091,6 +1096,13 @@ function applySimplifiedNavIfNeeded() {
   const unitsBtn = document.getElementById('unitsNavBtn');
   if (unitsBtn && currentUserRole !== 'technician') unitsBtn.style.display = '';
 
+  // Fixed Assets — a financial/auditor-facing register (acquisition
+  // cost, book value, TRA value), gated the same way cost and
+  // depreciation visibility already works everywhere else in this
+  // app, rather than inventing a new permission for it.
+  const fixedAssetsBtn = document.getElementById('fixedAssetsNavBtn');
+  if (fixedAssetsBtn && currentUserPermissions && currentUserPermissions.viewCostAndDepreciation) fixedAssetsBtn.style.display = '';
+
   if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
   SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
     const btn = document.querySelector(`.tab-btn[data-tab="${t}"]`);
@@ -1120,6 +1132,7 @@ function switchTab(tab) {
   if(tab==='workorders') renderWorkOrders();
   if(tab==='plannedmaintenance') renderPlannedMaintenance();
   if(tab==='units') renderUnits();
+  if(tab==='fixedassets') renderFixedAssetRegister();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -1864,6 +1877,14 @@ function openEditForm(idx) {
       <input id="ea_cost" type="number" value="${a.acquisitionCost||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Economic Life (yrs)</label>
       <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class <span style="font-weight:400;color:var(--muted)">(for the Fixed Asset Register)</span></label>
+      <select id="ea_traClass" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value=""${!a.traClass?' selected':''}>— Not set —</option>
+        <option value="CLASS_1"${a.traClass==='CLASS_1'?' selected':''}>Class 1 — Computers & data equipment</option>
+        <option value="CLASS_2"${a.traClass==='CLASS_2'?' selected':''}>Class 2 — Vehicles & earthmoving equipment</option>
+        <option value="CLASS_3"${a.traClass==='CLASS_3'?' selected':''}>Class 3 — Other machinery & equipment</option>
+        <option value="CLASS_4"${a.traClass==='CLASS_4'?' selected':''}>Class 4 — Buildings & structures</option>
+      </select>
       ` : ''}
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note</label>
@@ -1931,6 +1952,7 @@ async function submitAssetEdit(recordId) {
   if (costField) {
     changes["Acquisition Cost (TZS)"] = costField.value;
     changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
+    changes["TRA Class"] = document.getElementById('ea_traClass').value;
   }
 
   try {
@@ -2614,6 +2636,119 @@ function copyUnitPortalLink(unitId) {
   }).catch(() => {
     prompt('Copy this link:', link);
   });
+}
+
+// The organization-wide Fixed Asset Register — book value and TRA
+// value side by side for every active asset, confirmed directly to
+// live as its own tab rather than folded into the operational Asset
+// Register, since this serves a genuinely different audience
+// (auditors, TRA, hospital management) than the maintenance-focused
+// view everything else here is built around.
+let fixedAssetRegisterCache = null;
+
+async function renderFixedAssetRegister() {
+  const container = document.getElementById('view-fixedassets');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const resp = await fetch('/api/get-assets?fixedAssetRegister=true');
+    if (!resp.ok) throw new Error('Failed to load the register (' + resp.status + ')');
+    const data = await resp.json();
+    fixedAssetRegisterCache = data;
+    renderFixedAssetRegisterTable(data);
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load the Fixed Asset Register: ${err.message}</div>`;
+  }
+}
+
+function renderFixedAssetRegisterTable(data) {
+  const container = document.getElementById('view-fixedassets');
+  const { register, totals, traClasses } = data;
+
+  let html = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Fixed Asset Register</div>
+        <div style="font-size:12px;color:var(--muted)">Book value (straight-line) and TRA value (declining balance) side by side, for every asset — the organization-wide view for audit, tax, and management reporting.</div>
+      </div>
+      <button onclick="exportFixedAssetRegister()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Export</button>
+    </div>
+
+    <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:12px;color:#92400E">
+      ⚠️ TRA classes and rates shown here are <strong>placeholder values for demonstration only</strong> — not yet confirmed against the official current TRA schedule. Confirm the real figures before this is used for any actual tax filing or audit submission.
+    </div>
+
+    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${register.length}</div><div class="summary-label">Total Assets</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totals.totalAcquisitionCost)}</div><div class="summary-label">Total Acquisition Cost</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${formatCurrency(totals.totalBookValue)}</div><div class="summary-label">Total Book Value</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${formatCurrency(totals.totalTraValue)}</div><div class="summary-label">Total TRA Value</div></div>
+      ${totals.assetsWithNoTraClass > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--red)">${totals.assetsWithNoTraClass}</div><div class="summary-label">Missing TRA Class</div></div>` : ''}
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Asset ID</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Acquired</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Acquisition Cost</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Book Value</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">TRA Class</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">TRA Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${register.length === 0
+            ? `<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">No assets yet.</td></tr>`
+            : register.map(a => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.assetId)}</td>
+                <td style="padding:9px 12px">${escapeHtml(a.name)}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.category || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${a.acquisitionDate || '—'}</td>
+                <td style="padding:9px 12px;text-align:right">${a.acquisitionCost != null ? formatCurrency(a.acquisitionCost) : '—'}</td>
+                <td style="padding:9px 12px;text-align:right;color:var(--green)">${a.bookValue != null ? formatCurrency(a.bookValue) : '—'}</td>
+                <td style="padding:9px 12px">
+                  ${a.traClassLabel
+                    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--navy-pale);color:var(--navy)">${escapeHtml(a.traClassLabel)}</span>`
+                    : `<span style="font-size:11px;color:var(--red);font-style:italic">Not set</span>`}
+                </td>
+                <td style="padding:9px 12px;text-align:right;color:var(--amber)">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+function exportFixedAssetRegister() {
+  if (!fixedAssetRegisterCache) { alert('The register hasn\'t finished loading yet.'); return; }
+  const { register, totals } = fixedAssetRegisterCache;
+
+  const rows = [
+    ['Asset ID', 'Name', 'Category', 'Building', 'Acquisition Date', 'Acquisition Cost (TZS)', 'Book Value (TZS)', 'TRA Class', 'TRA Value (TZS)'],
+    ...register.map(a => [a.assetId, a.name, a.category || '', a.building || '', a.acquisitionDate || '', a.acquisitionCost ?? '', a.bookValue ?? '', a.traClassLabel || 'Not set', a.traValue ?? '']),
+    [],
+    ['', '', '', '', 'TOTALS', totals.totalAcquisitionCost, totals.totalBookValue, '', totals.totalTraValue],
+  ];
+  const csv = rows.map(row => row.map(cell => {
+    const s = String(cell ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Fixed-Asset-Register-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function renderUnits() {

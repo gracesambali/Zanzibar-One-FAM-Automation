@@ -311,7 +311,7 @@ const EDITABLE_FIELDS = [
   "Warranty Expiry Date",
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
-  "Status", "Criticality", "Note",
+  "Status", "Criticality", "Note", "TRA Class",
 ];
 
 const EDITABLE_FIELD_COLUMNS = {
@@ -321,6 +321,7 @@ const EDITABLE_FIELD_COLUMNS = {
   "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
   "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
   "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
+  "TRA Class": "tra_class",
 };
 
 async function handleEditAsset(req, res, editedBy) {

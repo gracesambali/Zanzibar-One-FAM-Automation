@@ -730,3 +730,19 @@ insert into sla_targets (urgency, response_hours, resolution_hours) values
 -- ============================================================
 alter table units add column sla_response_hours numeric;
 alter table units add column sla_resolution_hours numeric;
+
+-- ============================================================
+-- TRA (Tanzania Revenue Authority) fixed asset classification -
+-- confirmed directly: built now with placeholder classes/rates for a
+-- real demo, real values to be plugged in once confirmed. This is
+-- DELIBERATELY separate from the existing straight-line depreciation
+-- (acquisition_cost_tzs/residual_value_tzs/current_value_tzs above,
+-- modeled on the Public Assets Management Guideline 2019) - Tanzanian
+-- tax depreciation and general book depreciation are two genuinely
+-- different figures for the same asset, kept side by side rather than
+-- one replacing the other. tra_class links an asset to a class
+-- defined in lib/traDepreciation.js; the actual TRA current value is
+-- computed fresh from that class's rate, not stored, same
+-- compute-fresh discipline used for the existing depreciation.
+-- ============================================================
+alter table components add column tra_class text;
