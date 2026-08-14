@@ -32,6 +32,7 @@ export default async function handler(req, res) {
     const action = (req.body && req.body.action) || "decommission";
     if (action === "edit") return handleEditAsset(req, res, session.u);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
+    if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -323,6 +324,64 @@ const EDITABLE_FIELD_COLUMNS = {
   "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
   "TRA Class": "tra_class",
 };
+
+// Bulk-assigns TRA classes from a CSV a person uploads — the
+// practical need behind this: manually opening every single asset's
+// edit form one at a time to set a class isn't realistic once a real
+// client hands over their real values for potentially hundreds of
+// assets. Rows are matched by asset_id; unmatched IDs and invalid
+// class values are both reported back clearly rather than silently
+// skipped, so a person can see exactly what didn't apply and why.
+const VALID_TRA_CLASSES = ["CLASS_1", "CLASS_2", "CLASS_3", "CLASS_4"];
+
+async function handleBulkImportTraClasses(req, res, editedBy) {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "rows array is required" });
+  }
+
+  try {
+    const { getByColumn, update, insert } = await import("../lib/postgresClient.js");
+
+    let updated = 0;
+    const notFound = [];
+    const invalidClass = [];
+    const timestamp = new Date().toISOString();
+
+    for (const row of rows) {
+      const assetId = (row.assetId || "").trim();
+      const traClass = (row.traClass || "").trim().toUpperCase();
+      if (!assetId) continue;
+
+      if (traClass && !VALID_TRA_CLASSES.includes(traClass)) {
+        invalidClass.push({ assetId, traClass: row.traClass });
+        continue;
+      }
+
+      const asset = await getByColumn("components", "asset_id", assetId).catch(() => null);
+      if (!asset) {
+        notFound.push(assetId);
+        continue;
+      }
+
+      const oldValue = asset.tra_class || "";
+      const newValue = traClass || null;
+      if (String(oldValue) === String(newValue || "")) continue; // no real change, skip the write and the log entry
+
+      await update("components", asset.id, { tra_class: newValue });
+      await insert("edit_log", {
+        asset_id: assetId, field_changed: "TRA Class", old_value: oldValue || "(not set)",
+        new_value: newValue || "(cleared)", edited_by: editedBy, timestamp,
+      }).catch(e => console.error("Bulk TRA import log write failed (non-fatal):", e.message));
+      updated++;
+    }
+
+    return res.status(200).json({ success: true, updated, notFound, invalidClass });
+  } catch (err) {
+    console.error("bulkImportTraClasses error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
 
 async function handleEditAsset(req, res, editedBy) {
   const { recordId, changes } = req.body || {};
