@@ -3522,18 +3522,26 @@ let openInventoryColumnPopover = null;
 
 // Real camera-based scanning, confirmed directly: no separate app
 // needed, works right in the browser via the camera the phone already
-// has. ZXing loaded from CDN on first use only, same lazy-load
-// principle already used for the Excel export library — most
+// has. @zxing/browser loaded from CDN on first use only, same lazy-
+// load principle already used for the Excel export library — most
 // sessions on this page won't scan anything, no reason to pay for
-// loading it up front.
+// loading it up front. A real mistake caught and fixed here: an
+// earlier version of this pointed at the wrong package entirely
+// (zxing-js) under the wrong global name (ZXing) - the real, correct
+// package is @zxing/browser, exposing itself as ZXingBrowser. Pinned
+// to a specific version rather than @latest, so this can't silently
+// break again if a future release changes its API.
 let zxingLoadPromise = null;
 function ensureZXingLoaded() {
-  if (window.ZXing) return Promise.resolve();
+  if (window.ZXingBrowser) return Promise.resolve();
   if (zxingLoadPromise) return zxingLoadPromise;
   zxingLoadPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.19.1/index.min.js';
-    script.onload = resolve;
+    script.src = 'https://unpkg.com/@zxing/browser@0.1.5';
+    script.onload = () => {
+      if (window.ZXingBrowser) resolve();
+      else reject(new Error('Scanning library loaded but was not recognized — try refreshing the page.'));
+    };
     script.onerror = () => reject(new Error('Could not load the scanning library — check your connection and try again.'));
     document.head.appendChild(script);
   });
@@ -4431,7 +4439,7 @@ async function openScanModal(mode) {
     video.srcObject = scanModalStream;
     await video.play();
 
-    scanModalReader = new ZXing.BrowserMultiFormatReader();
+    scanModalReader = new ZXingBrowser.BrowserMultiFormatReader();
     scanModalReader.decodeFromVideoElement(video, (result, err) => {
       if (result) handleScanDecoded(result.getText());
     });
