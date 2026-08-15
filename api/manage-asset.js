@@ -772,7 +772,7 @@ async function findByAssetId(assetId) {
 async function handleRelocate(req, res, relocatedBy) {
   const { recordId, newFloor, newRoom, newBuilding, reason } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
-  if (!newFloor && !newRoom) return res.status(400).json({ error: "At least a new floor or room/zone is required" });
+  if (!newFloor && !newRoom && !newBuilding) return res.status(400).json({ error: "At least a new building, floor, or room/zone is required" });
 
   try {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
