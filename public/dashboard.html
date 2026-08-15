@@ -2698,9 +2698,88 @@ function openEditFormFromAssetTracking(assetId) {
   openEditForm(idx);
 }
 
+// Column-header filter/sort state, confirmed directly to replace the
+// old separate filter dropdown row entirely — clicking a column
+// header itself now reveals the relevant options for that column.
+let assetTrackingFilters = { category: '', traClassId: '', sortColumn: null, sortDirection: null };
+let assetTrackingCategoriesOpen = false; // collapsed by default - secondary/admin content, not the primary reason someone's on this page
+let openColumnPopover = null;
+
+function toggleAssetTrackingCategories() {
+  assetTrackingCategoriesOpen = !assetTrackingCategoriesOpen;
+  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+}
+
+function toggleColumnPopover(column) {
+  openColumnPopover = openColumnPopover === column ? null : column;
+  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+}
+
+function setAssetTrackingFilter(field, value) {
+  assetTrackingFilters[field] = value;
+  openColumnPopover = null;
+  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+}
+
+function setAssetTrackingSort(column, direction) {
+  // direction === null means "All" was chosen - clears sorting on
+  // this column entirely rather than sorting with no real direction.
+  assetTrackingFilters.sortColumn = direction ? column : null;
+  assetTrackingFilters.sortDirection = direction;
+  openColumnPopover = null;
+  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+}
+
+function clearAllAssetTrackingFilters() {
+  assetTrackingFilters = { category: '', traClassId: '', sortColumn: null, sortDirection: null };
+  openColumnPopover = null;
+  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+}
+
+// One small, shared popover renderer — a sort popover (Ascending/
+// Descending/All) for the numeric and date columns, or a value-filter
+// popover (a real option per distinct value present, plus All) for
+// Category and TRA Class. Positioned as a simple dropdown right under
+// whichever header was clicked.
+function renderColumnPopover(column) {
+  if (openColumnPopover !== column) return '';
+  const sortColumns = { acquisitionDate: 'Acquired', acquisitionCost: 'Acquisition Cost', bookValue: 'Book Value', traValue: 'TRA Value' };
+  let optionsHtml;
+  if (column in sortColumns) {
+    const isAsc = assetTrackingFilters.sortColumn === column && assetTrackingFilters.sortDirection === 'asc';
+    const isDesc = assetTrackingFilters.sortColumn === column && assetTrackingFilters.sortDirection === 'desc';
+    const isAll = assetTrackingFilters.sortColumn !== column;
+    optionsHtml = `
+      <button onclick="setAssetTrackingSort('${column}', 'asc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAsc ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">Ascending</button>
+      <button onclick="setAssetTrackingSort('${column}', 'desc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isDesc ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Descending</button>
+      <button onclick="setAssetTrackingSort('${column}', null)" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAll ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">All</button>`;
+  } else if (column === 'category') {
+    const uniqueCategories = [...new Set(fixedAssetRegisterCache.register.map(a => a.category).filter(Boolean))].sort();
+    optionsHtml = `
+      <button onclick="setAssetTrackingFilter('category', '')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${!assetTrackingFilters.category ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">All</button>
+      ${uniqueCategories.map(c => `<button onclick="setAssetTrackingFilter('category', '${c.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.category===c ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(c)}</button>`).join('')}`;
+  } else if (column === 'traClassId') {
+    const classes = fixedAssetRegisterCache.traClasses || [];
+    optionsHtml = `
+      <button onclick="setAssetTrackingFilter('traClassId', '')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${!assetTrackingFilters.traClassId ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">All</button>
+      <button onclick="setAssetTrackingFilter('traClassId', '__unset__')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.traClassId==='__unset__' ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Not set</button>
+      ${classes.map(c => `<button onclick="setAssetTrackingFilter('traClassId', '${c.id}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.traClassId===c.id ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(c.label)}</button>`).join('')}`;
+  }
+  return `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:170px;max-height:240px;overflow-y:auto">${optionsHtml}</div>`;
+}
+
+function columnHeaderHtml(column, label, align) {
+  const hasActiveFilter = (column === 'category' && assetTrackingFilters.category) ||
+    (column === 'traClassId' && assetTrackingFilters.traClassId) ||
+    (assetTrackingFilters.sortColumn === column);
+  const arrow = assetTrackingFilters.sortColumn === column ? (assetTrackingFilters.sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+  return `<th style="text-align:${align};padding:10px 12px;color:${hasActiveFilter ? 'var(--navy)' : 'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none" onclick="toggleColumnPopover('${column}')">${label}${arrow} ▾${renderColumnPopover(column)}</th>`;
+}
+
 function renderFixedAssetRegisterTable(data) {
   const container = document.getElementById('view-fixedassets');
   const { totals, traClasses } = data;
+  fixedAssetRegisterCache = data; // kept current so the popover functions above can always read fresh category/class options
   // Everyone (except Technician) can see this tab, but managing the
   // actual categories or assigning them to assets is restricted to
   // Procurement, System Admin, and Business Owner, confirmed
@@ -2709,17 +2788,26 @@ function renderFixedAssetRegisterTable(data) {
   // rather than buttons that would just fail if clicked.
   const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
 
-  // Filtering is entirely client-side — the full register is already
-  // loaded, so a filter change just re-renders from the same cached
-  // data rather than a new fetch.
-  const categoryFilter = document.getElementById('at_categoryFilter')?.value || '';
-  const traFilter = document.getElementById('at_traFilter')?.value || '';
-  const register = data.register.filter(a =>
+  // Filtering and sorting are entirely client-side — the full
+  // register is already loaded, so any change just re-renders from
+  // the same cached data rather than a new fetch.
+  const { category: categoryFilter, traClassId: traFilter, sortColumn, sortDirection } = assetTrackingFilters;
+  let register = data.register.filter(a =>
     (!categoryFilter || a.category === categoryFilter) &&
     (!traFilter || (traFilter === '__unset__' ? !a.traClassId : a.traClassId === traFilter))
   );
-
-  const uniqueCategories = [...new Set(data.register.map(a => a.category).filter(Boolean))].sort();
+  if (sortColumn) {
+    register = [...register].sort((a, b) => {
+      const av = a[sortColumn], bv = b[sortColumn];
+      // Nulls always sort to the end, regardless of direction - a
+      // missing value isn't meaningfully "highest" or "lowest".
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = av > bv ? 1 : av < bv ? -1 : 0;
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+  }
 
   // Filtered totals — the summary cards reflect whatever's actually
   // showing in the table below them, not the full unfiltered set.
@@ -2729,6 +2817,7 @@ function renderFixedAssetRegisterTable(data) {
     totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
     assetsWithNoTraClass: register.filter(a => !a.traClassId).length,
   };
+  const anyFilterActive = categoryFilter || traFilter || sortColumn;
 
   let html = `<div style="padding:24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -2738,7 +2827,7 @@ function renderFixedAssetRegisterTable(data) {
       </div>
       <div style="display:flex;gap:8px;position:relative">
         ${canManageTra ? `<button onclick="openImportTraClassesModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import TRA Classes</button>` : ''}
-        <button onclick="toggleAssetTrackingLog()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐 Activity Log</button>
+        <button onclick="scrollToAssetTrackingLog()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐 Activity Log</button>
         <div style="position:relative">
           <button onclick="toggleExportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Export ▾</button>
           <div id="at_exportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:140px">
@@ -2754,45 +2843,53 @@ function renderFixedAssetRegisterTable(data) {
       ⚠️ ${data.placeholderNotice}
     </div>` : ''}
 
-    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-      <select id="at_categoryFilter" onchange="renderFixedAssetRegisterTable(fixedAssetRegisterCache)" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;background:#fff">
-        <option value="">All Categories</option>
-        ${uniqueCategories.map(c => `<option value="${escapeHtml(c)}"${categoryFilter===c?' selected':''}>${escapeHtml(c)}</option>`).join('')}
-      </select>
-      <select id="at_traFilter" onchange="renderFixedAssetRegisterTable(fixedAssetRegisterCache)" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;background:#fff">
-        <option value="">All TRA Classes</option>
-        <option value="__unset__"${traFilter==='__unset__'?' selected':''}>Not set</option>
-        ${traClasses.map(c => `<option value="${c.id}"${traFilter===c.id?' selected':''}>${escapeHtml(c.label)}</option>`).join('')}
-      </select>
-      ${(categoryFilter || traFilter) ? `<button onclick="document.getElementById('at_categoryFilter').value='';document.getElementById('at_traFilter').value='';renderFixedAssetRegisterTable(fixedAssetRegisterCache)" style="padding:8px 12px;font-size:12.5px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">Clear filters</button>` : ''}
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAssetTrackingCategories()">
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Categories ${assetTrackingCategoriesOpen ? '▾' : '▸'}</div>
+        ${canManageTra && assetTrackingCategoriesOpen ? `<button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>` : ''}
+      </div>
+      ${assetTrackingCategoriesOpen ? `
+      <div style="font-size:11.5px;color:var(--muted);margin:12px 0 12px">${canManageTra ? 'The real item types and rates your finance contact provides, entered here once — this is what every asset\'s TRA Class dropdown pulls from, and what the register calculates against.' : 'View only — only Procurement, System Admin, or Business Owner can add, edit, or delete these categories.'}</div>
+      ${traClasses.length === 0
+        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet${canManageTra ? ' — add the first one above.' : '.'}</div>`
+        : traClasses.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
+            ${canManageTra ? `<div style="display:flex;gap:6px">
+              <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
+              <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
+            </div>` : ''}
+          </div>`).join('')}
+      ` : ''}
     </div>
 
     <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${register.length}</div><div class="summary-label">${(categoryFilter||traFilter) ? 'Filtered' : 'Total'} Assets</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${register.length}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Assets</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(filteredTotals.totalAcquisitionCost)}</div><div class="summary-label">Acquisition Cost</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--green)">${formatCurrency(filteredTotals.totalBookValue)}</div><div class="summary-label">Book Value</div></div>
       <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${formatCurrency(filteredTotals.totalTraValue)}</div><div class="summary-label">TRA Value</div></div>
       ${filteredTotals.assetsWithNoTraClass > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--red)">${filteredTotals.assetsWithNoTraClass}</div><div class="summary-label">Missing TRA Class</div></div>` : ''}
+      ${anyFilterActive ? `<button onclick="clearAllAssetTrackingFilters()" style="align-self:center;padding:6px 12px;font-size:12px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">Clear filters</button>` : ''}
     </div>
 
-    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+    <div style="overflow-x:visible;background:#fff;border:1px solid var(--border);border-radius:10px">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead>
           <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Asset ID</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Acquired</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Acquisition Cost</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Book Value</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">TRA Class</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">TRA Value</th>
+            ${columnHeaderHtml('category', 'Category', 'left')}
+            ${columnHeaderHtml('acquisitionDate', 'Acquired', 'left')}
+            ${columnHeaderHtml('acquisitionCost', 'Acquisition Cost', 'right')}
+            ${columnHeaderHtml('bookValue', 'Book Value', 'right')}
+            ${columnHeaderHtml('traClassId', 'TRA Class', 'left')}
+            ${columnHeaderHtml('traValue', 'TRA Value', 'right')}
             <th style="padding:10px 12px"></th>
           </tr>
         </thead>
         <tbody>
           ${register.length === 0
-            ? `<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">${(categoryFilter||traFilter) ? 'No assets match this filter.' : 'No assets yet.'}</td></tr>`
+            ? `<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">${anyFilterActive ? 'No assets match this filter.' : 'No assets yet.'}</td></tr>`
             : register.map(a => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.assetId)}</td>
@@ -2813,25 +2910,7 @@ function renderFixedAssetRegisterTable(data) {
       </table>
     </div>
 
-    <div style="margin-top:24px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Categories</div>
-        ${canManageTra ? `<button onclick="openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>` : ''}
-      </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">${canManageTra ? 'The real item types and rates your finance contact provides, entered here once — this is what every asset\'s TRA Class dropdown pulls from, and what the register calculates against.' : 'View only — only Procurement, System Admin, or Business Owner can add, edit, or delete these categories.'}</div>
-      ${traClasses.length === 0
-        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet${canManageTra ? ' — add the first one above.' : '.'}</div>`
-        : traClasses.map(c => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
-            ${canManageTra ? `<div style="display:flex;gap:6px">
-              <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
-              <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
-            </div>` : ''}
-          </div>`).join('')}
-    </div>
-
-    <div id="assetTrackingLogPanel" style="display:none;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+    <div id="assetTrackingLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
       <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>
@@ -2839,7 +2918,17 @@ function renderFixedAssetRegisterTable(data) {
 
   container.innerHTML = html;
   traClassesCache = traClasses; // keep the asset edit form's dropdown in sync with whatever's real right now
+  loadAssetTrackingLog();
 }
+
+// Closes an open column popover when clicking anywhere outside of it
+// or its header, same pattern already used for the export menu.
+document.addEventListener('click', (e) => {
+  if (openColumnPopover && !e.target.closest('th')) {
+    openColumnPopover = null;
+    if (fixedAssetRegisterCache) renderFixedAssetRegisterTable(fixedAssetRegisterCache);
+  }
+});
 
 function toggleExportMenu() {
   const menu = document.getElementById('at_exportMenu');
@@ -2852,15 +2941,12 @@ document.addEventListener('click', (e) => {
   }
 });
 
-let assetTrackingLogLoaded = false;
-async function toggleAssetTrackingLog() {
-  const panel = document.getElementById('assetTrackingLogPanel');
-  if (!panel) return;
-  const isOpen = panel.style.display !== 'none';
-  if (isOpen) { panel.style.display = 'none'; return; }
-  panel.style.display = 'block';
-  if (assetTrackingLogLoaded) return;
+// Always loaded as part of the normal page load now, not lazily on a
+// toggle — confirmed directly: the log should be visible at the
+// bottom even with nothing in it yet, not hidden behind a click.
+async function loadAssetTrackingLog() {
   const content = document.getElementById('assetTrackingLogContent');
+  if (!content) return;
   try {
     const resp = await fetch('/api/get-assets?assetTrackingLog=true');
     const data = await resp.json();
@@ -2873,23 +2959,38 @@ async function toggleAssetTrackingLog() {
           <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
           <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
         </div>`).join('');
-    assetTrackingLogLoaded = true;
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
   }
 }
 
-// Every export respects whatever filter is currently active on
-// screen — exporting should give you exactly what you're looking at,
-// not silently the full unfiltered set.
+// The button no longer shows/hides anything — the log is already
+// always visible — it just scrolls the person straight there without
+// them needing to scroll manually.
+function scrollToAssetTrackingLog() {
+  document.getElementById('assetTrackingLogPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Every export respects whatever filter AND sort is currently active
+// on screen — exporting should give you exactly what you're looking
+// at, not silently the full unfiltered/unsorted set.
 function getFilteredRegisterForExport() {
   if (!fixedAssetRegisterCache) return null;
-  const categoryFilter = document.getElementById('at_categoryFilter')?.value || '';
-  const traFilter = document.getElementById('at_traFilter')?.value || '';
-  const register = fixedAssetRegisterCache.register.filter(a =>
+  const { category: categoryFilter, traClassId: traFilter, sortColumn, sortDirection } = assetTrackingFilters;
+  let register = fixedAssetRegisterCache.register.filter(a =>
     (!categoryFilter || a.category === categoryFilter) &&
     (!traFilter || (traFilter === '__unset__' ? !a.traClassId : a.traClassId === traFilter))
   );
+  if (sortColumn) {
+    register = [...register].sort((a, b) => {
+      const av = a[sortColumn], bv = b[sortColumn];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = av > bv ? 1 : av < bv ? -1 : 0;
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+  }
   const totals = {
     totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
     totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
