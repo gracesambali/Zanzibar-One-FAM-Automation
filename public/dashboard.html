@@ -4693,8 +4693,90 @@ function renderLinkBarcodeStep(gtin, lotNumber, expiryDate) {
       ${itemOptions}
     </select>
     <div id="scan_linkError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
-    <button id="scan_linkSubmit" onclick="submitLinkAndProceed('${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'})" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Link & Continue</button>
+    <button id="scan_linkSubmit" onclick="submitLinkAndProceed('${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'})" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer;margin-bottom:10px">Link & Continue</button>
+    <button onclick="renderCreateNewItemFromScan('${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'})" style="width:100%;padding:10px;border:1px dashed var(--border);border-radius:8px;background:none;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">+ This is a brand-new item — add it</button>
   `;
+}
+
+// Confirmed directly: scanning something genuinely new to the system
+// shouldn't be a dead end that forces backing out to the main
+// Inventory tab first. A real, complete mini add-item form right
+// here, including a real category dropdown with the same inline
+// "add new category" capability already used on the main form -
+// reused directly, not a separate, potentially-diverging copy of it.
+async function renderCreateNewItemFromScan(gtin, lotNumber, expiryDate) {
+  try {
+    const resp = await fetch('/api/get-assets?inventoryCategories=true');
+    inventoryCategoriesCache = resp.ok ? (await resp.json()).categories || [] : [];
+  } catch (err) {
+    console.error('Could not load categories:', err);
+  }
+
+  const overlay = document.getElementById('scanModalOverlay');
+  const container = overlay.querySelector('div');
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:14px;font-weight:700;color:var(--navy)">Add New Item</div>
+      <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:var(--muted);cursor:pointer;line-height:1">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Scanned code: ${escapeHtml(gtin)}${lotNumber ? ` · Batch ${escapeHtml(lotNumber)}` : ''}${expiryDate ? ` · Expires ${expiryDate}` : ''}</div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
+    <input id="scannew_name" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
+    <select id="scannew_category" onchange="toggleInlineAddField('category', 'scannew_')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <option value="">— Not set —</option>
+      ${inventoryCategoriesCache.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+      <option value="__add_new__">+ Add new category…</option>
+    </select>
+    <div id="scannew_category_new" style="display:none;gap:6px;margin-bottom:10px">
+      <input id="scannew_category_newInput" type="text" placeholder="New category name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+      <button onclick="addInlineInventoryOption('category', 'scannew_')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit of Measure</label>
+    <input id="scannew_unit" type="text" placeholder="e.g. boxes, pieces" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reorder Level</label>
+    <input id="scannew_reorder" type="number" min="0" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+    <div id="scannew_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+    <button id="scannew_submit" onclick="submitCreateNewItemFromScan('${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'})" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Create & Continue</button>
+  `;
+}
+
+async function submitCreateNewItemFromScan(gtin, lotNumber, expiryDate) {
+  const name = document.getElementById('scannew_name').value.trim();
+  const category = document.getElementById('scannew_category').value;
+  const errorBox = document.getElementById('scannew_error');
+  const btn = document.getElementById('scannew_submit');
+  errorBox.style.display = 'none';
+  if (!name) { errorBox.textContent = 'Enter a name.'; errorBox.style.display = 'block'; return; }
+  if (category === '__add_new__') { errorBox.textContent = 'Finish adding the new category (or pick an existing one) before continuing.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const createResp = await fetch('/api/manage-asset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entityType: 'inventoryItem', name, category,
+        unitOfMeasure: document.getElementById('scannew_unit').value.trim(),
+        reorderLevel: document.getElementById('scannew_reorder').value,
+        initialQuantity: 0,
+      }),
+    });
+    const createData = await createResp.json();
+    if (!createResp.ok || !createData.success) throw new Error(createData.error || 'Could not create item');
+
+    const linkResp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'linkInventoryBarcode', gtin, itemId: createData.id }),
+    });
+    const linkData = await linkResp.json();
+    if (!linkResp.ok || !linkData.success) throw new Error(linkData.error || 'Item created, but could not link the barcode to it');
+
+    renderScanQuantityStep(createData.id, createData.itemCode, name, false, gtin, lotNumber, expiryDate);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create & Continue';
+  }
 }
 
 async function submitLinkAndProceed(gtin, lotNumber, expiryDate) {
