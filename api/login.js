@@ -16,8 +16,8 @@
 // deliberately, to stay within the Vercel Hobby plan's function limit.
 // It's the same authentication concern as login/logout anyway.
 
-import { setSessionCookie } from "../lib/auth.js";
-import { ROLES } from "../lib/roles.js";
+import { setSessionCookie, getSession } from "../lib/auth.js";
+import { ROLES, can } from "../lib/roles.js";
 import {
   findUserByUsername,
   findUserByEmail,
@@ -46,6 +46,12 @@ export default async function handler(req, res) {
   }
   if (req.body && req.body.action === "confirmPasswordReset") {
     return handleConfirmPasswordReset(req, res);
+  }
+  if (req.body && req.body.action === "listStaffAccounts") {
+    return handleListStaffAccounts(req, res);
+  }
+  if (req.body && req.body.action === "createStaffAccount") {
+    return handleCreateStaffAccount(req, res);
   }
 
   const { username, password } = req.body || {};
@@ -115,6 +121,64 @@ export default async function handler(req, res) {
 // account no matter how many share an email, so it's the more reliable
 // identifier whenever it's known — email stays supported as a fallback
 // for a real person who genuinely doesn't remember their username.
+// The real fix for what today actually was — creating a new account
+// used to mean raw SQL followed by fighting the email-reset flow just
+// to get a first working password. This sets it directly, right here,
+// no email step involved at all for a brand-new account. Reset-by-
+// email still exists and stays exactly as it is, for someone who
+// genuinely forgets their password later — this only replaces the
+// painful first-time setup a new person shouldn't have to go through.
+async function handleCreateStaffAccount(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can create staff accounts." });
+  }
+
+  const { username, email, displayName, role, password } = req.body || {};
+  if (!username || !username.trim()) return res.status(400).json({ error: "A username is required." });
+  if (!role || !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
+  if (!password || password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const { hash, salt } = hashPassword(password);
+    await insert("users", {
+      username: username.trim(), email: email || null, display_name: displayName || username.trim(),
+      role, password_hash: hash, password_salt: salt,
+    });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `Username "${username.trim()}" already exists.` : err.message;
+    console.error("createStaffAccount error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+// Every real account, for the admin screen — never the password hash
+// or salt, which have no reason to ever leave the server at all.
+async function handleListStaffAccounts(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can view staff accounts." });
+  }
+
+  try {
+    const { listAllRecords } = await import("../lib/postgresClient.js");
+    const users = await listAllRecords("users");
+    return res.status(200).json({
+      accounts: users.map(u => ({
+        username: u.username, email: u.email, displayName: u.display_name,
+        role: u.role, hasPassword: !!u.password_hash,
+      })),
+    });
+  } catch (err) {
+    console.error("listStaffAccounts error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleRequestPasswordReset(req, res) {
   const { username, email } = req.body || {};
   const GENERIC = { success: true, message: "If that account is registered, a link to set your password has been sent to it." };
