@@ -3484,6 +3484,7 @@ function renderInventoryTable() {
                   <button onclick="toggleInventoryRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--muted);cursor:pointer;line-height:1">⋮</button>
                   <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left">
                     <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
+                    ${canManageInventory ? `<button onclick="openEditInventoryItemModal('${i.id}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Edit</button>` : ''}
                     ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}
                   </div>
                 </td>
@@ -3928,19 +3929,21 @@ async function openAddInventoryItemModal() {
 // than navigating away to a separate admin screen — the whole point
 // was adding a category or location right from the item form when
 // it isn't already there.
-function toggleInlineAddField(field) {
-  const select = document.getElementById(`inv_${field}`);
-  const row = document.getElementById(`inv_${field}_new`);
+function toggleInlineAddField(field, prefix) {
+  prefix = prefix || 'inv_';
+  const select = document.getElementById(`${prefix}${field}`);
+  const row = document.getElementById(`${prefix}${field}_new`);
   if (select.value === '__add_new__') {
     row.style.display = 'flex';
-    document.getElementById(`inv_${field}_newInput`).focus();
+    document.getElementById(`${prefix}${field}_newInput`).focus();
   } else {
     row.style.display = 'none';
   }
 }
 
-async function addInlineInventoryOption(field) {
-  const input = document.getElementById(`inv_${field}_newInput`);
+async function addInlineInventoryOption(field, prefix) {
+  prefix = prefix || 'inv_';
+  const input = document.getElementById(`${prefix}${field}_newInput`);
   const label = input.value.trim();
   if (!label) { input.focus(); return; }
 
@@ -3957,13 +3960,13 @@ async function addInlineInventoryOption(field) {
     // Adds the real new option into the dropdown right where it is,
     // selects it, and hides the inline input again — no need to
     // reopen or reload the whole modal for this.
-    const select = document.getElementById(`inv_${field}`);
+    const select = document.getElementById(`${prefix}${field}`);
     const newOption = document.createElement('option');
     newOption.value = data.label;
     newOption.textContent = data.label;
     select.insertBefore(newOption, select.lastElementChild); // right before "+ Add new..."
     select.value = data.label;
-    document.getElementById(`inv_${field}_new`).style.display = 'none';
+    document.getElementById(`${prefix}${field}_new`).style.display = 'none';
     input.value = '';
   } catch (err) {
     alert('Could not add: ' + err.message);
@@ -4015,6 +4018,126 @@ async function submitAddInventoryItem() {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Add Item';
+  }
+}
+
+// Confirmed directly: a real way to see and edit an item's own
+// details after creation, not just at the moment it's added -
+// reorder level and target level specifically named, since those are
+// the numbers most likely to need adjusting over time. Pulls current
+// values straight from the already-loaded cache rather than a fresh
+// fetch, and reuses the exact same category/location dropdown +
+// inline "add new" pattern as the Add Item form for consistency.
+async function openEditInventoryItemModal(itemId) {
+  const item = inventoryItemsCache.find(i => i.id === itemId);
+  if (!item) { alert('Could not find this item — try refreshing the page.'); return; }
+
+  try {
+    const [catResp, locResp] = await Promise.all([
+      fetch('/api/get-assets?inventoryCategories=true'),
+      fetch('/api/get-assets?inventoryLocations=true'),
+    ]);
+    inventoryCategoriesCache = catResp.ok ? (await catResp.json()).categories || [] : [];
+    inventoryLocationsCache = locResp.ok ? (await locResp.json()).locations || [] : [];
+  } catch (err) {
+    console.error('Could not load inventory categories/locations:', err);
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'editInventoryItemOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Edit ${escapeHtml(item.itemCode)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Quantity itself isn't edited here — that only ever changes through a real Record Movement, so there's always a real reason behind every change.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
+      <input id="einv_name" type="text" value="${escapeHtml(item.name)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
+      <select id="einv_category" onchange="toggleInlineAddField('category', 'einv_')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+        <option value="">— Not set —</option>
+        ${inventoryCategoriesCache.map(c => `<option value="${escapeHtml(c)}"${item.category===c?' selected':''}>${escapeHtml(c)}</option>`).join('')}
+        <option value="__add_new__">+ Add new category…</option>
+      </select>
+      <div id="einv_category_new" style="display:none;gap:6px;margin-bottom:10px">
+        <input id="einv_category_newInput" type="text" placeholder="New category name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="addInlineInventoryOption('category', 'einv_')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit of Measure</label>
+      <input id="einv_unit" type="text" value="${escapeHtml(item.unitOfMeasure || '')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reorder Level</label>
+        <input id="einv_reorder" type="number" min="0" value="${item.reorderLevel ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+        <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Level</label>
+        <input id="einv_target" type="number" min="0" value="${item.targetLevel ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location</label>
+      <select id="einv_location" onchange="toggleInlineAddField('location', 'einv_')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+        <option value="">— Not set —</option>
+        ${inventoryLocationsCache.map(l => `<option value="${escapeHtml(l)}"${item.location===l?' selected':''}>${escapeHtml(l)}</option>`).join('')}
+        <option value="__add_new__">+ Add new location…</option>
+      </select>
+      <div id="einv_location_new" style="display:none;gap:6px;margin-bottom:10px">
+        <input id="einv_location_newInput" type="text" placeholder="New location name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="addInlineInventoryOption('location', 'einv_')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Cost (TZS)</label>
+      <input id="einv_cost" type="number" min="0" value="${item.unitCost ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+
+      <div id="einv_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editInventoryItemOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="einv_submit" onclick="submitEditInventoryItem('${itemId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditInventoryItem(itemId) {
+  const name = document.getElementById('einv_name').value.trim();
+  const errorBox = document.getElementById('einv_error');
+  const btn = document.getElementById('einv_submit');
+  errorBox.style.display = 'none';
+  if (!name) { errorBox.textContent = 'Enter a name.'; errorBox.style.display = 'block'; return; }
+  if (document.getElementById('einv_category').value === '__add_new__') {
+    errorBox.textContent = 'Finish adding the new category (or pick an existing one) before continuing.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (document.getElementById('einv_location').value === '__add_new__') {
+    errorBox.textContent = 'Finish adding the new location (or pick an existing one) before continuing.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'editInventoryItem', itemId, name,
+        category: document.getElementById('einv_category').value,
+        unitOfMeasure: document.getElementById('einv_unit').value.trim(),
+        reorderLevel: document.getElementById('einv_reorder').value,
+        targetLevel: document.getElementById('einv_target').value,
+        location: document.getElementById('einv_location').value,
+        unitCost: document.getElementById('einv_cost').value,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('editInventoryItemOverlay')?.remove();
+    refreshInventoryQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
   }
 }
 

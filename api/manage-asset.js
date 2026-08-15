@@ -473,18 +473,34 @@ async function handleEditInventoryItem(req, res, editedBy) {
   const { itemId, name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
-    const { update } = await import("../lib/postgresClient.js");
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const before = await getById("inventory_items", itemId).catch(() => null);
+    if (!before) return res.status(404).json({ error: "Item not found." });
+
     const fields = { updated_at: new Date().toISOString() };
-    if (name !== undefined) fields.name = name.trim();
-    if (category !== undefined) fields.category = category || null;
-    if (unitOfMeasure !== undefined) fields.unit_of_measure = unitOfMeasure || null;
-    if (reorderLevel !== undefined) fields.reorder_level = reorderLevel !== "" ? Number(reorderLevel) : null;
-    if (targetLevel !== undefined) fields.target_level = targetLevel !== "" ? Number(targetLevel) : null;
-    if (location !== undefined) fields.location = location || null;
-    if (building !== undefined) fields.building = building || null;
-    if (unitCost !== undefined) fields.unit_cost_tzs = unitCost !== "" ? Number(unitCost) : null;
-    await update("inventory_items", itemId, fields);
-    await logInventoryActivity("Edited Item", `itemId ${itemId}`, editedBy);
+    const changes = [];
+    const setIfChanged = (bodyVal, column, current, label, isNumber) => {
+      if (bodyVal === undefined) return;
+      const newVal = bodyVal === "" ? null : (isNumber ? Number(bodyVal) : bodyVal);
+      const oldVal = current;
+      if (String(oldVal ?? "") !== String(newVal ?? "")) {
+        fields[column] = newVal;
+        changes.push(`${label}: "${oldVal ?? '(not set)'}" → "${newVal ?? '(not set)'}"`);
+      }
+    };
+    setIfChanged(name !== undefined ? name.trim() : undefined, "name", before.name, "Name", false);
+    setIfChanged(category, "category", before.category, "Category", false);
+    setIfChanged(unitOfMeasure, "unit_of_measure", before.unit_of_measure, "Unit", false);
+    setIfChanged(reorderLevel, "reorder_level", before.reorder_level, "Reorder Level", true);
+    setIfChanged(targetLevel, "target_level", before.target_level, "Target Level", true);
+    setIfChanged(location, "location", before.location, "Location", false);
+    setIfChanged(building, "building", before.building, "Building", false);
+    setIfChanged(unitCost, "unit_cost_tzs", before.unit_cost_tzs, "Unit Cost", true);
+
+    if (changes.length > 0) {
+      await update("inventory_items", itemId, fields);
+      await logInventoryActivity("Edited Item", `${before.item_code} — "${before.name}": ${changes.join(", ")}`, editedBy);
+    }
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editInventoryItem error:", err);
