@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     // Business Owner set already trusted with Asset Tracking. A
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
-    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot"];
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot", "linkInventoryBarcode", "scanInventoryIn", "scanInventoryOut", "setItemBatchTracked"];
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
@@ -68,6 +68,10 @@ export default async function handler(req, res) {
     if (action === "seedInventoryTestData") return handleSeedInventoryTestData(req, res, session.u);
     if (action === "deleteInventoryItem") return handleDeleteInventoryItem(req, res, session.u);
     if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u);
+    if (action === "linkInventoryBarcode") return handleLinkInventoryBarcode(req, res, session.u);
+    if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u);
+    if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u);
+    if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -336,6 +340,188 @@ async function handleUploadInventorySnapshot(req, res, uploadedBy) {
     return res.status(200).json({ success: true, year: yearNum, created, skipped });
   } catch (err) {
     console.error("uploadInventorySnapshot error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Marks an item as batch-tracked or not, confirmed directly: only for
+// the items that actually need it (medications), never a default for
+// everything. Turning this off doesn't touch or delete any batches
+// already recorded - just stops requiring one for future movements.
+async function handleSetItemBatchTracked(req, res, editedBy) {
+  const { itemId, isBatchTracked } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { update, getById } = await import("../lib/postgresClient.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Item not found." });
+    await update("inventory_items", itemId, { is_batch_tracked: !!isBatchTracked, updated_at: new Date().toISOString() });
+    await logInventoryActivity(isBatchTracked ? "Enabled Batch Tracking" : "Disabled Batch Tracking", `${item.item_code} — "${item.name}"`, editedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("setItemBatchTracked error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The real "first time you see this code" confirmation, confirmed
+// directly as a one-time step - every scan of the same product after
+// this resolves automatically, no re-confirming the same barcode
+// twice.
+async function handleLinkInventoryBarcode(req, res, linkedBy) {
+  const { gtin, itemId } = req.body || {};
+  if (!gtin || !itemId) return res.status(400).json({ error: "gtin and itemId are required" });
+  try {
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Item not found." });
+    await insert("inventory_barcode_links", { gtin, item_id: itemId, linked_by: linkedBy });
+    await logInventoryActivity("Linked Barcode", `${gtin} → ${item.item_code} "${item.name}"`, linkedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? "This barcode is already linked to an item." : err.message;
+    console.error("linkInventoryBarcode error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+// Scan IN — receiving real stock. A GTIN already linked to an item
+// resolves automatically; an unrecognized one is reported back so the
+// frontend can prompt the one-time linking step rather than guessing.
+// Finds the matching batch by item + lot number + expiry if one
+// already exists and adds to it, or creates a new batch if this
+// specific combination hasn't been seen before - confirmed directly:
+// a batch is a real, distinct thing, not just a label on the same
+// pile.
+async function handleScanInventoryIn(req, res, performedBy) {
+  const { gtin, lotNumber, expiryDate, quantity, itemId: providedItemId } = req.body || {};
+  const qty = Number(quantity);
+  if (!qty || qty <= 0) return res.status(400).json({ error: "Quantity must be a positive number." });
+
+  try {
+    const { getById, getByColumn, insert, update, listAllRecords } = await import("../lib/postgresClient.js");
+
+    let itemId = providedItemId;
+    if (!itemId) {
+      if (!gtin) return res.status(400).json({ error: "gtin or itemId is required" });
+      const link = await getByColumn("inventory_barcode_links", "gtin", gtin).catch(() => null);
+      if (!link) {
+        // Not an error - a real, expected first-time case. The
+        // frontend uses this to prompt "which item is this?" rather
+        // than failing outright.
+        return res.status(200).json({ success: false, needsLink: true, gtin });
+      }
+      itemId = link.item_id;
+    }
+
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Item not found." });
+
+    let batch = null;
+    if (item.is_batch_tracked) {
+      if (!lotNumber && !expiryDate) {
+        return res.status(400).json({ error: "This item is batch-tracked — a lot number or expiry date is required." });
+      }
+      const existingBatches = await listAllRecords("inventory_batches");
+      batch = existingBatches.find(b => b.item_id === itemId && (b.lot_number || "") === (lotNumber || "") && (b.expiry_date || "") === (expiryDate || ""));
+      if (batch) {
+        await update("inventory_batches", batch.id, { quantity: Number(batch.quantity) + qty });
+      } else {
+        batch = await insert("inventory_batches", { item_id: itemId, lot_number: lotNumber || null, expiry_date: expiryDate || null, quantity: qty, created_by: performedBy });
+      }
+    }
+
+    const newQuantity = Number(item.current_quantity) + qty;
+    await insert("inventory_movements", {
+      item_id: itemId, movement_type: "IN", quantity: qty,
+      reason: batch ? `Scanned in — batch ${batch.lot_number || batch.id}` : "Scanned in",
+      performed_by: performedBy, batch_id: batch ? batch.id : null,
+    });
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+    await logInventoryActivity("Scanned Stock IN", `${item.item_code} "${item.name}": +${qty}${batch ? ` (batch ${batch.lot_number || 'unlabeled'}, exp ${batch.expiry_date || 'n/a'})` : ''}`, performedBy);
+
+    return res.status(200).json({ success: true, itemId, itemCode: item.item_code, itemName: item.name, newQuantity, batchId: batch ? batch.id : null });
+  } catch (err) {
+    console.error("scanInventoryIn error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Scan OUT — real FEFO deduction, confirmed directly as the actual
+// point of batch tracking: the person dispensing doesn't pick a
+// batch, the system does, always taking from whichever batch expires
+// soonest first. A single dispensing can genuinely span more than one
+// batch - each portion recorded as its own real, attributable
+// movement tied to the specific batch it actually came from, not
+// collapsed into one movement that hides which batch really lost
+// stock.
+async function handleScanInventoryOut(req, res, performedBy) {
+  const { itemId, quantity, reason, department } = req.body || {};
+  const qty = Number(quantity);
+  if (!itemId || !qty || qty <= 0) return res.status(400).json({ error: "itemId and a positive quantity are required" });
+
+  try {
+    const { getById, update, insert, listAllRecords } = await import("../lib/postgresClient.js");
+    const { planFefoDeduction, applyMovement, isLowStock } = await import("../lib/inventory.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Item not found." });
+
+    if (!item.is_batch_tracked) {
+      // Not batch-tracked - the same plain movement logic every other
+      // non-batch item already uses, no FEFO involved since there's
+      // only ever one pile.
+      let newQuantity;
+      try {
+        newQuantity = applyMovement(item.current_quantity, "OUT", qty);
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      await insert("inventory_movements", { item_id: itemId, movement_type: "OUT", quantity: qty, reason: reason || "Scanned out", department: department || null, performed_by: performedBy });
+      await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+      await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty}`, performedBy);
+      const wasLow = isLowStock({ current_quantity: item.current_quantity, reorder_level: item.reorder_level });
+      const isLow = isLowStock({ current_quantity: newQuantity, reorder_level: item.reorder_level });
+      if (!wasLow && isLow) await sendLowStockAlert({ itemName: item.name, itemCode: item.item_code, currentQuantity: newQuantity, reorderLevel: item.reorder_level, unit: item.unit_of_measure });
+      return res.status(200).json({ success: true, newQuantity, batches: null });
+    }
+
+    const allBatches = await listAllRecords("inventory_batches");
+    const itemBatches = allBatches
+      .filter(b => b.item_id === itemId && Number(b.quantity) > 0)
+      .sort((a, b) => {
+        if (!a.expiry_date) return 1; // no expiry recorded sorts last - genuinely less certain than a dated batch
+        if (!b.expiry_date) return -1;
+        return new Date(a.expiry_date) - new Date(b.expiry_date);
+      });
+
+    let plan;
+    try {
+      plan = planFefoDeduction(itemBatches, qty);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    for (const step of plan) {
+      const batch = itemBatches.find(b => b.id === step.batchId);
+      await update("inventory_batches", step.batchId, { quantity: Number(batch.quantity) - step.quantity });
+      await insert("inventory_movements", {
+        item_id: itemId, movement_type: "OUT", quantity: step.quantity,
+        reason: reason || `Scanned out (FEFO)`, department: department || null,
+        performed_by: performedBy, batch_id: step.batchId,
+      });
+    }
+
+    const newQuantity = Number(item.current_quantity) - qty;
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+    await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty} across ${plan.length} batch${plan.length===1?'':'es'} (FEFO)`, performedBy);
+
+    const wasLow = isLowStock({ current_quantity: item.current_quantity, reorder_level: item.reorder_level });
+    const isLow = isLowStock({ current_quantity: newQuantity, reorder_level: item.reorder_level });
+    if (!wasLow && isLow) await sendLowStockAlert({ itemName: item.name, itemCode: item.item_code, currentQuantity: newQuantity, reorderLevel: item.reorder_level, unit: item.unit_of_measure });
+
+    return res.status(200).json({ success: true, newQuantity, batches: plan });
+  } catch (err) {
+    console.error("scanInventoryOut error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

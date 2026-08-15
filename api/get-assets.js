@@ -413,7 +413,7 @@ export default async function handler(req, res) {
   // genuinely restricted to Stock Keeper, Procurement, System Admin,
   // and Business Owner — a real 403 at the API level, not a
   // stripped-down view.
-  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog"];
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog", "inventoryBatches", "resolveInventoryBarcode"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
@@ -437,6 +437,7 @@ export default async function handler(req, res) {
         building: r.building,
         unitCost: r.unit_cost_tzs !== null ? Number(r.unit_cost_tzs) : null,
         lowStock: isLowStock(r),
+        isBatchTracked: r.is_batch_tracked === true,
       }));
       return res.status(200).json({ items });
     } catch (err) {
@@ -459,6 +460,45 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("inventoryMovements read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real batch behind one item's total, soonest-expiring first
+  // — the same order FEFO deduction itself uses, so what's shown here
+  // matches exactly what scanning OUT would actually draw from first.
+  // Resolving a scanned GTIN to a real item — shared by both scan
+  // directions, so Scan Out can identify which item was just scanned
+  // the same way Scan In's own internal resolution works, without
+  // needing to go through a full scan-in call just to find out.
+  if (req.query.resolveInventoryBarcode === "true" && req.query.gtin) {
+    try {
+      const { getByColumn, getById } = await import("../lib/postgresClient.js");
+      const link = await getByColumn("inventory_barcode_links", "gtin", req.query.gtin).catch(() => null);
+      if (!link) return res.status(200).json({ needsLink: true, gtin: req.query.gtin });
+      const item = await getById("inventory_items", link.item_id).catch(() => null);
+      if (!item) return res.status(200).json({ needsLink: true, gtin: req.query.gtin });
+      return res.status(200).json({ needsLink: false, itemId: item.id, itemCode: item.item_code, itemName: item.name, isBatchTracked: item.is_batch_tracked === true });
+    } catch (err) {
+      console.error("resolveInventoryBarcode read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.query.inventoryBatches === "true" && req.query.itemId) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        "select * from inventory_batches where item_id = $1 and quantity > 0 order by expiry_date asc nulls last",
+        [req.query.itemId]
+      );
+      return res.status(200).json({
+        batches: result.rows.map(r => ({
+          id: r.id, lotNumber: r.lot_number, expiryDate: r.expiry_date, quantity: Number(r.quantity),
+        })),
+      });
+    } catch (err) {
+      console.error("inventoryBatches read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
