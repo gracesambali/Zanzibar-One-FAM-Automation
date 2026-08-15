@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     // Business Owner set already trusted with Asset Tracking. A
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
-    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation"];
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData"];
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
@@ -63,6 +63,9 @@ export default async function handler(req, res) {
     if (action === "deactivateInventoryItem") return handleDeactivateInventoryItem(req, res, session.u);
     if (action === "addInventoryCategory") return handleAddInventoryCategory(req, res, session.u);
     if (action === "addInventoryLocation") return handleAddInventoryLocation(req, res, session.u);
+    if (action === "bulkImportInventoryItems") return handleBulkImportInventoryItems(req, res, session.u);
+    if (action === "takeInventorySnapshot") return handleTakeInventorySnapshot(req, res, session.u);
+    if (action === "seedInventoryTestData") return handleSeedInventoryTestData(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -211,6 +214,52 @@ async function handleAddInventoryLocation(req, res, addedBy) {
   }
 }
 
+// The real, shared core of creating any inventory item - used by the
+// single-item form, bulk sheet import, and the test-data seeder alike,
+// so all three behave identically: same item code generation, same
+// honest "Opening stock" movement instead of a silent default, and
+// critically, the same immediate low-stock check on creation (a new
+// item can start out already at or below its own reorder level, and
+// there's no prior quantity to compare a transition against in that
+// case - this must never be skipped just because an item arrived via
+// a different path).
+async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity }, addedBy, existingCodes) {
+  const { insert, update } = await import("../lib/postgresClient.js");
+  const { generateItemCode, isLowStock } = await import("../lib/inventory.js");
+
+  const itemCode = generateItemCode(existingCodes);
+  existingCodes.push(itemCode); // so the next call in the same batch generates a genuinely different code
+
+  const created = await insert("inventory_items", {
+    item_code: itemCode,
+    name: name.trim(),
+    category: category || null,
+    unit_of_measure: unitOfMeasure || null,
+    current_quantity: 0,
+    reorder_level: reorderLevel != null && reorderLevel !== "" ? Number(reorderLevel) : null,
+    target_level: targetLevel != null && targetLevel !== "" ? Number(targetLevel) : null,
+    location: location || null,
+    building: building || null,
+    unit_cost_tzs: unitCost != null && unitCost !== "" ? Number(unitCost) : null,
+    added_by: addedBy,
+  });
+
+  const startQty = Number(initialQuantity) || 0;
+  if (startQty > 0) {
+    await insert("inventory_movements", {
+      item_id: created.id, movement_type: "IN", quantity: startQty,
+      reason: "Opening stock", performed_by: addedBy,
+    });
+    await update("inventory_items", created.id, { current_quantity: startQty });
+  }
+
+  if (isLowStock({ current_quantity: startQty, reorder_level: created.reorder_level })) {
+    await sendLowStockAlert({ itemName: created.name, itemCode, currentQuantity: startQty, reorderLevel: created.reorder_level, unit: created.unit_of_measure });
+  }
+
+  return { itemCode, id: created.id };
+}
+
 async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
   if (!["stock_keeper", "procurement", "system_admin", "business_owner"].includes(addedByRole)) {
     return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
@@ -220,53 +269,123 @@ async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
     return res.status(400).json({ error: "A name is required." });
   }
   try {
-    const { insert, listAllRecords } = await import("../lib/postgresClient.js");
-    const { generateItemCode } = await import("../lib/inventory.js");
+    const { listAllRecords } = await import("../lib/postgresClient.js");
     const existing = await listAllRecords("inventory_items");
-    const itemCode = generateItemCode(existing.map(i => i.item_code));
-
-    const created = await insert("inventory_items", {
-      item_code: itemCode,
-      name: name.trim(),
-      category: category || null,
-      unit_of_measure: unitOfMeasure || null,
-      current_quantity: 0,
-      reorder_level: reorderLevel != null && reorderLevel !== "" ? Number(reorderLevel) : null,
-      target_level: targetLevel != null && targetLevel !== "" ? Number(targetLevel) : null,
-      location: location || null,
-      building: building || null,
-      unit_cost_tzs: unitCost != null && unitCost !== "" ? Number(unitCost) : null,
-      added_by: addedBy,
-    });
-
-    // An optional starting quantity is recorded as a real, honest
-    // opening movement — not a silent default — so the very first
-    // entry in this item's history explains where its stock count
-    // came from.
-    const startQty = Number(initialQuantity) || 0;
-    if (startQty > 0) {
-      const { update } = await import("../lib/postgresClient.js");
-      await insert("inventory_movements", {
-        item_id: created.id, movement_type: "IN", quantity: startQty,
-        reason: "Opening stock", performed_by: addedBy,
-      });
-      await update("inventory_items", created.id, { current_quantity: startQty });
-    }
-
-    // A brand-new item can start out already at or below its own
-    // reorder level (e.g., "we know we're already low, let's get this
-    // into the system") — there's no prior quantity to compare a
-    // transition against here, so this checks directly rather than
-    // relying on the same before/after logic the movement handler
-    // uses, so this genuine case doesn't silently go unnoticed.
-    const { isLowStock } = await import("../lib/inventory.js");
-    if (isLowStock({ current_quantity: startQty, reorder_level: created.reorder_level })) {
-      await sendLowStockAlert({ itemName: created.name, itemCode, currentQuantity: startQty, reorderLevel: created.reorder_level, unit: created.unit_of_measure });
-    }
-
-    return res.status(200).json({ success: true, itemCode, id: created.id });
+    const result = await createOneInventoryItem(
+      { name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity },
+      addedBy,
+      existing.map(i => i.item_code)
+    );
+    return res.status(200).json({ success: true, itemCode: result.itemCode, id: result.id });
   } catch (err) {
     console.error("addInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Bulk sheet upload - genuinely CREATES new items (unlike the TRA
+// class import, which matches existing assets by ID), so each valid
+// row becomes a brand-new inventory item, not an update to one that
+// already exists. Every row gets the exact same treatment as adding
+// one item by hand - honest opening-stock movement, immediate
+// low-stock check - via the same shared creation function.
+async function handleBulkImportInventoryItems(req, res, addedBy) {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "rows array is required" });
+  }
+  try {
+    const { listAllRecords } = await import("../lib/postgresClient.js");
+    const existing = await listAllRecords("inventory_items");
+    const existingCodes = existing.map(i => i.item_code);
+
+    let created = 0;
+    const skipped = [];
+    for (const row of rows) {
+      const name = (row.name || "").trim();
+      if (!name) { skipped.push({ row: JSON.stringify(row), reason: "No name" }); continue; }
+      try {
+        await createOneInventoryItem({
+          name, category: row.category, unitOfMeasure: row.unitOfMeasure,
+          reorderLevel: row.reorderLevel, targetLevel: row.targetLevel,
+          location: row.location, unitCost: row.unitCost, initialQuantity: row.initialQuantity,
+        }, addedBy, existingCodes);
+        created++;
+      } catch (err) {
+        skipped.push({ row: name, reason: err.message });
+      }
+    }
+    return res.status(200).json({ success: true, created, skipped });
+  } catch (err) {
+    console.error("bulkImportInventoryItems error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// A real, point-in-time record of every active item, tagged with the
+// current year - confirmed directly: keeping past years' records
+// available even as live stock keeps changing. Captured, not
+// computed later - so a past snapshot never silently shifts if items
+// get renamed or recategorized afterward.
+async function handleTakeInventorySnapshot(req, res, takenBy) {
+  try {
+    const { listAllRecords, insert, query: pgQuery } = await import("../lib/postgresClient.js");
+    const items = await listAllRecords("inventory_items");
+    const active = items.filter(i => i.active !== false);
+    const year = new Date().getFullYear();
+
+    // Idempotent on purpose: re-saving this year's snapshot refreshes
+    // it rather than silently duplicating every item's entry — a
+    // person re-running this expects "this is what it looks like as
+    // of now, for this year," not a second, confusing copy alongside
+    // the first.
+    await pgQuery("delete from inventory_snapshots where snapshot_year = $1", [year]);
+
+    for (const item of active) {
+      await insert("inventory_snapshots", {
+        snapshot_year: year, item_code: item.item_code, name: item.name,
+        category: item.category, quantity: Number(item.current_quantity),
+        unit_of_measure: item.unit_of_measure, unit_cost_tzs: item.unit_cost_tzs,
+        location: item.location, taken_by: takenBy,
+      });
+    }
+    return res.status(200).json({ success: true, year, itemCount: active.length });
+  } catch (err) {
+    console.error("takeInventorySnapshot error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// A real testing tool, confirmed directly, kept simple and clearly
+// labeled as such rather than disguised as ordinary data entry - lets
+// someone actually confirm the live email/SMS pipeline works with
+// their real configured recipients, not just trust that it should.
+// Deliberately creates at least one item already below its own
+// reorder level, so the immediate on-creation low-stock check (the
+// same real, tested code path every other item creation uses) is
+// guaranteed to fire for real.
+async function handleSeedInventoryTestData(req, res, addedBy) {
+  const sampleItems = [
+    { name: "Nitrile Gloves (Box of 100)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 20, targetLevel: 150, location: "Main Store", unitCost: 12000, initialQuantity: 65 },
+    { name: "IV Catheters 18G", category: "Consumable", unitOfMeasure: "pieces", reorderLevel: 50, targetLevel: 300, location: "Pharmacy", unitCost: 800, initialQuantity: 210 },
+    { name: "Surgical Masks (Box of 50)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 15, targetLevel: 100, location: "Main Store", unitCost: 9500, initialQuantity: 42 },
+    { name: "A4 Printer Paper", category: "Stationery", unitOfMeasure: "reams", reorderLevel: 10, targetLevel: 60, location: "Main Store", unitCost: 6000, initialQuantity: 18 },
+    // Deliberately below its own reorder level - this one guarantees
+    // a real alert fires immediately on creation.
+    { name: "Paracetamol 500mg (Box of 1000)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 25, targetLevel: 120, location: "Pharmacy", unitCost: 45000, initialQuantity: 6 },
+  ];
+  try {
+    const { listAllRecords } = await import("../lib/postgresClient.js");
+    const existing = await listAllRecords("inventory_items");
+    const existingCodes = existing.map(i => i.item_code);
+    const createdItems = [];
+    for (const item of sampleItems) {
+      const result = await createOneInventoryItem(item, addedBy, existingCodes);
+      createdItems.push({ ...result, name: item.name, willAlert: item.initialQuantity <= item.reorderLevel });
+    }
+    return res.status(200).json({ success: true, items: createdItems });
+  } catch (err) {
+    console.error("seedInventoryTestData error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

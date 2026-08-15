@@ -3332,44 +3332,122 @@ async function renderInventory() {
   }
 }
 
+// Column-header filter/sort state for Inventory, matching the exact
+// pattern already proven on Asset Tracking - Category and Location
+// are value filters, Quantity is a sort.
+let inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null };
+let openInventoryColumnPopover = null;
+
+function toggleInventoryColumnPopover(column) {
+  openInventoryColumnPopover = openInventoryColumnPopover === column ? null : column;
+  renderInventoryTable();
+}
+function setInventoryFilter(field, value) {
+  inventoryFilters[field] = value;
+  openInventoryColumnPopover = null;
+  renderInventoryTable();
+}
+function setInventorySort(direction) {
+  inventoryFilters.sortColumn = direction ? 'currentQuantity' : null;
+  inventoryFilters.sortDirection = direction;
+  openInventoryColumnPopover = null;
+  renderInventoryTable();
+}
+function clearInventoryFilters() {
+  inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null };
+  openInventoryColumnPopover = null;
+  renderInventoryTable();
+}
+
+function renderInventoryColumnPopover(column) {
+  if (openInventoryColumnPopover !== column) return '';
+  let optionsHtml;
+  if (column === 'currentQuantity') {
+    const isAsc = inventoryFilters.sortDirection === 'asc';
+    const isDesc = inventoryFilters.sortDirection === 'desc';
+    const isAll = !inventoryFilters.sortColumn;
+    optionsHtml = `
+      <button onclick="setInventorySort('asc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAsc ? 'var(--navy-pale)' : 'none'};font-size:12px;cursor:pointer">Ascending</button>
+      <button onclick="setInventorySort('desc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isDesc ? 'var(--navy-pale)' : 'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">Descending</button>
+      <button onclick="setInventorySort(null)" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAll ? 'var(--navy-pale)' : 'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">All</button>`;
+  } else {
+    const unique = [...new Set(inventoryItemsCache.map(i => i[column]).filter(Boolean))].sort();
+    optionsHtml = `
+      <button onclick="setInventoryFilter('${column}', '')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${!inventoryFilters[column] ? 'var(--navy-pale)' : 'none'};font-size:12px;cursor:pointer">All</button>
+      ${unique.map(v => `<button onclick="setInventoryFilter('${column}', '${v.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${inventoryFilters[column]===v ? 'var(--navy-pale)' : 'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(v)}</button>`).join('')}`;
+  }
+  return `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:160px;max-height:220px;overflow-y:auto">${optionsHtml}</div>`;
+}
+
+function inventoryColumnHeaderHtml(column, label, align) {
+  const hasActive = (column !== 'currentQuantity' && inventoryFilters[column]) || (column === 'currentQuantity' && inventoryFilters.sortColumn);
+  const arrow = column === 'currentQuantity' && inventoryFilters.sortColumn ? (inventoryFilters.sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+  return `<th style="text-align:${align};padding:10px 12px;color:${hasActive ? 'var(--navy)' : 'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none" onclick="toggleInventoryColumnPopover('${column}')">${label}${arrow} ▾${renderInventoryColumnPopover(column)}</th>`;
+}
+
+document.addEventListener('click', (e) => {
+  if (openInventoryColumnPopover && !e.target.closest('th')) {
+    openInventoryColumnPopover = null;
+    if (document.getElementById('view-inventory')?.innerHTML) renderInventoryTable();
+  }
+});
+
 function renderInventoryTable() {
   const container = document.getElementById('view-inventory');
   const canManageInventory = ['stock_keeper', 'procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
-  const items = inventoryItemsCache;
+
+  let items = inventoryItemsCache.filter(i =>
+    (!inventoryFilters.category || i.category === inventoryFilters.category) &&
+    (!inventoryFilters.location || i.location === inventoryFilters.location)
+  );
+  if (inventoryFilters.sortColumn) {
+    items = [...items].sort((a, b) => {
+      const cmp = a.currentQuantity > b.currentQuantity ? 1 : a.currentQuantity < b.currentQuantity ? -1 : 0;
+      return inventoryFilters.sortDirection === 'asc' ? cmp : -cmp;
+    });
+  }
+  const anyFilterActive = inventoryFilters.category || inventoryFilters.location || inventoryFilters.sortColumn;
+
   const lowStockCount = items.filter(i => i.lowStock).length;
   const totalValue = items.reduce((sum, i) => sum + (i.unitCost != null ? i.unitCost * i.currentQuantity : 0), 0);
 
   let html = `<div style="padding:24px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
       <div>
         <div style="font-size:18px;font-weight:700;color:var(--navy)">Inventory</div>
         <div style="font-size:12px;color:var(--muted)">Real stock levels with a full, attributable movement history — every change tracked, not just an editable number.</div>
       </div>
-      ${canManageInventory ? `<button onclick="openAddInventoryItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>` : ''}
+      ${canManageInventory ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="openAddInventoryItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>
+        <button onclick="openUploadInventorySheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
+        <button onclick="openInventorySnapshotsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Past Years</button>
+        <button onclick="seedInventoryTestDataNow()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px dashed var(--amber);border-radius:8px;background:#fff;color:#92400E;cursor:pointer" title="Adds sample items with random-ish stock levels, including one deliberately low, to test the real email/SMS alert pipeline">🧪 Seed Test Data</button>
+      </div>` : ''}
     </div>
 
     <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">Total Items</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Items</div></div>
       <div class="summary-card"><div class="summary-val" style="color:${lowStockCount > 0 ? 'var(--red)' : 'var(--green)'}">${lowStockCount}</div><div class="summary-label">Low Stock</div></div>
       ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Estimated Stock Value</div></div>` : ''}
+      ${anyFilterActive ? `<button onclick="clearInventoryFilters()" style="align-self:center;padding:6px 12px;font-size:12px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">Clear filters</button>` : ''}
     </div>
 
-    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+    <div style="overflow-x:visible;background:#fff;border:1px solid var(--border);border-radius:10px">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead>
           <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Quantity</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Location</th>
+            ${inventoryColumnHeaderHtml('category', 'Category', 'left')}
+            ${inventoryColumnHeaderHtml('currentQuantity', 'Quantity', 'right')}
+            ${inventoryColumnHeaderHtml('location', 'Location', 'left')}
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
             <th style="padding:10px 12px"></th>
           </tr>
         </thead>
         <tbody>
           ${items.length === 0
-            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No inventory items yet.${canManageInventory ? ' Add the first one above.' : ''}</td></tr>`
+            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">${anyFilterActive ? 'No items match this filter.' : `No inventory items yet.${canManageInventory ? ' Add the first one above.' : ''}`}</td></tr>`
             : items.map(i => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
@@ -3402,6 +3480,187 @@ let inventoryLocationsCache = [];
 // init like TRA classes are — this modal is the only place these
 // lists are used, so there's no benefit to loading them earlier for
 // everyone regardless of whether they ever add an item.
+// A real, one-click testing tool - confirmed directly - so the
+// actual live email/SMS pipeline can be genuinely confirmed against
+// real configured recipients, not just trusted to work.
+async function seedInventoryTestDataNow() {
+  if (!confirm('This adds 5 sample inventory items, including one deliberately below its reorder level to trigger a real email/SMS alert. Continue?')) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'seedInventoryTestData' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not seed test data');
+    const alertItem = data.items.find(i => i.willAlert);
+    alert(`Added ${data.items.length} sample items.${alertItem ? ` "${alertItem.name}" was created already below its reorder level — a real low-stock email and SMS should be on their way now.` : ''}`);
+    renderInventory();
+  } catch (err) {
+    alert('Could not seed test data: ' + err.message);
+  }
+}
+
+function openUploadInventorySheetModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'uploadInventorySheetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Inventory Sheet</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW item — this doesn't update existing ones.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Columns, in order: Name*, Category, Unit of Measure, Opening Quantity, Reorder Level, Target Level, Location, Unit Cost (TZS). Only Name is required — leave others blank if unknown.</div>
+      <input id="invsheet_file" type="file" accept=".csv,.xlsx,.xls" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <div id="invsheet_status" style="display:none;font-size:12.5px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('uploadInventorySheetOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="invsheet_submit" onclick="submitInventorySheetUpload()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Upload</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function parseInventorySheetCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',').map(x => x.trim().replace(/^"|"$/g, ''));
+    if (!c[0]) continue;
+    rows.push({ name: c[0], category: c[1]||'', unitOfMeasure: c[2]||'', initialQuantity: c[3]||'', reorderLevel: c[4]||'', targetLevel: c[5]||'', location: c[6]||'', unitCost: c[7]||'' });
+  }
+  return rows;
+}
+
+async function parseInventorySheetExcel(file) {
+  await ensureSheetJsLoaded();
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r || !r[0]) continue;
+    rows.push({
+      name: String(r[0]).trim(), category: r[1] != null ? String(r[1]) : '', unitOfMeasure: r[2] != null ? String(r[2]) : '',
+      initialQuantity: r[3] != null ? String(r[3]) : '', reorderLevel: r[4] != null ? String(r[4]) : '',
+      targetLevel: r[5] != null ? String(r[5]) : '', location: r[6] != null ? String(r[6]) : '', unitCost: r[7] != null ? String(r[7]) : '',
+    });
+  }
+  return rows;
+}
+
+async function submitInventorySheetUpload() {
+  const fileInput = document.getElementById('invsheet_file');
+  const statusEl = document.getElementById('invsheet_status');
+  const btn = document.getElementById('invsheet_submit');
+  const file = fileInput.files[0];
+  if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try {
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    const rows = isExcel ? await parseInventorySheetExcel(file) : parseInventorySheetCsv(await file.text());
+    if (rows.length === 0) throw new Error('No rows found — check the file has a name in the first column.');
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'bulkImportInventoryItems', rows }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+
+    let statusHtml = `<strong style="color:var(--green)">${data.created} item${data.created === 1 ? '' : 's'} created.</strong>`;
+    if (data.skipped.length > 0) statusHtml += `<br><span style="color:var(--red)">${data.skipped.length} row${data.skipped.length === 1 ? '' : 's'} skipped: ${data.skipped.slice(0, 5).map(s => s.reason).join(', ')}${data.skipped.length > 5 ? '…' : ''}</span>`;
+    statusEl.innerHTML = statusHtml;
+    statusEl.style.display = 'block';
+    btn.textContent = 'Done';
+    if (data.created > 0) renderInventory();
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
+}
+
+async function openInventorySnapshotsModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'inventorySnapshotsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">Past Years</div>
+        <button onclick="submitTakeInventorySnapshot()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Save This Year's Snapshot</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">A real, point-in-time record of every item, saved by year — it never changes later even as live stock does.</div>
+      <div id="invsnap_yearPicker" style="margin-bottom:14px">Loading years…</div>
+      <div id="invsnap_content" style="font-size:12px;color:var(--muted)"></div>
+      <button onclick="document.getElementById('inventorySnapshotsOverlay').remove()" style="width:100%;margin-top:14px;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  await loadInventorySnapshotYears();
+}
+
+async function loadInventorySnapshotYears() {
+  const picker = document.getElementById('invsnap_yearPicker');
+  try {
+    const resp = await fetch('/api/get-assets?inventorySnapshotYears=true');
+    const data = await resp.json();
+    const years = data.years || [];
+    if (years.length === 0) {
+      picker.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No snapshots saved yet.</div>`;
+      return;
+    }
+    picker.innerHTML = `<select id="invsnap_yearSelect" onchange="loadInventorySnapshotYear()" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      ${years.map(y => `<option value="${y}">${y}</option>`).join('')}
+    </select>`;
+    loadInventorySnapshotYear();
+  } catch (err) {
+    picker.innerHTML = `<div style="color:var(--red)">Could not load years: ${err.message}</div>`;
+  }
+}
+
+async function loadInventorySnapshotYear() {
+  const year = document.getElementById('invsnap_yearSelect')?.value;
+  const content = document.getElementById('invsnap_content');
+  if (!year) return;
+  content.innerHTML = 'Loading…';
+  try {
+    const resp = await fetch(`/api/get-assets?inventorySnapshot=true&year=${year}`);
+    const data = await resp.json();
+    const items = data.items || [];
+    content.innerHTML = items.length === 0
+      ? `<div style="font-style:italic">No items in this snapshot.</div>`
+      : `<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px">Taken ${data.takenAt ? new Date(data.takenAt).toLocaleString() : ''}</div>` +
+        items.map(i => `
+          <div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between">
+            <span>${escapeHtml(i.name)} <span style="color:var(--muted)">(${escapeHtml(i.category||'—')})</span></span>
+            <span>${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</span>
+          </div>`).join('');
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--red)">Could not load snapshot: ${err.message}</div>`;
+  }
+}
+
+async function submitTakeInventorySnapshot() {
+  if (!confirm("Save a real snapshot of every current item for this year? Running this again later in the same year refreshes this year's snapshot rather than creating a duplicate.")) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'takeInventorySnapshot' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save snapshot');
+    alert(`Saved a snapshot of ${data.itemCount} item(s) for ${data.year}.`);
+    await loadInventorySnapshotYears();
+  } catch (err) {
+    alert('Could not save snapshot: ' + err.message);
+  }
+}
+
 async function openAddInventoryItemModal() {
   try {
     const [catResp, locResp] = await Promise.all([
