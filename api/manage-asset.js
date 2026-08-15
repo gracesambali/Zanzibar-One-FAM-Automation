@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     // Business Owner set already trusted with Asset Tracking. A
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
-    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData"];
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot"];
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
@@ -66,6 +66,8 @@ export default async function handler(req, res) {
     if (action === "bulkImportInventoryItems") return handleBulkImportInventoryItems(req, res, session.u);
     if (action === "takeInventorySnapshot") return handleTakeInventorySnapshot(req, res, session.u);
     if (action === "seedInventoryTestData") return handleSeedInventoryTestData(req, res, session.u);
+    if (action === "deleteInventoryItem") return handleDeleteInventoryItem(req, res, session.u);
+    if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -192,6 +194,7 @@ async function handleAddInventoryCategory(req, res, addedBy) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const created = await insert("inventory_categories", { label: label.trim(), created_by: addedBy });
+    await logInventoryActivity("Added Category", `"${created.label}"`, addedBy);
     return res.status(200).json({ success: true, label: created.label });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
@@ -206,6 +209,7 @@ async function handleAddInventoryLocation(req, res, addedBy) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const created = await insert("inventory_locations", { label: label.trim(), created_by: addedBy });
+    await logInventoryActivity("Added Location", `"${created.label}"`, addedBy);
     return res.status(200).json({ success: true, label: created.label });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
@@ -223,6 +227,19 @@ async function handleAddInventoryLocation(req, res, addedBy) {
 // there's no prior quantity to compare a transition against in that
 // case - this must never be skipped just because an item arrived via
 // a different path).
+// Shared logging for every action on the Inventory page, confirmed
+// directly: all of it recorded, who did it, visible together at the
+// bottom of the page. Non-fatal on purpose - a logging failure should
+// never block the real action it's describing.
+async function logInventoryActivity(action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("inventory_activity_log", { action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logInventoryActivity failed (non-fatal):", err.message);
+  }
+}
+
 async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity }, addedBy, existingCodes) {
   const { insert, update } = await import("../lib/postgresClient.js");
   const { generateItemCode, isLowStock } = await import("../lib/inventory.js");
@@ -260,6 +277,69 @@ async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLe
   return { itemCode, id: created.id };
 }
 
+// A genuine, permanent delete — confirmed directly, distinct from the
+// existing deactivate (which just hides an item from the live view
+// while keeping its full history intact). Deleting removes the
+// item's movement history too (inventory_movements has an on-delete
+// cascade to inventory_items already in the schema), so this is a
+// real, irreversible action — the frontend's own confirmation is
+// expected to make that unmistakably clear before ever reaching here.
+async function handleDeleteInventoryItem(req, res, deletedBy) {
+  const { itemId } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Item not found." });
+    await pgQuery("delete from inventory_items where id = $1", [itemId]);
+    await logInventoryActivity("Deleted Item", `${item.item_code} — "${item.name}" (permanently removed, including its movement history)`, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Uploading a genuinely previous year's own Excel/CSV - confirmed
+// directly to be the real point of "past years," not an automatic
+// capture of today's live state. Written straight into
+// inventory_snapshots for whatever year is specified, same
+// idempotent-per-year behavior as the existing snapshot action (a
+// second upload for the same year replaces it rather than
+// duplicating every row), viewable on the same Inventory tab via the
+// year switcher rather than tucked away separately.
+async function handleUploadInventorySnapshot(req, res, uploadedBy) {
+  const { year, rows } = req.body || {};
+  const yearNum = Number(year);
+  if (!yearNum || yearNum < 2000 || yearNum > 2100) return res.status(400).json({ error: "A valid year is required." });
+  if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "rows array is required" });
+  try {
+    const { insert, query: pgQuery } = await import("../lib/postgresClient.js");
+    await pgQuery("delete from inventory_snapshots where snapshot_year = $1", [yearNum]);
+
+    let created = 0;
+    const skipped = [];
+    for (const row of rows) {
+      const name = (row.name || "").trim();
+      if (!name) { skipped.push("A row with no name"); continue; }
+      const quantity = Number(row.quantity);
+      if (isNaN(quantity)) { skipped.push(`"${name}" — no valid quantity`); continue; }
+      await insert("inventory_snapshots", {
+        snapshot_year: yearNum, item_code: row.itemCode || `HIST-${created + 1}`, name,
+        category: row.category || null, quantity, unit_of_measure: row.unitOfMeasure || null,
+        unit_cost_tzs: row.unitCost ? Number(row.unitCost) : null, location: row.location || null,
+        taken_by: uploadedBy,
+      });
+      created++;
+    }
+    await logInventoryActivity("Uploaded Past Year", `${yearNum} — ${created} item(s)${skipped.length ? `, ${skipped.length} skipped` : ''}`, uploadedBy);
+    return res.status(200).json({ success: true, year: yearNum, created, skipped });
+  } catch (err) {
+    console.error("uploadInventorySnapshot error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
   if (!["stock_keeper", "procurement", "system_admin", "business_owner"].includes(addedByRole)) {
     return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
@@ -276,6 +356,7 @@ async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
       addedBy,
       existing.map(i => i.item_code)
     );
+    await logInventoryActivity("Added Item", `${result.itemCode} — "${name.trim()}"`, addedBy);
     return res.status(200).json({ success: true, itemCode: result.itemCode, id: result.id });
   } catch (err) {
     console.error("addInventoryItem error:", err);
@@ -315,6 +396,9 @@ async function handleBulkImportInventoryItems(req, res, addedBy) {
         skipped.push({ row: name, reason: err.message });
       }
     }
+    if (created > 0) {
+      await logInventoryActivity("Uploaded Inventory Sheet", `${created} item${created === 1 ? '' : 's'} created${skipped.length ? `, ${skipped.length} skipped` : ''}`, addedBy);
+    }
     return res.status(200).json({ success: true, created, skipped });
   } catch (err) {
     console.error("bulkImportInventoryItems error:", err);
@@ -349,6 +433,7 @@ async function handleTakeInventorySnapshot(req, res, takenBy) {
         location: item.location, taken_by: takenBy,
       });
     }
+    await logInventoryActivity("Saved Year Snapshot", `${year} — ${active.length} item(s) captured`, takenBy);
     return res.status(200).json({ success: true, year, itemCount: active.length });
   } catch (err) {
     console.error("takeInventorySnapshot error:", err);
@@ -365,15 +450,8 @@ async function handleTakeInventorySnapshot(req, res, takenBy) {
 // same real, tested code path every other item creation uses) is
 // guaranteed to fire for real.
 async function handleSeedInventoryTestData(req, res, addedBy) {
-  const sampleItems = [
-    { name: "Nitrile Gloves (Box of 100)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 20, targetLevel: 150, location: "Main Store", unitCost: 12000, initialQuantity: 65 },
-    { name: "IV Catheters 18G", category: "Consumable", unitOfMeasure: "pieces", reorderLevel: 50, targetLevel: 300, location: "Pharmacy", unitCost: 800, initialQuantity: 210 },
-    { name: "Surgical Masks (Box of 50)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 15, targetLevel: 100, location: "Main Store", unitCost: 9500, initialQuantity: 42 },
-    { name: "A4 Printer Paper", category: "Stationery", unitOfMeasure: "reams", reorderLevel: 10, targetLevel: 60, location: "Main Store", unitCost: 6000, initialQuantity: 18 },
-    // Deliberately below its own reorder level - this one guarantees
-    // a real alert fires immediately on creation.
-    { name: "Paracetamol 500mg (Box of 1000)", category: "Consumable", unitOfMeasure: "boxes", reorderLevel: 25, targetLevel: 120, location: "Pharmacy", unitCost: 45000, initialQuantity: 6 },
-  ];
+  const { generateRandomSeedItems } = await import("../lib/inventory.js");
+  const sampleItems = generateRandomSeedItems(5);
   try {
     const { listAllRecords } = await import("../lib/postgresClient.js");
     const existing = await listAllRecords("inventory_items");
@@ -383,6 +461,7 @@ async function handleSeedInventoryTestData(req, res, addedBy) {
       const result = await createOneInventoryItem(item, addedBy, existingCodes);
       createdItems.push({ ...result, name: item.name, willAlert: item.initialQuantity <= item.reorderLevel });
     }
+    await logInventoryActivity("Seeded Test Data", `${createdItems.length} sample items: ${createdItems.map(i => i.itemCode).join(", ")}`, addedBy);
     return res.status(200).json({ success: true, items: createdItems });
   } catch (err) {
     console.error("seedInventoryTestData error:", err);
@@ -405,6 +484,7 @@ async function handleEditInventoryItem(req, res, editedBy) {
     if (building !== undefined) fields.building = building || null;
     if (unitCost !== undefined) fields.unit_cost_tzs = unitCost !== "" ? Number(unitCost) : null;
     await update("inventory_items", itemId, fields);
+    await logInventoryActivity("Edited Item", `itemId ${itemId}`, editedBy);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editInventoryItem error:", err);
@@ -437,6 +517,7 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
       reason: reason || null, department: department || null, performed_by: performedBy,
     });
     await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+    await logInventoryActivity(movementType === "IN" ? "Stock IN" : "Stock OUT", `${item.item_code} "${item.name}": ${quantity} ${item.unit_of_measure || ''}${reason ? ` (${reason})` : ''}`, performedBy);
 
     // Confirmed directly: low-stock notification must be active. Only
     // fires on a genuine transition into low stock — checked against
@@ -461,8 +542,10 @@ async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
   const { itemId } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
-    const { update } = await import("../lib/postgresClient.js");
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
     await update("inventory_items", itemId, { active: false, updated_at: new Date().toISOString() });
+    await logInventoryActivity("Deactivated Item", item ? `${item.item_code} — "${item.name}"` : itemId, deactivatedBy);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deactivateInventoryItem error:", err);
