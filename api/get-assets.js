@@ -413,7 +413,7 @@ export default async function handler(req, res) {
   // genuinely restricted to Stock Keeper, Procurement, System Admin,
   // and Business Owner — a real 403 at the API level, not a
   // stripped-down view.
-  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot"];
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
@@ -517,6 +517,23 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("inventorySnapshot read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Everything that's happened on the Inventory page - items added or
+  // seeded, movements, deletions, categories/locations added,
+  // historical years uploaded - one unified timeline, most recent
+  // first, matching the exact Asset Tracking activity log pattern.
+  if (req.query.inventoryActivityLog === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from inventory_activity_log order by performed_at desc limit 200");
+      return res.status(200).json({
+        entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
+      });
+    } catch (err) {
+      console.error("inventoryActivityLog read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }

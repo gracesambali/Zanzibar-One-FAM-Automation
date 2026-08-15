@@ -3420,10 +3420,12 @@ function renderInventoryTable() {
       ${canManageInventory ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onclick="openAddInventoryItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>
         <button onclick="openUploadInventorySheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
-        <button onclick="openInventorySnapshotsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Past Years</button>
-        <button onclick="seedInventoryTestDataNow()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px dashed var(--amber);border-radius:8px;background:#fff;color:#92400E;cursor:pointer" title="Adds sample items with random-ish stock levels, including one deliberately low, to test the real email/SMS alert pipeline">🧪 Seed Test Data</button>
+        <button onclick="openUploadPreviousYearModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Upload Previous Year</button>
+        <button onclick="seedInventoryTestDataNow()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px dashed var(--amber);border-radius:8px;background:#fff;color:#92400E;cursor:pointer" title="Adds five randomized sample items, one deliberately low, to test the real email/SMS alert pipeline">🧪 Seed Test Data</button>
       </div>` : ''}
     </div>
+
+    <div id="inventoryYearTabs" style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:2px"></div>
 
     <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Items</div></div>
@@ -3462,15 +3464,23 @@ function renderInventoryTable() {
                 </td>
                 <td style="padding:9px 12px;text-align:right;white-space:nowrap">
                   ${canManageInventory ? `<button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
-                  <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">History</button>
+                  <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">History</button>
+                  ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
                 </td>
               </tr>`).join('')}
         </tbody>
       </table>
     </div>
+
+    <div id="inventoryActivityLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="inventoryActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
   </div>`;
 
   container.innerHTML = html;
+  loadInventoryYearTabs();
+  loadInventoryActivityLog();
 }
 
 let inventoryCategoriesCache = [];
@@ -3483,6 +3493,225 @@ let inventoryLocationsCache = [];
 // A real, one-click testing tool - confirmed directly - so the
 // actual live email/SMS pipeline can be genuinely confirmed against
 // real configured recipients, not just trusted to work.
+// Always loaded as part of the normal page render, not behind a
+// toggle — matching the exact Asset Tracking activity log pattern.
+async function loadInventoryActivityLog() {
+  const content = document.getElementById('inventoryActivityLogContent');
+  if (!content) return;
+  try {
+    const resp = await fetch('/api/get-assets?inventoryActivityLog=true');
+    const data = await resp.json();
+    const entries = data.entries || [];
+    content.innerHTML = entries.length === 0
+      ? `<div style="font-style:italic">No activity recorded yet.</div>`
+      : entries.map(e => `
+        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+        </div>`).join('');
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
+  }
+}
+
+// The real "past years" experience — confirmed directly: viewable on
+// the same tab via a real switcher, not a separate modal. "Live"
+// shows the actual current table (already rendered); any other tab
+// shows that year's uploaded historical data instead, read-only.
+let inventoryCurrentYearView = 'live';
+
+async function loadInventoryYearTabs() {
+  const container = document.getElementById('inventoryYearTabs');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/get-assets?inventorySnapshotYears=true');
+    const data = await resp.json();
+    const years = data.years || [];
+    const tabStyle = (active) => `padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-bottom:2px solid ${active ? 'var(--navy)' : 'transparent'};background:none;color:${active ? 'var(--navy)' : 'var(--muted)'};cursor:pointer`;
+    container.innerHTML = `
+      <button onclick="switchInventoryYearView('live')" style="${tabStyle(inventoryCurrentYearView === 'live')}">Live</button>
+      ${years.map(y => `<button onclick="switchInventoryYearView(${y})" style="${tabStyle(inventoryCurrentYearView === y)}">${y}</button>`).join('')}
+    `;
+  } catch (err) {
+    console.error('Could not load year tabs:', err);
+  }
+}
+
+async function switchInventoryYearView(yearOrLive) {
+  inventoryCurrentYearView = yearOrLive;
+  if (yearOrLive === 'live') {
+    renderInventoryTable();
+    return;
+  }
+  // A past year's data is genuinely different from the live table -
+  // no quantity-editing actions, no low-stock status, since it's a
+  // fixed historical record, not something still changing.
+  const container = document.getElementById('view-inventory');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading ${yearOrLive}…</div>`;
+  try {
+    const resp = await fetch(`/api/get-assets?inventorySnapshot=true&year=${yearOrLive}`);
+    const data = await resp.json();
+    const items = data.items || [];
+    const totalValue = items.reduce((sum, i) => sum + (i.unitCost != null ? i.unitCost * i.quantity : 0), 0);
+    container.innerHTML = `<div style="padding:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:var(--navy)">Inventory — ${yearOrLive}</div>
+          <div style="font-size:12px;color:var(--muted)">A fixed historical record${data.takenAt ? ', saved ' + new Date(data.takenAt).toLocaleDateString() : ''} — read-only, doesn't change as live stock does.</div>
+        </div>
+      </div>
+      <div id="inventoryYearTabs" style="display:flex;gap:6px;margin:16px 0;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:2px"></div>
+      <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
+        <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">Items</div></div>
+        ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Recorded Value</div></div>` : ''}
+      </div>
+      <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Quantity</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Location</th>
+          </tr></thead>
+          <tbody>
+            ${items.length === 0 ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
+              items.map(i => `<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
+                <td style="padding:9px 12px">${escapeHtml(i.name)}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category||'—')}</td>
+                <td style="padding:9px 12px;text-align:right">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location||'—')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div id="inventoryActivityLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+        <div id="inventoryActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+      </div>
+    </div>`;
+    loadInventoryYearTabs();
+    loadInventoryActivityLog();
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load ${yearOrLive}: ${err.message}</div>`;
+  }
+}
+
+function openUploadPreviousYearModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'uploadPrevYearOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const lastYear = new Date().getFullYear() - 1;
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload a Previous Year</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Bring in a real record you already have — a spreadsheet from a prior year. Kept separate from live stock, viewable on its own tab above.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Which year is this?</label>
+      <input id="prevyear_year" type="number" min="2000" max="2100" value="${lastYear}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Uploading again for a year you've already uploaded replaces that year's data rather than duplicating it.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">File (CSV or Excel)</label>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Columns: Name*, Category, Quantity*, Unit of Measure, Location, Unit Cost (TZS).</div>
+      <input id="prevyear_file" type="file" accept=".csv,.xlsx,.xls" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <div id="prevyear_status" style="display:none;font-size:12.5px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('uploadPrevYearOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="prevyear_submit" onclick="submitUploadPreviousYear()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Upload</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function parsePrevYearCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',').map(x => x.trim().replace(/^"|"$/g, ''));
+    if (!c[0]) continue;
+    rows.push({ name: c[0], category: c[1]||'', quantity: c[2]||'', unitOfMeasure: c[3]||'', location: c[4]||'', unitCost: c[5]||'' });
+  }
+  return rows;
+}
+
+async function parsePrevYearExcel(file) {
+  await ensureSheetJsLoaded();
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r || !r[0]) continue;
+    rows.push({
+      name: String(r[0]).trim(), category: r[1]!=null?String(r[1]):'', quantity: r[2]!=null?String(r[2]):'',
+      unitOfMeasure: r[3]!=null?String(r[3]):'', location: r[4]!=null?String(r[4]):'', unitCost: r[5]!=null?String(r[5]):'',
+    });
+  }
+  return rows;
+}
+
+async function submitUploadPreviousYear() {
+  const year = document.getElementById('prevyear_year').value;
+  const fileInput = document.getElementById('prevyear_file');
+  const statusEl = document.getElementById('prevyear_status');
+  const btn = document.getElementById('prevyear_submit');
+  const file = fileInput.files[0];
+  statusEl.style.display = 'none';
+  if (!year) { statusEl.textContent = 'Enter a year.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+  if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try {
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    const rows = isExcel ? await parsePrevYearExcel(file) : parsePrevYearCsv(await file.text());
+    if (rows.length === 0) throw new Error('No rows found.');
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'uploadInventorySnapshot', year: Number(year), rows }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+
+    statusEl.innerHTML = `<strong style="color:var(--green)">${data.created} item(s) saved for ${data.year}.</strong>${data.skipped.length ? `<br><span style="color:var(--red)">${data.skipped.length} skipped.</span>` : ''}`;
+    statusEl.style.display = 'block';
+    btn.textContent = 'Done';
+    inventoryCurrentYearView = data.year;
+    setTimeout(() => { document.getElementById('uploadPrevYearOverlay')?.remove(); switchInventoryYearView(data.year); }, 900);
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
+}
+
+// A genuine, permanent delete - distinct from anything reversible,
+// confirmed directly. Requires typing the item's own name to confirm,
+// not just a yes/no click, given it also removes the item's full
+// movement history and cannot be undone.
+async function deleteInventoryItemNow(itemId, name) {
+  const typed = prompt(`This permanently deletes "${name}" and its entire movement history — this cannot be undone.\n\nType the item's name exactly to confirm:`);
+  if (typed !== name) {
+    if (typed !== null) alert('Name did not match — nothing was deleted.');
+    return;
+  }
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteInventoryItem', itemId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    renderInventory();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
+
 async function seedInventoryTestDataNow() {
   if (!confirm('This adds 5 sample inventory items, including one deliberately below its reorder level to trigger a real email/SMS alert. Continue?')) return;
   try {
@@ -3581,83 +3810,6 @@ async function submitInventorySheetUpload() {
     statusEl.style.color = 'var(--red)';
     statusEl.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Upload';
-  }
-}
-
-async function openInventorySnapshotsModal() {
-  const overlay = document.createElement('div');
-  overlay.id = 'inventorySnapshotsOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-size:14px;font-weight:700;color:var(--navy)">Past Years</div>
-        <button onclick="submitTakeInventorySnapshot()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Save This Year's Snapshot</button>
-      </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">A real, point-in-time record of every item, saved by year — it never changes later even as live stock does.</div>
-      <div id="invsnap_yearPicker" style="margin-bottom:14px">Loading years…</div>
-      <div id="invsnap_content" style="font-size:12px;color:var(--muted)"></div>
-      <button onclick="document.getElementById('inventorySnapshotsOverlay').remove()" style="width:100%;margin-top:14px;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
-    </div>`;
-  document.body.appendChild(overlay);
-  await loadInventorySnapshotYears();
-}
-
-async function loadInventorySnapshotYears() {
-  const picker = document.getElementById('invsnap_yearPicker');
-  try {
-    const resp = await fetch('/api/get-assets?inventorySnapshotYears=true');
-    const data = await resp.json();
-    const years = data.years || [];
-    if (years.length === 0) {
-      picker.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No snapshots saved yet.</div>`;
-      return;
-    }
-    picker.innerHTML = `<select id="invsnap_yearSelect" onchange="loadInventorySnapshotYear()" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-      ${years.map(y => `<option value="${y}">${y}</option>`).join('')}
-    </select>`;
-    loadInventorySnapshotYear();
-  } catch (err) {
-    picker.innerHTML = `<div style="color:var(--red)">Could not load years: ${err.message}</div>`;
-  }
-}
-
-async function loadInventorySnapshotYear() {
-  const year = document.getElementById('invsnap_yearSelect')?.value;
-  const content = document.getElementById('invsnap_content');
-  if (!year) return;
-  content.innerHTML = 'Loading…';
-  try {
-    const resp = await fetch(`/api/get-assets?inventorySnapshot=true&year=${year}`);
-    const data = await resp.json();
-    const items = data.items || [];
-    content.innerHTML = items.length === 0
-      ? `<div style="font-style:italic">No items in this snapshot.</div>`
-      : `<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px">Taken ${data.takenAt ? new Date(data.takenAt).toLocaleString() : ''}</div>` +
-        items.map(i => `
-          <div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between">
-            <span>${escapeHtml(i.name)} <span style="color:var(--muted)">(${escapeHtml(i.category||'—')})</span></span>
-            <span>${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</span>
-          </div>`).join('');
-  } catch (err) {
-    content.innerHTML = `<div style="color:var(--red)">Could not load snapshot: ${err.message}</div>`;
-  }
-}
-
-async function submitTakeInventorySnapshot() {
-  if (!confirm("Save a real snapshot of every current item for this year? Running this again later in the same year refreshes this year's snapshot rather than creating a duplicate.")) return;
-  try {
-    const resp = await fetch('/api/manage-asset', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'takeInventorySnapshot' }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save snapshot');
-    alert(`Saved a snapshot of ${data.itemCount} item(s) for ${data.year}.`);
-    await loadInventorySnapshotYears();
-  } catch (err) {
-    alert('Could not save snapshot: ' + err.message);
   }
 }
 

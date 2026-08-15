@@ -902,3 +902,19 @@ create table inventory_snapshots (
   taken_at          timestamptz not null default now()
 );
 create index idx_inventory_snapshots_year on inventory_snapshots (snapshot_year);
+
+-- ============================================================
+-- Unified activity log for Inventory, confirmed directly - matching
+-- the exact Asset Tracking pattern: always visible at the bottom,
+-- covering every real action (items added or seeded, movements,
+-- deletions, categories/locations added, historical years uploaded),
+-- who did it, when.
+-- ============================================================
+create table inventory_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  action          text not null,
+  details         text not null,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index idx_inventory_activity_log_time on inventory_activity_log (performed_at desc);
