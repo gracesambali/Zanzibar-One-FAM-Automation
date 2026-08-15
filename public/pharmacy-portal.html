@@ -18,10 +18,10 @@
   #logoutBtn { background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:9px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; flex-shrink:0; }
   #logoutBtn:hover { background:rgba(255,255,255,0.22); }
 
-  .page-wrap { width:100%; max-width:1700px; margin:0 auto; padding:28px 32px 48px; display:flex; gap:28px; align-items:flex-start; }
+  .page-wrap { width:100%; margin:0 auto; padding:28px clamp(24px, 4vw, 80px) 48px; display:flex; gap:32px; align-items:flex-start; }
   .main-col { flex:1 1 0%; min-width:500px; }
-  .side-col { width:400px; flex-shrink:0; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
-  @media (max-width:1200px) { .page-wrap { flex-direction:column; padding:20px 16px 40px; } .main-col { min-width:0; width:100%; } .side-col { width:100%; position:static; } }
+  .side-col { flex:0 0 28%; min-width:340px; max-width:460px; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
+  @media (max-width:1200px) { .page-wrap { flex-direction:column; padding:20px 16px 40px; } .main-col { min-width:0; width:100%; } .side-col { flex-basis:auto; width:100%; min-width:0; max-width:none; position:static; } }
 
   .scan-buttons { display:flex; gap:16px; margin-bottom:24px; }
   .scan-btn { flex:1; padding:28px 20px; border-radius:16px; border:none; font-size:16px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:10px; transition:transform .1s; }
@@ -93,7 +93,7 @@
     <div class="header-left">
       <div class="logo"><img src="/selian-logo.png" alt="Logo" onerror="this.style.display='none'"></div>
       <div>
-        <h1>Pharmacy</h1>
+        <h1>Selian Lutheran Hospital Pharmacy</h1>
         <div class="sub">Facility Asset Management System</div>
       </div>
     </div>
