@@ -427,6 +427,15 @@ button { font-family: inherit; cursor: pointer; }
     <span class="tab-label">Tenant Management</span>
   </button>
 
+  <!-- Confirmed directly: only Business Owner and System Admin (the
+       existing manageUsers permission holders) ever see this at all -
+       hidden entirely for everyone else, same hard gate already used
+       for Tenant Management, not a soft restriction. -->
+  <button class="tab-btn" data-tab="staffmanagement" data-label="Manage Staff" id="staffManagementNavBtn" onclick="switchTab('staffmanagement')" onmouseenter="showSidebarTooltip(this, 'Manage Staff')" onmouseleave="hideSidebarTooltip()" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    <span class="tab-label">Manage Staff</span>
+  </button>
+
   <!-- Confirmed directly: Technician keeps the exact same flat list
        as before - no nesting, no groups, just these three - so this
        is a genuinely separate, standalone set of buttons rather than
@@ -469,6 +478,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-units" class="view"></div>
   <div id="view-fixedassets" class="view"></div>
   <div id="view-inventory" class="view"></div>
+  <div id="view-staffmanagement" class="view"></div>
 </div>
 </div>
 
@@ -1181,6 +1191,7 @@ function applySimplifiedNavIfNeeded() {
   const operationsGroup = document.getElementById('operationsGroup');
   const holdingsGroup = document.getElementById('holdingsGroup');
   const unitsBtn = document.getElementById('unitsNavBtn');
+  const staffManagementBtn = document.getElementById('staffManagementNavBtn');
 
   if (isTechnician) {
     if (technicianNav) technicianNav.style.display = '';
@@ -1188,6 +1199,7 @@ function applySimplifiedNavIfNeeded() {
     if (operationsGroup) operationsGroup.style.display = 'none';
     if (holdingsGroup) holdingsGroup.style.display = 'none';
     if (unitsBtn) unitsBtn.style.display = 'none';
+    if (staffManagementBtn) staffManagementBtn.style.display = 'none';
     return;
   }
 
@@ -1200,6 +1212,11 @@ function applySimplifiedNavIfNeeded() {
   if (operationsGroup) operationsGroup.style.display = '';
   if (holdingsGroup) holdingsGroup.style.display = '';
   if (unitsBtn) unitsBtn.style.display = '';
+  // Confirmed directly: hard gate, same as Tenant Management for
+  // Technician — hidden entirely for anyone without real manageUsers
+  // permission, not just softly discouraged. Matches exactly what the
+  // backend itself enforces on the actual create/list actions.
+  if (staffManagementBtn) staffManagementBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers) ? '' : 'none';
 }
 
 // Confirmed directly: collapsed by default — the actual point of
@@ -1259,6 +1276,7 @@ function switchTab(tab) {
   if(tab==='units') renderUnits();
   if(tab==='fixedassets') renderFixedAssetRegister();
   if(tab==='inventory') renderInventory();
+  if(tab==='staffmanagement') renderStaffManagement();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -3455,6 +3473,148 @@ async function submitTraClassImport() {
 // tables (inventory_categories / inventory_locations), fetched fresh
 // each time the Add Item modal opens — no longer a fixed list here.
 let inventoryItemsCache = [];
+
+// Confirmed directly: the real fix for what the pharmacy account
+// setup turned into - a proper way to create a staff account AND set
+// its first working password right here, no email step required at
+// all for a brand-new account. Reset-by-email still exists separately
+// for someone who genuinely forgets their password later.
+const STAFF_ROLE_LABELS = {
+  technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer',
+  admin: 'Admin', property_manager: 'Property Manager', procurement: 'Procurement', stock_keeper: 'Stock Keeper',
+  pharmacy: 'Pharmacy', business_owner: 'Business Owner', system_admin: 'System Admin',
+};
+
+let staffAccountsCache = [];
+
+async function renderStaffManagement() {
+  const container = document.getElementById('view-staffmanagement');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'listStaffAccounts' }),
+    });
+    if (resp.status === 403) {
+      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔒</div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+        <div style="font-size:13px;color:var(--muted)">Only System Admin or Business Owner can manage staff accounts.</div>
+      </div>`;
+      return;
+    }
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load staff accounts');
+    staffAccountsCache = data.accounts || [];
+    renderStaffManagementTable();
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+function renderStaffManagementTable() {
+  const container = document.getElementById('view-staffmanagement');
+  container.innerHTML = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Manage Staff</div>
+        <div style="font-size:12px;color:var(--muted)">Create a real account with a working password set directly — no email step needed for a brand-new person.</div>
+      </div>
+      <button onclick="openAddStaffModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Staff</button>
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px;margin-top:20px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Username</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Email</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Role</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${staffAccountsCache.length === 0
+            ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No accounts yet.</td></tr>`
+            : staffAccountsCache.map(a => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.username)}</td>
+                <td style="padding:9px 12px">${escapeHtml(a.displayName || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.email || '—')}</td>
+                <td style="padding:9px 12px">${escapeHtml(STAFF_ROLE_LABELS[a.role] || a.role)}</td>
+                <td style="padding:9px 12px">
+                  ${a.hasPassword
+                    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green)">Active</span>`
+                    : `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--red-bg);color:var(--red)">No password set</span>`}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openAddStaffModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addStaffOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Staff Account</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username *</label>
+      <input id="staff_username" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Display Name</label>
+      <input id="staff_displayName" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Email</label>
+      <input id="staff_email" type="email" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Role *</label>
+      <select id="staff_role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— Choose a role —</option>
+        ${Object.entries(STAFF_ROLE_LABELS).map(([k, label]) => `<option value="${k}">${label}</option>`).join('')}
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Password * (at least 8 characters)</label>
+      <input id="staff_password" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Set this directly and share it with them — they can change it once logged in. No email needed to get started.</div>
+      <div id="staff_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addStaffOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="staff_submit" onclick="submitAddStaff()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Create Account</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddStaff() {
+  const username = document.getElementById('staff_username').value.trim();
+  const displayName = document.getElementById('staff_displayName').value.trim();
+  const email = document.getElementById('staff_email').value.trim();
+  const role = document.getElementById('staff_role').value;
+  const password = document.getElementById('staff_password').value;
+  const errorBox = document.getElementById('staff_error');
+  const btn = document.getElementById('staff_submit');
+  errorBox.style.display = 'none';
+
+  if (!username) { errorBox.textContent = 'Enter a username.'; errorBox.style.display = 'block'; return; }
+  if (!role) { errorBox.textContent = 'Choose a role.'; errorBox.style.display = 'block'; return; }
+  if (!password || password.length < 8) { errorBox.textContent = 'Password must be at least 8 characters.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'createStaffAccount', username, displayName, email, role, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create account');
+    document.getElementById('addStaffOverlay')?.remove();
+    renderStaffManagement();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create Account';
+  }
+}
 
 async function renderInventory() {
   const container = document.getElementById('view-inventory');
