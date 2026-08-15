@@ -95,6 +95,89 @@ function computeCurrentValue(a) {
 // every quantity change after that happens through a real, logged
 // movement, matching the whole point of this feature: "there is not
 // any form of accountability" on inventory today.
+// Confirmed directly: low-stock notification must be genuinely
+// active, not just a visual badge on the page. Reuses the exact same
+// email + SMS pattern already established for sensor threshold
+// breaches — same providers (Resend, Beem), same generic email
+// template, same alert_log table — routed to its own, dedicated
+// recipient list (STOCK_ALERT_EMAIL / STOCK_ALERT_PHONE) rather than
+// the general sensor-alert contacts, since low stock is a stock
+// keeper/procurement concern, not necessarily an engineering one.
+// Failures here are logged but never thrown — a notification problem
+// should never roll back or fail the actual stock movement that
+// already succeeded.
+async function sendLowStockAlert({ itemName, itemCode, currentQuantity, reorderLevel, unit }) {
+  const { parseEmailList, parsePhoneList, buildBeemRecipients } = await import("../lib/recipients.js");
+  const { buildGenericAlertEmailHtml } = await import("../lib/emailTemplate.js");
+
+  const message = `${itemName} (${itemCode}) is now at ${currentQuantity}${unit ? ' ' + unit : ''}, at or below its reorder level of ${reorderLevel}${unit ? ' ' + unit : ''}. Restocking may be needed soon.`;
+
+  const emailList = parseEmailList(process.env.STOCK_ALERT_EMAIL);
+  if (emailList.length > 0) {
+    try {
+      const html = buildGenericAlertEmailHtml({
+        title: "Low Stock Alert", message,
+        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        color: "#F59E0B",
+      });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: emailList,
+          subject: `Low Stock Alert — ${itemName} (${itemCode})`,
+          html,
+        }),
+      });
+      if (!resp.ok) console.error("Low stock alert - Resend error:", await resp.text());
+    } catch (err) {
+      console.error("Low stock alert - email send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No STOCK_ALERT_EMAIL recipients configured — low stock email not sent.");
+  }
+
+  const phoneList = parsePhoneList(process.env.STOCK_ALERT_PHONE);
+  if (phoneList.length > 0) {
+    try {
+      const cleanMessage = message
+        .replace(/[\u2014\u2013]/g, "-").replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"').replace(/\u2026/g, "...")
+        .replace(/[^\x00-\x7F]/g, "");
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      const resp = await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: cleanMessage.slice(0, 160),
+          recipients: buildBeemRecipients(phoneList),
+        }),
+      });
+      const responseText = await resp.text();
+      if (!resp.ok) console.error("Low stock alert - Beem HTTP error:", responseText);
+    } catch (err) {
+      console.error("Low stock alert - SMS send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No STOCK_ALERT_PHONE recipients configured — low stock SMS not sent.");
+  }
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: itemCode, asset_name: itemName, urgency: "LOW STOCK",
+      channel: "Email + SMS (low stock)", message,
+    });
+  } catch (err) {
+    console.error("Low stock alert - alert_log write failed (non-fatal):", err.message);
+  }
+}
+
 async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
   if (!["stock_keeper", "procurement", "system_admin", "business_owner"].includes(addedByRole)) {
     return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
@@ -137,6 +220,17 @@ async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
       await update("inventory_items", created.id, { current_quantity: startQty });
     }
 
+    // A brand-new item can start out already at or below its own
+    // reorder level (e.g., "we know we're already low, let's get this
+    // into the system") — there's no prior quantity to compare a
+    // transition against here, so this checks directly rather than
+    // relying on the same before/after logic the movement handler
+    // uses, so this genuine case doesn't silently go unnoticed.
+    const { isLowStock } = await import("../lib/inventory.js");
+    if (isLowStock({ current_quantity: startQty, reorder_level: created.reorder_level })) {
+      await sendLowStockAlert({ itemName: created.name, itemCode, currentQuantity: startQty, reorderLevel: created.reorder_level, unit: created.unit_of_measure });
+    }
+
     return res.status(200).json({ success: true, itemCode, id: created.id });
   } catch (err) {
     console.error("addInventoryItem error:", err);
@@ -175,7 +269,7 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
   }
   try {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
-    const { applyMovement } = await import("../lib/inventory.js");
+    const { applyMovement, isLowStock } = await import("../lib/inventory.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
     if (!item) return res.status(404).json({ error: "Inventory item not found." });
 
@@ -191,6 +285,18 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
       reason: reason || null, department: department || null, performed_by: performedBy,
     });
     await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+
+    // Confirmed directly: low-stock notification must be active. Only
+    // fires on a genuine transition into low stock — checked against
+    // the quantity BEFORE this movement, not just "is it low now" —
+    // so someone recording several OUT movements while already below
+    // the reorder level doesn't get spammed with the same alert every
+    // single time.
+    const wasLowBefore = isLowStock({ current_quantity: item.current_quantity, reorder_level: item.reorder_level });
+    const isLowNow = isLowStock({ current_quantity: newQuantity, reorder_level: item.reorder_level });
+    if (!wasLowBefore && isLowNow) {
+      await sendLowStockAlert({ itemName: item.name, itemCode: item.item_code, currentQuantity: newQuantity, reorderLevel: item.reorder_level, unit: item.unit_of_measure });
+    }
 
     return res.status(200).json({ success: true, newQuantity });
   } catch (err) {
