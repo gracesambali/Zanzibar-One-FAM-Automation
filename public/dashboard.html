@@ -4276,7 +4276,7 @@ async function openAddInventoryItemModal() {
       <input id="inv_name" type="text" placeholder="e.g. Nitrile Gloves (Box of 100)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
-      <select id="inv_category" onchange="toggleInlineAddField('category')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <select id="inv_category" onchange="toggleInlineAddField('category'); updateBatchTrackingHint('inv_category', 'inv_batchHint')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">— Not set —</option>
         ${inventoryCategoriesCache.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
         <option value="__add_new__">+ Add new category…</option>
@@ -4285,6 +4285,7 @@ async function openAddInventoryItemModal() {
         <input id="inv_category_newInput" type="text" placeholder="New category name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
         <button onclick="addInlineInventoryOption('category')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
       </div>
+      <div id="inv_batchHint" style="display:none;font-size:11px;color:var(--green);margin:-4px 0 10px">✓ Batch tracking will be enabled automatically for this category.</div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit of Measure</label>
       <input id="inv_unit" type="text" placeholder="e.g. boxes, pieces, liters" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -4323,6 +4324,32 @@ async function openAddInventoryItemModal() {
 // than navigating away to a separate admin screen — the whole point
 // was adding a category or location right from the item form when
 // it isn't already there.
+// Confirmed directly: no manual flagging required. Mirrors the same
+// real backend rule (lib/inventory.js's categoryImpliesBatchTracking)
+// so what a person sees happening on screen matches exactly what
+// actually gets saved — not a separate, potentially-differing
+// frontend guess about which category triggers this.
+function categoryImpliesBatchTrackingClient(category) {
+  return category === 'Pharmaceutical';
+}
+
+function updateBatchTrackingHint(categorySelectId, hintDivId, checkboxId) {
+  const category = document.getElementById(categorySelectId)?.value;
+  const implies = categoryImpliesBatchTrackingClient(category);
+  if (hintDivId) {
+    const hint = document.getElementById(hintDivId);
+    if (hint) hint.style.display = implies ? 'block' : 'none';
+  }
+  if (checkboxId) {
+    const checkbox = document.getElementById(checkboxId);
+    // Only auto-checks, never auto-unchecks — matching the backend's
+    // own real rule exactly: moving a category away from
+    // Pharmaceutical never silently turns tracking back off on its
+    // own, since real batches may already exist on this item.
+    if (checkbox && implies) checkbox.checked = true;
+  }
+}
+
 function toggleInlineAddField(field, prefix) {
   prefix = prefix || 'inv_';
   const select = document.getElementById(`${prefix}${field}`);
@@ -4456,7 +4483,7 @@ async function openEditInventoryItemModal(itemId) {
       <input id="einv_name" type="text" value="${escapeHtml(item.name)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
-      <select id="einv_category" onchange="toggleInlineAddField('category', 'einv_')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <select id="einv_category" onchange="toggleInlineAddField('category', 'einv_'); updateBatchTrackingHint('einv_category', null, 'einv_batchTracked')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">— Not set —</option>
         ${inventoryCategoriesCache.map(c => `<option value="${escapeHtml(c)}"${item.category===c?' selected':''}>${escapeHtml(c)}</option>`).join('')}
         <option value="__add_new__">+ Add new category…</option>

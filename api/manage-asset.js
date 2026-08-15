@@ -246,11 +246,15 @@ async function logInventoryActivity(action, details, performedBy) {
 
 async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity }, addedBy, existingCodes) {
   const { insert, update } = await import("../lib/postgresClient.js");
-  const { generateItemCode, isLowStock } = await import("../lib/inventory.js");
+  const { generateItemCode, isLowStock, categoryImpliesBatchTracking } = await import("../lib/inventory.js");
 
   const itemCode = generateItemCode(existingCodes);
   existingCodes.push(itemCode); // so the next call in the same batch generates a genuinely different code
 
+  // Confirmed directly: no manual flagging required — a real,
+  // specific category (Pharmaceutical) automatically turns batch
+  // tracking on at the moment of creation, no separate edit step
+  // needed afterward.
   const created = await insert("inventory_items", {
     item_code: itemCode,
     name: name.trim(),
@@ -262,6 +266,7 @@ async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLe
     location: location || null,
     building: building || null,
     unit_cost_tzs: unitCost != null && unitCost !== "" ? Number(unitCost) : null,
+    is_batch_tracked: categoryImpliesBatchTracking(category),
     added_by: addedBy,
   });
 
@@ -682,6 +687,17 @@ async function handleEditInventoryItem(req, res, editedBy) {
     setIfChanged(location, "location", before.location, "Location", false);
     setIfChanged(building, "building", before.building, "Building", false);
     setIfChanged(unitCost, "unit_cost_tzs", before.unit_cost_tzs, "Unit Cost", true);
+
+    // Confirmed directly: no manual flagging required. Only turns ON
+    // automatically — moving a category away from Pharmaceutical
+    // never silently turns tracking back off, since real batches may
+    // already exist and that's a genuinely bigger, more consequential
+    // change than a category label update should make on its own.
+    const { categoryImpliesBatchTracking } = await import("../lib/inventory.js");
+    if (category !== undefined && categoryImpliesBatchTracking(category) && !before.is_batch_tracked) {
+      fields.is_batch_tracked = true;
+      changes.push("Batch Tracking: automatically enabled (Pharmaceutical category)");
+    }
 
     if (changes.length > 0) {
       await update("inventory_items", itemId, fields);
