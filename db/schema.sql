@@ -967,3 +967,41 @@ create table inventory_barcode_links (
 -- seed applied.
 insert into inventory_categories (label) values ('Pharmaceutical')
   on conflict (label) do nothing;
+
+-- ============================================================
+-- Annual Procurement Plan, confirmed directly - PPRA-inclined, built
+-- around Tanzania's real Public Procurement Act structure (a legal
+-- requirement for procuring entities: prepare, get approval for, and
+-- submit a plan of everything expected to be procured for the coming
+-- financial year). Deliberately its own record scoped by fiscal
+-- year, distinct from day-to-day Procurement requests and from
+-- Planned Maintenance (which covers recurring upkeep on things
+-- already owned, not new acquisitions).
+-- ============================================================
+create table annual_plan_items (
+  id                    uuid primary key default gen_random_uuid(),
+  fiscal_year           integer not null,
+  item_description      text not null,
+  category              text,               -- Goods, Works, Non-Consulting Services, Consultant Services - the real PPRA classification
+  estimated_quantity    numeric,
+  unit_of_measure       text,
+  estimated_cost_tzs    numeric,
+  procurement_method    text,               -- Open Tender, Restricted Tender, Request for Quotations, Direct/Single Source, Framework Agreement - real PPRA methods
+  planned_quarter       text,               -- Q1, Q2, Q3, Q4
+  source_of_funds       text,
+  status                text not null default 'Planned',  -- Planned, In Progress, Completed, Cancelled
+  notes                 text,
+  added_by              text,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create index idx_annual_plan_items_year on annual_plan_items (fiscal_year);
+
+create table annual_plan_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  action          text not null,
+  details         text not null,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index idx_annual_plan_activity_log_time on annual_plan_activity_log (performed_at desc);

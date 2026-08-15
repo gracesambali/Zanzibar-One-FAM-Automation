@@ -419,6 +419,9 @@ button { font-family: inherit; cursor: pointer; }
       <button class="tab-btn nested" data-tab="inventory" data-label="Inventory" id="inventoryNavBtn" onclick="switchTab('inventory')" onmouseenter="showSidebarTooltip(this, 'Inventory')" onmouseleave="hideSidebarTooltip()">
         <span class="tab-label">Inventory</span>
       </button>
+      <button class="tab-btn nested" data-tab="annualplanning" data-label="Annual Planning" id="annualPlanningNavBtn" onclick="switchTab('annualplanning')" onmouseenter="showSidebarTooltip(this, 'Annual Planning')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Annual Planning</span>
+      </button>
     </div>
   </div>
 
@@ -479,6 +482,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-fixedassets" class="view"></div>
   <div id="view-inventory" class="view"></div>
   <div id="view-staffmanagement" class="view"></div>
+  <div id="view-annualplanning" class="view"></div>
 </div>
 </div>
 
@@ -1277,6 +1281,7 @@ function switchTab(tab) {
   if(tab==='fixedassets') renderFixedAssetRegister();
   if(tab==='inventory') renderInventory();
   if(tab==='staffmanagement') renderStaffManagement();
+  if(tab==='annualplanning') renderAnnualPlanning();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -3486,6 +3491,333 @@ const STAFF_ROLE_LABELS = {
 };
 
 let staffAccountsCache = [];
+
+// Annual Procurement Plan, confirmed directly as PPRA-aligned - real
+// categories and procurement methods matching Tanzania's Public
+// Procurement Act structure, not invented placeholders.
+const ANNUAL_PLAN_CATEGORIES = ["Goods", "Works", "Non-Consulting Services", "Consultant Services"];
+const ANNUAL_PLAN_METHODS = ["Open Tender", "Restricted Tender", "Request for Quotations", "Direct/Single Source", "Framework Agreement"];
+const ANNUAL_PLAN_QUARTERS = ["Q1", "Q2", "Q3", "Q4"];
+const ANNUAL_PLAN_STATUSES = ["Planned", "In Progress", "Completed", "Cancelled"];
+const ANNUAL_PLAN_STATUS_COLORS = { Planned: 'var(--muted)', 'In Progress': 'var(--amber)', Completed: 'var(--green)', Cancelled: 'var(--red)' };
+
+let annualPlanItemsCache = [];
+let annualPlanCurrentYear = null;
+
+async function renderAnnualPlanning() {
+  const container = document.getElementById('view-annualplanning');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const resp = await fetch('/api/get-assets?annualPlanYears=true');
+    if (resp.status === 403) {
+      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔒</div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+        <div style="font-size:13px;color:var(--muted)">The Annual Plan is only available to Procurement, System Admin, and Business Owner.</div>
+      </div>`;
+      return;
+    }
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load the Annual Plan');
+    const years = data.years || [];
+    // A sensible default: the most recent real year if one exists,
+    // otherwise the current calendar year - so a first-time user can
+    // start adding items for the year they're actually planning
+    // right away, not stare at an empty year picker.
+    annualPlanCurrentYear = years.length > 0 ? years[0] : new Date().getFullYear();
+    await loadAnnualPlanForYear(annualPlanCurrentYear, years);
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function loadAnnualPlanForYear(year, knownYears) {
+  annualPlanCurrentYear = year;
+  try {
+    const resp = await fetch(`/api/get-assets?annualPlanItems=true&year=${year}`);
+    const data = await resp.json();
+    annualPlanItemsCache = data.items || [];
+    renderAnnualPlanningTable(data.totalEstimatedCost, data.statusCounts, knownYears);
+    loadAnnualPlanActivityLog();
+  } catch (err) {
+    document.getElementById('view-annualplanning').innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function switchAnnualPlanYear(year) {
+  const yearsResp = await fetch('/api/get-assets?annualPlanYears=true');
+  const yearsData = await yearsResp.json();
+  await loadAnnualPlanForYear(Number(year), yearsData.years || []);
+}
+
+function renderAnnualPlanningTable(totalEstimatedCost, statusCounts, knownYears) {
+  const container = document.getElementById('view-annualplanning');
+  const canManage = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
+  const items = annualPlanItemsCache;
+  const years = knownYears && knownYears.length > 0 ? knownYears : [annualPlanCurrentYear];
+  const yearOptions = years.includes(annualPlanCurrentYear) ? years : [...years, annualPlanCurrentYear].sort((a, b) => b - a);
+
+  let html = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Annual Planning</div>
+        <div style="font-size:12px;color:var(--muted)">A real Annual Procurement Plan, PPRA-aligned — everything expected to be procured for the year, tracked from planned through to completed.</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select onchange="switchAnnualPlanYear(this.value)" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff">
+          ${yearOptions.map(y => `<option value="${y}"${y === annualPlanCurrentYear ? ' selected' : ''}>FY ${y}</option>`).join('')}
+        </select>
+        ${canManage ? `<button onclick="openAddAnnualPlanItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>` : ''}
+      </div>
+    </div>
+
+    <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">Planned Items</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalEstimatedCost)}</div><div class="summary-label">Total Estimated Budget</div></div>
+      ${ANNUAL_PLAN_STATUSES.map(s => statusCounts?.[s] ? `<div class="summary-card"><div class="summary-val" style="color:${ANNUAL_PLAN_STATUS_COLORS[s]}">${statusCounts[s]}</div><div class="summary-label">${s}</div></div>` : '').join('')}
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Description</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Method</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Quarter</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Est. Cost</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
+            <th style="padding:10px 12px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.length === 0
+            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No items planned for FY ${annualPlanCurrentYear} yet.${canManage ? ' Add the first one above.' : ''}</td></tr>`
+            : items.map(i => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px">
+                  <div style="font-weight:600;color:var(--navy)">${escapeHtml(i.itemDescription)}</div>
+                  ${i.estimatedQuantity != null ? `<div style="font-size:11px;color:var(--muted)">${i.estimatedQuantity} ${escapeHtml(i.unitOfMeasure || '')}</div>` : ''}
+                </td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.procurementMethod || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.plannedQuarter || '—')}</td>
+                <td style="padding:9px 12px;text-align:right">${i.estimatedCost != null ? formatCurrency(i.estimatedCost) : '—'}</td>
+                <td style="padding:9px 12px">
+                  ${canManage
+                    ? `<select onchange="quickUpdateAnnualPlanStatus('${i.id}', this.value)" style="font-size:11px;padding:3px 6px;border-radius:8px;border:1px solid var(--border);color:${ANNUAL_PLAN_STATUS_COLORS[i.status]};font-weight:700">
+                        ${ANNUAL_PLAN_STATUSES.map(s => `<option value="${s}"${s === i.status ? ' selected' : ''}>${s}</option>`).join('')}
+                      </select>`
+                    : `<span style="font-size:11px;font-weight:700;color:${ANNUAL_PLAN_STATUS_COLORS[i.status]}">${i.status}</span>`}
+                </td>
+                <td style="padding:9px 12px;text-align:right;white-space:nowrap">
+                  ${canManage ? `<button onclick="openEditAnnualPlanItemModal('${i.id}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Edit</button>
+                  <button onclick="deleteAnnualPlanItemNow('${i.id}', '${i.itemDescription.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="annualPlanActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function loadAnnualPlanActivityLog() {
+  const content = document.getElementById('annualPlanActivityLogContent');
+  if (!content) return;
+  try {
+    const resp = await fetch('/api/get-assets?annualPlanActivityLog=true');
+    const data = await resp.json();
+    const entries = data.entries || [];
+    content.innerHTML = entries.length === 0
+      ? `<div style="font-style:italic">No activity recorded yet.</div>`
+      : entries.map(e => `
+        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+        </div>`).join('');
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
+  }
+}
+
+async function quickUpdateAnnualPlanStatus(itemId, status) {
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'editAnnualPlanItem', itemId, status }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update status');
+    await switchAnnualPlanYear(annualPlanCurrentYear);
+  } catch (err) {
+    alert('Could not update status: ' + err.message);
+    await switchAnnualPlanYear(annualPlanCurrentYear);
+  }
+}
+
+function annualPlanItemFormFields(item) {
+  const v = item || {};
+  return `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description *</label>
+    <input id="ap_description" type="text" value="${v.itemDescription ? escapeHtml(v.itemDescription) : ''}" placeholder="e.g. New backup generator (200kVA)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
+    <select id="ap_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="">— Not set —</option>
+      ${ANNUAL_PLAN_CATEGORIES.map(c => `<option value="${c}"${v.category === c ? ' selected' : ''}>${c}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Est. Quantity</label>
+      <input id="ap_quantity" type="number" min="0" value="${v.estimatedQuantity ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit</label>
+      <input id="ap_unit" type="text" value="${v.unitOfMeasure ? escapeHtml(v.unitOfMeasure) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Estimated Cost (TZS)</label>
+    <input id="ap_cost" type="number" min="0" value="${v.estimatedCost ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Procurement Method</label>
+    <select id="ap_method" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="">— Not set —</option>
+      ${ANNUAL_PLAN_METHODS.map(m => `<option value="${m}"${v.procurementMethod === m ? ' selected' : ''}>${m}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Planned Quarter</label>
+      <select id="ap_quarter" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— Not set —</option>
+        ${ANNUAL_PLAN_QUARTERS.map(q => `<option value="${q}"${v.plannedQuarter === q ? ' selected' : ''}>${q}</option>`).join('')}
+      </select></div>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Source of Funds</label>
+      <input id="ap_funds" type="text" value="${v.sourceOfFunds ? escapeHtml(v.sourceOfFunds) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
+    <textarea id="ap_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">${v.notes ? escapeHtml(v.notes) : ''}</textarea>
+  `;
+}
+
+function openAddAnnualPlanItemModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addAnnualPlanOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Plan Item — FY ${annualPlanCurrentYear}</div>
+      ${annualPlanItemFormFields()}
+      <div id="ap_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addAnnualPlanOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ap_addSubmit" onclick="submitAddAnnualPlanItem()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Item</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddAnnualPlanItem() {
+  const description = document.getElementById('ap_description').value.trim();
+  const errorBox = document.getElementById('ap_addError');
+  const btn = document.getElementById('ap_addSubmit');
+  errorBox.style.display = 'none';
+  if (!description) { errorBox.textContent = 'Enter what this item is.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'addAnnualPlanItem', fiscalYear: annualPlanCurrentYear, itemDescription: description,
+        category: document.getElementById('ap_category').value,
+        estimatedQuantity: document.getElementById('ap_quantity').value,
+        unitOfMeasure: document.getElementById('ap_unit').value.trim(),
+        estimatedCost: document.getElementById('ap_cost').value,
+        procurementMethod: document.getElementById('ap_method').value,
+        plannedQuarter: document.getElementById('ap_quarter').value,
+        sourceOfFunds: document.getElementById('ap_funds').value.trim(),
+        notes: document.getElementById('ap_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add item');
+    document.getElementById('addAnnualPlanOverlay')?.remove();
+    await switchAnnualPlanYear(annualPlanCurrentYear);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Item';
+  }
+}
+
+function openEditAnnualPlanItemModal(itemId) {
+  const item = annualPlanItemsCache.find(i => i.id === itemId);
+  if (!item) { alert('Could not find this item — try refreshing.'); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'editAnnualPlanOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Plan Item</div>
+      ${annualPlanItemFormFields(item)}
+      <div id="ap_editError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editAnnualPlanOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ap_editSubmit" onclick="submitEditAnnualPlanItem('${itemId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditAnnualPlanItem(itemId) {
+  const description = document.getElementById('ap_description').value.trim();
+  const errorBox = document.getElementById('ap_editError');
+  const btn = document.getElementById('ap_editSubmit');
+  errorBox.style.display = 'none';
+  if (!description) { errorBox.textContent = 'Enter what this item is.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'editAnnualPlanItem', itemId, itemDescription: description,
+        category: document.getElementById('ap_category').value,
+        estimatedQuantity: document.getElementById('ap_quantity').value,
+        unitOfMeasure: document.getElementById('ap_unit').value.trim(),
+        estimatedCost: document.getElementById('ap_cost').value,
+        procurementMethod: document.getElementById('ap_method').value,
+        plannedQuarter: document.getElementById('ap_quarter').value,
+        sourceOfFunds: document.getElementById('ap_funds').value.trim(),
+        notes: document.getElementById('ap_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('editAnnualPlanOverlay')?.remove();
+    await switchAnnualPlanYear(annualPlanCurrentYear);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function deleteAnnualPlanItemNow(itemId, description) {
+  if (!confirm(`Permanently delete "${description}" from the FY ${annualPlanCurrentYear} plan? This cannot be undone.`)) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteAnnualPlanItem', itemId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    await switchAnnualPlanYear(annualPlanCurrentYear);
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
 
 async function renderStaffManagement() {
   const container = document.getElementById('view-staffmanagement');
