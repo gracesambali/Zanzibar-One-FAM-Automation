@@ -324,8 +324,8 @@ button { font-family: inherit; cursor: pointer; }
   <div class="header-left">
     <div class="header-logo"><img src="/selian-logo.png" alt="GVC"></div>
     <div>
-      <div class="header-title">Facility Asset Manager</div>
-      <div class="header-sub" id="header-subtitle">Prepared for [Client Name] — [Building Name] · MEP Systems</div>
+      <div class="header-title" id="header-title">Selian Lutheran Hospital</div>
+      <div class="header-sub" id="header-subtitle">Facility Asset Management System</div>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px">
@@ -472,7 +472,7 @@ button { font-family: inherit; cursor: pointer; }
 </div>
 </div>
 
-<div class="footer">Gracing Ventures · BIM Training – Coordination – Information Management · Tanzania</div>
+<div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
 
 <script>
 // ============================================================
@@ -497,11 +497,17 @@ const CLIENT_CONFIG = {
 
 // Applies whatever's currently in CLIENT_CONFIG to the page — called
 // once immediately with the defaults above, then again if the fetch
-// below brings back different values.
+// below brings back different values. The header title follows
+// CLIENT_CONFIG.clientName the same way the subtitle already did,
+// rather than being hardcoded separately — the actual client's name
+// is the prominent thing now, with the product name as the plain,
+// fixed description underneath it.
 function applyClientConfigToPage() {
   document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
+  const title = document.getElementById('header-title');
+  if (title) title.textContent = CLIENT_CONFIG.clientName;
   const sub = document.getElementById('header-subtitle');
-  if (sub) sub.textContent = `Prepared for ${CLIENT_CONFIG.clientName} · ${CLIENT_CONFIG.district}, ${CLIENT_CONFIG.region} · MEP Systems`;
+  if (sub) sub.textContent = "Facility Asset Management System";
 }
 
 applyClientConfigToPage();
