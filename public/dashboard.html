@@ -3305,7 +3305,9 @@ async function submitTraClassImport() {
 // through a real, attributable movement rather than an editable
 // number — the whole point being real accountability where there
 // currently is none.
-const INVENTORY_CATEGORIES = ["Fuel", "Stationery", "Consumable", "Spare Parts", "Building Materials", "Maintenance Materials"];
+// Categories and locations now come from real, editable database
+// tables (inventory_categories / inventory_locations), fetched fresh
+// each time the Add Item modal opens — no longer a fixed list here.
 let inventoryItemsCache = [];
 
 async function renderInventory() {
@@ -3393,7 +3395,25 @@ function renderInventoryTable() {
   container.innerHTML = html;
 }
 
-function openAddInventoryItemModal() {
+let inventoryCategoriesCache = [];
+let inventoryLocationsCache = [];
+
+// Fetched fresh each time the modal opens rather than cached at app
+// init like TRA classes are — this modal is the only place these
+// lists are used, so there's no benefit to loading them earlier for
+// everyone regardless of whether they ever add an item.
+async function openAddInventoryItemModal() {
+  try {
+    const [catResp, locResp] = await Promise.all([
+      fetch('/api/get-assets?inventoryCategories=true'),
+      fetch('/api/get-assets?inventoryLocations=true'),
+    ]);
+    inventoryCategoriesCache = catResp.ok ? (await catResp.json()).categories || [] : [];
+    inventoryLocationsCache = locResp.ok ? (await locResp.json()).locations || [] : [];
+  } catch (err) {
+    console.error('Could not load inventory categories/locations:', err);
+  }
+
   const overlay = document.createElement('div');
   overlay.id = 'addInventoryItemOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
@@ -3402,11 +3422,18 @@ function openAddInventoryItemModal() {
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Inventory Item</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
       <input id="inv_name" type="text" placeholder="e.g. Nitrile Gloves (Box of 100)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
-      <select id="inv_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="inv_category" onchange="toggleInlineAddField('category')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">— Not set —</option>
-        ${INVENTORY_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('')}
+        ${inventoryCategoriesCache.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+        <option value="__add_new__">+ Add new category…</option>
       </select>
+      <div id="inv_category_new" style="display:none;gap:6px;margin-bottom:10px">
+        <input id="inv_category_newInput" type="text" placeholder="New category name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="addInlineInventoryOption('category')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+      </div>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit of Measure</label>
       <input id="inv_unit" type="text" placeholder="e.g. boxes, pieces, liters" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <div style="display:flex;gap:10px">
@@ -3415,8 +3442,18 @@ function openAddInventoryItemModal() {
         <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Level</label>
         <input id="inv_target" type="number" min="0" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
       </div>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Location</label>
-      <input id="inv_location" type="text" placeholder="e.g. Main Store, Pharmacy" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="inv_location" onchange="toggleInlineAddField('location')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+        <option value="">— Not set —</option>
+        ${inventoryLocationsCache.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('')}
+        <option value="__add_new__">+ Add new location…</option>
+      </select>
+      <div id="inv_location_new" style="display:none;gap:6px;margin-bottom:10px">
+        <input id="inv_location_newInput" type="text" placeholder="New location name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="addInlineInventoryOption('location')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+      </div>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Unit Cost (TZS)</label>
       <input id="inv_cost" type="number" min="0" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Opening Quantity</label>
@@ -3430,12 +3467,72 @@ function openAddInventoryItemModal() {
   document.body.appendChild(overlay);
 }
 
+// Selecting "+ Add new..." reveals a small inline text input rather
+// than navigating away to a separate admin screen — the whole point
+// was adding a category or location right from the item form when
+// it isn't already there.
+function toggleInlineAddField(field) {
+  const select = document.getElementById(`inv_${field}`);
+  const row = document.getElementById(`inv_${field}_new`);
+  if (select.value === '__add_new__') {
+    row.style.display = 'flex';
+    document.getElementById(`inv_${field}_newInput`).focus();
+  } else {
+    row.style.display = 'none';
+  }
+}
+
+async function addInlineInventoryOption(field) {
+  const input = document.getElementById(`inv_${field}_newInput`);
+  const label = input.value.trim();
+  if (!label) { input.focus(); return; }
+
+  const action = field === 'category' ? 'addInventoryCategory' : 'addInventoryLocation';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, label }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add');
+
+    // Adds the real new option into the dropdown right where it is,
+    // selects it, and hides the inline input again — no need to
+    // reopen or reload the whole modal for this.
+    const select = document.getElementById(`inv_${field}`);
+    const newOption = document.createElement('option');
+    newOption.value = data.label;
+    newOption.textContent = data.label;
+    select.insertBefore(newOption, select.lastElementChild); // right before "+ Add new..."
+    select.value = data.label;
+    document.getElementById(`inv_${field}_new`).style.display = 'none';
+    input.value = '';
+  } catch (err) {
+    alert('Could not add: ' + err.message);
+  }
+}
+
 async function submitAddInventoryItem() {
   const name = document.getElementById('inv_name').value.trim();
   const errorBox = document.getElementById('inv_addError');
   const btn = document.getElementById('inv_addSubmit');
   errorBox.style.display = 'none';
   if (!name) { errorBox.textContent = 'Enter a name.'; errorBox.style.display = 'block'; return; }
+  // Someone may have selected "+ Add new..." and typed something but
+  // never actually clicked Add before trying to submit the whole
+  // form — catching that here rather than silently sending the
+  // literal placeholder value as a real category or location.
+  if (document.getElementById('inv_category').value === '__add_new__') {
+    errorBox.textContent = 'Finish adding the new category (or pick an existing one) before continuing.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (document.getElementById('inv_location').value === '__add_new__') {
+    errorBox.textContent = 'Finish adding the new location (or pick an existing one) before continuing.';
+    errorBox.style.display = 'block';
+    return;
+  }
 
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
