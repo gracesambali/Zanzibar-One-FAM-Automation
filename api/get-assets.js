@@ -407,6 +407,18 @@ export default async function handler(req, res) {
   // Inventory Management v1 - every active item, with a real
   // low-stock flag computed fresh from its current quantity and
   // reorder level, not a stored value that could drift stale.
+  //
+  // Confirmed directly, matching the exact Asset Tracking pattern:
+  // everyone sees the Inventory tab, but the actual data is
+  // genuinely restricted to Stock Keeper, Procurement, System Admin,
+  // and Business Owner — a real 403 at the API level, not a
+  // stripped-down view.
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements"];
+  const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
+  if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+    return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
+  }
+
   if (req.query.inventoryItems === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");

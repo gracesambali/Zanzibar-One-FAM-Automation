@@ -3313,6 +3313,14 @@ async function renderInventory() {
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
     const resp = await fetch('/api/get-assets?inventoryItems=true');
+    if (resp.status === 403) {
+      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔒</div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+        <div style="font-size:13px;color:var(--muted);max-width:360px;margin:0 auto">Inventory is only available to Stock Keeper, Procurement, System Admin, and Business Owner.</div>
+      </div>`;
+      return;
+    }
     if (!resp.ok) throw new Error('Failed to load inventory (' + resp.status + ')');
     const data = await resp.json();
     inventoryItemsCache = data.items || [];
