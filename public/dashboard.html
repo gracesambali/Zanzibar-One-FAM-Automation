@@ -381,9 +381,9 @@ button { font-family: inherit; cursor: pointer; }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
     <span class="tab-label">Planned Maintenance</span>
   </button>
-  <button class="tab-btn" data-tab="units" data-label="Tenant Units" id="unitsNavBtn" onclick="switchTab('units')" onmouseenter="showSidebarTooltip(this, 'Tenant Units')" onmouseleave="hideSidebarTooltip()" style="display:none">
+  <button class="tab-btn" data-tab="units" data-label="Tenant Management" id="unitsNavBtn" onclick="switchTab('units')" onmouseenter="showSidebarTooltip(this, 'Tenant Management')" onmouseleave="hideSidebarTooltip()" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
-    <span class="tab-label">Tenant Units</span>
+    <span class="tab-label">Tenant Management</span>
   </button>
   <button class="tab-btn" data-tab="fixedassets" data-label="Asset Tracking" id="fixedAssetsNavBtn" onclick="switchTab('fixedassets')" onmouseenter="showSidebarTooltip(this, 'Asset Tracking')" onmouseleave="hideSidebarTooltip()" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
@@ -2000,15 +2000,45 @@ async function submitAssetEdit(recordId) {
   }
 }
 
+// Confirmed directly: relocation needs to genuinely support moving to
+// a different facility, not only a different building within the
+// current one. Picking a facility narrows the Building dropdown to
+// just that facility's real buildings; leaving it on "No change"
+// keeps every building available, for the common case of moving
+// within the same facility without needing to re-select it first.
+function updateRelocateBuildingOptions() {
+  const facilitySelect = document.getElementById('rel_facility');
+  const buildingSelect = document.getElementById('rel_building');
+  const selectedFacility = facilitySelect.value;
+  const buildings = selectedFacility
+    ? (facilitiesData.find(f => f.name === selectedFacility)?.buildings || [])
+    : facilitiesData.flatMap(f => f.buildings);
+  buildingSelect.innerHTML = `<option value="">— No change —</option>` +
+    buildings.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+}
+
 function openRelocateForm(recordId, assetName) {
   const overlay = document.createElement('div');
   overlay.id = 'relocateOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
   overlay.innerHTML = `
-    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:28px">
+    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:28px;max-height:85vh;overflow-y:auto">
       <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Relocate Asset</h3>
       <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Moving <strong>${assetName}</strong> to a new location. The old location will be logged for history.</div>
       <div id="relocateError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px"></div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Facility</label>
+      <select id="rel_facility" onchange="updateRelocateBuildingOptions()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— No change —</option>
+        ${facilitiesData.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('')}
+      </select>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Building</label>
+      <select id="rel_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">— No change —</option>
+        ${facilitiesData.flatMap(f => f.buildings).map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+      </select>
+
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor/Level</label>
       <select id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="">— No change —</option>
@@ -2034,14 +2064,26 @@ function openRelocateForm(recordId, assetName) {
 }
 
 async function submitRelocation(recordId) {
+  const facility = document.getElementById('rel_facility').value.trim();
+  const building = document.getElementById('rel_building').value.trim();
   const floor = document.getElementById('rel_floor').value.trim();
   const room = document.getElementById('rel_room').value.trim();
   const reason = document.getElementById('rel_reason').value.trim();
   const errorBox = document.getElementById('relocateError');
   const btn = document.getElementById('rel_submit');
 
-  if (!floor && !room) {
-    errorBox.textContent = 'Enter at least a new floor or room/zone.';
+  // A facility change alone doesn't actually move anything — the
+  // asset's real location field is building, so picking a new
+  // facility without picking a building within it is a no-op that
+  // would silently do nothing, confirmed worth catching rather than
+  // leaving someone thinking they'd relocated when nothing changed.
+  if (facility && !building) {
+    errorBox.textContent = 'You picked a new facility but not a building within it — pick a building to actually complete the move.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (!building && !floor && !room) {
+    errorBox.textContent = 'Enter at least a new building, floor, or room/zone.';
     errorBox.style.display = 'block';
     return;
   }
@@ -2054,7 +2096,7 @@ async function submitRelocation(recordId) {
     const resp = await fetch('/api/manage-asset', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId, newFloor: floor, newRoom: room, reason }),
+      body: JSON.stringify({ recordId, newFloor: floor, newRoom: room, newBuilding: building, reason }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to relocate');
@@ -2460,7 +2502,7 @@ async function showUnitDetail(unitId) {
   const unitAssets = assets.filter(a => a.unit === u.name);
   const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/unit-portal?unit=' + u.id)}`;
 
-  let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Units</button>
+  let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Management</button>
   <div class="wo-layout">
   <div class="wo-main">
   <div class="detail-panel">
@@ -3350,6 +3392,29 @@ async function refreshInventoryQuietly() {
   }
 }
 
+// Genuinely instant updates, confirmed directly — no network round
+// trip at all for what's already known locally. A stock movement's
+// own response already returns the real new quantity; an edit's new
+// values are exactly what was just typed into the form. Patching the
+// already-loaded cache directly and re-rendering from it is not an
+// approximation — it's the same real data the server just confirmed,
+// just without waiting on a second fetch to see it reflected.
+function patchInventoryItemLocally(itemId, changes) {
+  const item = inventoryItemsCache.find(i => i.id === itemId);
+  if (!item) return;
+  Object.assign(item, changes);
+  // Low stock recomputed the same way the server does — at or below
+  // a real reorder level counts as low, matching lib/inventory.js's
+  // isLowStock exactly, not an approximation of it.
+  item.lowStock = item.reorderLevel != null && item.currentQuantity <= item.reorderLevel;
+  renderInventoryTable();
+}
+
+function removeInventoryItemLocally(itemId) {
+  inventoryItemsCache = inventoryItemsCache.filter(i => i.id !== itemId);
+  renderInventoryTable();
+}
+
 // Column-header filter/sort state for Inventory, matching the exact
 // pattern already proven on Asset Tracking - Category and Location
 // are value filters, Quantity is a sort.
@@ -3753,7 +3818,7 @@ async function deleteInventoryItemNow(itemId, itemCode, name) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
-    refreshInventoryQuietly();
+    removeInventoryItemLocally(itemId);
   } catch (err) {
     alert('Could not delete: ' + err.message);
   }
@@ -3995,25 +4060,32 @@ async function submitAddInventoryItem() {
   }
 
   btn.disabled = true; btn.textContent = 'Adding…';
+  const category = document.getElementById('inv_category').value;
+  const unitOfMeasure = document.getElementById('inv_unit').value.trim();
+  const reorderLevel = document.getElementById('inv_reorder').value;
+  const targetLevel = document.getElementById('inv_target').value;
+  const location = document.getElementById('inv_location').value.trim();
+  const unitCost = document.getElementById('inv_cost').value;
+  const initialQuantity = document.getElementById('inv_initialQty').value;
   try {
     const resp = await fetch('/api/manage-asset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entityType: 'inventoryItem', name,
-        category: document.getElementById('inv_category').value,
-        unitOfMeasure: document.getElementById('inv_unit').value.trim(),
-        reorderLevel: document.getElementById('inv_reorder').value,
-        targetLevel: document.getElementById('inv_target').value,
-        location: document.getElementById('inv_location').value.trim(),
-        unitCost: document.getElementById('inv_cost').value,
-        initialQuantity: document.getElementById('inv_initialQty').value,
-      }),
+      body: JSON.stringify({ entityType: 'inventoryItem', name, category, unitOfMeasure, reorderLevel, targetLevel, location, unitCost, initialQuantity }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add item');
     document.getElementById('addInventoryItemOverlay')?.remove();
-    refreshInventoryQuietly();
+    const startQty = Number(initialQuantity) || 0;
+    const reorderNum = reorderLevel !== '' ? Number(reorderLevel) : null;
+    inventoryItemsCache.push({
+      id: data.id, itemCode: data.itemCode, name, category: category || null,
+      unitOfMeasure: unitOfMeasure || null, currentQuantity: startQty,
+      reorderLevel: reorderNum, targetLevel: targetLevel !== '' ? Number(targetLevel) : null,
+      location: location || null, unitCost: unitCost !== '' ? Number(unitCost) : null,
+      lowStock: reorderNum != null && startQty <= reorderNum,
+    });
+    renderInventoryTable();
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -4116,24 +4188,27 @@ async function submitEditInventoryItem(itemId) {
   }
 
   btn.disabled = true; btn.textContent = 'Saving…';
+  const category = document.getElementById('einv_category').value;
+  const unitOfMeasure = document.getElementById('einv_unit').value.trim();
+  const reorderLevel = document.getElementById('einv_reorder').value;
+  const targetLevel = document.getElementById('einv_target').value;
+  const location = document.getElementById('einv_location').value;
+  const unitCost = document.getElementById('einv_cost').value;
   try {
     const resp = await fetch('/api/manage-asset', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'editInventoryItem', itemId, name,
-        category: document.getElementById('einv_category').value,
-        unitOfMeasure: document.getElementById('einv_unit').value.trim(),
-        reorderLevel: document.getElementById('einv_reorder').value,
-        targetLevel: document.getElementById('einv_target').value,
-        location: document.getElementById('einv_location').value,
-        unitCost: document.getElementById('einv_cost').value,
-      }),
+      body: JSON.stringify({ action: 'editInventoryItem', itemId, name, category, unitOfMeasure, reorderLevel, targetLevel, location, unitCost }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
     document.getElementById('editInventoryItemOverlay')?.remove();
-    refreshInventoryQuietly();
+    patchInventoryItemLocally(itemId, {
+      name, category: category || null, unitOfMeasure: unitOfMeasure || null,
+      reorderLevel: reorderLevel !== '' ? Number(reorderLevel) : null,
+      targetLevel: targetLevel !== '' ? Number(targetLevel) : null,
+      location: location || null, unitCost: unitCost !== '' ? Number(unitCost) : null,
+    });
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -4205,7 +4280,7 @@ async function submitInventoryMovement(itemId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record movement');
     overlay.remove();
-    refreshInventoryQuietly();
+    patchInventoryItemLocally(itemId, { currentQuantity: data.newQuantity });
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -4256,7 +4331,7 @@ async function renderUnits() {
 
     let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div>
-        <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Units</div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Management</div>
         <div style="font-size:12px;color:var(--muted)">Click a unit to open its own page — chat, activity, contract, and assets all live there together.</div>
       </div>
       <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
@@ -4976,7 +5051,7 @@ async function openAssignUnitModal(assetRecordId, building) {
     const listEl = document.getElementById('au_pick_list');
     if (!listEl) return;
     if (matches.length === 0) {
-      listEl.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No units set up in ${building || 'this building'} yet — add one from the Tenant Units tab first.</div>`;
+      listEl.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No units set up in ${building || 'this building'} yet — add one from the Tenant Management tab first.</div>`;
       return;
     }
     listEl.innerHTML = matches.map(u => `
