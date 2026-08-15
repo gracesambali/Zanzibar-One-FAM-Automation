@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy — GVC Facility Asset Manager</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; }
+  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .header-left { display:flex; align-items:center; gap:12px; min-width:0; }
+  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  .header h1 { font-size:15px; font-weight:700; }
+  .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
+  #logoutBtn { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0; }
+  .page-wrap { max-width:640px; margin:0 auto; padding:20px 16px 40px; }
+  .scan-buttons { display:flex; gap:10px; margin-bottom:20px; }
+  .scan-btn { flex:1; padding:20px 14px; border-radius:14px; border:none; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .scan-btn .icon { font-size:26px; }
+  .scan-in { background:#E8F8EF; color:#1B7A43; border:2px solid #27AE60; }
+  .scan-out { background:#FDE8E6; color:#B3261E; border:2px solid #E74C3C; }
+  .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .panel-title { font-size:12px; font-weight:700; color:#1A3566; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
+  .search-box { width:100%; padding:10px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:13.5px; margin-bottom:14px; }
+  .item-row { display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid #F0F2F6; cursor:pointer; }
+  .item-row:last-child { border-bottom:none; }
+  .item-name { font-size:13.5px; font-weight:600; color:#1A1A2E; }
+  .item-meta { font-size:11.5px; color:#6B7280; margin-top:2px; }
+  .item-qty { font-size:15px; font-weight:700; color:#1A3566; text-align:right; }
+  .badge { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:9px; margin-top:3px; }
+  .badge-low { background:#FDE8E6; color:#B3261E; }
+  .badge-ok { background:#E8F8EF; color:#1B7A43; }
+  .empty-state { text-align:center; padding:30px 20px; color:#9CA3AF; font-size:13px; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+  .modal { background:#fff; border-radius:14px; max-width:420px; width:100%; padding:20px; max-height:90vh; overflow-y:auto; }
+  .modal label { font-size:11px; font-weight:600; color:#1A3566; display:block; margin-bottom:4px; }
+  .modal input, .modal select { width:100%; padding:9px 12px; border:1px solid #E2E6ED; border-radius:8px; font-size:13px; margin-bottom:10px; }
+  .modal button.primary { width:100%; padding:11px; border:none; border-radius:8px; background:#1A3566; color:#fff; font-weight:600; font-size:13.5px; cursor:pointer; }
+  .modal button.secondary { width:100%; padding:11px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#1A3566; font-weight:600; font-size:13.5px; cursor:pointer; margin-top:8px; }
+  .error-box { color:#B3261E; font-size:12px; margin-bottom:10px; display:none; }
+  #accessBlocked { text-align:center; padding:60px 24px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="logo"><img src="/selian-logo.png" alt="Logo" onerror="this.style.display='none'"></div>
+      <div>
+        <h1>Pharmacy</h1>
+        <div class="sub">Facility Asset Management System</div>
+      </div>
+    </div>
+    <button id="logoutBtn" onclick="logout()">Log Out</button>
+  </div>
+
+  <div id="accessBlocked" style="display:none">
+    <div style="font-size:32px;margin-bottom:12px">🔒</div>
+    <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:6px">Access Restricted</div>
+    <div style="font-size:13px;color:#6B7280">This page is only available to the Pharmacy role.</div>
+  </div>
+
+  <div id="mainContent" class="page-wrap" style="display:none">
+    <div class="scan-buttons">
+      <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
+      <button class="scan-btn scan-out" onclick="openScanModal('OUT')"><span class="icon">📷</span>Scan Out</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Inventory</div>
+      <input id="itemSearch" class="search-box" type="text" placeholder="Search items…" oninput="renderItemList()">
+      <div id="itemList"></div>
+    </div>
+  </div>
+
+  <script>
+    let inventoryItemsCache = [];
+    let scanModalMode = null;
+    let scanModalStream = null;
+    let scanModalReader = null;
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function init() {
+      try {
+        const resp = await fetch('/api/get-assets');
+        if (resp.status === 401) { window.location.href = '/login'; return; }
+        const data = await resp.json();
+        if (data.role !== 'pharmacy') {
+          document.getElementById('accessBlocked').style.display = 'block';
+          return;
+        }
+        document.getElementById('logoutBtn').style.display = '';
+        document.getElementById('mainContent').style.display = 'block';
+        await loadItems();
+      } catch (err) {
+        document.getElementById('accessBlocked').innerHTML = `<div style="color:#B3261E">Could not load: ${err.message}</div>`;
+        document.getElementById('accessBlocked').style.display = 'block';
+      }
+    }
+
+    async function logout() {
+      await fetch('/api/login', { method: 'DELETE' });
+      window.location.href = '/login';
+    }
+
+    async function loadItems() {
+      try {
+        const resp = await fetch('/api/get-assets?inventoryItems=true');
+        const data = await resp.json();
+        inventoryItemsCache = data.items || [];
+        renderItemList();
+      } catch (err) {
+        document.getElementById('itemList').innerHTML = `<div class="empty-state" style="color:#B3261E">Could not load inventory: ${err.message}</div>`;
+      }
+    }
+
+    function renderItemList() {
+      const search = document.getElementById('itemSearch').value.trim().toLowerCase();
+      const items = inventoryItemsCache.filter(i => !search || i.name.toLowerCase().includes(search) || i.itemCode.toLowerCase().includes(search));
+      const listEl = document.getElementById('itemList');
+      listEl.innerHTML = items.length === 0
+        ? `<div class="empty-state">No items found.</div>`
+        : items.map(i => `
+          <div class="item-row" onclick="openItemDetail('${i.id}')">
+            <div>
+              <div class="item-name">${escapeHtml(i.name)}</div>
+              <div class="item-meta">${escapeHtml(i.itemCode)}${i.location ? ' · ' + escapeHtml(i.location) : ''}${i.isBatchTracked ? ' · Batch-tracked' : ''}</div>
+            </div>
+            <div>
+              <div class="item-qty">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</div>
+              <div style="text-align:right">${i.lowStock ? '<span class="badge badge-low">Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</div>
+            </div>
+          </div>`).join('');
+    }
+
+    async function openItemDetail(itemId) {
+      const item = inventoryItemsCache.find(i => i.id === itemId);
+      if (!item) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.id = 'itemDetailOverlay';
+      overlay.innerHTML = `
+        <div class="modal">
+          <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:4px">${escapeHtml(item.name)}</div>
+          <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(item.itemCode)} — ${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')} on hand</div>
+          <div id="itemDetailContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
+          <button class="secondary" onclick="document.getElementById('itemDetailOverlay').remove()">Close</button>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      if (item.isBatchTracked) {
+        try {
+          const resp = await fetch(`/api/get-assets?inventoryBatches=true&itemId=${itemId}`);
+          const data = await resp.json();
+          const batches = data.batches || [];
+          document.getElementById('itemDetailContent').innerHTML = batches.length === 0
+            ? '<div style="font-style:italic">No active batches.</div>'
+            : '<div style="font-weight:700;color:#1A3566;margin-bottom:8px">Batches (soonest expiry first)</div>' +
+              batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
+        } catch (err) {
+          document.getElementById('itemDetailContent').innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
+        }
+      } else {
+        document.getElementById('itemDetailContent').innerHTML = '<div style="font-style:italic">Not batch-tracked — a single running total.</div>';
+      }
+    }
+
+    // ===== Scanning — identical logic to the main dashboard's,
+    // confirmed working after the real fix in Session 105. Kept as
+    // its own copy here rather than shared, matching how every other
+    // standalone portal in this app is already fully self-contained. =====
+    let zxingLoadPromise = null;
+    function ensureZXingLoaded() {
+      if (window.ZXingBrowser) return Promise.resolve();
+      if (zxingLoadPromise) return zxingLoadPromise;
+      zxingLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/@zxing/browser@0.1.5';
+        script.onload = () => { if (window.ZXingBrowser) resolve(); else reject(new Error('Scanning library loaded but was not recognized — try refreshing.')); };
+        script.onerror = () => reject(new Error('Could not load the scanning library — check your connection.'));
+        document.head.appendChild(script);
+      });
+      return zxingLoadPromise;
+    }
+
+    function parseGS1BarcodeClient(raw) {
+      if (!raw) return null;
+      let s = raw.replace(/^\]d2/i, '').replace(/^\]C1/i, '');
+      const GS = '\x1D';
+      const result = { gtin: null, expiryDate: null, lotNumber: null };
+      let i = 0;
+      while (i < s.length) {
+        const ai = s.substring(i, i + 2);
+        if (ai === '01' && s.length >= i + 16) { result.gtin = s.substring(i + 2, i + 16); i += 16; }
+        else if (ai === '17' && s.length >= i + 8) {
+          const yy = s.substring(i + 2, i + 4), mm = s.substring(i + 4, i + 6), dd = s.substring(i + 6, i + 8);
+          const year = Number(yy) <= 50 ? 2000 + Number(yy) : 1900 + Number(yy);
+          const day = dd === '00' ? new Date(year, Number(mm), 0).getDate() : Number(dd);
+          result.expiryDate = `${year}-${mm}-${String(day).padStart(2, '0')}`;
+          i += 8;
+        } else if (ai === '10') {
+          let end = s.indexOf(GS, i + 2);
+          if (end === -1) end = s.length;
+          result.lotNumber = s.substring(i + 2, end);
+          i = end + 1;
+        } else { i += 1; }
+      }
+      if (!result.gtin && !result.expiryDate && !result.lotNumber) return null;
+      return result;
+    }
+
+    async function openScanModal(mode) {
+      scanModalMode = mode;
+      const overlay = document.createElement('div');
+      overlay.id = 'scanModalOverlay';
+      overlay.className = 'overlay';
+      overlay.innerHTML = `
+        <div class="modal">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div style="font-size:15px;font-weight:700;color:#1A3566">${mode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+            <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
+          </div>
+          <div id="scanVideoWrap" style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:12px">
+            <video id="scanVideo" style="width:100%;display:block" playsinline muted></video>
+            <div style="position:absolute;inset:0;border:3px solid rgba(255,255,255,0.4);pointer-events:none;margin:14%"></div>
+          </div>
+          <div id="scanStatus" style="font-size:12px;color:#6B7280;text-align:center;margin-bottom:10px">Point the camera at the barcode…</div>
+          <button class="secondary" onclick="openManualScanEntry('${mode}')">Can't scan? Enter manually</button>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      try {
+        await ensureZXingLoaded();
+        scanModalStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const video = document.getElementById('scanVideo');
+        video.srcObject = scanModalStream;
+        await video.play();
+        scanModalReader = new ZXingBrowser.BrowserMultiFormatReader();
+        scanModalReader.decodeFromVideoElement(video, (result) => { if (result) handleScanDecoded(result.getText()); });
+      } catch (err) {
+        const status = document.getElementById('scanStatus');
+        if (status) status.innerHTML = `<span style="color:#B3261E">Could not access the camera (${err.message}). Use manual entry below.</span>`;
+      }
+    }
+
+    function stopScanCamera() {
+      if (scanModalReader) { try { scanModalReader.reset(); } catch (e) {} scanModalReader = null; }
+      if (scanModalStream) { scanModalStream.getTracks().forEach(t => t.stop()); scanModalStream = null; }
+    }
+    function closeScanModal() { stopScanCamera(); document.getElementById('scanModalOverlay')?.remove(); }
+
+    async function handleScanDecoded(rawText) {
+      stopScanCamera();
+      const parsed = parseGS1BarcodeClient(rawText);
+      const gtin = parsed?.gtin || rawText;
+      await proceedFromScannedCode(gtin, parsed?.lotNumber || null, parsed?.expiryDate || null);
+    }
+
+    async function proceedFromScannedCode(gtin, lotNumber, expiryDate) {
+      const overlay = document.getElementById('scanModalOverlay');
+      if (!overlay) return;
+      overlay.querySelector('#scanVideoWrap')?.remove();
+      const status = document.getElementById('scanStatus');
+      if (status) status.textContent = 'Looking up this item…';
+      try {
+        const resp = await fetch(`/api/get-assets?resolveInventoryBarcode=true&gtin=${encodeURIComponent(gtin)}`);
+        const data = await resp.json();
+        if (data.needsLink) renderLinkBarcodeStep(gtin, lotNumber, expiryDate);
+        else renderScanQuantityStep(data.itemId, data.itemCode, data.itemName, data.isBatchTracked, gtin, lotNumber, expiryDate);
+      } catch (err) {
+        if (status) status.innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
+      }
+    }
+
+    function renderLinkBarcodeStep(gtin, lotNumber, expiryDate) {
+      const overlay = document.getElementById('scanModalOverlay');
+      const container = overlay.querySelector('.modal');
+      const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
+      container.innerHTML += `
+        <div style="font-size:12.5px;color:#1A3566;margin-bottom:8px">This barcode hasn't been seen before. Which item is it?</div>
+        <div style="font-size:11px;color:#6B7280;margin-bottom:10px">Scanned code: ${escapeHtml(gtin)}</div>
+        <select id="scan_linkItem"><option value="">— Choose an item —</option>${itemOptions}</select>
+        <div id="scan_linkError" class="error-box"></div>
+        <button class="primary" id="scan_linkSubmit" onclick="submitLinkAndProceed('${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'})">Link & Continue</button>`;
+    }
+
+    async function submitLinkAndProceed(gtin, lotNumber, expiryDate) {
+      const itemId = document.getElementById('scan_linkItem').value;
+      const errorBox = document.getElementById('scan_linkError');
+      if (!itemId) { errorBox.textContent = 'Choose which item this barcode represents.'; errorBox.style.display = 'block'; return; }
+      const btn = document.getElementById('scan_linkSubmit');
+      btn.disabled = true; btn.textContent = 'Linking…';
+      try {
+        const resp = await fetch('/api/manage-asset', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'linkInventoryBarcode', gtin, itemId }) });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not link');
+        const item = inventoryItemsCache.find(i => i.id === itemId);
+        renderScanQuantityStep(itemId, item?.itemCode, item?.name, item?.isBatchTracked, gtin, lotNumber, expiryDate);
+      } catch (err) {
+        errorBox.textContent = err.message; errorBox.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Link & Continue';
+      }
+    }
+
+    function renderScanQuantityStep(itemId, itemCode, itemName, isBatchTracked, gtin, lotNumber, expiryDate) {
+      const overlay = document.getElementById('scanModalOverlay');
+      const container = overlay.querySelector('.modal');
+      container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:15px;font-weight:700;color:#1A3566">${scanModalMode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+          <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
+        </div>
+        <div style="background:#F0F2F6;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:700;color:#1A3566">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
+          ${isBatchTracked && lotNumber ? `<div style="font-size:11.5px;color:#6B7280;margin-top:4px">Batch ${escapeHtml(lotNumber)}${expiryDate ? ' · Expires ' + expiryDate : ''}</div>` : ''}
+          ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `<div style="font-size:11px;color:#B45309;margin-top:4px">⚠ Batch-tracked but no batch info in the scan — enter it below.</div>` : ''}
+        </div>
+        ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `
+        <label>Batch / Lot Number</label><input id="scan_lotNumber" type="text">
+        <label>Expiry Date</label><input id="scan_expiryDate" type="date">` : ''}
+        <label>Quantity</label><input id="scan_quantity" type="number" min="1" autofocus>
+        <div id="scan_qtyError" class="error-box"></div>
+        <button class="primary" id="scan_qtySubmit" onclick="submitScanQuantity('${itemId}', ${JSON.stringify(lotNumber)}, ${JSON.stringify(expiryDate)})" style="background:${scanModalMode === 'IN' ? '#27AE60' : '#E74C3C'}">${scanModalMode === 'IN' ? 'Confirm Stock In' : 'Confirm Stock Out'}</button>`;
+    }
+
+    async function submitScanQuantity(itemId, scannedLot, scannedExpiry) {
+      const qty = document.getElementById('scan_quantity').value;
+      const errorBox = document.getElementById('scan_qtyError');
+      const btn = document.getElementById('scan_qtySubmit');
+      errorBox.style.display = 'none';
+      if (!qty || Number(qty) <= 0) { errorBox.textContent = 'Enter a quantity greater than zero.'; errorBox.style.display = 'block'; return; }
+      const lotNumber = document.getElementById('scan_lotNumber')?.value.trim() || scannedLot;
+      const expiryDate = document.getElementById('scan_expiryDate')?.value || scannedExpiry;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const action = scanModalMode === 'IN' ? 'scanInventoryIn' : 'scanInventoryOut';
+        const body = scanModalMode === 'IN' ? { action, itemId, lotNumber, expiryDate, quantity: qty } : { action, itemId, quantity: qty };
+        const resp = await fetch('/api/manage-asset', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+        closeScanModal();
+        await loadItems();
+      } catch (err) {
+        errorBox.textContent = err.message; errorBox.style.display = 'block';
+        btn.disabled = false; btn.textContent = scanModalMode === 'IN' ? 'Confirm Stock In' : 'Confirm Stock Out';
+      }
+    }
+
+    function openManualScanEntry(mode) {
+      closeScanModal();
+      scanModalMode = mode;
+      const overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.id = 'scanModalOverlay';
+      const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}" data-batch="${i.isBatchTracked}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
+      overlay.innerHTML = `
+        <div class="modal">
+          <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:14px">${mode === 'IN' ? 'Stock In' : 'Stock Out'} — Manual Entry</div>
+          <label>Item</label>
+          <select id="manual_item" onchange="renderManualScanQuantityFields()"><option value="">— Choose an item —</option>${itemOptions}</select>
+          <div id="manual_extraFields"></div>
+          <label>Quantity</label><input id="manual_quantity" type="number" min="1">
+          <div id="manual_error" class="error-box"></div>
+          <button class="primary" id="manual_submit" onclick="submitManualScanEntry()" style="background:${mode === 'IN' ? '#27AE60' : '#E74C3C'}">Confirm</button>
+          <button class="secondary" onclick="document.getElementById('scanModalOverlay').remove()">Cancel</button>
+        </div>`;
+      document.body.appendChild(overlay);
+    }
+
+    function renderManualScanQuantityFields() {
+      const select = document.getElementById('manual_item');
+      const isBatchTracked = select.selectedOptions[0]?.dataset.batch === 'true';
+      document.getElementById('manual_extraFields').innerHTML = (isBatchTracked && scanModalMode === 'IN') ? `
+        <label>Batch / Lot Number</label><input id="manual_lotNumber" type="text">
+        <label>Expiry Date</label><input id="manual_expiryDate" type="date">` : '';
+    }
+
+    async function submitManualScanEntry() {
+      const itemId = document.getElementById('manual_item').value;
+      const qty = document.getElementById('manual_quantity').value;
+      const errorBox = document.getElementById('manual_error');
+      const btn = document.getElementById('manual_submit');
+      errorBox.style.display = 'none';
+      if (!itemId) { errorBox.textContent = 'Choose an item.'; errorBox.style.display = 'block'; return; }
+      if (!qty || Number(qty) <= 0) { errorBox.textContent = 'Enter a quantity greater than zero.'; errorBox.style.display = 'block'; return; }
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const action = scanModalMode === 'IN' ? 'scanInventoryIn' : 'scanInventoryOut';
+        const body = scanModalMode === 'IN'
+          ? { action, itemId, lotNumber: document.getElementById('manual_lotNumber')?.value.trim() || null, expiryDate: document.getElementById('manual_expiryDate')?.value || null, quantity: qty }
+          : { action, itemId, quantity: qty };
+        const resp = await fetch('/api/manage-asset', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+        document.getElementById('scanModalOverlay')?.remove();
+        await loadItems();
+      } catch (err) {
+        errorBox.textContent = err.message; errorBox.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Confirm';
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

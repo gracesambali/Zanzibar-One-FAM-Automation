@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
     const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot", "linkInventoryBarcode", "scanInventoryIn", "scanInventoryOut", "setItemBatchTracked"];
-    if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+    if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
@@ -527,7 +527,7 @@ async function handleScanInventoryOut(req, res, performedBy) {
 }
 
 async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
-  if (!["stock_keeper", "procurement", "system_admin", "business_owner"].includes(addedByRole)) {
+  if (!["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(addedByRole)) {
     return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
   }
   const { name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity } = req.body || {};

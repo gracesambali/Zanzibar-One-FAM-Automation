@@ -153,7 +153,10 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 
     if (resp.ok && data.success) {
       saveRecentUsername(username);
-      window.location.href = '/dashboard';
+      // Confirmed directly: Pharmacy goes straight to its own
+      // standalone portal, never the main dashboard at all - every
+      // other role's behavior stays exactly as it was.
+      window.location.href = data.role === 'pharmacy' ? '/pharmacy-portal' : '/dashboard';
     } else {
       errorBox.textContent = data.error || 'Login failed. Please try again.';
       errorBox.className = 'error show';

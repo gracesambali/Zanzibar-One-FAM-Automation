@@ -688,6 +688,11 @@ const ROLE_PERMISSIONS = {
   admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   procurement: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
+  // Never actually used in practice — Pharmacy redirects to its own
+  // portal before this would ever be read — kept here anyway so the
+  // two permission sources stay consistent with each other, matching
+  // every other role in this object.
+  pharmacy: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true },
   system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
@@ -10342,6 +10347,16 @@ async function loadAssetsAndInit() {
     const data = await assetsResp.json();
     assets = data.assets || [];
     currentUserRole = data.role || "technician";
+    // Defense in depth, same principle already used elsewhere in this
+    // app — Pharmacy is meant to only ever reach its own standalone
+    // portal. If this role somehow lands here directly (a bookmark, a
+    // typed URL, anything bypassing login's own redirect), send them
+    // to where they actually belong rather than showing a dashboard
+    // built for roles that use it.
+    if (currentUserRole === 'pharmacy') {
+      window.location.href = '/pharmacy-portal';
+      return;
+    }
     currentUserPermissions = ROLE_PERMISSIONS[currentUserRole];
     if (!currentUserPermissions) {
       // A role string that doesn't match any known role should never
