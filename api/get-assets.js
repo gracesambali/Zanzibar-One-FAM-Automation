@@ -413,7 +413,7 @@ export default async function handler(req, res) {
   // genuinely restricted to Stock Keeper, Procurement, System Admin,
   // and Business Owner — a real 403 at the API level, not a
   // stripped-down view.
-  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations"];
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
@@ -483,6 +483,40 @@ export default async function handler(req, res) {
       return res.status(200).json({ locations: rows.map(r => r.label).sort() });
     } catch (err) {
       console.error("inventoryLocations read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Which years actually have a saved snapshot - so the frontend
+  // only ever offers real, existing years to look at.
+  if (req.query.inventorySnapshotYears === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select distinct snapshot_year from inventory_snapshots order by snapshot_year desc");
+      return res.status(200).json({ years: result.rows.map(r => r.snapshot_year) });
+    } catch (err) {
+      console.error("inventorySnapshotYears read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // The actual captured record for one past year - a real,
+  // point-in-time record, not recomputed from anything live.
+  if (req.query.inventorySnapshot === "true" && req.query.year) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from inventory_snapshots where snapshot_year = $1 order by name asc", [Number(req.query.year)]);
+      return res.status(200).json({
+        items: result.rows.map(r => ({
+          itemCode: r.item_code, name: r.name, category: r.category,
+          quantity: Number(r.quantity), unitOfMeasure: r.unit_of_measure,
+          unitCost: r.unit_cost_tzs !== null ? Number(r.unit_cost_tzs) : null,
+          location: r.location,
+        })),
+        takenAt: result.rows[0]?.taken_at || null,
+      });
+    } catch (err) {
+      console.error("inventorySnapshot read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }

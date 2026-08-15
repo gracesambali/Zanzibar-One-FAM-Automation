@@ -877,3 +877,28 @@ create table inventory_locations (
   created_at  timestamptz not null default now()
 );
 insert into inventory_locations (label) values ('Main Store'), ('Pharmacy');
+
+-- ============================================================
+-- Year-end inventory snapshots - confirmed directly: keeping past
+-- years' records available even as live stock keeps changing.
+-- Captures the real state of every active item at the moment it's
+-- taken (quantity, cost, computed value) - a genuine point-in-time
+-- record, not something that changes retroactively when the live
+-- table changes later. Grouped by snapshot_year so a person can pull
+-- up "what did we have at the end of 2025" without touching or being
+-- confused by what's happening in the live table today.
+-- ============================================================
+create table inventory_snapshots (
+  id                uuid primary key default gen_random_uuid(),
+  snapshot_year     integer not null,
+  item_code         text not null,
+  name              text not null,
+  category          text,
+  quantity          numeric not null,
+  unit_of_measure   text,
+  unit_cost_tzs     numeric,
+  location          text,
+  taken_by          text,
+  taken_at          timestamptz not null default now()
+);
+create index idx_inventory_snapshots_year on inventory_snapshots (snapshot_year);
