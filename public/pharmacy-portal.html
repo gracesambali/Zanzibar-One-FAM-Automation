@@ -6,56 +6,94 @@
 <title>Pharmacy — GVC Facility Asset Manager</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; }
-  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .header-left { display:flex; align-items:center; gap:12px; min-width:0; }
-  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; background:#fff; display:flex; align-items:center; justify-content:center; }
+  :root { --navy:#8B1A1A; --navy-light:#A83232; --navy-pale:#F5DFDF; --bg:#F0F2F6; --white:#FFFFFF; --text:#1A1A2E; --muted:#6B7280; --border:#E2E6ED; --green:#1B7A43; --green-bg:#E8F8EF; --red:#B3261E; --red-bg:#FDE8E6; }
+  body { font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  .header { background:var(--navy); color:#fff; padding:20px 32px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .header-left { display:flex; align-items:center; gap:14px; min-width:0; }
+  .logo { width:46px; height:46px; border-radius:50%; overflow:hidden; flex-shrink:0; background:#fff; display:flex; align-items:center; justify-content:center; }
   .logo img { width:100%; height:100%; object-fit:contain; }
-  .header h1 { font-size:15px; font-weight:700; }
-  .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
-  #logoutBtn { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0; }
-  .page-wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; display:flex; gap:20px; align-items:flex-start; }
-  .main-col { flex:1; min-width:0; max-width:640px; }
-  .side-col { width:320px; flex-shrink:0; position:sticky; top:16px; }
-  @media (max-width:900px) { .page-wrap { flex-direction:column; } .side-col { width:100%; position:static; max-width:640px; margin:0 auto; } }
-  .scan-buttons { display:flex; gap:10px; margin-bottom:20px; }
-  .activity-stat { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #F0F2F6; }
+  .header h1 { font-size:19px; font-weight:700; letter-spacing:0.2px; }
+  .header .sub { font-size:12.5px; color:rgba(255,255,255,0.8); margin-top:2px; }
+  #logoutBtn { background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:9px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; flex-shrink:0; }
+  #logoutBtn:hover { background:rgba(255,255,255,0.22); }
+
+  .page-wrap { max-width:1500px; margin:0 auto; padding:28px 32px 48px; display:flex; gap:28px; align-items:flex-start; }
+  .main-col { flex:1; min-width:0; }
+  .side-col { width:380px; flex-shrink:0; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
+  @media (max-width:1100px) { .page-wrap { flex-direction:column; padding:20px 16px 40px; } .side-col { width:100%; position:static; } }
+
+  .scan-buttons { display:flex; gap:16px; margin-bottom:24px; }
+  .scan-btn { flex:1; padding:28px 20px; border-radius:16px; border:none; font-size:16px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:10px; transition:transform .1s; }
+  .scan-btn:hover { transform:translateY(-2px); }
+  .scan-btn .icon { font-size:34px; }
+  .scan-in { background:var(--green-bg); color:var(--green); border:2px solid var(--green); }
+  .scan-out { background:var(--red-bg); color:var(--red); border:2px solid var(--red); }
+
+  .panel { background:#fff; border-radius:14px; padding:22px 24px; margin-bottom:20px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .panel-title { font-size:13px; font-weight:700; color:var(--navy); margin-bottom:16px; text-transform:uppercase; letter-spacing:0.04em; }
+  .search-box { width:100%; padding:12px 16px; border:1px solid var(--border); border-radius:9px; font-size:14px; margin-bottom:16px; }
+
+  /* Wide-screen table for the item list, matching the main system's
+     density instead of a thin stacked list with wasted horizontal
+     space - confirmed directly as the actual complaint. Collapses
+     back to the simpler stacked row style on narrow/phone screens
+     where a table would be genuinely worse. */
+  .item-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .item-table th { text-align:left; padding:10px 12px; color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:0.03em; border-bottom:2px solid var(--border); }
+  .item-table td { padding:12px; border-bottom:1px solid #F0F2F6; }
+  .item-table tr:hover td { background:var(--bg); cursor:pointer; }
+  .item-table .item-name-cell { font-weight:600; color:var(--text); }
+  .item-table .item-meta-cell { font-size:11px; color:var(--muted); margin-top:2px; }
+  .item-qty-cell { text-align:right; font-weight:700; color:var(--navy); font-size:14.5px; }
+
+  @media (max-width:700px) {
+    .item-table thead { display:none; }
+    .item-table, .item-table tbody, .item-table tr { display:block; width:100%; }
+    .item-table tr { padding:12px 0; border-bottom:1px solid #F0F2F6; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .item-table td { padding:0; border:none; }
+    .item-table td:nth-child(2), .item-table td:nth-child(3) { display:none; } /* Category and Location hidden on phone - name, quantity, and status are what actually matters when scanning on the go */
+    .item-table td:first-child { flex:1; min-width:0; }
+  }
+
+  .badge { display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:10px; margin-top:4px; }
+  .badge-low { background:var(--red-bg); color:var(--red); }
+  .badge-ok { background:var(--green-bg); color:var(--green); }
+  .empty-state { text-align:center; padding:36px 20px; color:#9CA3AF; font-size:13.5px; }
+
+  .activity-stat { display:flex; justify-content:space-between; align-items:center; padding:14px 0; border-bottom:1px solid #F0F2F6; }
   .activity-stat:last-child { border-bottom:none; }
-  .activity-stat .label { font-size:12.5px; color:#6B7280; }
-  .activity-stat .value { font-size:20px; font-weight:700; }
-  .activity-in { color:#1B7A43; }
-  .activity-out { color:#B3261E; }
-  .report-btn { width:100%; padding:10px 12px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#1A3566; font-size:12.5px; font-weight:600; cursor:pointer; margin-top:8px; text-align:left; display:flex; align-items:center; gap:8px; }
-  .report-btn:hover { background:#F7F8FA; }
-  .report-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
-  .report-row-label { flex:1; font-size:12.5px; font-weight:600; color:#1A3566; }
-  .report-btn-sm { padding:7px 14px; border:1px solid #E2E6ED; border-radius:7px; background:#fff; color:#1A3566; font-size:11.5px; font-weight:600; cursor:pointer; }
-  .report-btn-sm:hover { background:#F7F8FA; border-color:#1A3566; }
-  .recent-item { font-size:11.5px; padding:6px 0; border-bottom:1px solid #F0F2F6; color:#1A1A2E; }
+  .activity-stat .label { font-size:13px; color:var(--muted); font-weight:600; }
+  .activity-stat .value { font-size:24px; font-weight:700; }
+  .activity-in { color:var(--green); }
+  .activity-out { color:var(--red); }
+
+  .report-row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .report-row-label { flex:1; font-size:13px; font-weight:600; color:var(--navy); }
+  .report-btn-sm { padding:8px 16px; border:1px solid var(--border); border-radius:8px; background:#fff; color:var(--navy); font-size:12px; font-weight:600; cursor:pointer; }
+  .report-btn-sm:hover { background:var(--bg); border-color:var(--navy); }
+
+  .recent-item { font-size:12.5px; padding:9px 0; border-bottom:1px solid #F0F2F6; color:var(--text); }
   .recent-item:last-child { border-bottom:none; }
   .recent-item .meta { color:#9CA3AF; }
-  .scan-btn { flex:1; padding:20px 14px; border-radius:14px; border:none; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px; }
-  .scan-btn .icon { font-size:26px; }
-  .scan-in { background:#E8F8EF; color:#1B7A43; border:2px solid #27AE60; }
-  .scan-out { background:#FDE8E6; color:#B3261E; border:2px solid #E74C3C; }
+
   .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
-  .panel-title { font-size:12px; font-weight:700; color:#1A3566; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
+  .panel-title { font-size:12px; font-weight:700; color:#8B1A1A; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
   .search-box { width:100%; padding:10px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:13.5px; margin-bottom:14px; }
   .item-row { display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid #F0F2F6; cursor:pointer; }
   .item-row:last-child { border-bottom:none; }
   .item-name { font-size:13.5px; font-weight:600; color:#1A1A2E; }
   .item-meta { font-size:11.5px; color:#6B7280; margin-top:2px; }
-  .item-qty { font-size:15px; font-weight:700; color:#1A3566; text-align:right; }
+  .item-qty { font-size:15px; font-weight:700; color:#8B1A1A; text-align:right; }
   .badge { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:9px; margin-top:3px; }
   .badge-low { background:#FDE8E6; color:#B3261E; }
   .badge-ok { background:#E8F8EF; color:#1B7A43; }
   .empty-state { text-align:center; padding:30px 20px; color:#9CA3AF; font-size:13px; }
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
   .modal { background:#fff; border-radius:14px; max-width:420px; width:100%; padding:20px; max-height:90vh; overflow-y:auto; }
-  .modal label { font-size:11px; font-weight:600; color:#1A3566; display:block; margin-bottom:4px; }
+  .modal label { font-size:11px; font-weight:600; color:#8B1A1A; display:block; margin-bottom:4px; }
   .modal input, .modal select { width:100%; padding:9px 12px; border:1px solid #E2E6ED; border-radius:8px; font-size:13px; margin-bottom:10px; }
-  .modal button.primary { width:100%; padding:11px; border:none; border-radius:8px; background:#1A3566; color:#fff; font-weight:600; font-size:13.5px; cursor:pointer; }
-  .modal button.secondary { width:100%; padding:11px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#1A3566; font-weight:600; font-size:13.5px; cursor:pointer; margin-top:8px; }
+  .modal button.primary { width:100%; padding:11px; border:none; border-radius:8px; background:#8B1A1A; color:#fff; font-weight:600; font-size:13.5px; cursor:pointer; }
+  .modal button.secondary { width:100%; padding:11px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#8B1A1A; font-weight:600; font-size:13.5px; cursor:pointer; margin-top:8px; }
   .error-box { color:#B3261E; font-size:12px; margin-bottom:10px; display:none; }
   #accessBlocked { text-align:center; padding:60px 24px; }
 </style>
@@ -74,7 +112,7 @@
 
   <div id="accessBlocked" style="display:none">
     <div style="font-size:32px;margin-bottom:12px">🔒</div>
-    <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:6px">Access Restricted</div>
+    <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:6px">Access Restricted</div>
     <div style="font-size:13px;color:#6B7280">This page is only available to the Pharmacy role.</div>
   </div>
 
@@ -260,13 +298,13 @@
           <html><head><title>Pharmacy ${label} Report</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-            h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
+            h1 { font-size: 18px; color: #8B1A1A; margin-bottom: 2px; }
             .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
             table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
             th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
             th { background: #F7F8FA; }
-            .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
-            .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+            .totals td { font-weight: 700; border-top: 2px solid #8B1A1A; }
+            .download-btn { background:#8B1A1A; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
             @media print { .download-btn { display:none; } }
           </style></head><body>
           <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
@@ -291,19 +329,27 @@
       const search = document.getElementById('itemSearch').value.trim().toLowerCase();
       const items = inventoryItemsCache.filter(i => !search || i.name.toLowerCase().includes(search) || i.itemCode.toLowerCase().includes(search));
       const listEl = document.getElementById('itemList');
-      listEl.innerHTML = items.length === 0
-        ? `<div class="empty-state">No items found.</div>`
-        : items.map(i => `
-          <div class="item-row" onclick="openItemDetail('${i.id}')">
-            <div>
-              <div class="item-name">${escapeHtml(i.name)}</div>
-              <div class="item-meta">${escapeHtml(i.itemCode)}${i.location ? ' · ' + escapeHtml(i.location) : ''}${i.isBatchTracked ? ' · Batch-tracked' : ''}</div>
-            </div>
-            <div>
-              <div class="item-qty">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</div>
-              <div style="text-align:right">${i.lowStock ? '<span class="badge badge-low">Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</div>
-            </div>
-          </div>`).join('');
+      if (items.length === 0) {
+        listEl.innerHTML = `<div class="empty-state">No items found.</div>`;
+        return;
+      }
+      listEl.innerHTML = `
+        <table class="item-table">
+          <thead><tr><th>Item</th><th>Category</th><th>Location</th><th style="text-align:right">Quantity</th><th>Status</th></tr></thead>
+          <tbody>
+            ${items.map(i => `
+              <tr onclick="openItemDetail('${i.id}')">
+                <td>
+                  <div class="item-name-cell">${escapeHtml(i.name)}</div>
+                  <div class="item-meta-cell">${escapeHtml(i.itemCode)}${i.isBatchTracked ? ' · Batch-tracked' : ''}</div>
+                </td>
+                <td>${escapeHtml(i.category || '—')}</td>
+                <td>${escapeHtml(i.location || '—')}</td>
+                <td class="item-qty-cell">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
+                <td>${i.lowStock ? '<span class="badge badge-low">Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
     }
 
     async function openItemDetail(itemId) {
@@ -314,7 +360,7 @@
       overlay.id = 'itemDetailOverlay';
       overlay.innerHTML = `
         <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:4px">${escapeHtml(item.name)}</div>
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:4px">${escapeHtml(item.name)}</div>
           <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(item.itemCode)} — ${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')} on hand</div>
           <div id="itemDetailContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
           <button class="secondary" onclick="document.getElementById('itemDetailOverlay').remove()">Close</button>
@@ -328,7 +374,7 @@
           const batches = data.batches || [];
           document.getElementById('itemDetailContent').innerHTML = batches.length === 0
             ? '<div style="font-style:italic">No active batches.</div>'
-            : '<div style="font-weight:700;color:#1A3566;margin-bottom:8px">Batches (soonest expiry first)</div>' +
+            : '<div style="font-weight:700;color:#8B1A1A;margin-bottom:8px">Batches (soonest expiry first)</div>' +
               batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
         } catch (err) {
           document.getElementById('itemDetailContent').innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
@@ -390,7 +436,7 @@
       overlay.innerHTML = `
         <div class="modal">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div style="font-size:15px;font-weight:700;color:#1A3566">${mode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+            <div style="font-size:15px;font-weight:700;color:#8B1A1A">${mode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
             <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
           </div>
           <div id="scanVideoWrap" style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:12px">
@@ -450,7 +496,7 @@
       const container = overlay.querySelector('.modal');
       const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
       container.innerHTML += `
-        <div style="font-size:12.5px;color:#1A3566;margin-bottom:8px">This barcode hasn't been seen before. Which item is it?</div>
+        <div style="font-size:12.5px;color:#8B1A1A;margin-bottom:8px">This barcode hasn't been seen before. Which item is it?</div>
         <div style="font-size:11px;color:#6B7280;margin-bottom:10px">Scanned code: ${escapeHtml(gtin)}</div>
         <select id="scan_linkItem"><option value="">— Choose an item —</option>${itemOptions}</select>
         <div id="scan_linkError" class="error-box"></div>
@@ -480,11 +526,11 @@
       const container = overlay.querySelector('.modal');
       container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-          <div style="font-size:15px;font-weight:700;color:#1A3566">${scanModalMode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A">${scanModalMode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
           <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
         </div>
         <div style="background:#F0F2F6;border-radius:10px;padding:12px 14px;margin-bottom:14px">
-          <div style="font-size:13px;font-weight:700;color:#1A3566">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
+          <div style="font-size:13px;font-weight:700;color:#8B1A1A">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
           ${isBatchTracked && lotNumber ? `<div style="font-size:11.5px;color:#6B7280;margin-top:4px">Batch ${escapeHtml(lotNumber)}${expiryDate ? ' · Expires ' + expiryDate : ''}</div>` : ''}
           ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `<div style="font-size:11px;color:#B45309;margin-top:4px">⚠ Batch-tracked but no batch info in the scan — enter it below.</div>` : ''}
         </div>
@@ -529,7 +575,7 @@
       const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}" data-batch="${i.isBatchTracked}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
       overlay.innerHTML = `
         <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#1A3566;margin-bottom:14px">${mode === 'IN' ? 'Stock In' : 'Stock Out'} — Manual Entry</div>
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">${mode === 'IN' ? 'Stock In' : 'Stock Out'} — Manual Entry</div>
           <label>Item</label>
           <select id="manual_item" onchange="renderManualScanQuantityFields()"><option value="">— Choose an item —</option>${itemOptions}</select>
           <div id="manual_extraFields"></div>
