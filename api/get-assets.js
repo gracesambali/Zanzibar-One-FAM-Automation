@@ -413,7 +413,7 @@ export default async function handler(req, res) {
   // genuinely restricted to Stock Keeper, Procurement, System Admin,
   // and Business Owner — a real 403 at the API level, not a
   // stripped-down view.
-  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog", "inventoryBatches", "resolveInventoryBarcode"];
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog", "inventoryBatches", "resolveInventoryBarcode", "inventoryMovementSummary"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
@@ -481,6 +481,55 @@ export default async function handler(req, res) {
       return res.status(200).json({ needsLink: false, itemId: item.id, itemCode: item.item_code, itemName: item.name, isBatchTracked: item.is_batch_tracked === true });
     } catch (err) {
       console.error("resolveInventoryBarcode read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Real-time IN/OUT totals plus the full underlying movement list,
+  // confirmed directly — the same data backs both the live "today"
+  // panel and the downloadable daily/weekly/monthly reports, so a
+  // report always matches exactly what the panel showed, not a
+  // separately-computed approximation of it. "Today" is computed
+  // against Tanzania's own local day (UTC+3, no DST to worry about),
+  // not the server's UTC day — a pharmacy worker's "today" should
+  // start at their own midnight, not somewhere in their afternoon.
+  if (req.query.inventoryMovementSummary === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const period = req.query.period === "week" ? "week" : req.query.period === "month" ? "month" : "today";
+
+      const nowUtc = new Date();
+      const nowEat = new Date(nowUtc.getTime() + 3 * 60 * 60 * 1000);
+      let since;
+      if (period === "today") {
+        const startOfDayEat = new Date(Date.UTC(nowEat.getUTCFullYear(), nowEat.getUTCMonth(), nowEat.getUTCDate()));
+        since = new Date(startOfDayEat.getTime() - 3 * 60 * 60 * 1000); // convert that EAT midnight back to the real UTC instant it represents
+      } else if (period === "week") {
+        since = new Date(nowUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else {
+        since = new Date(nowUtc.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      const result = await pgQuery(
+        `select m.*, i.item_code, i.name as item_name, i.unit_of_measure
+         from inventory_movements m
+         join inventory_items i on i.id = m.item_id
+         where m.performed_at >= $1
+         order by m.performed_at desc`,
+        [since.toISOString()]
+      );
+
+      const movements = result.rows.map(r => ({
+        itemCode: r.item_code, itemName: r.item_name, unitOfMeasure: r.unit_of_measure,
+        movementType: r.movement_type, quantity: Number(r.quantity), reason: r.reason,
+        department: r.department, performedBy: r.performed_by, performedAt: r.performed_at,
+      }));
+      const totalIn = movements.filter(m => m.movementType === "IN").reduce((sum, m) => sum + m.quantity, 0);
+      const totalOut = movements.filter(m => m.movementType === "OUT").reduce((sum, m) => sum + m.quantity, 0);
+
+      return res.status(200).json({ period, since: since.toISOString(), totalIn, totalOut, movements });
+    } catch (err) {
+      console.error("inventoryMovementSummary read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }

@@ -14,8 +14,22 @@
   .header h1 { font-size:15px; font-weight:700; }
   .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
   #logoutBtn { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); color:#fff; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0; }
-  .page-wrap { max-width:640px; margin:0 auto; padding:20px 16px 40px; }
+  .page-wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; display:flex; gap:20px; align-items:flex-start; }
+  .main-col { flex:1; min-width:0; max-width:640px; }
+  .side-col { width:320px; flex-shrink:0; position:sticky; top:16px; }
+  @media (max-width:900px) { .page-wrap { flex-direction:column; } .side-col { width:100%; position:static; max-width:640px; margin:0 auto; } }
   .scan-buttons { display:flex; gap:10px; margin-bottom:20px; }
+  .activity-stat { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #F0F2F6; }
+  .activity-stat:last-child { border-bottom:none; }
+  .activity-stat .label { font-size:12.5px; color:#6B7280; }
+  .activity-stat .value { font-size:20px; font-weight:700; }
+  .activity-in { color:#1B7A43; }
+  .activity-out { color:#B3261E; }
+  .report-btn { width:100%; padding:10px 12px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#1A3566; font-size:12.5px; font-weight:600; cursor:pointer; margin-top:8px; text-align:left; display:flex; align-items:center; gap:8px; }
+  .report-btn:hover { background:#F7F8FA; }
+  .recent-item { font-size:11.5px; padding:6px 0; border-bottom:1px solid #F0F2F6; color:#1A1A2E; }
+  .recent-item:last-child { border-bottom:none; }
+  .recent-item .meta { color:#9CA3AF; }
   .scan-btn { flex:1; padding:20px 14px; border-radius:14px; border:none; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px; }
   .scan-btn .icon { font-size:26px; }
   .scan-in { background:#E8F8EF; color:#1B7A43; border:2px solid #27AE60; }
@@ -61,15 +75,34 @@
   </div>
 
   <div id="mainContent" class="page-wrap" style="display:none">
-    <div class="scan-buttons">
-      <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
-      <button class="scan-btn scan-out" onclick="openScanModal('OUT')"><span class="icon">📷</span>Scan Out</button>
+    <div class="main-col">
+      <div class="scan-buttons">
+        <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
+        <button class="scan-btn scan-out" onclick="openScanModal('OUT')"><span class="icon">📷</span>Scan Out</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Inventory</div>
+        <input id="itemSearch" class="search-box" type="text" placeholder="Search items…" oninput="renderItemList()">
+        <div id="itemList"></div>
+      </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-title">Inventory</div>
-      <input id="itemSearch" class="search-box" type="text" placeholder="Search items…" oninput="renderItemList()">
-      <div id="itemList"></div>
+    <div class="side-col">
+      <div class="panel">
+        <div class="panel-title">Today's Activity</div>
+        <div id="todayActivityContent">
+          <div class="activity-stat"><span class="label">Loading…</span></div>
+        </div>
+        <div id="recentMovementsList" style="margin-top:4px"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Reports</div>
+        <button class="report-btn" onclick="downloadMovementReport('today')">📄 Daily Report (CSV)</button>
+        <button class="report-btn" onclick="downloadMovementReport('week')">📄 Weekly Report (CSV)</button>
+        <button class="report-btn" onclick="downloadMovementReport('month')">📄 Monthly Report (CSV)</button>
+      </div>
     </div>
   </div>
 
@@ -96,6 +129,7 @@
         document.getElementById('logoutBtn').style.display = '';
         document.getElementById('mainContent').style.display = 'block';
         await loadItems();
+        await loadTodayActivity();
       } catch (err) {
         document.getElementById('accessBlocked').innerHTML = `<div style="color:#B3261E">Could not load: ${err.message}</div>`;
         document.getElementById('accessBlocked').style.display = 'block';
@@ -115,6 +149,73 @@
         renderItemList();
       } catch (err) {
         document.getElementById('itemList').innerHTML = `<div class="empty-state" style="color:#B3261E">Could not load inventory: ${err.message}</div>`;
+      }
+    }
+
+    // Confirmed directly: a real, live count of what's actually
+    // entered and left today, refreshed right after every scan so
+    // it's genuinely current, not a number from whenever the page
+    // happened to load.
+    async function loadTodayActivity() {
+      const content = document.getElementById('todayActivityContent');
+      const recentList = document.getElementById('recentMovementsList');
+      try {
+        const resp = await fetch('/api/get-assets?inventoryMovementSummary=true&period=today');
+        const data = await resp.json();
+        content.innerHTML = `
+          <div class="activity-stat"><span class="label">Items In</span><span class="value activity-in">+${data.totalIn}</span></div>
+          <div class="activity-stat"><span class="label">Items Out</span><span class="value activity-out">-${data.totalOut}</span></div>
+        `;
+        const recent = (data.movements || []).slice(0, 8);
+        recentList.innerHTML = recent.length === 0
+          ? `<div class="recent-item" style="font-style:italic;color:#9CA3AF">Nothing recorded yet today.</div>`
+          : recent.map(m => `
+            <div class="recent-item">
+              <span style="color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'};font-weight:700">${m.movementType === 'IN' ? '↑' : '↓'} ${m.quantity}</span>
+              ${escapeHtml(m.itemName)}
+              <div class="meta">${escapeHtml(m.performedBy || '')} · ${new Date(m.performedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+            </div>`).join('');
+      } catch (err) {
+        content.innerHTML = `<div style="color:#B3261E;font-size:12px">Could not load: ${err.message}</div>`;
+      }
+    }
+
+    // A real CSV, built from the exact same data the panel itself
+    // shows — confirmed directly, so a report always matches what was
+    // actually on screen, not a separately-computed approximation.
+    function csvEscape(val) {
+      const s = String(val ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    async function downloadMovementReport(period) {
+      try {
+        const resp = await fetch(`/api/get-assets?inventoryMovementSummary=true&period=${period}`);
+        const data = await resp.json();
+        const rows = [['Date/Time', 'Item Code', 'Item Name', 'Type', 'Quantity', 'Unit', 'Reason', 'Department', 'Performed By']];
+        (data.movements || []).forEach(m => {
+          rows.push([
+            new Date(m.performedAt).toLocaleString(), m.itemCode, m.itemName, m.movementType,
+            m.quantity, m.unitOfMeasure || '', m.reason || '', m.department || '', m.performedBy || '',
+          ]);
+        });
+        rows.push([]);
+        rows.push(['Total In', data.totalIn]);
+        rows.push(['Total Out', data.totalOut]);
+
+        const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const label = period === 'today' ? 'daily' : period === 'week' ? 'weekly' : 'monthly';
+        a.href = url;
+        a.download = `pharmacy-${label}-report-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Could not generate report: ' + err.message);
       }
     }
 
@@ -344,6 +445,7 @@
         if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
         closeScanModal();
         await loadItems();
+        await loadTodayActivity();
       } catch (err) {
         errorBox.textContent = err.message; errorBox.style.display = 'block';
         btn.disabled = false; btn.textContent = scanModalMode === 'IN' ? 'Confirm Stock In' : 'Confirm Stock Out';
@@ -398,6 +500,7 @@
         if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
         document.getElementById('scanModalOverlay')?.remove();
         await loadItems();
+        await loadTodayActivity();
       } catch (err) {
         errorBox.textContent = err.message; errorBox.style.display = 'block';
         btn.disabled = false; btn.textContent = 'Confirm';
