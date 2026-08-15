@@ -1005,3 +1005,42 @@ create table annual_plan_activity_log (
   performed_at    timestamptz not null default now()
 );
 create index idx_annual_plan_activity_log_time on annual_plan_activity_log (performed_at desc);
+
+-- ============================================================
+-- Fleet Requests, confirmed directly - a real workflow, same shape
+-- as Work Orders (submit, approve, track), not a new kind of asset.
+-- The vehicle itself already has a real home in Asset Tracking's
+-- existing category system (asset_category = 'Transport Assets',
+-- prefix VEH) - this table links to that real record rather than
+-- duplicating vehicle data. Fuel usage deliberately stays a separate,
+-- existing Inventory movement for now rather than being force-linked
+-- here - keeping this first version focused rather than
+-- over-connected.
+-- ============================================================
+create table fleet_requests (
+  id                uuid primary key default gen_random_uuid(),
+  vehicle_id        uuid references components(id) on delete set null,
+  driver_name       text not null,
+  purpose           text,
+  destination       text,
+  trip_date         date,
+  status            text not null default 'Pending',  -- Pending, Approved, Rejected, Completed, Cancelled
+  requested_by      text,
+  approved_by       text,
+  approved_at       timestamptz,
+  odometer_start    numeric,
+  odometer_end      numeric,
+  notes             text,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index idx_fleet_requests_status on fleet_requests (status, trip_date desc);
+
+create table fleet_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  action          text not null,
+  details         text not null,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index idx_fleet_activity_log_time on fleet_activity_log (performed_at desc);

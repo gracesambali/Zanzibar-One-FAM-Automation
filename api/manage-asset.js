@@ -63,6 +63,15 @@ export default async function handler(req, res) {
     if (ANNUAL_PLAN_ACTIONS.includes(action) && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Procurement, System Admin, or Business Owner can manage the Annual Plan." });
     }
+    // Fleet Requests, confirmed directly - the real, specific role
+    // set discussed for this: Admin, Property Manager, Procurement,
+    // System Admin, Business Owner. Drivers never touch this
+    // directly - one of these roles submits a request on a driver's
+    // behalf, naming the driver as a plain field.
+    const FLEET_ACTIONS = ["addFleetRequest", "editFleetRequest", "deleteFleetRequest"];
+    if (FLEET_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+      return res.status(403).json({ error: "Only Admin, Property Manager, Procurement, System Admin, or Business Owner can manage Fleet Requests." });
+    }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
@@ -86,6 +95,9 @@ export default async function handler(req, res) {
     if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u);
     if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u);
     if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u);
+    if (action === "addFleetRequest") return handleAddFleetRequest(req, res, session.u);
+    if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u);
+    if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -464,6 +476,111 @@ async function handleDeleteAnnualPlanItem(req, res, deletedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteAnnualPlanItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function logFleetActivity(action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("fleet_activity_log", { action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logFleetActivity failed (non-fatal):", err.message);
+  }
+}
+
+// A real request/approval workflow, confirmed directly - same shape
+// as Work Orders. The vehicle links to its real Asset Tracking
+// record rather than duplicating vehicle data here.
+async function handleAddFleetRequest(req, res, requestedBy) {
+  const { vehicleId, driverName, purpose, destination, tripDate, notes } = req.body || {};
+  if (!driverName || !driverName.trim()) return res.status(400).json({ error: "A driver name is required." });
+
+  try {
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    let vehicleName = null;
+    if (vehicleId) {
+      const vehicle = await getById("components", vehicleId).catch(() => null);
+      vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+    }
+    const created = await insert("fleet_requests", {
+      vehicle_id: vehicleId || null, driver_name: driverName.trim(), purpose: purpose || null,
+      destination: destination || null, trip_date: tripDate || null, status: "Pending",
+      notes: notes || null, requested_by: requestedBy,
+    });
+    await logFleetActivity("Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${destination ? ` to ${destination}` : ''}`, requestedBy);
+    return res.status(200).json({ success: true, id: created.id });
+  } catch (err) {
+    console.error("addFleetRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Status changes carry real weight here — approving a request means
+// someone genuinely signed off on it, confirmed directly as worth
+// capturing accurately. approved_by and approved_at are set here,
+// server-side, from the real session — never trusted from the
+// client, so this can't be spoofed by whoever happens to submit the
+// edit request.
+async function handleEditFleetRequest(req, res, editedBy) {
+  const { requestId, vehicleId, driverName, purpose, destination, tripDate, status, odometerStart, odometerEnd, notes } = req.body || {};
+  if (!requestId) return res.status(400).json({ error: "requestId is required" });
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const before = await getById("fleet_requests", requestId).catch(() => null);
+    if (!before) return res.status(404).json({ error: "Request not found." });
+
+    const fields = { updated_at: new Date().toISOString() };
+    const changes = [];
+    const setIfChanged = (bodyVal, column, current, label, isNumber) => {
+      if (bodyVal === undefined) return;
+      const newVal = bodyVal === "" ? null : (isNumber ? Number(bodyVal) : bodyVal);
+      if (String(current ?? "") !== String(newVal ?? "")) {
+        fields[column] = newVal;
+        changes.push(`${label}: "${current ?? '(not set)'}" → "${newVal ?? '(not set)'}"`);
+      }
+    };
+    setIfChanged(vehicleId, "vehicle_id", before.vehicle_id, "Vehicle", false);
+    setIfChanged(driverName !== undefined ? driverName.trim() : undefined, "driver_name", before.driver_name, "Driver", false);
+    setIfChanged(purpose, "purpose", before.purpose, "Purpose", false);
+    setIfChanged(destination, "destination", before.destination, "Destination", false);
+    setIfChanged(tripDate, "trip_date", before.trip_date, "Trip Date", false);
+    setIfChanged(odometerStart, "odometer_start", before.odometer_start, "Odometer Start", true);
+    setIfChanged(odometerEnd, "odometer_end", before.odometer_end, "Odometer End", true);
+    setIfChanged(notes, "notes", before.notes, "Notes", false);
+
+    if (status !== undefined && status !== before.status) {
+      fields.status = status;
+      changes.push(`Status: "${before.status}" → "${status}"`);
+      if (status === "Approved") {
+        fields.approved_by = editedBy;
+        fields.approved_at = new Date().toISOString();
+      }
+    }
+
+    if (changes.length > 0) {
+      await update("fleet_requests", requestId, fields);
+      await logFleetActivity("Updated Request", `${before.driver_name}: ${changes.join(", ")}`, editedBy);
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editFleetRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteFleetRequest(req, res, deletedBy) {
+  const { requestId } = req.body || {};
+  if (!requestId) return res.status(400).json({ error: "requestId is required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const request = await getById("fleet_requests", requestId).catch(() => null);
+    if (!request) return res.status(404).json({ error: "Request not found." });
+    await pgQuery("delete from fleet_requests where id = $1", [requestId]);
+    await logFleetActivity("Deleted Request", `${request.driver_name}${request.destination ? ` — ${request.destination}` : ''}`, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteFleetRequest error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

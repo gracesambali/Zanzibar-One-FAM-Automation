@@ -428,6 +428,15 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "The Annual Plan is restricted to Procurement, System Admin, and Business Owner." });
   }
 
+  // Fleet Requests, confirmed directly - the real, specific role set
+  // discussed: Admin, Property Manager, Procurement, System Admin,
+  // Business Owner.
+  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog"];
+  const requestedFleetRoute = FLEET_DATA_ROUTES.find(r => req.query[r] === "true");
+  if (requestedFleetRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+    return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
+  }
+
   if (req.query.inventoryItems === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
@@ -590,6 +599,61 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("annualPlanActivityLog read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Real vehicles — anything active in Asset Tracking already
+  // categorized as Transport Assets, confirmed directly as the real,
+  // existing home for vehicle records rather than a separate list.
+  if (req.query.fleetVehicles === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select id, asset_id, name from components where asset_category = 'Transport Assets' and active = true order by name asc");
+      return res.status(200).json({ vehicles: result.rows.map(r => ({ id: r.id, assetId: r.asset_id, name: r.name })) });
+    } catch (err) {
+      console.error("fleetVehicles read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real fleet request, most recent trip date first, joined
+  // with its real vehicle so a request's own record always shows the
+  // genuine vehicle identity rather than just a stored ID.
+  if (req.query.fleetRequests === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
+         from fleet_requests f
+         left join components c on c.id = f.vehicle_id
+         order by f.trip_date desc nulls last, f.created_at desc`
+      );
+      const requests = result.rows.map(r => ({
+        id: r.id, vehicleId: r.vehicle_id, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
+        driverName: r.driver_name, purpose: r.purpose, destination: r.destination, tripDate: r.trip_date,
+        status: r.status, requestedBy: r.requested_by, approvedBy: r.approved_by, approvedAt: r.approved_at,
+        odometerStart: r.odometer_start !== null ? Number(r.odometer_start) : null,
+        odometerEnd: r.odometer_end !== null ? Number(r.odometer_end) : null,
+        distanceKm: (r.odometer_start !== null && r.odometer_end !== null) ? Number(r.odometer_end) - Number(r.odometer_start) : null,
+        notes: r.notes,
+      }));
+      return res.status(200).json({ requests });
+    } catch (err) {
+      console.error("fleetRequests read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.query.fleetActivityLog === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from fleet_activity_log order by performed_at desc limit 200");
+      return res.status(200).json({
+        entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
+      });
+    } catch (err) {
+      console.error("fleetActivityLog read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
