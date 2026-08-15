@@ -57,8 +57,22 @@ button { font-family: inherit; cursor: pointer; }
 .tab-btn:hover { background: var(--bg); }
 .tab-btn.active { color: var(--navy); border-left-color: var(--navy); background: var(--navy-pale); font-weight: 600; }
 .tab-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+.tab-btn.nested { padding-left: 40px; }
 .sidebar.collapsed .tab-btn span.tab-label { display: none; }
 .sidebar.collapsed .tab-btn { justify-content: center; padding: 12px; position: relative; }
+.sidebar.collapsed .tab-btn.nested { padding: 12px; }
+
+.nav-group-header {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 18px;
+  border: none; background: none; color: var(--muted); border-left: 3px solid transparent;
+  font-weight: 400; font-size: 13.5px; white-space: nowrap; transition: all 0.15s; text-align: left; cursor: pointer;
+}
+.nav-group-header:hover { background: var(--bg); }
+.nav-group-header svg { width: 18px; height: 18px; flex-shrink: 0; }
+.nav-group-arrow { margin-left: auto; font-size: 11px; transition: transform 0.15s; }
+.nav-group-header.expanded .nav-group-arrow { transform: rotate(90deg); }
+.sidebar.collapsed .nav-group-header span.tab-label, .sidebar.collapsed .nav-group-arrow { display: none; }
+.sidebar.collapsed .nav-group-header { justify-content: center; padding: 12px; }
 
 .wo-unread-badge {
   display: none; position: absolute; top: 7px; right: 14px;
@@ -344,55 +358,94 @@ button { font-family: inherit; cursor: pointer; }
     </button>
   </div>
   <div class="sidebar-nav">
-  <button class="tab-btn active" data-tab="dashboard" data-label="Dashboard" onclick="switchTab('dashboard')" onmouseenter="showSidebarTooltip(this, 'Dashboard')" onmouseleave="hideSidebarTooltip()">
+  <button class="tab-btn active" data-tab="dashboard" data-label="Dashboard" id="dashboardNavBtn" onclick="switchTab('dashboard')" onmouseenter="showSidebarTooltip(this, 'Dashboard')" onmouseleave="hideSidebarTooltip()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
     <span class="tab-label">Dashboard</span>
   </button>
-  <button class="tab-btn" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')" onmouseenter="showSidebarTooltip(this, 'Asset Register')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
-    <span class="tab-label">Asset Register</span>
-  </button>
-  <button class="tab-btn" data-tab="sensors" data-label="Sensors" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensors')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-    <span class="tab-label">Sensors</span>
-  </button>
-  <button class="tab-btn" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
-    <span class="tab-label">Systems</span>
-  </button>
-  <button class="tab-btn" data-tab="maintenance" data-label="Maintenance" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Maintenance')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    <span class="tab-label">Maintenance</span>
-  </button>
-  <button class="tab-btn" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
-    <span class="tab-label">Level View</span>
-  </button>
-  <button class="tab-btn" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Floor Plan')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
-    <span class="tab-label">Floor Plan</span>
-  </button>
-  <button class="tab-btn" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')" onmouseenter="showSidebarTooltip(this, 'Work Orders')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    <span class="tab-label">Work Orders</span>
-    <span id="woChatUnreadBadge" class="wo-unread-badge">0</span>
-  </button>
-  <button class="tab-btn" data-tab="plannedmaintenance" data-label="Planned Maintenance" onclick="switchTab('plannedmaintenance')" onmouseenter="showSidebarTooltip(this, 'Planned Maintenance')" onmouseleave="hideSidebarTooltip()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
-    <span class="tab-label">Planned Maintenance</span>
-  </button>
+
+  <!-- Confirmed directly: grouped so the sidebar stops growing with
+       every new tab - Operations covers the day-to-day maintenance
+       and asset work, collapsed by default since that was the actual
+       point (less always-visible length, not just reorganization). -->
+  <div id="operationsGroup">
+    <button class="nav-group-header" id="operationsGroupHeader" onclick="toggleNavGroup('operations')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      <span class="tab-label">Operations</span>
+      <span class="nav-group-arrow">▸</span>
+    </button>
+    <div id="navGroupItems-operations" style="display:none">
+      <button class="tab-btn nested" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')" onmouseenter="showSidebarTooltip(this, 'Asset Register')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Asset Register</span>
+      </button>
+      <button class="tab-btn nested" data-tab="sensors" data-label="Sensors" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensors')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Sensors</span>
+      </button>
+      <button class="tab-btn nested" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Systems</span>
+      </button>
+      <button class="tab-btn nested" data-tab="maintenance" data-label="Maintenance" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Maintenance')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Maintenance</span>
+      </button>
+      <button class="tab-btn nested" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Level View</span>
+      </button>
+      <button class="tab-btn nested" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Floor Plan')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Floor Plan</span>
+      </button>
+      <button class="tab-btn nested" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')" onmouseenter="showSidebarTooltip(this, 'Work Orders')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Work Orders</span>
+        <span id="woChatUnreadBadge" class="wo-unread-badge wo-unread-badge-instance">0</span>
+      </button>
+      <button class="tab-btn nested" data-tab="plannedmaintenance" data-label="Planned Maintenance" onclick="switchTab('plannedmaintenance')" onmouseenter="showSidebarTooltip(this, 'Planned Maintenance')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Planned Maintenance</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Confirmed directly: named "Holdings" for now, deliberately
+       distinct from the Procurement role name to avoid the two
+       meaning different things in the same sidebar - open to
+       revisiting the name later once it's been lived with. -->
+  <div id="holdingsGroup">
+    <button class="nav-group-header" id="holdingsGroupHeader" onclick="toggleNavGroup('holdings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+      <span class="tab-label">Holdings</span>
+      <span class="nav-group-arrow">▸</span>
+    </button>
+    <div id="navGroupItems-holdings" style="display:none">
+      <button class="tab-btn nested" data-tab="fixedassets" data-label="Asset Tracking" id="fixedAssetsNavBtn" onclick="switchTab('fixedassets')" onmouseenter="showSidebarTooltip(this, 'Asset Tracking')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Asset Tracking</span>
+      </button>
+      <button class="tab-btn nested" data-tab="inventory" data-label="Inventory" id="inventoryNavBtn" onclick="switchTab('inventory')" onmouseenter="showSidebarTooltip(this, 'Inventory')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Inventory</span>
+      </button>
+    </div>
+  </div>
+
   <button class="tab-btn" data-tab="units" data-label="Tenant Management" id="unitsNavBtn" onclick="switchTab('units')" onmouseenter="showSidebarTooltip(this, 'Tenant Management')" onmouseleave="hideSidebarTooltip()" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
     <span class="tab-label">Tenant Management</span>
   </button>
-  <button class="tab-btn" data-tab="fixedassets" data-label="Asset Tracking" id="fixedAssetsNavBtn" onclick="switchTab('fixedassets')" onmouseenter="showSidebarTooltip(this, 'Asset Tracking')" onmouseleave="hideSidebarTooltip()" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-    <span class="tab-label">Asset Tracking</span>
-  </button>
-  <button class="tab-btn" data-tab="inventory" data-label="Inventory" id="inventoryNavBtn" onclick="switchTab('inventory')" onmouseenter="showSidebarTooltip(this, 'Inventory')" onmouseleave="hideSidebarTooltip()" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
-    <span class="tab-label">Inventory</span>
-  </button>
+
+  <!-- Confirmed directly: Technician keeps the exact same flat list
+       as before - no nesting, no groups, just these three - so this
+       is a genuinely separate, standalone set of buttons rather than
+       a group that happens to show fewer items for this one role. -->
+  <div id="technicianFlatNav" style="display:none">
+    <button class="tab-btn" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')" onmouseenter="showSidebarTooltip(this, 'Work Orders')" onmouseleave="hideSidebarTooltip()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span class="tab-label">Work Orders</span>
+      <span class="wo-unread-badge wo-unread-badge-instance">0</span>
+    </button>
+    <button class="tab-btn" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+      <span class="tab-label">Level View</span>
+    </button>
+    <button class="tab-btn" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Floor Plan')" onmouseleave="hideSidebarTooltip()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
+      <span class="tab-label">Floor Plan</span>
+    </button>
+  </div>
   </div>
 </div>
 </div>
@@ -1101,34 +1154,73 @@ function daysUntil(dateStr) { return Math.round((new Date(dateStr) - new Date())
 // not just gating actions inside a view (the existing pattern for
 // things like viewCostAndDepreciation), but the nav entry itself,
 // since the whole point is fewer places to have to look.
-const SIMPLIFIED_NAV_HIDDEN_TABS = ['dashboard', 'assets', 'sensors', 'systems', 'maintenance', 'plannedmaintenance'];
+// The Technician-specific hiding is now handled directly in
+// applySimplifiedNavIfNeeded via the genuinely separate flat nav
+// structure, rather than a list of tabs to individually hide.
 function applySimplifiedNavIfNeeded() {
-  // Units tab — visible to everyone except Technician, confirmed
-  // simple rule, not a nuanced permission. Hidden by default in the
-  // HTML; revealed here for every other role.
+  const isTechnician = currentUserPermissions && currentUserPermissions.simplifiedNav;
+
+  // Technician: the exact same flat list as always - just Work
+  // Orders, Level View, Floor Plan, no nesting at all, confirmed
+  // directly to stay untouched by this whole restructure. A
+  // genuinely separate, standalone set of buttons, not the Operations
+  // group shown with fewer items inside it.
+  const technicianNav = document.getElementById('technicianFlatNav');
+  const dashboardBtn = document.getElementById('dashboardNavBtn');
+  const operationsGroup = document.getElementById('operationsGroup');
+  const holdingsGroup = document.getElementById('holdingsGroup');
   const unitsBtn = document.getElementById('unitsNavBtn');
-  if (unitsBtn && currentUserRole !== 'technician') unitsBtn.style.display = '';
 
-  // Asset Tracking — confirmed directly: visible to everyone except
-  // Technician, same rule already used for Tenant Units, not tied to
-  // cost/depreciation visibility specifically.
-  // Asset Tracking — confirmed directly: the tab itself is visible to
-  // everyone, no role exceptions at the nav level at all. Real access
-  // control happens once someone actually opens it — the data behind
-  // it is what's genuinely restricted, enforced on the backend.
-  const fixedAssetsBtn = document.getElementById('fixedAssetsNavBtn');
-  if (fixedAssetsBtn) fixedAssetsBtn.style.display = '';
+  if (isTechnician) {
+    if (technicianNav) technicianNav.style.display = '';
+    if (dashboardBtn) dashboardBtn.style.display = 'none';
+    if (operationsGroup) operationsGroup.style.display = 'none';
+    if (holdingsGroup) holdingsGroup.style.display = 'none';
+    if (unitsBtn) unitsBtn.style.display = 'none';
+    return;
+  }
 
-  // Inventory — same pattern as Asset Tracking: visible to everyone,
-  // real restriction happens on the actual management actions.
-  const inventoryBtn = document.getElementById('inventoryNavBtn');
-  if (inventoryBtn) inventoryBtn.style.display = '';
+  // Everyone else: the new nested structure. Dashboard and the two
+  // groups are visible to everyone in this branch — real restriction
+  // for Holdings' actual data happens on the backend, same as before;
+  // this only controls whether the nav entries are visible at all.
+  if (technicianNav) technicianNav.style.display = 'none';
+  if (dashboardBtn) dashboardBtn.style.display = '';
+  if (operationsGroup) operationsGroup.style.display = '';
+  if (holdingsGroup) holdingsGroup.style.display = '';
+  if (unitsBtn) unitsBtn.style.display = '';
+}
 
-  if (!currentUserPermissions || !currentUserPermissions.simplifiedNav) return;
-  SIMPLIFIED_NAV_HIDDEN_TABS.forEach(t => {
-    const btn = document.querySelector(`.tab-btn[data-tab="${t}"]`);
-    if (btn) btn.style.display = 'none';
-  });
+// Confirmed directly: collapsed by default — the actual point of
+// this restructure was reducing how much always sits visible, not
+// just reorganizing the same length differently.
+function toggleNavGroup(groupName) {
+  const items = document.getElementById(`navGroupItems-${groupName}`);
+  const header = document.getElementById(`${groupName}GroupHeader`);
+  if (!items || !header) return;
+  const isOpen = items.style.display !== 'none';
+  items.style.display = isOpen ? 'none' : '';
+  header.classList.toggle('expanded', !isOpen);
+}
+
+// Landing on a tab that lives inside a collapsed group (a direct
+// switchTab call, not necessarily a click on the group itself) should
+// still reveal it — an active tab hidden inside a closed group would
+// look like it silently vanished.
+const NAV_GROUP_MEMBERSHIP = {
+  assets: 'operations', sensors: 'operations', systems: 'operations', maintenance: 'operations',
+  levelview: 'operations', floorplan: 'operations', workorders: 'operations', plannedmaintenance: 'operations',
+  fixedassets: 'holdings', inventory: 'holdings',
+};
+function ensureNavGroupExpandedFor(tab) {
+  const group = NAV_GROUP_MEMBERSHIP[tab];
+  if (!group) return;
+  const items = document.getElementById(`navGroupItems-${group}`);
+  const header = document.getElementById(`${group}GroupHeader`);
+  if (items && items.style.display === 'none') {
+    items.style.display = '';
+    if (header) header.classList.add('expanded');
+  }
 }
 
 const SIMPLIFIED_NAV_ALLOWED_TABS = ['workorders', 'levelview', 'floorplan'];
@@ -1140,6 +1232,7 @@ function switchTab(tab) {
   if (tab === 'units' && currentUserRole === 'technician') {
     tab = 'workorders'; // same defense-in-depth principle — never trust hidden-button alone
   }
+  ensureNavGroupExpandedFor(tab);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-'+tab).classList.add('active');
@@ -7813,15 +7906,17 @@ function getWOUnreadCount(o) {
 // roles use this. This badge just says "some work order has new
 // chat activity," scoped to Work Orders where it belongs.
 function updateWOUnreadBadges() {
-  const badge = document.getElementById('woChatUnreadBadge');
-  if (!badge) return;
+  const badges = document.querySelectorAll('.wo-unread-badge-instance');
+  if (badges.length === 0) return;
   const count = dashboardWorkOrders.filter(o => getWOUnreadCount(o) > 0).length;
-  if (count > 0) {
-    badge.textContent = count > 99 ? '99+' : String(count);
-    badge.style.display = 'flex';
-  } else {
-    badge.style.display = 'none';
-  }
+  badges.forEach(badge => {
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.style.display = 'flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  });
 }
 
 async function renderWODetailChat(o) {
