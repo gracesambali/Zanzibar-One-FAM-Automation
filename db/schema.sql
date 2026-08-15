@@ -958,3 +958,12 @@ create table inventory_barcode_links (
   linked_by   text,
   linked_at   timestamptz not null default now()
 );
+
+-- A genuinely separate category from Consumable, confirmed directly
+-- as the real trigger for automatic batch tracking - "Consumable" was
+-- too broad to mean anything specific enough to act on (gloves and
+-- medications both landed there). on conflict do nothing since this
+-- runs against a database that may already have the earlier category
+-- seed applied.
+insert into inventory_categories (label) values ('Pharmaceutical')
+  on conflict (label) do nothing;
