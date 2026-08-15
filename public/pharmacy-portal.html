@@ -75,6 +75,7 @@
   .recent-item { font-size:12.5px; padding:9px 0; border-bottom:1px solid #F0F2F6; color:var(--text); }
   .recent-item:last-child { border-bottom:none; }
   .recent-item .meta { color:#9CA3AF; }
+  .hidden { display:none !important; }
 
   .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
   .panel-title { font-size:12px; font-weight:700; color:#8B1A1A; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
@@ -116,7 +117,7 @@
     <div style="font-size:13px;color:#6B7280">This page is only available to the Pharmacy role.</div>
   </div>
 
-  <div id="mainContent" class="page-wrap" style="display:none">
+  <div id="mainContent" class="page-wrap hidden">
     <div class="main-col">
       <div class="scan-buttons">
         <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
@@ -181,7 +182,7 @@
           return;
         }
         document.getElementById('logoutBtn').style.display = '';
-        document.getElementById('mainContent').style.display = 'block';
+        document.getElementById('mainContent').classList.remove('hidden');
         await loadItems();
         await loadTodayActivity();
       } catch (err) {
