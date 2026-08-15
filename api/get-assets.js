@@ -415,7 +415,7 @@ export default async function handler(req, res) {
   // stripped-down view.
   const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations", "inventorySnapshotYears", "inventorySnapshot", "inventoryActivityLog", "inventoryBatches", "resolveInventoryBarcode"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
-  if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+  if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
   }
 

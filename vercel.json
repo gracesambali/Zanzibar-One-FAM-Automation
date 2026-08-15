@@ -13,7 +13,8 @@
     { "source": "/demo.html", "destination": "/demo", "permanent": true },
     { "source": "/sensor-monitor.html", "destination": "/sensor-monitor", "permanent": true },
     { "source": "/set-password.html", "destination": "/set-password", "permanent": true },
-    { "source": "/unit-portal.html", "destination": "/unit-portal", "permanent": true }
+    { "source": "/unit-portal.html", "destination": "/unit-portal", "permanent": true },
+    { "source": "/pharmacy-portal.html", "destination": "/pharmacy-portal", "permanent": true }
   ],
   "rewrites": [
     { "source": "/login", "destination": "/login.html" },
@@ -23,6 +24,7 @@
     { "source": "/demo", "destination": "/demo.html" },
     { "source": "/sensor-monitor", "destination": "/sensor-monitor.html" },
     { "source": "/set-password", "destination": "/set-password.html" },
-    { "source": "/unit-portal", "destination": "/unit-portal.html" }
+    { "source": "/unit-portal", "destination": "/unit-portal.html" },
+    { "source": "/pharmacy-portal", "destination": "/pharmacy-portal.html" }
   ]
 }
