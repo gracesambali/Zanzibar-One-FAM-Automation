@@ -52,6 +52,17 @@ export default async function handler(req, res) {
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
+    // Annual Planning, confirmed directly as a real, distinct
+    // procurement-team requirement (PPRA-aligned) - deliberately its
+    // own, narrower permission group rather than folded into general
+    // inventory management. Stock Keeper left out on purpose here:
+    // day-to-day stock counting is a different function from annual
+    // budget/procurement planning. A reasonable starting point, open
+    // to refinement.
+    const ANNUAL_PLAN_ACTIONS = ["addAnnualPlanItem", "editAnnualPlanItem", "deleteAnnualPlanItem"];
+    if (ANNUAL_PLAN_ACTIONS.includes(action) && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
+      return res.status(403).json({ error: "Only Procurement, System Admin, or Business Owner can manage the Annual Plan." });
+    }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
@@ -72,6 +83,9 @@ export default async function handler(req, res) {
     if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u);
     if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u);
     if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u);
+    if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u);
+    if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u);
+    if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -353,6 +367,107 @@ async function handleUploadInventorySnapshot(req, res, uploadedBy) {
 // the items that actually need it (medications), never a default for
 // everything. Turning this off doesn't touch or delete any batches
 // already recorded - just stops requiring one for future movements.
+// Shared logging for Annual Plan activity, matching the exact same
+// pattern already proven for Inventory - non-fatal on purpose, a
+// logging failure should never block the real action it describes.
+async function logAnnualPlanActivity(action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("annual_plan_activity_log", { action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logAnnualPlanActivity failed (non-fatal):", err.message);
+  }
+}
+
+// A real Annual Procurement Plan item, confirmed directly as PPRA-
+// aligned - one row per planned purchase for the coming financial
+// year, tracked from Planned through to Completed as the year
+// actually unfolds.
+async function handleAddAnnualPlanItem(req, res, addedBy) {
+  const { fiscalYear, itemDescription, category, estimatedQuantity, unitOfMeasure, estimatedCost, procurementMethod, plannedQuarter, sourceOfFunds, notes } = req.body || {};
+  if (!fiscalYear) return res.status(400).json({ error: "A fiscal year is required." });
+  if (!itemDescription || !itemDescription.trim()) return res.status(400).json({ error: "A description of what's needed is required." });
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("annual_plan_items", {
+      fiscal_year: Number(fiscalYear),
+      item_description: itemDescription.trim(),
+      category: category || null,
+      estimated_quantity: estimatedQuantity != null && estimatedQuantity !== "" ? Number(estimatedQuantity) : null,
+      unit_of_measure: unitOfMeasure || null,
+      estimated_cost_tzs: estimatedCost != null && estimatedCost !== "" ? Number(estimatedCost) : null,
+      procurement_method: procurementMethod || null,
+      planned_quarter: plannedQuarter || null,
+      source_of_funds: sourceOfFunds || null,
+      status: "Planned",
+      notes: notes || null,
+      added_by: addedBy,
+    });
+    await logAnnualPlanActivity("Added Plan Item", `FY${fiscalYear} — "${itemDescription.trim()}"`, addedBy);
+    return res.status(200).json({ success: true, id: created.id });
+  } catch (err) {
+    console.error("addAnnualPlanItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleEditAnnualPlanItem(req, res, editedBy) {
+  const { itemId, itemDescription, category, estimatedQuantity, unitOfMeasure, estimatedCost, procurementMethod, plannedQuarter, sourceOfFunds, status, notes } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const before = await getById("annual_plan_items", itemId).catch(() => null);
+    if (!before) return res.status(404).json({ error: "Plan item not found." });
+
+    const fields = { updated_at: new Date().toISOString() };
+    const changes = [];
+    const setIfChanged = (bodyVal, column, current, label, isNumber) => {
+      if (bodyVal === undefined) return;
+      const newVal = bodyVal === "" ? null : (isNumber ? Number(bodyVal) : bodyVal);
+      if (String(current ?? "") !== String(newVal ?? "")) {
+        fields[column] = newVal;
+        changes.push(`${label}: "${current ?? '(not set)'}" → "${newVal ?? '(not set)'}"`);
+      }
+    };
+    setIfChanged(itemDescription !== undefined ? itemDescription.trim() : undefined, "item_description", before.item_description, "Description", false);
+    setIfChanged(category, "category", before.category, "Category", false);
+    setIfChanged(estimatedQuantity, "estimated_quantity", before.estimated_quantity, "Quantity", true);
+    setIfChanged(unitOfMeasure, "unit_of_measure", before.unit_of_measure, "Unit", false);
+    setIfChanged(estimatedCost, "estimated_cost_tzs", before.estimated_cost_tzs, "Estimated Cost", true);
+    setIfChanged(procurementMethod, "procurement_method", before.procurement_method, "Method", false);
+    setIfChanged(plannedQuarter, "planned_quarter", before.planned_quarter, "Planned Quarter", false);
+    setIfChanged(sourceOfFunds, "source_of_funds", before.source_of_funds, "Source of Funds", false);
+    setIfChanged(status, "status", before.status, "Status", false);
+    setIfChanged(notes, "notes", before.notes, "Notes", false);
+
+    if (changes.length > 0) {
+      await update("annual_plan_items", itemId, fields);
+      await logAnnualPlanActivity("Edited Plan Item", `FY${before.fiscal_year} — "${before.item_description}": ${changes.join(", ")}`, editedBy);
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editAnnualPlanItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteAnnualPlanItem(req, res, deletedBy) {
+  const { itemId } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const item = await getById("annual_plan_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Plan item not found." });
+    await pgQuery("delete from annual_plan_items where id = $1", [itemId]);
+    await logAnnualPlanActivity("Deleted Plan Item", `FY${item.fiscal_year} — "${item.item_description}"`, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteAnnualPlanItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleSetItemBatchTracked(req, res, editedBy) {
   const { itemId, isBatchTracked } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });

@@ -419,6 +419,15 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
   }
 
+  // Annual Planning, confirmed directly as its own, narrower group -
+  // Stock Keeper left out here on purpose, matching the same real
+  // restriction already enforced on the write side.
+  const ANNUAL_PLAN_DATA_ROUTES = ["annualPlanYears", "annualPlanItems", "annualPlanActivityLog"];
+  const requestedAnnualPlanRoute = ANNUAL_PLAN_DATA_ROUTES.find(r => req.query[r] === "true");
+  if (requestedAnnualPlanRoute && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
+    return res.status(403).json({ error: "The Annual Plan is restricted to Procurement, System Admin, and Business Owner." });
+  }
+
   if (req.query.inventoryItems === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
@@ -530,6 +539,57 @@ export default async function handler(req, res) {
       return res.status(200).json({ period, since: since.toISOString(), totalIn, totalOut, movements });
     } catch (err) {
       console.error("inventoryMovementSummary read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Which fiscal years actually have real plan items, so the
+  // frontend only ever offers real, existing years to switch to.
+  if (req.query.annualPlanYears === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select distinct fiscal_year from annual_plan_items order by fiscal_year desc");
+      return res.status(200).json({ years: result.rows.map(r => r.fiscal_year) });
+    } catch (err) {
+      console.error("annualPlanYears read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real plan item for one fiscal year, plus a genuine summary
+  // (total estimated budget, breakdown by status) computed from the
+  // exact same items - so the summary cards can never show something
+  // different from the real list underneath them.
+  if (req.query.annualPlanItems === "true" && req.query.year) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from annual_plan_items where fiscal_year = $1 order by created_at asc", [Number(req.query.year)]);
+      const items = result.rows.map(r => ({
+        id: r.id, fiscalYear: r.fiscal_year, itemDescription: r.item_description, category: r.category,
+        estimatedQuantity: r.estimated_quantity !== null ? Number(r.estimated_quantity) : null,
+        unitOfMeasure: r.unit_of_measure,
+        estimatedCost: r.estimated_cost_tzs !== null ? Number(r.estimated_cost_tzs) : null,
+        procurementMethod: r.procurement_method, plannedQuarter: r.planned_quarter,
+        sourceOfFunds: r.source_of_funds, status: r.status, notes: r.notes,
+      }));
+      const totalEstimatedCost = items.reduce((sum, i) => sum + (i.estimatedCost || 0), 0);
+      const statusCounts = items.reduce((acc, i) => { acc[i.status] = (acc[i.status] || 0) + 1; return acc; }, {});
+      return res.status(200).json({ items, totalEstimatedCost, statusCounts });
+    } catch (err) {
+      console.error("annualPlanItems read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.query.annualPlanActivityLog === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from annual_plan_activity_log order by performed_at desc limit 200");
+      return res.status(200).json({
+        entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
+      });
+    } catch (err) {
+      console.error("annualPlanActivityLog read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
