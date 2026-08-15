@@ -3332,6 +3332,24 @@ async function renderInventory() {
   }
 }
 
+// Confirmed directly: after deleting an item or recording a change,
+// the page shouldn't visibly reload — no "Loading…" flash, no wiping
+// the screen. This re-fetches the real data in the background and
+// re-renders straight from it, same as the first load, just without
+// the intermediate blank state a person would otherwise see and feel
+// like they lost their place.
+async function refreshInventoryQuietly() {
+  try {
+    const resp = await fetch('/api/get-assets?inventoryItems=true');
+    if (!resp.ok) return; // a quiet refresh failing silently is fine - the person still sees their last-known-good state, not an error interrupting them
+    const data = await resp.json();
+    inventoryItemsCache = data.items || [];
+    renderInventoryTable();
+  } catch (err) {
+    console.error('Quiet inventory refresh failed (non-fatal):', err.message);
+  }
+}
+
 // Column-header filter/sort state for Inventory, matching the exact
 // pattern already proven on Asset Tracking - Category and Location
 // are value filters, Quantity is a sort.
@@ -3462,10 +3480,13 @@ function renderInventoryTable() {
                     ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--red-bg);color:var(--red)">⚠ Low Stock</span>`
                     : `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green)">OK</span>`}
                 </td>
-                <td style="padding:9px 12px;text-align:right;white-space:nowrap">
+                <td style="padding:9px 12px;text-align:right;white-space:nowrap;position:relative">
                   ${canManageInventory ? `<button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
-                  <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">History</button>
-                  ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
+                  <button onclick="toggleInventoryRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--muted);cursor:pointer;line-height:1">⋮</button>
+                  <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left">
+                    <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
+                    ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}
+                  </div>
                 </td>
               </tr>`).join('')}
         </tbody>
@@ -3495,6 +3516,32 @@ let inventoryLocationsCache = [];
 // real configured recipients, not just trusted to work.
 // Always loaded as part of the normal page render, not behind a
 // toggle — matching the exact Asset Tracking activity log pattern.
+// A compact menu per row, confirmed directly, replacing separate
+// History and Delete buttons — Record Movement stays its own visible
+// button since it's the most common action; History and Delete sit
+// behind the dots, closed by default and closing again on an outside
+// click, same pattern already used for the column-filter popovers.
+let openInventoryRowMenuId = null;
+function toggleInventoryRowMenu(itemId, event) {
+  event.stopPropagation();
+  const menu = document.getElementById(`rowmenu_${itemId}`);
+  if (!menu) return;
+  const isOpen = menu.style.display !== 'none';
+  if (openInventoryRowMenuId && openInventoryRowMenuId !== itemId) {
+    const prevMenu = document.getElementById(`rowmenu_${openInventoryRowMenuId}`);
+    if (prevMenu) prevMenu.style.display = 'none';
+  }
+  menu.style.display = isOpen ? 'none' : 'block';
+  openInventoryRowMenuId = isOpen ? null : itemId;
+}
+document.addEventListener('click', (e) => {
+  if (openInventoryRowMenuId && !e.target.closest(`#rowmenu_${openInventoryRowMenuId}`) && !e.target.closest('[onclick*="toggleInventoryRowMenu"]')) {
+    const menu = document.getElementById(`rowmenu_${openInventoryRowMenuId}`);
+    if (menu) menu.style.display = 'none';
+    openInventoryRowMenuId = null;
+  }
+});
+
 async function loadInventoryActivityLog() {
   const content = document.getElementById('inventoryActivityLogContent');
   if (!content) return;
@@ -3692,10 +3739,10 @@ async function submitUploadPreviousYear() {
 // confirmed directly. Requires typing the item's own name to confirm,
 // not just a yes/no click, given it also removes the item's full
 // movement history and cannot be undone.
-async function deleteInventoryItemNow(itemId, name) {
-  const typed = prompt(`This permanently deletes "${name}" and its entire movement history — this cannot be undone.\n\nType the item's name exactly to confirm:`);
-  if (typed !== name) {
-    if (typed !== null) alert('Name did not match — nothing was deleted.');
+async function deleteInventoryItemNow(itemId, itemCode, name) {
+  const typed = prompt(`This permanently deletes "${name}" (${itemCode}) and its entire movement history — this cannot be undone.\n\nType the item code to confirm:`);
+  if (typed !== itemCode) {
+    if (typed !== null) alert('Item code did not match — nothing was deleted.');
     return;
   }
   try {
@@ -3706,7 +3753,7 @@ async function deleteInventoryItemNow(itemId, name) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
-    renderInventory();
+    refreshInventoryQuietly();
   } catch (err) {
     alert('Could not delete: ' + err.message);
   }
@@ -3724,7 +3771,7 @@ async function seedInventoryTestDataNow() {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not seed test data');
     const alertItem = data.items.find(i => i.willAlert);
     alert(`Added ${data.items.length} sample items.${alertItem ? ` "${alertItem.name}" was created already below its reorder level — a real low-stock email and SMS should be on their way now.` : ''}`);
-    renderInventory();
+    refreshInventoryQuietly();
   } catch (err) {
     alert('Could not seed test data: ' + err.message);
   }
@@ -3804,7 +3851,7 @@ async function submitInventorySheetUpload() {
     statusEl.innerHTML = statusHtml;
     statusEl.style.display = 'block';
     btn.textContent = 'Done';
-    if (data.created > 0) renderInventory();
+    if (data.created > 0) refreshInventoryQuietly();
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.style.color = 'var(--red)';
@@ -3964,7 +4011,7 @@ async function submitAddInventoryItem() {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add item');
     document.getElementById('addInventoryItemOverlay')?.remove();
-    renderInventory();
+    refreshInventoryQuietly();
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -4036,7 +4083,7 @@ async function submitInventoryMovement(itemId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record movement');
     overlay.remove();
-    renderInventory();
+    refreshInventoryQuietly();
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
