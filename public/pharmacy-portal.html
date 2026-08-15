@@ -27,6 +27,10 @@
   .activity-out { color:#B3261E; }
   .report-btn { width:100%; padding:10px 12px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#1A3566; font-size:12.5px; font-weight:600; cursor:pointer; margin-top:8px; text-align:left; display:flex; align-items:center; gap:8px; }
   .report-btn:hover { background:#F7F8FA; }
+  .report-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .report-row-label { flex:1; font-size:12.5px; font-weight:600; color:#1A3566; }
+  .report-btn-sm { padding:7px 14px; border:1px solid #E2E6ED; border-radius:7px; background:#fff; color:#1A3566; font-size:11.5px; font-weight:600; cursor:pointer; }
+  .report-btn-sm:hover { background:#F7F8FA; border-color:#1A3566; }
   .recent-item { font-size:11.5px; padding:6px 0; border-bottom:1px solid #F0F2F6; color:#1A1A2E; }
   .recent-item:last-child { border-bottom:none; }
   .recent-item .meta { color:#9CA3AF; }
@@ -99,9 +103,21 @@
 
       <div class="panel">
         <div class="panel-title">Reports</div>
-        <button class="report-btn" onclick="downloadMovementReport('today')">📄 Daily Report (CSV)</button>
-        <button class="report-btn" onclick="downloadMovementReport('week')">📄 Weekly Report (CSV)</button>
-        <button class="report-btn" onclick="downloadMovementReport('month')">📄 Monthly Report (CSV)</button>
+        <div class="report-row">
+          <span class="report-row-label">Daily</span>
+          <button class="report-btn-sm" onclick="downloadMovementReport('today')">CSV</button>
+          <button class="report-btn-sm" onclick="downloadMovementReportPdf('today')">PDF</button>
+        </div>
+        <div class="report-row">
+          <span class="report-row-label">Weekly</span>
+          <button class="report-btn-sm" onclick="downloadMovementReport('week')">CSV</button>
+          <button class="report-btn-sm" onclick="downloadMovementReportPdf('week')">PDF</button>
+        </div>
+        <div class="report-row">
+          <span class="report-row-label">Monthly</span>
+          <button class="report-btn-sm" onclick="downloadMovementReport('month')">CSV</button>
+          <button class="report-btn-sm" onclick="downloadMovementReportPdf('month')">PDF</button>
+        </div>
       </div>
     </div>
   </div>
@@ -214,6 +230,58 @@
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Could not generate report: ' + err.message);
+      }
+    }
+
+    // Matches the exact same "print window with a Download as PDF
+    // button" pattern already established elsewhere in the app -
+    // window.print() to the browser's own PDF output, not a real
+    // binary generated server-side.
+    async function downloadMovementReportPdf(period) {
+      try {
+        const resp = await fetch(`/api/get-assets?inventoryMovementSummary=true&period=${period}`);
+        const data = await resp.json();
+        const movements = data.movements || [];
+        const label = period === 'today' ? 'Daily' : period === 'week' ? 'Weekly' : 'Monthly';
+
+        const rowsHtml = movements.map(m => `
+          <tr>
+            <td>${new Date(m.performedAt).toLocaleString()}</td>
+            <td>${escapeHtml(m.itemCode)}</td><td>${escapeHtml(m.itemName)}</td>
+            <td style="color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'};font-weight:700">${m.movementType}</td>
+            <td style="text-align:right">${m.quantity} ${escapeHtml(m.unitOfMeasure || '')}</td>
+            <td>${escapeHtml(m.reason || '—')}</td><td>${escapeHtml(m.department || '—')}</td><td>${escapeHtml(m.performedBy || '—')}</td>
+          </tr>`).join('');
+
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <html><head><title>Pharmacy ${label} Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
+            h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
+            .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+            th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
+            th { background: #F7F8FA; }
+            .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
+            .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+            @media print { .download-btn { display:none; } }
+          </style></head><body>
+          <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+          <h1>Pharmacy ${label} Report</h1>
+          <div class="meta">Generated ${new Date().toLocaleString()} · ${movements.length} movement${movements.length === 1 ? '' : 's'}</div>
+          <table>
+            <thead><tr><th>Date/Time</th><th>Item Code</th><th>Item Name</th><th>Type</th><th>Quantity</th><th>Reason</th><th>Department</th><th>Performed By</th></tr></thead>
+            <tbody>${rowsHtml || '<tr><td colspan="8" style="text-align:center;color:#9CA3AF">No movements in this period.</td></tr>'}
+              <tr class="totals"><td colspan="4">TOTALS</td><td style="text-align:right">In: ${data.totalIn} · Out: ${data.totalOut}</td><td colspan="3"></td></tr>
+            </tbody>
+          </table>
+          </body></html>
+        `);
+        printWindow.document.close();
+        printWindow.focus();
       } catch (err) {
         alert('Could not generate report: ' + err.message);
       }
