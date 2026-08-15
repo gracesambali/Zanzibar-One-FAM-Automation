@@ -849,3 +849,31 @@ create table inventory_movements (
   performed_at    timestamptz not null default now()
 );
 create index idx_inventory_movements_item on inventory_movements (item_id, performed_at desc);
+
+-- ============================================================
+-- Real, editable Inventory categories and locations - confirmed
+-- directly: someone should be able to add a new one right from the
+-- item form if what they need isn't in the dropdown, rather than
+-- being stuck with a fixed list. Kept as simple label lists rather
+-- than foreign keys on inventory_items - unlike TRA classes, no
+-- calculation depends on category or location, so a plain, real,
+-- controlled list of valid options is enough without the added
+-- complexity of a relational migration.
+-- ============================================================
+create table inventory_categories (
+  id          uuid primary key default gen_random_uuid(),
+  label       text unique not null,
+  created_by  text,
+  created_at  timestamptz not null default now()
+);
+insert into inventory_categories (label) values
+  ('Fuel'), ('Stationery'), ('Consumable'), ('Spare Parts'),
+  ('Building Materials'), ('Maintenance Materials');
+
+create table inventory_locations (
+  id          uuid primary key default gen_random_uuid(),
+  label       text unique not null,
+  created_by  text,
+  created_at  timestamptz not null default now()
+);
+insert into inventory_locations (label) values ('Main Store'), ('Pharmacy');

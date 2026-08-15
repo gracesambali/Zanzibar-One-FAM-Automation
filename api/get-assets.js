@@ -413,7 +413,7 @@ export default async function handler(req, res) {
   // genuinely restricted to Stock Keeper, Procurement, System Admin,
   // and Business Owner — a real 403 at the API level, not a
   // stripped-down view.
-  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements"];
+  const INVENTORY_DATA_ROUTES = ["inventoryItems", "inventoryMovements", "inventoryCategories", "inventoryLocations"];
   const requestedInventoryRoute = INVENTORY_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedInventoryRoute && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Inventory is restricted to Stock Keeper, Procurement, System Admin, and Business Owner." });
@@ -459,6 +459,30 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("inventoryMovements read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Real, growing lists a person can add to right from the item form
+  // when what they need isn't already there — not a fixed dropdown.
+  if (req.query.inventoryCategories === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const rows = await pgListAllRecords("inventory_categories");
+      return res.status(200).json({ categories: rows.map(r => r.label).sort() });
+    } catch (err) {
+      console.error("inventoryCategories read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.query.inventoryLocations === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const rows = await pgListAllRecords("inventory_locations");
+      return res.status(200).json({ locations: rows.map(r => r.label).sort() });
+    } catch (err) {
+      console.error("inventoryLocations read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }

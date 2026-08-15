@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     // Business Owner set already trusted with Asset Tracking. A
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
-    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem"];
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation"];
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
@@ -61,6 +61,8 @@ export default async function handler(req, res) {
     if (action === "editInventoryItem") return handleEditInventoryItem(req, res, session.u);
     if (action === "recordInventoryMovement") return handleRecordInventoryMovement(req, res, session.u);
     if (action === "deactivateInventoryItem") return handleDeactivateInventoryItem(req, res, session.u);
+    if (action === "addInventoryCategory") return handleAddInventoryCategory(req, res, session.u);
+    if (action === "addInventoryLocation") return handleAddInventoryLocation(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -175,6 +177,37 @@ async function sendLowStockAlert({ itemName, itemCode, currentQuantity, reorderL
     });
   } catch (err) {
     console.error("Low stock alert - alert_log write failed (non-fatal):", err.message);
+  }
+}
+
+// Real, growing lists — add-only for now (no edit/delete), matching
+// exactly what was actually asked for: a way to add a category or
+// location right from the item form when it isn't already there.
+async function handleAddInventoryCategory(req, res, addedBy) {
+  const { label } = req.body || {};
+  if (!label || !label.trim()) return res.status(400).json({ error: "A category name is required." });
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("inventory_categories", { label: label.trim(), created_by: addedBy });
+    return res.status(200).json({ success: true, label: created.label });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
+    console.error("addInventoryCategory error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+async function handleAddInventoryLocation(req, res, addedBy) {
+  const { label } = req.body || {};
+  if (!label || !label.trim()) return res.status(400).json({ error: "A location name is required." });
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("inventory_locations", { label: label.trim(), created_by: addedBy });
+    return res.status(200).json({ success: true, label: created.label });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
+    console.error("addInventoryLocation error:", err);
+    return res.status(500).json({ error: message });
   }
 }
 
