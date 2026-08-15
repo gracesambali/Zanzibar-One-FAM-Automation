@@ -6,6 +6,7 @@
 <title>Pharmacy — GVC Facility Asset Manager</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; }
   :root { --navy:#8B1A1A; --navy-light:#A83232; --navy-pale:#F5DFDF; --bg:#F0F2F6; --white:#FFFFFF; --text:#1A1A2E; --muted:#6B7280; --border:#E2E6ED; --green:#1B7A43; --green-bg:#E8F8EF; --red:#B3261E; --red-bg:#FDE8E6; }
   body { font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
   .header { background:var(--navy); color:#fff; padding:20px 32px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
@@ -17,10 +18,10 @@
   #logoutBtn { background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:9px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; flex-shrink:0; }
   #logoutBtn:hover { background:rgba(255,255,255,0.22); }
 
-  .page-wrap { max-width:1500px; margin:0 auto; padding:28px 32px 48px; display:flex; gap:28px; align-items:flex-start; }
-  .main-col { flex:1; min-width:0; }
-  .side-col { width:380px; flex-shrink:0; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
-  @media (max-width:1100px) { .page-wrap { flex-direction:column; padding:20px 16px 40px; } .side-col { width:100%; position:static; } }
+  .page-wrap { width:100%; max-width:1700px; margin:0 auto; padding:28px 32px 48px; display:flex; gap:28px; align-items:flex-start; }
+  .main-col { flex:1 1 0%; min-width:500px; }
+  .side-col { width:400px; flex-shrink:0; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
+  @media (max-width:1200px) { .page-wrap { flex-direction:column; padding:20px 16px 40px; } .main-col { min-width:0; width:100%; } .side-col { width:100%; position:static; } }
 
   .scan-buttons { display:flex; gap:16px; margin-bottom:24px; }
   .scan-btn { flex:1; padding:28px 20px; border-radius:16px; border:none; font-size:16px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:10px; transition:transform .1s; }
@@ -77,18 +78,6 @@
   .recent-item .meta { color:#9CA3AF; }
   .hidden { display:none !important; }
 
-  .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
-  .panel-title { font-size:12px; font-weight:700; color:#8B1A1A; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
-  .search-box { width:100%; padding:10px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:13.5px; margin-bottom:14px; }
-  .item-row { display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid #F0F2F6; cursor:pointer; }
-  .item-row:last-child { border-bottom:none; }
-  .item-name { font-size:13.5px; font-weight:600; color:#1A1A2E; }
-  .item-meta { font-size:11.5px; color:#6B7280; margin-top:2px; }
-  .item-qty { font-size:15px; font-weight:700; color:#8B1A1A; text-align:right; }
-  .badge { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:9px; margin-top:3px; }
-  .badge-low { background:#FDE8E6; color:#B3261E; }
-  .badge-ok { background:#E8F8EF; color:#1B7A43; }
-  .empty-state { text-align:center; padding:30px 20px; color:#9CA3AF; font-size:13px; }
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
   .modal { background:#fff; border-radius:14px; max-width:420px; width:100%; padding:20px; max-height:90vh; overflow-y:auto; }
   .modal label { font-size:11px; font-weight:600; color:#8B1A1A; display:block; margin-bottom:4px; }
