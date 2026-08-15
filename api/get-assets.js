@@ -404,6 +404,53 @@ export default async function handler(req, res) {
     }
   }
 
+  // Inventory Management v1 - every active item, with a real
+  // low-stock flag computed fresh from its current quantity and
+  // reorder level, not a stored value that could drift stale.
+  if (req.query.inventoryItems === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const { isLowStock } = await import("../lib/inventory.js");
+      const rows = await pgListAllRecords("inventory_items");
+      const items = rows.filter(r => r.active !== false).map(r => ({
+        id: r.id,
+        itemCode: r.item_code,
+        name: r.name,
+        category: r.category,
+        unitOfMeasure: r.unit_of_measure,
+        currentQuantity: Number(r.current_quantity),
+        reorderLevel: r.reorder_level !== null ? Number(r.reorder_level) : null,
+        targetLevel: r.target_level !== null ? Number(r.target_level) : null,
+        location: r.location,
+        building: r.building,
+        unitCost: r.unit_cost_tzs !== null ? Number(r.unit_cost_tzs) : null,
+        lowStock: isLowStock(r),
+      }));
+      return res.status(200).json({ items });
+    } catch (err) {
+      console.error("inventoryItems read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Full movement history for one item, most recent first — the real
+  // transaction record behind its current quantity.
+  if (req.query.inventoryMovements === "true" && req.query.itemId) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from inventory_movements where item_id = $1 order by performed_at desc limit 200", [req.query.itemId]);
+      return res.status(200).json({
+        movements: result.rows.map(r => ({
+          movementType: r.movement_type, quantity: Number(r.quantity), reason: r.reason,
+          department: r.department, performedBy: r.performed_by, performedAt: r.performed_at,
+        })),
+      });
+    } catch (err) {
+      console.error("inventoryMovements read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Full invoice + payment history for one unit — the detail view
   // behind the summary numbers already in the main units list.
   if (req.query.unitFinancials === "true") {

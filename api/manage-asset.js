@@ -26,6 +26,9 @@ export default async function handler(req, res) {
     if (req.body && req.body.entityType === "plannedMaintenance") {
       return handleCreatePlan(req, res, session.u);
     }
+    if (req.body && req.body.entityType === "inventoryItem") {
+      return handleAddInventoryItem(req, res, session.u, session.r);
+    }
     return handleAddAsset(req, res, session.u, session.r);
   }
   if (req.method === "PATCH") {
@@ -40,12 +43,24 @@ export default async function handler(req, res) {
     if (TRA_MANAGEMENT_ACTIONS.includes(action) && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Procurement, System Admin, or Business Owner can manage TRA categories." });
     }
+    // Inventory management, v1 default: Stock Keeper (the role this
+    // is clearly meant for) plus the same Procurement/System Admin/
+    // Business Owner set already trusted with Asset Tracking. A
+    // reasonable starting point, confirmed to be refined together
+    // rather than a final decision.
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem"];
+    if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner"].includes(session.r)) {
+      return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
+    }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
     if (action === "addTraClass") return handleAddTraClass(req, res, session.u);
     if (action === "editTraClass") return handleEditTraClass(req, res, session.u);
     if (action === "deleteTraClass") return handleDeleteTraClass(req, res, session.u);
+    if (action === "editInventoryItem") return handleEditInventoryItem(req, res, session.u);
+    if (action === "recordInventoryMovement") return handleRecordInventoryMovement(req, res, session.u);
+    if (action === "deactivateInventoryItem") return handleDeactivateInventoryItem(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -71,6 +86,130 @@ function computeCurrentValue(a) {
     acquisitionDate: a.installDate || new Date().toISOString().split("T")[0],
   });
   return result.currentValue !== null ? result.currentValue : undefined;
+}
+
+// Inventory Management v1 — a real transaction log, not an editable
+// number. Adding an item and recording a movement are deliberately
+// separate actions: creating an item establishes what it is (name,
+// category, reorder level) with a starting quantity of zero, and
+// every quantity change after that happens through a real, logged
+// movement, matching the whole point of this feature: "there is not
+// any form of accountability" on inventory today.
+async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
+  if (!["stock_keeper", "procurement", "system_admin", "business_owner"].includes(addedByRole)) {
+    return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
+  }
+  const { name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity } = req.body || {};
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "A name is required." });
+  }
+  try {
+    const { insert, listAllRecords } = await import("../lib/postgresClient.js");
+    const { generateItemCode } = await import("../lib/inventory.js");
+    const existing = await listAllRecords("inventory_items");
+    const itemCode = generateItemCode(existing.map(i => i.item_code));
+
+    const created = await insert("inventory_items", {
+      item_code: itemCode,
+      name: name.trim(),
+      category: category || null,
+      unit_of_measure: unitOfMeasure || null,
+      current_quantity: 0,
+      reorder_level: reorderLevel != null && reorderLevel !== "" ? Number(reorderLevel) : null,
+      target_level: targetLevel != null && targetLevel !== "" ? Number(targetLevel) : null,
+      location: location || null,
+      building: building || null,
+      unit_cost_tzs: unitCost != null && unitCost !== "" ? Number(unitCost) : null,
+      added_by: addedBy,
+    });
+
+    // An optional starting quantity is recorded as a real, honest
+    // opening movement — not a silent default — so the very first
+    // entry in this item's history explains where its stock count
+    // came from.
+    const startQty = Number(initialQuantity) || 0;
+    if (startQty > 0) {
+      const { update } = await import("../lib/postgresClient.js");
+      await insert("inventory_movements", {
+        item_id: created.id, movement_type: "IN", quantity: startQty,
+        reason: "Opening stock", performed_by: addedBy,
+      });
+      await update("inventory_items", created.id, { current_quantity: startQty });
+    }
+
+    return res.status(200).json({ success: true, itemCode, id: created.id });
+  } catch (err) {
+    console.error("addInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleEditInventoryItem(req, res, editedBy) {
+  const { itemId, name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { update } = await import("../lib/postgresClient.js");
+    const fields = { updated_at: new Date().toISOString() };
+    if (name !== undefined) fields.name = name.trim();
+    if (category !== undefined) fields.category = category || null;
+    if (unitOfMeasure !== undefined) fields.unit_of_measure = unitOfMeasure || null;
+    if (reorderLevel !== undefined) fields.reorder_level = reorderLevel !== "" ? Number(reorderLevel) : null;
+    if (targetLevel !== undefined) fields.target_level = targetLevel !== "" ? Number(targetLevel) : null;
+    if (location !== undefined) fields.location = location || null;
+    if (building !== undefined) fields.building = building || null;
+    if (unitCost !== undefined) fields.unit_cost_tzs = unitCost !== "" ? Number(unitCost) : null;
+    await update("inventory_items", itemId, fields);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The core of the whole feature — every stock change goes through
+// here, and only here, as a real, attributable transaction.
+async function handleRecordInventoryMovement(req, res, performedBy) {
+  const { itemId, movementType, quantity, reason, department } = req.body || {};
+  if (!itemId || !movementType || !quantity) {
+    return res.status(400).json({ error: "itemId, movementType, and quantity are required" });
+  }
+  try {
+    const { getById, update, insert } = await import("../lib/postgresClient.js");
+    const { applyMovement } = await import("../lib/inventory.js");
+    const item = await getById("inventory_items", itemId).catch(() => null);
+    if (!item) return res.status(404).json({ error: "Inventory item not found." });
+
+    let newQuantity;
+    try {
+      newQuantity = applyMovement(item.current_quantity, movementType, quantity);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    await insert("inventory_movements", {
+      item_id: itemId, movement_type: movementType, quantity: Number(quantity),
+      reason: reason || null, department: department || null, performed_by: performedBy,
+    });
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
+
+    return res.status(200).json({ success: true, newQuantity });
+  } catch (err) {
+    console.error("recordInventoryMovement error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
+  const { itemId } = req.body || {};
+  if (!itemId) return res.status(400).json({ error: "itemId is required" });
+  try {
+    const { update } = await import("../lib/postgresClient.js");
+    await update("inventory_items", itemId, { active: false, updated_at: new Date().toISOString() });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deactivateInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 async function handleAddAsset(req, res, addedBy, addedByRole) {

@@ -801,3 +801,51 @@ create table asset_tracking_activity_log (
   performed_at    timestamptz not null default now()
 );
 create index idx_asset_tracking_log_time on asset_tracking_activity_log (performed_at desc);
+
+-- ============================================================
+-- Inventory Management - v1, built as a strong starting point to
+-- refine together, per direct instruction. Deliberately a different
+-- data model from Fixed Assets: inventory is about QUANTITY and
+-- STOCK LEVELS of consumable/countable items (gloves, IV catheters,
+-- stationery, spare parts) - not individual serialized assets with
+-- their own depreciation lifecycle. Categories seeded from the same
+-- real government standard already used for Fixed Assets - the 2019
+-- Public Assets Management Guideline's own Current Assets
+-- (Inventories) categories (Fuel, Stationery, Consumable, Spare
+-- Parts, Building Materials, Maintenance Materials) - not invented
+-- placeholders.
+-- ============================================================
+create table inventory_items (
+  id                uuid primary key default gen_random_uuid(),
+  item_code         text unique not null,
+  name              text not null,
+  category          text,
+  unit_of_measure   text,
+  current_quantity  numeric not null default 0,
+  reorder_level     numeric,
+  target_level      numeric,
+  location          text,
+  building          text,
+  unit_cost_tzs     numeric,
+  active            boolean not null default true,
+  added_by          text,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+-- Every stock change goes through here - a real transaction log, not
+-- just an editable "current quantity" number that would silently lose
+-- all history. current_quantity on the item above is a fast-read
+-- cache, always kept in sync with the sum of its movements, never the
+-- source of truth on its own.
+create table inventory_movements (
+  id              uuid primary key default gen_random_uuid(),
+  item_id         uuid not null references inventory_items(id) on delete cascade,
+  movement_type   text not null,
+  quantity        numeric not null,
+  reason          text,
+  department      text,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index idx_inventory_movements_item on inventory_movements (item_id, performed_at desc);
