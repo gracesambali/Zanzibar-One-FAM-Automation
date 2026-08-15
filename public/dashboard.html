@@ -399,6 +399,9 @@ button { font-family: inherit; cursor: pointer; }
       <button class="tab-btn nested" data-tab="plannedmaintenance" data-label="Planned Maintenance" onclick="switchTab('plannedmaintenance')" onmouseenter="showSidebarTooltip(this, 'Planned Maintenance')" onmouseleave="hideSidebarTooltip()">
         <span class="tab-label">Planned Maintenance</span>
       </button>
+      <button class="tab-btn nested" data-tab="fleetrequests" data-label="Fleet Requests" id="fleetRequestsNavBtn" onclick="switchTab('fleetrequests')" onmouseenter="showSidebarTooltip(this, 'Fleet Requests')" onmouseleave="hideSidebarTooltip()">
+        <span class="tab-label">Fleet Requests</span>
+      </button>
     </div>
   </div>
 
@@ -483,6 +486,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-inventory" class="view"></div>
   <div id="view-staffmanagement" class="view"></div>
   <div id="view-annualplanning" class="view"></div>
+  <div id="view-fleetrequests" class="view"></div>
 </div>
 </div>
 
@@ -1282,6 +1286,7 @@ function switchTab(tab) {
   if(tab==='inventory') renderInventory();
   if(tab==='staffmanagement') renderStaffManagement();
   if(tab==='annualplanning') renderAnnualPlanning();
+  if(tab==='fleetrequests') renderFleetRequests();
 }
 
 function drawDonut(canvas, segments, size) {
@@ -3503,6 +3508,310 @@ const ANNUAL_PLAN_STATUS_COLORS = { Planned: 'var(--muted)', 'In Progress': 'var
 
 let annualPlanItemsCache = [];
 let annualPlanCurrentYear = null;
+
+// Fleet Requests, confirmed directly - the same shape as Work
+// Orders: submit, approve, track. Drivers never touch this directly;
+// one of the confirmed roles submits on their behalf.
+const FLEET_STATUSES = ["Pending", "Approved", "Rejected", "Completed", "Cancelled"];
+const FLEET_STATUS_COLORS = { Pending: 'var(--muted)', Approved: 'var(--blue)', Rejected: 'var(--red)', Completed: 'var(--green)', Cancelled: 'var(--red)' };
+
+let fleetRequestsCache = [];
+let fleetVehiclesCache = [];
+
+async function renderFleetRequests() {
+  const container = document.getElementById('view-fleetrequests');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const [reqResp, vehResp] = await Promise.all([
+      fetch('/api/get-assets?fleetRequests=true'),
+      fetch('/api/get-assets?fleetVehicles=true'),
+    ]);
+    if (reqResp.status === 403) {
+      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔒</div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+        <div style="font-size:13px;color:var(--muted)">Fleet Requests is only available to Admin, Property Manager, Procurement, System Admin, and Business Owner.</div>
+      </div>`;
+      return;
+    }
+    const reqData = await reqResp.json();
+    if (!reqResp.ok) throw new Error(reqData.error || 'Could not load Fleet Requests');
+    fleetRequestsCache = reqData.requests || [];
+    fleetVehiclesCache = vehResp.ok ? (await vehResp.json()).vehicles || [] : [];
+    renderFleetRequestsTable();
+    loadFleetActivityLog();
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function refreshFleetRequestsQuietly() {
+  try {
+    const resp = await fetch('/api/get-assets?fleetRequests=true');
+    const data = await resp.json();
+    fleetRequestsCache = data.requests || [];
+    renderFleetRequestsTable();
+    loadFleetActivityLog();
+  } catch (err) {
+    console.error('Quiet fleet refresh failed:', err.message);
+  }
+}
+
+function renderFleetRequestsTable() {
+  const container = document.getElementById('view-fleetrequests');
+  const canManage = ['admin', 'property_manager', 'procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
+  const requests = fleetRequestsCache;
+  const statusCounts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+
+  let html = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Fleet Requests</div>
+        <div style="font-size:12px;color:var(--muted)">Vehicle requests and approvals — drivers don't need their own login; a real request is submitted and tracked on their behalf.</div>
+      </div>
+      ${canManage ? `<button onclick="openAddFleetRequestModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Request</button>` : ''}
+    </div>
+
+    <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${requests.length}</div><div class="summary-label">Total Requests</div></div>
+      ${FLEET_STATUSES.map(s => statusCounts[s] ? `<div class="summary-card"><div class="summary-val" style="color:${FLEET_STATUS_COLORS[s]}">${statusCounts[s]}</div><div class="summary-label">${s}</div></div>` : '').join('')}
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Driver</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Vehicle</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Destination</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Trip Date</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Distance</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
+            <th style="padding:10px 12px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${requests.length === 0
+            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No fleet requests yet.${canManage ? ' Submit the first one above.' : ''}</td></tr>`
+            : requests.map(r => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px">
+                  <div style="font-weight:600;color:var(--navy)">${escapeHtml(r.driverName)}</div>
+                  ${r.purpose ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(r.purpose)}</div>` : ''}
+                </td>
+                <td style="padding:9px 12px;color:var(--muted)">${r.vehicleAssetId ? `${escapeHtml(r.vehicleAssetId)} — ${escapeHtml(r.vehicleName)}` : '—'}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(r.destination || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${r.tripDate || '—'}</td>
+                <td style="padding:9px 12px;text-align:right">${r.distanceKm != null ? r.distanceKm + ' km' : '—'}</td>
+                <td style="padding:9px 12px">
+                  ${canManage
+                    ? `<select onchange="quickUpdateFleetStatus('${r.id}', this.value)" style="font-size:11px;padding:3px 6px;border-radius:8px;border:1px solid var(--border);color:${FLEET_STATUS_COLORS[r.status]};font-weight:700">
+                        ${FLEET_STATUSES.map(s => `<option value="${s}"${s === r.status ? ' selected' : ''}>${s}</option>`).join('')}
+                      </select>`
+                    : `<span style="font-size:11px;font-weight:700;color:${FLEET_STATUS_COLORS[r.status]}">${r.status}</span>`}
+                </td>
+                <td style="padding:9px 12px;text-align:right;white-space:nowrap">
+                  ${canManage ? `<button onclick="openEditFleetRequestModal('${r.id}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Edit</button>
+                  <button onclick="deleteFleetRequestNow('${r.id}', '${r.driverName.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="fleetActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function loadFleetActivityLog() {
+  const content = document.getElementById('fleetActivityLogContent');
+  if (!content) return;
+  try {
+    const resp = await fetch('/api/get-assets?fleetActivityLog=true');
+    const data = await resp.json();
+    const entries = data.entries || [];
+    content.innerHTML = entries.length === 0
+      ? `<div style="font-style:italic">No activity recorded yet.</div>`
+      : entries.map(e => `
+        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+        </div>`).join('');
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
+  }
+}
+
+async function quickUpdateFleetStatus(requestId, status) {
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'editFleetRequest', requestId, status }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update status');
+  } catch (err) {
+    alert('Could not update status: ' + err.message);
+  }
+  await refreshFleetRequestsQuietly();
+}
+
+function fleetRequestFormFields(req) {
+  const v = req || {};
+  const vehicleOptions = fleetVehiclesCache.map(veh => `<option value="${veh.id}"${v.vehicleId === veh.id ? ' selected' : ''}>${escapeHtml(veh.assetId)} — ${escapeHtml(veh.name)}</option>`).join('');
+  return `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Driver Name *</label>
+    <input id="fr_driver" type="text" value="${v.driverName ? escapeHtml(v.driverName) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vehicle</label>
+    <select id="fr_vehicle" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="">— Not set —</option>
+      ${vehicleOptions}
+    </select>
+    ${fleetVehiclesCache.length === 0 ? `<div style="font-size:11px;color:var(--amber);margin:-6px 0 10px">No vehicles found — add one in Asset Tracking under category "Transport Assets" first.</div>` : ''}
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Purpose</label>
+    <input id="fr_purpose" type="text" value="${v.purpose ? escapeHtml(v.purpose) : ''}" placeholder="e.g. Supply run, airport pickup" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Destination</label>
+    <input id="fr_destination" type="text" value="${v.destination ? escapeHtml(v.destination) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Trip Date</label>
+    <input id="fr_tripDate" type="date" value="${v.tripDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Odometer Start (km)</label>
+      <input id="fr_odoStart" type="number" min="0" value="${v.odometerStart ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Odometer End (km)</label>
+      <input id="fr_odoEnd" type="number" min="0" value="${v.odometerEnd ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
+    <textarea id="fr_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">${v.notes ? escapeHtml(v.notes) : ''}</textarea>
+  `;
+}
+
+async function openAddFleetRequestModal() {
+  // Fetched fresh so a vehicle just added in Asset Tracking shows up
+  // immediately, without needing a full page reload first.
+  try {
+    const resp = await fetch('/api/get-assets?fleetVehicles=true');
+    fleetVehiclesCache = resp.ok ? (await resp.json()).vehicles || [] : [];
+  } catch (err) { console.error('Could not refresh vehicles:', err); }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'addFleetRequestOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">New Fleet Request</div>
+      ${fleetRequestFormFields()}
+      <div id="fr_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addFleetRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="fr_addSubmit" onclick="submitAddFleetRequest()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Submit Request</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddFleetRequest() {
+  const driverName = document.getElementById('fr_driver').value.trim();
+  const errorBox = document.getElementById('fr_addError');
+  const btn = document.getElementById('fr_addSubmit');
+  errorBox.style.display = 'none';
+  if (!driverName) { errorBox.textContent = 'Enter the driver\'s name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'addFleetRequest', driverName,
+        vehicleId: document.getElementById('fr_vehicle').value,
+        purpose: document.getElementById('fr_purpose').value.trim(),
+        destination: document.getElementById('fr_destination').value.trim(),
+        tripDate: document.getElementById('fr_tripDate').value,
+        notes: document.getElementById('fr_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
+    document.getElementById('addFleetRequestOverlay')?.remove();
+    await refreshFleetRequestsQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Submit Request';
+  }
+}
+
+function openEditFleetRequestModal(requestId) {
+  const req = fleetRequestsCache.find(r => r.id === requestId);
+  if (!req) { alert('Could not find this request — try refreshing.'); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'editFleetRequestOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Fleet Request</div>
+      ${fleetRequestFormFields(req)}
+      <div id="fr_editError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editFleetRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="fr_editSubmit" onclick="submitEditFleetRequest('${requestId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditFleetRequest(requestId) {
+  const driverName = document.getElementById('fr_driver').value.trim();
+  const errorBox = document.getElementById('fr_editError');
+  const btn = document.getElementById('fr_editSubmit');
+  errorBox.style.display = 'none';
+  if (!driverName) { errorBox.textContent = 'Enter the driver\'s name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'editFleetRequest', requestId, driverName,
+        vehicleId: document.getElementById('fr_vehicle').value,
+        purpose: document.getElementById('fr_purpose').value.trim(),
+        destination: document.getElementById('fr_destination').value.trim(),
+        tripDate: document.getElementById('fr_tripDate').value,
+        odometerStart: document.getElementById('fr_odoStart').value,
+        odometerEnd: document.getElementById('fr_odoEnd').value,
+        notes: document.getElementById('fr_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('editFleetRequestOverlay')?.remove();
+    await refreshFleetRequestsQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function deleteFleetRequestNow(requestId, driverName) {
+  if (!confirm(`Permanently delete this request for "${driverName}"? This cannot be undone.`)) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteFleetRequest', requestId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    await refreshFleetRequestsQuietly();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
 
 async function renderAnnualPlanning() {
   const container = document.getElementById('view-annualplanning');
