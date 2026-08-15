@@ -918,3 +918,43 @@ create table inventory_activity_log (
   performed_at    timestamptz not null default now()
 );
 create index idx_inventory_activity_log_time on inventory_activity_log (performed_at desc);
+
+-- ============================================================
+-- Batch tracking, confirmed directly: only for items that actually
+-- need it (medications), never a separate section from Inventory
+-- itself - same item, same code, just a deeper page for the ones
+-- marked this way. An item's current_quantity stays the same fast-
+-- read total it always was, kept in sync whenever a batch-level
+-- movement happens, exactly the same discipline already used for
+-- every other movement - never a second, drifting source of truth.
+-- ============================================================
+alter table inventory_items add column is_batch_tracked boolean not null default false;
+
+create table inventory_batches (
+  id            uuid primary key default gen_random_uuid(),
+  item_id       uuid not null references inventory_items(id) on delete cascade,
+  lot_number    text,
+  expiry_date   date,
+  quantity      numeric not null default 0,
+  created_by    text,
+  created_at    timestamptz not null default now()
+);
+-- Sorted by expiry ascending by default - the exact order FEFO
+-- deduction needs, so the query that matters most is already fast.
+create index idx_inventory_batches_item_expiry on inventory_batches (item_id, expiry_date asc);
+
+-- Every movement can now optionally point at the specific batch it
+-- touched - null for anything on a non-batch-tracked item, exactly
+-- as before.
+alter table inventory_movements add column batch_id uuid references inventory_batches(id) on delete set null;
+
+-- Remembers which real supplier barcode means which FAM item, after
+-- the first time a person confirms it - every scan after that
+-- resolves automatically, no re-confirming the same product twice.
+create table inventory_barcode_links (
+  id          uuid primary key default gen_random_uuid(),
+  gtin        text unique not null,
+  item_id     uuid not null references inventory_items(id) on delete cascade,
+  linked_by   text,
+  linked_at   timestamptz not null default now()
+);
