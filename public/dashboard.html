@@ -43,7 +43,7 @@ button { font-family: inherit; cursor: pointer; }
   position: sticky; top: 0; max-height: 100vh;
   display: flex; flex-direction: column;
 }
-.sidebar-nav { flex: 1; padding: 8px 0; }
+.sidebar-nav { flex: 1; min-height: 0; padding: 8px 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
 .sidebar-toggle-row { display: flex; justify-content: flex-end; padding: 10px; border-bottom: 1px solid var(--border); }
 .sidebar-toggle { background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px; border-radius: 6px; display: flex; }
 .sidebar-toggle:hover { background: var(--bg); color: var(--navy); }
