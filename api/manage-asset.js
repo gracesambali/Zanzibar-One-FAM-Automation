@@ -215,6 +215,85 @@ async function sendLowStockAlert({ itemName, itemCode, currentQuantity, reorderL
   }
 }
 
+// Confirmed directly: no alert on submission - OM/Admin already know
+// about it, since they're the ones creating it. The real moment that
+// matters is the instant a request is actually approved, notifying
+// the administration concerned that a trip is genuinely going ahead.
+// Reuses the exact same real, proven Resend + Beem pattern already
+// working for low-stock alerts, routed to its own dedicated
+// recipient list.
+async function sendFleetApprovalAlert({ driverName, vehicleName, destination, tripDate, approvedBy }) {
+  const { parseEmailList, parsePhoneList, buildBeemRecipients } = await import("../lib/recipients.js");
+  const { buildGenericAlertEmailHtml } = await import("../lib/emailTemplate.js");
+
+  const message = `Fleet request approved — ${driverName}${vehicleName ? ` (${vehicleName})` : ''}${destination ? ` to ${destination}` : ''}${tripDate ? ` on ${tripDate}` : ''}. Approved by ${approvedBy}.`;
+
+  const emailList = parseEmailList(process.env.FLEET_ALERT_EMAIL);
+  if (emailList.length > 0) {
+    try {
+      const html = buildGenericAlertEmailHtml({
+        title: "Fleet Request Approved", message,
+        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        color: "#2563EB",
+      });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: emailList,
+          subject: `Fleet Request Approved — ${driverName}`,
+          html,
+        }),
+      });
+      if (!resp.ok) console.error("Fleet approval alert - Resend error:", await resp.text());
+    } catch (err) {
+      console.error("Fleet approval alert - email send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No FLEET_ALERT_EMAIL recipients configured — fleet approval email not sent.");
+  }
+
+  const phoneList = parsePhoneList(process.env.FLEET_ALERT_PHONE);
+  if (phoneList.length > 0) {
+    try {
+      const cleanMessage = message
+        .replace(/[\u2014\u2013]/g, "-").replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"').replace(/\u2026/g, "...")
+        .replace(/[^\x00-\x7F]/g, "");
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      const resp = await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: cleanMessage.slice(0, 160),
+          recipients: buildBeemRecipients(phoneList),
+        }),
+      });
+      const responseText = await resp.text();
+      if (!resp.ok) console.error("Fleet approval alert - Beem HTTP error:", responseText);
+    } catch (err) {
+      console.error("Fleet approval alert - SMS send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No FLEET_ALERT_PHONE recipients configured — fleet approval SMS not sent.");
+  }
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_name: driverName, urgency: "FLEET APPROVED",
+      channel: "Email + SMS (fleet approval)", message,
+    });
+  } catch (err) {
+    console.error("Fleet approval alert - alert_log write failed (non-fatal):", err.message);
+  }
+}
+
 // Real, growing lists — add-only for now (no edit/delete), matching
 // exactly what was actually asked for: a way to add a category or
 // location right from the item form when it isn't already there.
@@ -562,6 +641,27 @@ async function handleEditFleetRequest(req, res, editedBy) {
       await update("fleet_requests", requestId, fields);
       await logFleetActivity("Updated Request", `${before.driver_name}: ${changes.join(", ")}`, editedBy);
     }
+
+    // Confirmed directly: only fires on a genuine transition into
+    // Approved, not on every subsequent edit to an already-approved
+    // request - the same no-spam principle already proven for
+    // low-stock alerts.
+    if (status === "Approved" && before.status !== "Approved") {
+      let vehicleName = null;
+      const finalVehicleId = fields.vehicle_id !== undefined ? fields.vehicle_id : before.vehicle_id;
+      if (finalVehicleId) {
+        const vehicle = await getById("components", finalVehicleId).catch(() => null);
+        vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+      }
+      await sendFleetApprovalAlert({
+        driverName: fields.driver_name || before.driver_name,
+        vehicleName,
+        destination: fields.destination !== undefined ? fields.destination : before.destination,
+        tripDate: fields.trip_date !== undefined ? fields.trip_date : before.trip_date,
+        approvedBy: editedBy,
+      });
+    }
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editFleetRequest error:", err);
