@@ -472,7 +472,7 @@ export default async function handler(req, res) {
   // Fleet Requests, confirmed directly - the real, specific role set
   // discussed: Admin, Property Manager, Procurement, System Admin,
   // Business Owner.
-  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers", "fleetReportSummary", "fuelRequests", "fuelInvoices"];
+  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers", "fleetReportSummary", "fuelRequests", "fuelInvoices", "fuelReportSummary"];
   const requestedFleetRoute = FLEET_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedFleetRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
@@ -824,6 +824,51 @@ export default async function handler(req, res) {
       return res.status(200).json({ period, since: since.toISOString(), requests });
     } catch (err) {
       console.error("fleetReportSummary read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Daily/weekly/monthly Fuel reports, confirmed directly - the exact
+  // same real timezone-correct period logic already proven for Fleet
+  // reports, reused rather than reimplemented.
+  if (req.query.fuelReportSummary === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const period = req.query.period === "week" ? "week" : req.query.period === "month" ? "month" : "today";
+
+      const nowUtc = new Date();
+      const nowEat = new Date(nowUtc.getTime() + 3 * 60 * 60 * 1000);
+      let since;
+      if (period === "today") {
+        const startOfDayEat = new Date(Date.UTC(nowEat.getUTCFullYear(), nowEat.getUTCMonth(), nowEat.getUTCDate()));
+        since = new Date(startOfDayEat.getTime() - 3 * 60 * 60 * 1000);
+      } else if (period === "week") {
+        since = new Date(nowUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else {
+        since = new Date(nowUtc.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      const result = await pgQuery(
+        `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
+         from fuel_requests f
+         left join components c on c.id = f.vehicle_id
+         where coalesce(f.fill_date::timestamptz, f.created_at) >= $1
+         order by coalesce(f.fill_date::timestamptz, f.created_at) desc`,
+        [since.toISOString()]
+      );
+      const requests = result.rows.map(r => ({
+        driverName: r.driver_name, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
+        status: r.status, fillDate: r.fill_date,
+        estimatedLiters: r.estimated_liters !== null ? Number(r.estimated_liters) : null,
+        actualLiters: r.actual_liters !== null ? Number(r.actual_liters) : null,
+        actualCost: r.actual_cost_tzs !== null ? Number(r.actual_cost_tzs) : null,
+        approvedBy: r.approved_by, notes: r.notes,
+      }));
+      const totalActualCost = requests.reduce((sum, r) => sum + (r.actualCost || 0), 0);
+      const totalActualLiters = requests.reduce((sum, r) => sum + (r.actualLiters || 0), 0);
+      return res.status(200).json({ period, since: since.toISOString(), requests, totalActualCost, totalActualLiters });
+    } catch (err) {
+      console.error("fuelReportSummary read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }

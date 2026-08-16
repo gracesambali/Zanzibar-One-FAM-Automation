@@ -1646,7 +1646,10 @@ function renderAssets() {
   const attn = assets.filter(a=>a.status==="Critical").length;
   const sched = assets.filter(a=>a.status==="Poor").length;
 
-  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button></div>`;
+  let html = `<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:12px">
+    <button onclick="openUploadAssetSheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
+    <button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button>
+  </div>`;
   html += `<div class="summary-grid">
     <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
@@ -3648,7 +3651,22 @@ function renderFuelSection() {
         <div style="font-size:18px;font-weight:700;color:var(--navy)">Fleet Management</div>
         <div style="font-size:12px;color:var(--muted)">Fuel requests, approvals, and monthly invoice reconciliation for the fleet's regular petrol station account.</div>
       </div>
-      ${canManage ? `<button onclick="openAddFuelRequestModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Fuel Request</button>` : ''}
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="position:relative">
+          <button onclick="toggleFuelReportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📄 Reports ▾</button>
+          <div id="fuel_reportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:200px;padding:6px 0">
+            ${[['today','Daily'],['week','Weekly'],['month','Monthly']].map(([period, label]) => `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 14px;font-size:12.5px;color:var(--text)">
+                <span>${label}</span>
+                <span style="display:flex;gap:6px">
+                  <button onclick="downloadFuelReportCsv('${period}')" style="padding:3px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
+                  <button onclick="downloadFuelReportPdf('${period}')" style="padding:3px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
+                </span>
+              </div>`).join('')}
+          </div>
+        </div>
+        ${canManage ? `<button onclick="openAddFuelRequestModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Fuel Request</button>` : ''}
+      </div>
     </div>
 
     ${renderFleetSectionToggle('fuel')}
@@ -4195,6 +4213,98 @@ async function downloadFleetReportPdf(period) {
       <table>
         <thead><tr><th>Trip Date</th><th>Return Date</th><th>Driver</th><th>Vehicle</th><th>Route</th><th>Beginning KM</th><th>Ending KM</th><th>Distance</th><th>Status</th></tr></thead>
         <tbody>${rowsHtml || '<tr><td colspan="9" style="text-align:center;color:#9CA3AF">No requests in this period.</td></tr>'}</tbody>
+      </table>
+      </body></html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
+
+function toggleFuelReportMenu() {
+  const menu = document.getElementById('fuel_reportMenu');
+  if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('fuel_reportMenu');
+  if (menu && menu.style.display !== 'none' && !e.target.closest('#fuel_reportMenu') && !e.target.closest('[onclick="toggleFuelReportMenu()"]')) {
+    menu.style.display = 'none';
+  }
+});
+
+async function downloadFuelReportCsv(period) {
+  document.getElementById('fuel_reportMenu').style.display = 'none';
+  try {
+    const resp = await fetch(`/api/get-assets?fuelReportSummary=true&period=${period}`);
+    const data = await resp.json();
+    const rows = [['Fill Date', 'Driver', 'Vehicle', 'Estimated Liters', 'Actual Liters', 'Actual Cost (TZS)', 'Status', 'Approved By']];
+    (data.requests || []).forEach(r => {
+      rows.push([
+        r.fillDate || '', r.driverName, r.vehicleAssetId ? `${r.vehicleAssetId} — ${r.vehicleName}` : '',
+        r.estimatedLiters ?? '', r.actualLiters ?? '', r.actualCost ?? '', r.status, r.approvedBy || '',
+      ]);
+    });
+    rows.push([]);
+    rows.push(['Total Actual Liters', data.totalActualLiters]);
+    rows.push(['Total Actual Cost (TZS)', data.totalActualCost]);
+    const csv = rows.map(row => row.map(fleetCsvEscape).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const label = period === 'today' ? 'daily' : period === 'week' ? 'weekly' : 'monthly';
+    a.href = url;
+    a.download = `fuel-${label}-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Could not generate report: ' + err.message);
+  }
+}
+
+async function downloadFuelReportPdf(period) {
+  document.getElementById('fuel_reportMenu').style.display = 'none';
+  try {
+    const resp = await fetch(`/api/get-assets?fuelReportSummary=true&period=${period}`);
+    const data = await resp.json();
+    const requests = data.requests || [];
+    const label = period === 'today' ? 'Daily' : period === 'week' ? 'Weekly' : 'Monthly';
+
+    const rowsHtml = requests.map(r => `
+      <tr>
+        <td>${r.fillDate || '—'}</td><td>${escapeHtml(r.driverName)}</td>
+        <td>${r.vehicleAssetId ? escapeHtml(r.vehicleAssetId) + ' — ' + escapeHtml(r.vehicleName) : '—'}</td>
+        <td style="text-align:right">${r.estimatedLiters ?? '—'}</td>
+        <td style="text-align:right">${r.actualLiters ?? '—'}</td>
+        <td style="text-align:right">${r.actualCost != null ? formatCurrency(r.actualCost) : '—'}</td>
+        <td>${escapeHtml(r.status)}</td>
+      </tr>`).join('');
+
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html><head><title>Fuel ${label} Report</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
+        h1 { font-size: 18px; color: #8B1A1A; margin-bottom: 2px; }
+        .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+        th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
+        th { background: #F7F8FA; }
+        .totals td { font-weight: 700; border-top: 2px solid #8B1A1A; }
+        .download-btn { background:#8B1A1A; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+        @media print { .download-btn { display:none; } }
+      </style></head><body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <h1>Fuel ${label} Report</h1>
+      <div class="meta">Generated ${new Date().toLocaleString()} · ${requests.length} request${requests.length === 1 ? '' : 's'}</div>
+      <table>
+        <thead><tr><th>Fill Date</th><th>Driver</th><th>Vehicle</th><th>Est. Liters</th><th>Actual Liters</th><th>Actual Cost</th><th>Status</th></tr></thead>
+        <tbody>${rowsHtml || '<tr><td colspan="7" style="text-align:center;color:#9CA3AF">No requests in this period.</td></tr>'}
+          <tr class="totals"><td colspan="3">TOTALS</td><td style="text-align:right">${data.totalActualLiters || 0}L</td><td></td><td style="text-align:right">${formatCurrency(data.totalActualCost || 0)}</td><td></td></tr>
+        </tbody>
       </table>
       </body></html>
     `);
@@ -5504,6 +5614,122 @@ async function parseInventorySheetExcel(file) {
     });
   }
   return rows;
+}
+
+// Asset Register bulk upload, confirmed directly through real
+// discussion first: Building stays a real, hard requirement per row,
+// matching single-add exactly. A real reference list of known
+// facility/building pairs is shown right in the modal - not to
+// enforce anything client-side, but so a person copying names into
+// their sheet is working from the actual, real spellings rather than
+// guessing and hoping.
+async function openUploadAssetSheetModal() {
+  let knownPairsHtml = '<div style="font-size:11.5px;color:var(--muted)">Loading known buildings…</div>';
+  try {
+    const resp = await fetch('/api/get-assets?facilities=true');
+    const data = await resp.json();
+    const pairs = [];
+    (data.facilities || []).forEach(f => {
+      (f.buildings || []).forEach(b => pairs.push(`${escapeHtml(f.name)} — ${escapeHtml(b)}`));
+    });
+    knownPairsHtml = pairs.length > 0
+      ? `<div style="font-size:11px;color:var(--muted);max-height:90px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px">${pairs.join('<br>')}</div>`
+      : `<div style="font-size:11.5px;color:var(--muted)">No facilities/buildings set up yet.</div>`;
+  } catch (err) {
+    knownPairsHtml = `<div style="font-size:11.5px;color:var(--red)">Could not load the known buildings list: ${err.message}</div>`;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'uploadAssetSheetOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:88vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Columns, in order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date. Only the first five are required.</div>
+      <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
+      ${knownPairsHtml}
+      <div style="font-size:10.5px;color:var(--muted);margin:8px 0 14px">Don't see the building you need? Add it under Asset Tracking's facility settings first, then upload.</div>
+      <input id="assetsheet_file" type="file" accept=".csv,.xlsx,.xls" style="width:100%;font-size:12.5px;margin-bottom:14px">
+      <div id="assetsheet_status" style="display:none;font-size:12.5px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('uploadAssetSheetOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="assetsheet_submit" onclick="submitAssetSheetUpload()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Upload</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function assetSheetRowFromColumns(c) {
+  return {
+    name: c[0] || '', nature: c[1] || '', category: c[2] || '', building: c[3] || '', facility: c[4] || '',
+    system: c[5] || '', manufacturer: c[6] || '', model: c[7] || '', acquisitionCost: c[8] || '', installDate: c[9] || '',
+  };
+}
+
+function parseAssetSheetCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',').map(x => x.trim().replace(/^"|"$/g, ''));
+    if (!c[0]) continue;
+    rows.push(assetSheetRowFromColumns(c));
+  }
+  return rows;
+}
+
+async function parseAssetSheetExcel(file) {
+  await ensureSheetJsLoaded();
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r || !r[0]) continue;
+    rows.push(assetSheetRowFromColumns(r.map(v => v != null ? String(v).trim() : '')));
+  }
+  return rows;
+}
+
+async function submitAssetSheetUpload() {
+  const fileInput = document.getElementById('assetsheet_file');
+  const statusEl = document.getElementById('assetsheet_status');
+  const btn = document.getElementById('assetsheet_submit');
+  const file = fileInput.files[0];
+  if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try {
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    const rows = isExcel ? await parseAssetSheetExcel(file) : parseAssetSheetCsv(await file.text());
+    if (rows.length === 0) throw new Error('No rows found — check the file has a name in the first column.');
+
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityType: 'bulkAssets', rows }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Upload failed');
+
+    let statusHtml = `<strong style="color:var(--green)">${data.created} asset${data.created === 1 ? '' : 's'} created.</strong>`;
+    if (data.buildingWarnings && data.buildingWarnings.length > 0) {
+      statusHtml += `<br><span style="color:var(--amber)">⚠ ${data.buildingWarnings.length} unrecognized building${data.buildingWarnings.length === 1 ? '' : 's'} (asset${data.buildingWarnings.length === 1 ? '' : 's'} still created — worth double-checking):<br>${data.buildingWarnings.slice(0, 5).map(escapeHtml).join('<br>')}${data.buildingWarnings.length > 5 ? '…' : ''}</span>`;
+    }
+    if (data.skipped && data.skipped.length > 0) {
+      statusHtml += `<br><span style="color:var(--red)">${data.skipped.length} row${data.skipped.length === 1 ? '' : 's'} skipped: ${data.skipped.slice(0, 5).map(s => escapeHtml(s.reason)).join(', ')}${data.skipped.length > 5 ? '…' : ''}</span>`;
+    }
+    statusEl.innerHTML = statusHtml;
+    statusEl.style.display = 'block';
+    btn.textContent = 'Done';
+    renderFixedAssetRegister();
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
 }
 
 async function submitInventorySheetUpload() {
