@@ -8050,6 +8050,151 @@ function statusDotColor(status) {
   return "#dc2626"; // Critical
 }
 
+// Digital Twin Lite, confirmed directly through real discussion
+// first - lives inside Floor Plan, not a separate tab. Two
+// genuinely, explicitly separate captures: one building's real
+// interior, and a facility's real exterior, visible regardless of
+// which building is currently selected.
+let floorPlanViewMode = '2d'; // '2d' | 'buildingTwin' | 'facilityTwin'
+let floorPlanBuildingTwinUrl = null;
+let floorPlanFacilityTwinUrl = null;
+
+function DIGITAL_TWIN_CAN_MANAGE() {
+  return ['admin', 'property_manager', 'system_admin', 'business_owner'].includes(currentUserRole);
+}
+
+async function loadDigitalTwinToggle() {
+  const toggleEl = document.getElementById('floorPlanTwinToggle');
+  if (!toggleEl) return;
+
+  const building = currentBuildingFilter !== '__all__' ? currentBuildingFilter : null;
+  const facility = currentFacilityFilter !== '__all__' ? currentFacilityFilter : null;
+
+  floorPlanBuildingTwinUrl = null;
+  floorPlanFacilityTwinUrl = null;
+
+  const fetches = [];
+  if (facility && building) {
+    fetches.push(
+      fetch(`/api/get-assets?buildingDigitalTwin=true&facility=${encodeURIComponent(facility)}&building=${encodeURIComponent(building)}`)
+        .then(r => r.ok ? r.json() : null).then(d => { if (d) floorPlanBuildingTwinUrl = d.matterportUrl; }).catch(() => {})
+    );
+  }
+  if (facility) {
+    fetches.push(
+      fetch(`/api/get-assets?facilityExteriorTwin=true&facility=${encodeURIComponent(facility)}`)
+        .then(r => r.ok ? r.json() : null).then(d => { if (d) floorPlanFacilityTwinUrl = d.matterportUrl; }).catch(() => {})
+    );
+  }
+  await Promise.all(fetches);
+
+  // Nothing 3D exists for this context - fall back cleanly to plain
+  // 2D with no toggle shown at all, since there's genuinely nothing
+  // to switch to.
+  if (!floorPlanBuildingTwinUrl && !floorPlanFacilityTwinUrl) {
+    floorPlanViewMode = '2d';
+    toggleEl.innerHTML = '';
+    return;
+  }
+  // If the mode that was active no longer has a real URL behind it
+  // (e.g. switched buildings to one with no capture), fall back to 2D
+  // rather than showing a broken toggle state.
+  if (floorPlanViewMode === 'buildingTwin' && !floorPlanBuildingTwinUrl) floorPlanViewMode = '2d';
+  if (floorPlanViewMode === 'facilityTwin' && !floorPlanFacilityTwinUrl) floorPlanViewMode = '2d';
+
+  const tabBtn = (active, label) => `padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:${active ? '#fff' : 'none'};color:${active ? 'var(--navy)' : 'var(--muted)'};box-shadow:${active ? '0 1px 2px rgba(0,0,0,.1)' : 'none'}`;
+  toggleEl.innerHTML = `<div style="display:flex;gap:4px;background:var(--bg);border-radius:8px;padding:3px">
+    <button onclick="switchFloorPlanViewMode('2d')" style="${tabBtn(floorPlanViewMode==='2d')}">2D Floor Plan</button>
+    ${floorPlanBuildingTwinUrl ? `<button onclick="switchFloorPlanViewMode('buildingTwin')" style="${tabBtn(floorPlanViewMode==='buildingTwin')}">🎥 ${escapeHtml(building)} Interior</button>` : ''}
+    ${floorPlanFacilityTwinUrl ? `<button onclick="switchFloorPlanViewMode('facilityTwin')" style="${tabBtn(floorPlanViewMode==='facilityTwin')}">🎥 Facility Exterior</button>` : ''}
+  </div>`;
+}
+
+// Renders the 3D embed into the same wrap the 2D loader uses, if the
+// currently active mode genuinely has a real URL behind it. Returns
+// true when it actually rendered something, so the caller knows
+// whether to fall through to the 2D loader instead.
+function applyFloorPlanViewMode() {
+  const wrap = document.getElementById('floorPlanImageWrap');
+  if (!wrap) return false;
+  const url = floorPlanViewMode === 'buildingTwin' ? floorPlanBuildingTwinUrl
+    : floorPlanViewMode === 'facilityTwin' ? floorPlanFacilityTwinUrl : null;
+  if (!url) return false;
+  const label = floorPlanViewMode === 'buildingTwin' ? `${currentBuildingFilter} Interior` : 'Facility Exterior';
+  wrap.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);text-align:left;margin-bottom:8px">🎥 Real Matterport capture — ${escapeHtml(label)}</div>
+    <iframe src="${escapeHtml(url)}" style="width:100%;height:600px;border:none;border-radius:10px" allow="xr-spatial-tracking; gyroscope; accelerometer; fullscreen" allowfullscreen></iframe>`;
+  return true;
+}
+
+async function switchFloorPlanViewMode(mode) {
+  floorPlanViewMode = mode;
+  await loadDigitalTwinToggle();
+  if (mode === '2d' || !applyFloorPlanViewMode()) {
+    renderFloorPlan();
+  }
+}
+
+async function openDigitalTwinSettingsModal() {
+  const facility = currentFacilityFilter !== '__all__' ? currentFacilityFilter : null;
+  const building = currentBuildingFilter !== '__all__' ? currentBuildingFilter : null;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'digitalTwinSettingsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Digital Twin Lite</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">A real Matterport link for each — genuinely separate captures, not tied to each other.</div>
+
+      ${building ? `
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${escapeHtml(building)} — Interior Capture</label>
+      <input id="dt_buildingUrl" type="text" value="${floorPlanBuildingTwinUrl ? escapeHtml(floorPlanBuildingTwinUrl) : ''}" placeholder="https://my.matterport.com/show/?m=..." style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <button onclick="submitDigitalTwinUrl('building')" style="padding:6px 14px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:16px">Save Interior Link</button>
+      ` : `<div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Select a specific building (not "All Buildings") to manage its interior capture.</div>`}
+
+      ${facility ? `
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${escapeHtml(facility)} — Facility Exterior Capture</label>
+      <input id="dt_facilityUrl" type="text" value="${floorPlanFacilityTwinUrl ? escapeHtml(floorPlanFacilityTwinUrl) : ''}" placeholder="https://my.matterport.com/show/?m=..." style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">The whole facility's exterior/grounds — explicitly separate from any one building's interior, and stays visible no matter which building is selected.</div>
+      <button onclick="submitDigitalTwinUrl('facility')" style="padding:6px 14px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:16px">Save Exterior Link</button>
+      ` : `<div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Select a specific facility to manage its exterior capture.</div>`}
+
+      <div id="dt_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <button onclick="document.getElementById('digitalTwinSettingsOverlay').remove()" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitDigitalTwinUrl(which) {
+  const errorBox = document.getElementById('dt_error');
+  errorBox.style.display = 'none';
+  const facility = currentFacilityFilter !== '__all__' ? currentFacilityFilter : null;
+  const building = currentBuildingFilter !== '__all__' ? currentBuildingFilter : null;
+
+  try {
+    let resp;
+    if (which === 'building') {
+      resp = await fetch('/api/manage-asset', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setBuildingDigitalTwin', facilityName: facility, buildingName: building, matterportUrl: document.getElementById('dt_buildingUrl').value }),
+      });
+    } else {
+      resp = await fetch('/api/manage-asset', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setFacilityExteriorTwin', facilityName: facility, matterportUrl: document.getElementById('dt_facilityUrl').value }),
+      });
+    }
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('digitalTwinSettingsOverlay')?.remove();
+    renderFloorPlan();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+}
+
 async function renderFloorPlan() {
   const container = document.getElementById('view-floorplan');
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
@@ -8063,6 +8208,7 @@ async function renderFloorPlan() {
     <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;renderFloorPlan()">
       ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
     </select>
+    <div id="floorPlanTwinToggle"></div>
     <div style="display:flex;gap:12px;font-size:12px;color:var(--muted);margin-left:auto">
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:4px"></span>Good</span>
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d97706;margin-right:4px"></span>Poor</span>
@@ -8070,6 +8216,7 @@ async function renderFloorPlan() {
     </div>
     ${canManage ? `<button class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
     ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
+    ${DIGITAL_TWIN_CAN_MANAGE() ? `<button class="filter-btn" onclick="openDigitalTwinSettingsModal()">🎥 Digital Twin</button>` : ''}
   </div>
   <div id="floorPlanUploadPanel" style="display:none;background:#F0F4FA;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
     <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:10px">Upload a floor plan drawing</div>
@@ -8090,6 +8237,15 @@ async function renderFloorPlan() {
   </div>`;
 
   container.innerHTML = html;
+  await loadDigitalTwinToggle();
+
+  // If a 3D view is currently active and its URL genuinely exists,
+  // show it and stop here entirely - never let this run concurrently
+  // with the 2D floor plan loader below, which would otherwise race
+  // to overwrite the same element unpredictably.
+  if (floorPlanViewMode !== '2d' && applyFloorPlanViewMode()) {
+    return;
+  }
 
   if (!floorPlanCurrentFloor) {
     document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px">No floors found on any asset yet.</div>`;

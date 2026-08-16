@@ -113,6 +113,8 @@ export default async function handler(req, res) {
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u);
     if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u);
+    if (action === "setBuildingDigitalTwin") return handleSetBuildingDigitalTwin(req, res, session.u, session.r);
+    if (action === "setFacilityExteriorTwin") return handleSetFacilityExteriorTwin(req, res, session.u, session.r);
     return handleRelocate(req, res, session.u);
   }
   return res.status(405).json({ error: "Method not allowed" });
@@ -1955,6 +1957,80 @@ async function appendFloorPlanActivity(recordId, text, by) {
 // image to storage, and stamps who uploaded it and when, for
 // accountability. The image_url column stores a storage PATH, not a
 // URL — see the comment on nameplate photos in get-assets.js for why.
+// Digital Twin Lite, confirmed directly through real discussion
+// first - genuinely light on FAM's own end, just a real, stored
+// Matterport link per building, no 3D rendering work here at all.
+// A more careful, narrower permission gate than the existing floor-
+// plan upload (which only checks on the frontend) - setting a real
+// Matterport link is a genuinely administrative, infrequent action,
+// not a day-to-day operational task, confirmed worth backend
+// enforcement here rather than trusting the hidden-button pattern
+// alone.
+const DIGITAL_TWIN_MANAGE_ROLES = ["admin", "property_manager", "system_admin", "business_owner"];
+
+function isPlausibleMatterportUrl(url) {
+  return typeof url === "string" && /^https:\/\//.test(url.trim());
+}
+
+async function handleSetBuildingDigitalTwin(req, res, updatedBy, updatedByRole) {
+  if (!DIGITAL_TWIN_MANAGE_ROLES.includes(updatedByRole)) {
+    return res.status(403).json({ error: "Only Admin, Property Manager, System Admin, or Business Owner can manage Digital Twin captures." });
+  }
+  const { facilityName, buildingName, matterportUrl } = req.body || {};
+  if (!facilityName || !buildingName) return res.status(400).json({ error: "facilityName and buildingName are required." });
+  const trimmedUrl = matterportUrl ? matterportUrl.trim() : "";
+  if (trimmedUrl && !isPlausibleMatterportUrl(trimmedUrl)) {
+    return res.status(400).json({ error: "That doesn't look like a real link — it should start with https://" });
+  }
+
+  try {
+    const { getByColumn, insert, query: pgQuery } = await import("../lib/postgresClient.js");
+    const facility = await getByColumn("facilities", "name", facilityName).catch(() => null);
+    if (!facility) return res.status(404).json({ error: `Facility "${facilityName}" not found.` });
+
+    // Real upsert on the composite key - one real row per building,
+    // set once and updated afterward, not a growing pile of history.
+    await pgQuery(
+      `insert into building_digital_twins (facility_id, building_name, matterport_url, updated_by, updated_at)
+       values ($1, $2, $3, $4, now())
+       on conflict (facility_id, building_name)
+       do update set matterport_url = $3, updated_by = $4, updated_at = now()`,
+      [facility.id, buildingName, trimmedUrl || null, updatedBy]
+    );
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("setBuildingDigitalTwin error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleSetFacilityExteriorTwin(req, res, updatedBy, updatedByRole) {
+  if (!DIGITAL_TWIN_MANAGE_ROLES.includes(updatedByRole)) {
+    return res.status(403).json({ error: "Only Admin, Property Manager, System Admin, or Business Owner can manage Digital Twin captures." });
+  }
+  const { facilityName, matterportUrl } = req.body || {};
+  if (!facilityName) return res.status(400).json({ error: "facilityName is required." });
+  const trimmedUrl = matterportUrl ? matterportUrl.trim() : "";
+  if (trimmedUrl && !isPlausibleMatterportUrl(trimmedUrl)) {
+    return res.status(400).json({ error: "That doesn't look like a real link — it should start with https://" });
+  }
+
+  try {
+    const { getByColumn, update } = await import("../lib/postgresClient.js");
+    const facility = await getByColumn("facilities", "name", facilityName).catch(() => null);
+    if (!facility) return res.status(404).json({ error: `Facility "${facilityName}" not found.` });
+    await update("facilities", facility.id, {
+      matterport_exterior_url: trimmedUrl || null,
+      matterport_exterior_updated_by: updatedBy,
+      matterport_exterior_updated_at: new Date().toISOString(),
+    });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("setFacilityExteriorTwin error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleUploadFloorPlan(req, res, uploadedBy) {
   const { floor, filename, contentType, fileBase64 } = req.body || {};
   if (!floor || !filename || !contentType || !fileBase64) {
