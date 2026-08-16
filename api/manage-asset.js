@@ -81,7 +81,7 @@ export default async function handler(req, res) {
     // stage for now, alongside Procurement for the earlier review
     // stage. Flagged directly as a real decision worth revisiting,
     // not silently assumed permanent.
-    const REQUISITION_ACTIONS = ["createRequisition", "editRequisition", "deleteRequisition", "requestProcurementForWorkOrder"];
+    const REQUISITION_ACTIONS = ["createRequisition", "editRequisition", "deleteRequisition", "requestProcurementForWorkOrder", "registerRequisitionAsAsset"];
     if (REQUISITION_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
       return res.status(403).json({ error: "You don't have permission to manage requisitions." });
     }
@@ -121,6 +121,7 @@ export default async function handler(req, res) {
     if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r);
     if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r);
     if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u);
+    if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -1208,6 +1209,69 @@ async function handleDeleteRequisition(req, res, deletedBy, deletedByRole) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteRequisition error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The real bridge from procurement into Facility Asset Management -
+// confirmed directly as the actual point Selian's document was
+// making: a purchase shouldn't require re-typing the same
+// manufacturer, cost, and vendor a second time into a blank asset
+// form. Everything the requisition already genuinely knows is
+// carried forward automatically; only what a requisition can't know
+// (asset Nature and Category, which drive classification) is asked
+// for here, not silently guessed.
+//
+// Deliberately a real, explicit action a person triggers - not
+// something that fires silently the instant GRN completes. Asset
+// creation has real requirements a requisition doesn't naturally
+// capture, and a human should be the one confirming this specific
+// purchase really is a distinct, trackable asset before it becomes
+// one, not have that decided for them.
+async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole) {
+  const { requisitionId, nature, category, serialNumber, manufacturer, model } = req.body || {};
+  if (!requisitionId) return res.status(400).json({ error: "requisitionId is required" });
+  if (!nature || !category) return res.status(400).json({ error: "Asset Nature and Asset Category are required to register this as a real asset." });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const requisition = await getById("requisitions", requisitionId).catch(() => null);
+    if (!requisition) return res.status(404).json({ error: "Requisition not found." });
+    if (!requisition.is_asset) {
+      return res.status(400).json({ error: "This requisition wasn't flagged as an asset — nothing to register." });
+    }
+    if (requisition.resulting_asset_id) {
+      return res.status(400).json({ error: "This requisition has already been registered as an asset." });
+    }
+    if (requisition.status !== "GRN Completed" && requisition.status !== "Completed") {
+      return res.status(400).json({ error: "The GRN needs to be completed — confirming the item actually arrived and was inspected — before it can be registered as an asset." });
+    }
+    if (!requisition.building) {
+      return res.status(400).json({ error: "This requisition has no building set, and every asset needs one — add a building to the requisition first." });
+    }
+
+    const { created, assetId } = await createOneAsset({
+      name: requisition.item_description,
+      nature, category,
+      building: requisition.building,
+      facility: requisition.facility,
+      manufacturer: manufacturer || null,
+      model: model || null,
+      installDate: requisition.grn_received_at ? requisition.grn_received_at.toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      acquisitionCost: requisition.payment_amount_tzs != null ? Number(requisition.payment_amount_tzs) : undefined,
+    }, addedBy, addedByRole);
+
+    await update("components", created.id, {
+      vendor_id: requisition.chosen_vendor_id || null,
+      sourced_from_requisition_id: requisition.id,
+      serial_number: serialNumber || null,
+    });
+    await update("requisitions", requisition.id, { resulting_asset_id: created.id, status: "Completed" });
+
+    await logRequisitionActivity("Registered as Asset", `${requisition.requisition_number} → ${assetId}`, addedBy);
+    return res.status(200).json({ success: true, assetId, componentId: created.id });
+  } catch (err) {
+    console.error("registerRequisitionAsAsset error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
