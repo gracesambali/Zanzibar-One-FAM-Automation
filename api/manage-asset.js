@@ -592,7 +592,7 @@ async function handleAddFleetDriver(req, res, addedBy) {
 }
 
 async function handleAddFleetRequest(req, res, requestedBy) {
-  const { vehicleId, driverName, purpose, origin, destination, tripDate, odometerStart, notes } = req.body || {};
+  const { vehicleId, driverName, purpose, origin, destination, tripDate, returnDate, odometerStart, notes } = req.body || {};
   if (!driverName || !driverName.trim()) return res.status(400).json({ error: "A driver name is required." });
 
   try {
@@ -604,7 +604,8 @@ async function handleAddFleetRequest(req, res, requestedBy) {
     }
     const created = await insert("fleet_requests", {
       vehicle_id: vehicleId || null, driver_name: driverName.trim(), purpose: purpose || null,
-      origin: origin || null, destination: destination || null, trip_date: tripDate || null, status: "Pending",
+      origin: origin || null, destination: destination || null, trip_date: tripDate || null,
+      return_date: returnDate || null, status: "Pending",
       odometer_start: odometerStart != null && odometerStart !== "" ? Number(odometerStart) : null,
       notes: notes || null, requested_by: requestedBy,
     });
@@ -623,7 +624,7 @@ async function handleAddFleetRequest(req, res, requestedBy) {
 // client, so this can't be spoofed by whoever happens to submit the
 // edit request.
 async function handleEditFleetRequest(req, res, editedBy) {
-  const { requestId, vehicleId, driverName, purpose, origin, destination, tripDate, status, odometerStart, odometerEnd, notes } = req.body || {};
+  const { requestId, vehicleId, driverName, purpose, origin, destination, tripDate, returnDate, status, odometerStart, odometerEnd, notes } = req.body || {};
   if (!requestId) return res.status(400).json({ error: "requestId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
@@ -646,6 +647,7 @@ async function handleEditFleetRequest(req, res, editedBy) {
     setIfChanged(origin, "origin", before.origin, "Origin", false);
     setIfChanged(destination, "destination", before.destination, "Destination", false);
     setIfChanged(tripDate, "trip_date", before.trip_date, "Trip Date", false);
+    setIfChanged(returnDate, "return_date", before.return_date, "Return Date", false);
     setIfChanged(odometerStart, "odometer_start", before.odometer_start, "Odometer Start", true);
     setIfChanged(odometerEnd, "odometer_end", before.odometer_end, "Odometer End", true);
     setIfChanged(notes, "notes", before.notes, "Notes", false);

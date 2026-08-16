@@ -645,7 +645,7 @@ export default async function handler(req, res) {
       );
       const requests = result.rows.map(r => ({
         id: r.id, vehicleId: r.vehicle_id, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
-        driverName: r.driver_name, purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date,
+        driverName: r.driver_name, purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date, returnDate: r.return_date,
         status: r.status, requestedBy: r.requested_by, approvedBy: r.approved_by, approvedAt: r.approved_at,
         odometerStart: r.odometer_start !== null ? Number(r.odometer_start) : null,
         odometerEnd: r.odometer_end !== null ? Number(r.odometer_end) : null,
@@ -708,7 +708,7 @@ export default async function handler(req, res) {
       );
       const requests = result.rows.map(r => ({
         driverName: r.driver_name, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
-        purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date,
+        purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date, returnDate: r.return_date,
         status: r.status, odometerStart: r.odometer_start !== null ? Number(r.odometer_start) : null,
         odometerEnd: r.odometer_end !== null ? Number(r.odometer_end) : null,
         distanceKm: (r.odometer_start !== null && r.odometer_end !== null) ? Number(r.odometer_end) - Number(r.odometer_start) : null,

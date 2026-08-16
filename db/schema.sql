@@ -1059,3 +1059,6 @@ create table fleet_drivers (
 -- Confirmed directly: a real origin field alongside destination -
 -- where the trip actually starts, not just where it's going.
 alter table fleet_requests add column origin text;
+
+-- Return date alongside trip date, confirmed directly.
+alter table fleet_requests add column return_date date;
