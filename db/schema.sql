@@ -1062,3 +1062,49 @@ alter table fleet_requests add column origin text;
 
 -- Return date alongside trip date, confirmed directly.
 alter table fleet_requests add column return_date date;
+
+-- ============================================================
+-- Fuel Requests and monthly invoice reconciliation, confirmed
+-- directly - lives inside Fleet Management as its own section, not
+-- a separate sidebar tab, since it's genuinely about the same
+-- vehicles and drivers already there. Deliberately its own real
+-- table, not folded into fleet_requests - a fuel request and a
+-- vehicle request need mostly different information and shouldn't
+-- be forced into rows pretending to be the same kind of thing.
+-- Estimated amount captured at request time, actual liters and cost
+-- filled in later once the driver's genuinely been to the pump -
+-- same real principle already proven for Beginning/Ending KM.
+-- ============================================================
+create table fuel_requests (
+  id                uuid primary key default gen_random_uuid(),
+  vehicle_id        uuid references components(id) on delete set null,
+  driver_name       text not null,
+  estimated_liters  numeric,
+  actual_liters     numeric,
+  actual_cost_tzs   numeric,
+  fill_date         date,
+  status            text not null default 'Pending',  -- Pending, Approved, Rejected, Filled, Cancelled
+  requested_by      text,
+  approved_by       text,
+  approved_at       timestamptz,
+  notes             text,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index idx_fuel_requests_status on fuel_requests (status, fill_date desc);
+
+-- The real monthly bill from the petrol station, logged once it
+-- arrives - reconciled against whatever was actually approved and
+-- filled for that same month, so a genuine mismatch actually
+-- surfaces rather than the invoice just being trusted blindly.
+create table fuel_invoices (
+  id                    uuid primary key default gen_random_uuid(),
+  invoice_month         text not null,  -- 'YYYY-MM', e.g. '2026-09'
+  invoice_amount_tzs    numeric not null,
+  station_name          text,
+  received_date         date,
+  notes                 text,
+  added_by              text,
+  created_at            timestamptz not null default now()
+);
+create index idx_fuel_invoices_month on fuel_invoices (invoice_month);

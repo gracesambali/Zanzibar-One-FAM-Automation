@@ -68,7 +68,7 @@ export default async function handler(req, res) {
     // System Admin, Business Owner. Drivers never touch this
     // directly - one of these roles submits a request on a driver's
     // behalf, naming the driver as a plain field.
-    const FLEET_ACTIONS = ["addFleetRequest", "editFleetRequest", "deleteFleetRequest", "addFleetDriver"];
+    const FLEET_ACTIONS = ["addFleetRequest", "editFleetRequest", "deleteFleetRequest", "addFleetDriver", "addFuelRequest", "editFuelRequest", "deleteFuelRequest", "addFuelInvoice", "deleteFuelInvoice"];
     if (FLEET_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Admin, Property Manager, Procurement, System Admin, or Business Owner can manage Fleet Requests." });
     }
@@ -99,6 +99,11 @@ export default async function handler(req, res) {
     if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u);
     if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u);
     if (action === "addFleetDriver") return handleAddFleetDriver(req, res, session.u);
+    if (action === "addFuelRequest") return handleAddFuelRequest(req, res, session.u);
+    if (action === "editFuelRequest") return handleEditFuelRequest(req, res, session.u);
+    if (action === "deleteFuelRequest") return handleDeleteFuelRequest(req, res, session.u);
+    if (action === "addFuelInvoice") return handleAddFuelInvoice(req, res, session.u);
+    if (action === "deleteFuelInvoice") return handleDeleteFuelInvoice(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -705,6 +710,220 @@ async function handleDeleteFleetRequest(req, res, deletedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteFleetRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly: the same real approval-alert principle already
+// proven for vehicle requests, reusing the identical Resend + Beem
+// pattern and the same FLEET_ALERT_EMAIL/PHONE recipients - same
+// administrative audience, just a different real message.
+async function sendFuelApprovalAlert({ driverName, vehicleName, estimatedLiters, approvedBy }) {
+  const { parseEmailList, parsePhoneList, buildBeemRecipients } = await import("../lib/recipients.js");
+  const { buildGenericAlertEmailHtml } = await import("../lib/emailTemplate.js");
+
+  const message = `Fuel request approved — ${driverName}${vehicleName ? ` (${vehicleName})` : ''}${estimatedLiters ? `, approx. ${estimatedLiters}L` : ''}. Approved by ${approvedBy}.`;
+
+  const emailList = parseEmailList(process.env.FLEET_ALERT_EMAIL);
+  if (emailList.length > 0) {
+    try {
+      const html = buildGenericAlertEmailHtml({
+        title: "Fuel Request Approved", message,
+        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        color: "#2563EB",
+      });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          to: emailList,
+          subject: `Fuel Request Approved — ${driverName}`,
+          html,
+        }),
+      });
+      if (!resp.ok) console.error("Fuel approval alert - Resend error:", await resp.text());
+    } catch (err) {
+      console.error("Fuel approval alert - email send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No FLEET_ALERT_EMAIL recipients configured — fuel approval email not sent.");
+  }
+
+  const phoneList = parsePhoneList(process.env.FLEET_ALERT_PHONE);
+  if (phoneList.length > 0) {
+    try {
+      const cleanMessage = message
+        .replace(/[\u2014\u2013]/g, "-").replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"').replace(/\u2026/g, "...")
+        .replace(/[^\x00-\x7F]/g, "");
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      const resp = await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: cleanMessage.slice(0, 160),
+          recipients: buildBeemRecipients(phoneList),
+        }),
+      });
+      const responseText = await resp.text();
+      if (!resp.ok) console.error("Fuel approval alert - Beem HTTP error:", responseText);
+    } catch (err) {
+      console.error("Fuel approval alert - SMS send failed (non-fatal):", err.message);
+    }
+  } else {
+    console.error("No FLEET_ALERT_PHONE recipients configured — fuel approval SMS not sent.");
+  }
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_name: driverName, urgency: "FUEL APPROVED",
+      channel: "Email + SMS (fuel approval)", message,
+    });
+  } catch (err) {
+    console.error("Fuel approval alert - alert_log write failed (non-fatal):", err.message);
+  }
+}
+
+async function handleAddFuelRequest(req, res, requestedBy) {
+  const { vehicleId, driverName, estimatedLiters, notes } = req.body || {};
+  if (!driverName || !driverName.trim()) return res.status(400).json({ error: "A driver name is required." });
+  try {
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    let vehicleName = null;
+    if (vehicleId) {
+      const vehicle = await getById("components", vehicleId).catch(() => null);
+      vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+    }
+    const created = await insert("fuel_requests", {
+      vehicle_id: vehicleId || null, driver_name: driverName.trim(),
+      estimated_liters: estimatedLiters != null && estimatedLiters !== "" ? Number(estimatedLiters) : null,
+      status: "Pending", notes: notes || null, requested_by: requestedBy,
+    });
+    await logFleetActivity("Fuel Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${estimatedLiters ? ` (~${estimatedLiters}L)` : ''}`, requestedBy);
+    return res.status(200).json({ success: true, id: created.id });
+  } catch (err) {
+    console.error("addFuelRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleEditFuelRequest(req, res, editedBy) {
+  const { requestId, vehicleId, driverName, estimatedLiters, actualLiters, actualCost, fillDate, status, notes } = req.body || {};
+  if (!requestId) return res.status(400).json({ error: "requestId is required" });
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const before = await getById("fuel_requests", requestId).catch(() => null);
+    if (!before) return res.status(404).json({ error: "Request not found." });
+
+    const fields = { updated_at: new Date().toISOString() };
+    const changes = [];
+    const setIfChanged = (bodyVal, column, current, label, isNumber) => {
+      if (bodyVal === undefined) return;
+      const newVal = bodyVal === "" ? null : (isNumber ? Number(bodyVal) : bodyVal);
+      if (String(current ?? "") !== String(newVal ?? "")) {
+        fields[column] = newVal;
+        changes.push(`${label}: "${current ?? '(not set)'}" → "${newVal ?? '(not set)'}"`);
+      }
+    };
+    setIfChanged(vehicleId, "vehicle_id", before.vehicle_id, "Vehicle", false);
+    setIfChanged(driverName !== undefined ? driverName.trim() : undefined, "driver_name", before.driver_name, "Driver", false);
+    setIfChanged(estimatedLiters, "estimated_liters", before.estimated_liters, "Estimated Liters", true);
+    setIfChanged(actualLiters, "actual_liters", before.actual_liters, "Actual Liters", true);
+    setIfChanged(actualCost, "actual_cost_tzs", before.actual_cost_tzs, "Actual Cost", true);
+    setIfChanged(fillDate, "fill_date", before.fill_date, "Fill Date", false);
+    setIfChanged(notes, "notes", before.notes, "Notes", false);
+
+    if (status !== undefined && status !== before.status) {
+      fields.status = status;
+      changes.push(`Status: "${before.status}" → "${status}"`);
+      if (status === "Approved") {
+        fields.approved_by = editedBy;
+        fields.approved_at = new Date().toISOString();
+      }
+    }
+
+    if (changes.length > 0) {
+      await update("fuel_requests", requestId, fields);
+      await logFleetActivity("Updated Fuel Request", `${before.driver_name}: ${changes.join(", ")}`, editedBy);
+    }
+
+    if (status === "Approved" && before.status !== "Approved") {
+      let vehicleName = null;
+      const finalVehicleId = fields.vehicle_id !== undefined ? fields.vehicle_id : before.vehicle_id;
+      if (finalVehicleId) {
+        const vehicle = await getById("components", finalVehicleId).catch(() => null);
+        vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+      }
+      await sendFuelApprovalAlert({
+        driverName: fields.driver_name || before.driver_name,
+        vehicleName,
+        estimatedLiters: fields.estimated_liters !== undefined ? fields.estimated_liters : before.estimated_liters,
+        approvedBy: editedBy,
+      });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editFuelRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteFuelRequest(req, res, deletedBy) {
+  const { requestId } = req.body || {};
+  if (!requestId) return res.status(400).json({ error: "requestId is required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const request = await getById("fuel_requests", requestId).catch(() => null);
+    if (!request) return res.status(404).json({ error: "Request not found." });
+    await pgQuery("delete from fuel_requests where id = $1", [requestId]);
+    await logFleetActivity("Deleted Fuel Request", request.driver_name, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteFuelRequest error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The real monthly bill, logged once it arrives - confirmed directly
+// as the actual reconciliation record, compared on the frontend
+// against whatever was genuinely filled that same month.
+async function handleAddFuelInvoice(req, res, addedBy) {
+  const { invoiceMonth, invoiceAmount, stationName, receivedDate, notes } = req.body || {};
+  if (!invoiceMonth || !/^\d{4}-\d{2}$/.test(invoiceMonth)) return res.status(400).json({ error: "A valid month (YYYY-MM) is required." });
+  if (invoiceAmount == null || invoiceAmount === "") return res.status(400).json({ error: "The invoice amount is required." });
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("fuel_invoices", {
+      invoice_month: invoiceMonth, invoice_amount_tzs: Number(invoiceAmount),
+      station_name: stationName || null, received_date: receivedDate || null, notes: notes || null, added_by: addedBy,
+    });
+    await logFleetActivity("Logged Fuel Invoice", `${invoiceMonth} — ${Number(invoiceAmount).toLocaleString()} TZS${stationName ? ` (${stationName})` : ''}`, addedBy);
+    return res.status(200).json({ success: true, id: created.id });
+  } catch (err) {
+    console.error("addFuelInvoice error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteFuelInvoice(req, res, deletedBy) {
+  const { invoiceId } = req.body || {};
+  if (!invoiceId) return res.status(400).json({ error: "invoiceId is required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const invoice = await getById("fuel_invoices", invoiceId).catch(() => null);
+    if (!invoice) return res.status(404).json({ error: "Invoice not found." });
+    await pgQuery("delete from fuel_invoices where id = $1", [invoiceId]);
+    await logFleetActivity("Deleted Fuel Invoice", invoice.invoice_month, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteFuelInvoice error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

@@ -3541,6 +3541,7 @@ let fleetRequestsCache = [];
 let fleetVehiclesCache = [];
 
 async function renderFleetRequests() {
+  fleetActiveSection = 'vehicles';
   const container = document.getElementById('view-fleetrequests');
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
@@ -3579,6 +3580,419 @@ async function refreshFleetRequestsQuietly() {
   }
 }
 
+// Confirmed directly: fuel lives inside Fleet Management as its own
+// section rather than a separate sidebar tab - same vehicles, same
+// drivers, genuinely different information from a vehicle request,
+// so kept as its own real view rather than mixed into the same table.
+let fleetActiveSection = 'vehicles';
+let fuelRequestsCache = [];
+let fuelInvoicesCache = [];
+const FUEL_STATUSES = ["Pending", "Approved", "Rejected", "Filled", "Cancelled"];
+const FUEL_STATUS_COLORS = { Pending: 'var(--muted)', Approved: 'var(--blue)', Rejected: 'var(--red)', Filled: 'var(--green)', Cancelled: 'var(--red)' };
+
+function renderFleetSectionToggle(active) {
+  const tabStyle = (isActive) => `padding:9px 18px;font-size:12.5px;font-weight:600;border:none;border-bottom:2px solid ${isActive ? 'var(--navy)' : 'transparent'};background:none;color:${isActive ? 'var(--navy)' : 'var(--muted)'};cursor:pointer`;
+  return `<div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-top:10px">
+    <button onclick="switchFleetSection('vehicles')" style="${tabStyle(active === 'vehicles')}">Vehicle Requests</button>
+    <button onclick="switchFleetSection('fuel')" style="${tabStyle(active === 'fuel')}">Fuel</button>
+  </div>`;
+}
+
+async function switchFleetSection(section) {
+  fleetActiveSection = section;
+  if (section === 'vehicles') {
+    renderFleetRequestsTable();
+    loadFleetActivityLog();
+    return;
+  }
+  const container = document.getElementById('view-fleetrequests');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const [reqResp, invResp] = await Promise.all([
+      fetch('/api/get-assets?fuelRequests=true'),
+      fetch('/api/get-assets?fuelInvoices=true'),
+    ]);
+    fuelRequestsCache = reqResp.ok ? (await reqResp.json()).requests || [] : [];
+    fuelInvoicesCache = invResp.ok ? (await invResp.json()).invoices || [] : [];
+    renderFuelSection();
+    loadFleetActivityLog();
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function refreshFuelQuietly() {
+  try {
+    const [reqResp, invResp] = await Promise.all([
+      fetch('/api/get-assets?fuelRequests=true'),
+      fetch('/api/get-assets?fuelInvoices=true'),
+    ]);
+    fuelRequestsCache = reqResp.ok ? (await reqResp.json()).requests || [] : [];
+    fuelInvoicesCache = invResp.ok ? (await invResp.json()).invoices || [] : [];
+    renderFuelSection();
+    loadFleetActivityLog();
+  } catch (err) {
+    console.error('Quiet fuel refresh failed:', err.message);
+  }
+}
+
+function renderFuelSection() {
+  const container = document.getElementById('view-fleetrequests');
+  const canManage = ['admin', 'property_manager', 'procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
+  const requests = fuelRequestsCache;
+  const statusCounts = requests.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+
+  let html = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Fleet Management</div>
+        <div style="font-size:12px;color:var(--muted)">Fuel requests, approvals, and monthly invoice reconciliation for the fleet's regular petrol station account.</div>
+      </div>
+      ${canManage ? `<button onclick="openAddFuelRequestModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Fuel Request</button>` : ''}
+    </div>
+
+    ${renderFleetSectionToggle('fuel')}
+
+    <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${requests.length}</div><div class="summary-label">Total Requests</div></div>
+      ${FUEL_STATUSES.map(s => statusCounts[s] ? `<div class="summary-card"><div class="summary-val" style="color:${FUEL_STATUS_COLORS[s]}">${statusCounts[s]}</div><div class="summary-label">${s}</div></div>` : '').join('')}
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:24px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Driver</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Vehicle</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Estimated</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Actual</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Fill Date</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
+            <th style="padding:10px 12px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${requests.length === 0
+            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No fuel requests yet.${canManage ? ' Submit the first one above.' : ''}</td></tr>`
+            : requests.map(r => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(r.driverName)}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${r.vehicleAssetId ? `${escapeHtml(r.vehicleAssetId)} — ${escapeHtml(r.vehicleName)}` : '—'}</td>
+                <td style="padding:9px 12px;text-align:right">${r.estimatedLiters != null ? r.estimatedLiters + 'L' : '—'}</td>
+                <td style="padding:9px 12px;text-align:right">
+                  ${r.actualLiters != null ? `${r.actualLiters}L` : '<span style="color:var(--muted);font-style:italic">Pending</span>'}
+                  ${r.actualCost != null ? `<div style="font-size:10.5px;color:var(--muted)">${formatCurrency(r.actualCost)}</div>` : ''}
+                </td>
+                <td style="padding:9px 12px;color:var(--muted)">${r.fillDate || '—'}</td>
+                <td style="padding:9px 12px">
+                  ${canManage
+                    ? `<select onchange="quickUpdateFuelStatus('${r.id}', this.value)" style="font-size:11px;padding:3px 6px;border-radius:8px;border:1px solid var(--border);color:${FUEL_STATUS_COLORS[r.status]};font-weight:700">
+                        ${FUEL_STATUSES.map(s => `<option value="${s}"${s === r.status ? ' selected' : ''}>${s}</option>`).join('')}
+                      </select>`
+                    : `<span style="font-size:11px;font-weight:700;color:${FUEL_STATUS_COLORS[r.status]}">${r.status}</span>`}
+                </td>
+                <td style="padding:9px 12px;text-align:right;white-space:nowrap">
+                  ${canManage ? `<button onclick="openEditFuelRequestModal('${r.id}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Edit</button>
+                  <button onclick="deleteFuelRequestNow('${r.id}', '${r.driverName.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">Monthly Invoice Reconciliation</div>
+        ${canManage ? `<button onclick="openAddFuelInvoiceModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Log Invoice</button>` : ''}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">The real petrol station bill for each month, checked against everything actually approved and filled that same month — a genuine mismatch shows up here, not just trusted.</div>
+      ${fuelInvoicesCache.length === 0 ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No invoices logged yet.</div>` : `
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:8px;color:var(--muted);font-weight:600">Month</th>
+            <th style="text-align:left;padding:8px;color:var(--muted);font-weight:600">Station</th>
+            <th style="text-align:right;padding:8px;color:var(--muted);font-weight:600">Invoice Amount</th>
+            <th style="text-align:right;padding:8px;color:var(--muted);font-weight:600">Actually Filled</th>
+            <th style="text-align:right;padding:8px;color:var(--muted);font-weight:600">Variance</th>
+            <th style="padding:8px"></th>
+          </tr></thead>
+          <tbody>
+            ${fuelInvoicesCache.map(inv => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px;font-weight:600;color:var(--navy)">${escapeHtml(inv.invoiceMonth)}</td>
+                <td style="padding:8px;color:var(--muted)">${escapeHtml(inv.stationName || '—')}</td>
+                <td style="padding:8px;text-align:right">${formatCurrency(inv.invoiceAmount)}</td>
+                <td style="padding:8px;text-align:right">${formatCurrency(inv.reconciledTotal)} <span style="color:var(--muted);font-size:10.5px">(${inv.reconciledFillCount})</span></td>
+                <td style="padding:8px;text-align:right;font-weight:700;color:${inv.variance === 0 ? 'var(--green)' : 'var(--red)'}">
+                  ${inv.variance === 0 ? '✓ Matches' : formatCurrency(Math.abs(inv.variance)) + (inv.variance > 0 ? ' over' : ' under')}
+                </td>
+                <td style="padding:8px;text-align:right">
+                  ${canManage ? `<button onclick="deleteFuelInvoiceNow('${inv.id}', '${inv.invoiceMonth}')" style="padding:3px 8px;font-size:10.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>` : ''}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>
+
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="fleetActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+async function quickUpdateFuelStatus(requestId, status) {
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'editFuelRequest', requestId, status }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update status');
+  } catch (err) {
+    alert('Could not update status: ' + err.message);
+  }
+  await refreshFuelQuietly();
+}
+
+function fuelRequestFormFields(req, isEdit) {
+  const v = req || {};
+  const vehicleOptions = fleetVehiclesCache.map(veh => `<option value="${veh.id}"${v.vehicleId === veh.id ? ' selected' : ''}>${escapeHtml(veh.assetId)} — ${escapeHtml(veh.name)}</option>`).join('');
+  const driverOptions = fleetDriversCache.map(d => `<option value="${escapeHtml(d)}"${v.driverName === d ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('');
+  return `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Driver *</label>
+    <select id="fu_driver" onchange="toggleFleetDriverAddField('fu_driver')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <option value="">— Choose a driver —</option>
+      ${driverOptions}
+      <option value="__add_new__">+ Add new driver…</option>
+    </select>
+    <div id="fr_driver_new" style="display:none;gap:6px;margin-bottom:10px">
+      <input id="fr_driver_newInput" type="text" placeholder="New driver name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+      <button onclick="addFleetDriverInline('fu_driver')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vehicle</label>
+    <select id="fu_vehicle" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="">— Not set —</option>
+      ${vehicleOptions}
+    </select>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Estimated Liters</label>
+    <input id="fu_estLiters" type="number" min="0" value="${v.estimatedLiters ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    ${isEdit ? `
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Actual Liters</label>
+      <input id="fu_actLiters" type="number" min="0" value="${v.actualLiters ?? ''}" placeholder="Once filled" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Actual Cost (TZS)</label>
+      <input id="fu_actCost" type="number" min="0" value="${v.actualCost ?? ''}" placeholder="Once filled" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Fill Date</label>
+    <input id="fu_fillDate" type="date" value="${v.fillDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    ` : `<div style="font-size:11px;color:var(--muted);margin:-6px 0 10px">Actual liters, cost, and fill date get filled in later once the driver's actually been to the pump — edit this request then.</div>`}
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
+    <textarea id="fu_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">${v.notes ? escapeHtml(v.notes) : ''}</textarea>
+  `;
+}
+
+async function openAddFuelRequestModal() {
+  try {
+    const [vehResp, drvResp] = await Promise.all([
+      fetch('/api/get-assets?fleetVehicles=true'),
+      fetch('/api/get-assets?fleetDrivers=true'),
+    ]);
+    fleetVehiclesCache = vehResp.ok ? (await vehResp.json()).vehicles || [] : [];
+    fleetDriversCache = drvResp.ok ? (await drvResp.json()).drivers || [] : [];
+  } catch (err) { console.error('Could not refresh vehicles/drivers:', err); }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'addFuelRequestOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">New Fuel Request</div>
+      ${fuelRequestFormFields(null, false)}
+      <div id="fu_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addFuelRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="fu_addSubmit" onclick="submitAddFuelRequest()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Submit Request</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddFuelRequest() {
+  const driverName = document.getElementById('fu_driver').value;
+  const errorBox = document.getElementById('fu_addError');
+  const btn = document.getElementById('fu_addSubmit');
+  errorBox.style.display = 'none';
+  if (!driverName) { errorBox.textContent = 'Choose a driver.'; errorBox.style.display = 'block'; return; }
+  if (driverName === '__add_new__') { errorBox.textContent = 'Finish adding the new driver (or pick an existing one) before continuing.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'addFuelRequest', driverName,
+        vehicleId: document.getElementById('fu_vehicle').value,
+        estimatedLiters: document.getElementById('fu_estLiters').value,
+        notes: document.getElementById('fu_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit request');
+    document.getElementById('addFuelRequestOverlay')?.remove();
+    await refreshFuelQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Submit Request';
+  }
+}
+
+async function openEditFuelRequestModal(requestId) {
+  const req = fuelRequestsCache.find(r => r.id === requestId);
+  if (!req) { alert('Could not find this request — try refreshing.'); return; }
+  try {
+    const resp = await fetch('/api/get-assets?fleetDrivers=true');
+    fleetDriversCache = resp.ok ? (await resp.json()).drivers || [] : [];
+  } catch (err) { console.error('Could not refresh drivers:', err); }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'editFuelRequestOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Fuel Request</div>
+      ${fuelRequestFormFields(req, true)}
+      <div id="fu_editError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editFuelRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="fu_editSubmit" onclick="submitEditFuelRequest('${requestId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditFuelRequest(requestId) {
+  const driverName = document.getElementById('fu_driver').value;
+  const errorBox = document.getElementById('fu_editError');
+  const btn = document.getElementById('fu_editSubmit');
+  errorBox.style.display = 'none';
+  if (!driverName) { errorBox.textContent = 'Choose a driver.'; errorBox.style.display = 'block'; return; }
+  if (driverName === '__add_new__') { errorBox.textContent = 'Finish adding the new driver (or pick an existing one) before continuing.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'editFuelRequest', requestId, driverName,
+        vehicleId: document.getElementById('fu_vehicle').value,
+        estimatedLiters: document.getElementById('fu_estLiters').value,
+        actualLiters: document.getElementById('fu_actLiters')?.value,
+        actualCost: document.getElementById('fu_actCost')?.value,
+        fillDate: document.getElementById('fu_fillDate')?.value,
+        notes: document.getElementById('fu_notes').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('editFuelRequestOverlay')?.remove();
+    await refreshFuelQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function deleteFuelRequestNow(requestId, driverName) {
+  if (!confirm(`Permanently delete this fuel request for "${driverName}"? This cannot be undone.`)) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteFuelRequest', requestId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    await refreshFuelQuietly();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
+
+function openAddFuelInvoiceModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addFuelInvoiceOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Log Fuel Invoice</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Month *</label>
+      <input id="fi_month" type="month" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Invoice Amount (TZS) *</label>
+      <input id="fi_amount" type="number" min="0" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Station Name</label>
+      <input id="fi_station" type="text" placeholder="e.g. Total Arusha" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Date Received</label>
+      <input id="fi_received" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div id="fi_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addFuelInvoiceOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="fi_addSubmit" onclick="submitAddFuelInvoice()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Log Invoice</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddFuelInvoice() {
+  const invoiceMonth = document.getElementById('fi_month').value;
+  const invoiceAmount = document.getElementById('fi_amount').value;
+  const errorBox = document.getElementById('fi_addError');
+  const btn = document.getElementById('fi_addSubmit');
+  errorBox.style.display = 'none';
+  if (!invoiceMonth) { errorBox.textContent = 'Choose which month this invoice covers.'; errorBox.style.display = 'block'; return; }
+  if (!invoiceAmount) { errorBox.textContent = 'Enter the invoice amount.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Logging…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'addFuelInvoice', invoiceMonth, invoiceAmount,
+        stationName: document.getElementById('fi_station').value.trim(),
+        receivedDate: document.getElementById('fi_received').value,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not log invoice');
+    document.getElementById('addFuelInvoiceOverlay')?.remove();
+    await refreshFuelQuietly();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Log Invoice';
+  }
+}
+
+async function deleteFuelInvoiceNow(invoiceId, month) {
+  if (!confirm(`Permanently delete the invoice logged for ${month}? This cannot be undone.`)) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deleteFuelInvoice', invoiceId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
+    await refreshFuelQuietly();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+}
+
 function renderFleetRequestsTable() {
   const container = document.getElementById('view-fleetrequests');
   const canManage = ['admin', 'property_manager', 'procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
@@ -3608,6 +4022,8 @@ function renderFleetRequestsTable() {
         ${canManage ? `<button onclick="openAddFleetRequestModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Request</button>` : ''}
       </div>
     </div>
+
+    ${renderFleetSectionToggle('vehicles')}
 
     <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
       <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${requests.length}</div><div class="summary-label">Total Requests</div></div>
@@ -3844,14 +4260,16 @@ function fleetRequestFormFields(req, isEdit) {
   `;
 }
 
-function toggleFleetDriverAddField() {
-  const select = document.getElementById('fr_driver');
+function toggleFleetDriverAddField(selectId) {
+  selectId = selectId || 'fr_driver';
+  const select = document.getElementById(selectId);
   const row = document.getElementById('fr_driver_new');
   if (select.value === '__add_new__') { row.style.display = 'flex'; document.getElementById('fr_driver_newInput').focus(); }
   else { row.style.display = 'none'; }
 }
 
-async function addFleetDriverInline() {
+async function addFleetDriverInline(selectId) {
+  selectId = selectId || 'fr_driver';
   const input = document.getElementById('fr_driver_newInput');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
@@ -3862,7 +4280,7 @@ async function addFleetDriverInline() {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add');
-    const select = document.getElementById('fr_driver');
+    const select = document.getElementById(selectId);
     const newOption = document.createElement('option');
     newOption.value = data.name; newOption.textContent = data.name;
     select.insertBefore(newOption, select.lastElementChild);

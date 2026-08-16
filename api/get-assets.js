@@ -431,7 +431,7 @@ export default async function handler(req, res) {
   // Fleet Requests, confirmed directly - the real, specific role set
   // discussed: Admin, Property Manager, Procurement, System Admin,
   // Business Owner.
-  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers", "fleetReportSummary"];
+  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers", "fleetReportSummary", "fuelRequests", "fuelInvoices"];
   const requestedFleetRoute = FLEET_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedFleetRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
@@ -668,6 +668,63 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("fleetActivityLog read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real fuel request, joined with its real vehicle.
+  if (req.query.fuelRequests === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
+         from fuel_requests f
+         left join components c on c.id = f.vehicle_id
+         order by f.created_at desc`
+      );
+      const requests = result.rows.map(r => ({
+        id: r.id, vehicleId: r.vehicle_id, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
+        driverName: r.driver_name, status: r.status,
+        estimatedLiters: r.estimated_liters !== null ? Number(r.estimated_liters) : null,
+        actualLiters: r.actual_liters !== null ? Number(r.actual_liters) : null,
+        actualCost: r.actual_cost_tzs !== null ? Number(r.actual_cost_tzs) : null,
+        fillDate: r.fill_date, requestedBy: r.requested_by, approvedBy: r.approved_by, approvedAt: r.approved_at, notes: r.notes,
+      }));
+      return res.status(200).json({ requests });
+    } catch (err) {
+      console.error("fuelRequests read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real logged invoice, plus a genuine reconciliation total for
+  // each one - the actual sum of everything genuinely Filled that
+  // same month, computed fresh from real fuel_requests rather than a
+  // stored, potentially-stale number, so a real mismatch actually
+  // surfaces instead of being trusted blindly.
+  if (req.query.fuelInvoices === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const invoicesResult = await pgQuery("select * from fuel_invoices order by invoice_month desc");
+      const invoices = [];
+      for (const inv of invoicesResult.rows) {
+        const reconResult = await pgQuery(
+          `select coalesce(sum(actual_cost_tzs), 0) as total, count(*) as fill_count
+           from fuel_requests
+           where status = 'Filled' and to_char(fill_date, 'YYYY-MM') = $1`,
+          [inv.invoice_month]
+        );
+        const actualTotal = Number(reconResult.rows[0].total);
+        invoices.push({
+          id: inv.id, invoiceMonth: inv.invoice_month, invoiceAmount: Number(inv.invoice_amount_tzs),
+          stationName: inv.station_name, receivedDate: inv.received_date, notes: inv.notes,
+          reconciledTotal: actualTotal, reconciledFillCount: Number(reconResult.rows[0].fill_count),
+          variance: Number(inv.invoice_amount_tzs) - actualTotal,
+        });
+      }
+      return res.status(200).json({ invoices });
+    } catch (err) {
+      console.error("fuelInvoices read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
