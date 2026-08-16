@@ -478,6 +478,15 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
   }
 
+  // Requisitions, confirmed directly - matches the same broad
+  // participation as the write side, since any department may need
+  // to request something.
+  const REQUISITION_DATA_ROUTES = ["requisitions", "requisitionActivityLog"];
+  const requestedRequisitionRoute = REQUISITION_DATA_ROUTES.find(r => req.query[r] === "true");
+  if (requestedRequisitionRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
+    return res.status(403).json({ error: "You don't have permission to view requisitions." });
+  }
+
   if (req.query.inventoryItems === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
@@ -869,6 +878,61 @@ export default async function handler(req, res) {
       return res.status(200).json({ period, since: since.toISOString(), requests, totalActualCost, totalActualLiters });
     } catch (err) {
       console.error("fuelReportSummary read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Every real requisition, joined with its real source work order
+  // (if any) and its real chosen vendor (if any) — so the list always
+  // shows genuine identities, not just stored IDs.
+  if (req.query.requisitions === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        `select r.*, wo.wo_id as source_wo_id, wo.asset_name as source_wo_asset_name, v.vendor_name as chosen_vendor_name
+         from requisitions r
+         left join work_orders wo on wo.id = r.source_work_order_id
+         left join vendors v on v.id = r.chosen_vendor_id
+         order by r.requested_at desc`
+      );
+      const requisitions = result.rows.map(r => ({
+        id: r.id, requisitionNumber: r.requisition_number,
+        sourceWorkOrderId: r.source_work_order_id, sourceWoId: r.source_wo_id, sourceWoAssetName: r.source_wo_asset_name,
+        requestingDepartment: r.requesting_department, itemDescription: r.item_description,
+        quantityRequested: r.quantity_requested !== null ? Number(r.quantity_requested) : null,
+        unitOfMeasure: r.unit_of_measure, isAsset: r.is_asset, status: r.status,
+        building: r.building, facility: r.facility,
+        requestedBy: r.requested_by, requestedAt: r.requested_at,
+        procurementReviewedBy: r.procurement_reviewed_by, procurementReviewedAt: r.procurement_reviewed_at,
+        procurementNotes: r.procurement_notes, procurementRejectionReason: r.procurement_rejection_reason,
+        chosenVendorId: r.chosen_vendor_id, chosenVendorName: r.chosen_vendor_name,
+        accountsApprovedBy: r.accounts_approved_by, accountsApprovedAt: r.accounts_approved_at,
+        accountsNotes: r.accounts_notes, accountsRejectionReason: r.accounts_rejection_reason,
+        paymentStatus: r.payment_status, paymentDate: r.payment_date, paymentReference: r.payment_reference,
+        paymentAmount: r.payment_amount_tzs !== null ? Number(r.payment_amount_tzs) : null,
+        expectedDeliveryDate: r.expected_delivery_date, deliveredAt: r.delivered_at,
+        inspectedBy: r.inspected_by, inspectedAt: r.inspected_at, inspectionNotes: r.inspection_notes,
+        quantityReceived: r.quantity_received !== null ? Number(r.quantity_received) : null,
+        grnNumber: r.grn_number, grnReceivedBy: r.grn_received_by, grnReceivedAt: r.grn_received_at,
+        grnConditionNotes: r.grn_condition_notes, grnDocumentUrl: r.grn_document_url, grnDocumentFilename: r.grn_document_filename,
+        resultingAssetId: r.resulting_asset_id, notes: r.notes,
+      }));
+      return res.status(200).json({ requisitions });
+    } catch (err) {
+      console.error("requisitions read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.query.requisitionActivityLog === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select * from requisition_activity_log order by performed_at desc limit 200");
+      return res.status(200).json({
+        entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
+      });
+    } catch (err) {
+      console.error("requisitionActivityLog read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
