@@ -8286,7 +8286,9 @@ let floorPlanBuildingTwinUrl = null;
 let floorPlanFacilityTwinUrl = null;
 
 function DIGITAL_TWIN_CAN_MANAGE() {
-  return ['admin', 'property_manager', 'system_admin', 'business_owner'].includes(currentUserRole);
+  // Confirmed directly: opened to every real role, including
+  // Technician - matches the exact same list enforced on the backend.
+  return ['technician', 'electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'procurement', 'pharmacy', 'stock_keeper', 'business_owner', 'system_admin'].includes(currentUserRole);
 }
 
 async function loadDigitalTwinToggle() {
