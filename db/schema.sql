@@ -1044,3 +1044,18 @@ create table fleet_activity_log (
   performed_at    timestamptz not null default now()
 );
 create index idx_fleet_activity_log_time on fleet_activity_log (performed_at desc);
+
+-- Real, growing driver list, confirmed directly - same pattern
+-- already proven for inventory categories and locations: a real,
+-- editable list backing a dropdown, not free text retyped fresh
+-- every time with no consistency.
+create table fleet_drivers (
+  id          uuid primary key default gen_random_uuid(),
+  name        text unique not null,
+  added_by    text,
+  created_at  timestamptz not null default now()
+);
+
+-- Confirmed directly: a real origin field alongside destination -
+-- where the trip actually starts, not just where it's going.
+alter table fleet_requests add column origin text;

@@ -68,7 +68,7 @@ export default async function handler(req, res) {
     // System Admin, Business Owner. Drivers never touch this
     // directly - one of these roles submits a request on a driver's
     // behalf, naming the driver as a plain field.
-    const FLEET_ACTIONS = ["addFleetRequest", "editFleetRequest", "deleteFleetRequest"];
+    const FLEET_ACTIONS = ["addFleetRequest", "editFleetRequest", "deleteFleetRequest", "addFleetDriver"];
     if (FLEET_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Admin, Property Manager, Procurement, System Admin, or Business Owner can manage Fleet Requests." });
     }
@@ -98,6 +98,7 @@ export default async function handler(req, res) {
     if (action === "addFleetRequest") return handleAddFleetRequest(req, res, session.u);
     if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u);
     if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u);
+    if (action === "addFleetDriver") return handleAddFleetDriver(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -571,8 +572,27 @@ async function logFleetActivity(action, details, performedBy) {
 // A real request/approval workflow, confirmed directly - same shape
 // as Work Orders. The vehicle links to its real Asset Tracking
 // record rather than duplicating vehicle data here.
+// A real, growing driver list, confirmed directly - add-only, same
+// as inventory categories/locations, matching exactly what was
+// actually asked for: a real dropdown, not free text retyped fresh
+// every time with no consistency.
+async function handleAddFleetDriver(req, res, addedBy) {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: "A driver name is required." });
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("fleet_drivers", { name: name.trim(), added_by: addedBy });
+    await logFleetActivity("Added Driver", `"${created.name}"`, addedBy);
+    return res.status(200).json({ success: true, name: created.name });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `"${name.trim()}" already exists.` : err.message;
+    console.error("addFleetDriver error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
 async function handleAddFleetRequest(req, res, requestedBy) {
-  const { vehicleId, driverName, purpose, destination, tripDate, notes } = req.body || {};
+  const { vehicleId, driverName, purpose, origin, destination, tripDate, odometerStart, notes } = req.body || {};
   if (!driverName || !driverName.trim()) return res.status(400).json({ error: "A driver name is required." });
 
   try {
@@ -584,10 +604,11 @@ async function handleAddFleetRequest(req, res, requestedBy) {
     }
     const created = await insert("fleet_requests", {
       vehicle_id: vehicleId || null, driver_name: driverName.trim(), purpose: purpose || null,
-      destination: destination || null, trip_date: tripDate || null, status: "Pending",
+      origin: origin || null, destination: destination || null, trip_date: tripDate || null, status: "Pending",
+      odometer_start: odometerStart != null && odometerStart !== "" ? Number(odometerStart) : null,
       notes: notes || null, requested_by: requestedBy,
     });
-    await logFleetActivity("Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${destination ? ` to ${destination}` : ''}`, requestedBy);
+    await logFleetActivity("Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${origin ? ` from ${origin}` : ''}${destination ? ` to ${destination}` : ''}`, requestedBy);
     return res.status(200).json({ success: true, id: created.id });
   } catch (err) {
     console.error("addFleetRequest error:", err);
@@ -602,7 +623,7 @@ async function handleAddFleetRequest(req, res, requestedBy) {
 // client, so this can't be spoofed by whoever happens to submit the
 // edit request.
 async function handleEditFleetRequest(req, res, editedBy) {
-  const { requestId, vehicleId, driverName, purpose, destination, tripDate, status, odometerStart, odometerEnd, notes } = req.body || {};
+  const { requestId, vehicleId, driverName, purpose, origin, destination, tripDate, status, odometerStart, odometerEnd, notes } = req.body || {};
   if (!requestId) return res.status(400).json({ error: "requestId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
@@ -622,6 +643,7 @@ async function handleEditFleetRequest(req, res, editedBy) {
     setIfChanged(vehicleId, "vehicle_id", before.vehicle_id, "Vehicle", false);
     setIfChanged(driverName !== undefined ? driverName.trim() : undefined, "driver_name", before.driver_name, "Driver", false);
     setIfChanged(purpose, "purpose", before.purpose, "Purpose", false);
+    setIfChanged(origin, "origin", before.origin, "Origin", false);
     setIfChanged(destination, "destination", before.destination, "Destination", false);
     setIfChanged(tripDate, "trip_date", before.trip_date, "Trip Date", false);
     setIfChanged(odometerStart, "odometer_start", before.odometer_start, "Odometer Start", true);

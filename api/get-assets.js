@@ -431,7 +431,7 @@ export default async function handler(req, res) {
   // Fleet Requests, confirmed directly - the real, specific role set
   // discussed: Admin, Property Manager, Procurement, System Admin,
   // Business Owner.
-  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog"];
+  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers"];
   const requestedFleetRoute = FLEET_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedFleetRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
@@ -617,6 +617,20 @@ export default async function handler(req, res) {
     }
   }
 
+  // Real, growing driver list, confirmed directly - the same
+  // real-dropdown pattern already proven for inventory categories and
+  // locations.
+  if (req.query.fleetDrivers === "true") {
+    try {
+      const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+      const rows = await pgListAllRecords("fleet_drivers");
+      return res.status(200).json({ drivers: rows.map(r => r.name).sort() });
+    } catch (err) {
+      console.error("fleetDrivers read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Every real fleet request, most recent trip date first, joined
   // with its real vehicle so a request's own record always shows the
   // genuine vehicle identity rather than just a stored ID.
@@ -631,7 +645,7 @@ export default async function handler(req, res) {
       );
       const requests = result.rows.map(r => ({
         id: r.id, vehicleId: r.vehicle_id, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
-        driverName: r.driver_name, purpose: r.purpose, destination: r.destination, tripDate: r.trip_date,
+        driverName: r.driver_name, purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date,
         status: r.status, requestedBy: r.requested_by, approvedBy: r.approved_by, approvedAt: r.approved_at,
         odometerStart: r.odometer_start !== null ? Number(r.odometer_start) : null,
         odometerEnd: r.odometer_end !== null ? Number(r.odometer_end) : null,

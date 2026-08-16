@@ -3583,16 +3583,17 @@ function renderFleetRequestsTable() {
           <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Driver</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Vehicle</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Destination</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Route</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Trip Date</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Distance</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Beginning KM</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Ending KM</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
             <th style="padding:10px 12px"></th>
           </tr>
         </thead>
         <tbody>
           ${requests.length === 0
-            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No fleet requests yet.${canManage ? ' Submit the first one above.' : ''}</td></tr>`
+            ? `<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">No fleet requests yet.${canManage ? ' Submit the first one above.' : ''}</td></tr>`
             : requests.map(r => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px">
@@ -3600,9 +3601,13 @@ function renderFleetRequestsTable() {
                   ${r.purpose ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(r.purpose)}</div>` : ''}
                 </td>
                 <td style="padding:9px 12px;color:var(--muted)">${r.vehicleAssetId ? `${escapeHtml(r.vehicleAssetId)} — ${escapeHtml(r.vehicleName)}` : '—'}</td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(r.destination || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${r.origin || r.destination ? `${escapeHtml(r.origin || '—')} → ${escapeHtml(r.destination || '—')}` : '—'}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${r.tripDate || '—'}</td>
-                <td style="padding:9px 12px;text-align:right">${r.distanceKm != null ? r.distanceKm + ' km' : '—'}</td>
+                <td style="padding:9px 12px;text-align:right">${r.odometerStart != null ? r.odometerStart : '—'}</td>
+                <td style="padding:9px 12px;text-align:right">
+                  ${r.odometerEnd != null ? r.odometerEnd : '<span style="color:var(--muted);font-style:italic">Pending</span>'}
+                  ${r.distanceKm != null ? `<div style="font-size:10.5px;color:var(--muted)">${r.distanceKm} km</div>` : ''}
+                </td>
                 <td style="padding:9px 12px">
                   ${canManage
                     ? `<select onchange="quickUpdateFleetStatus('${r.id}', this.value)" style="font-size:11px;padding:3px 6px;border-radius:8px;border:1px solid var(--border);color:${FLEET_STATUS_COLORS[r.status]};font-weight:700">
@@ -3662,12 +3667,21 @@ async function quickUpdateFleetStatus(requestId, status) {
   await refreshFleetRequestsQuietly();
 }
 
-function fleetRequestFormFields(req) {
+function fleetRequestFormFields(req, isEdit) {
   const v = req || {};
   const vehicleOptions = fleetVehiclesCache.map(veh => `<option value="${veh.id}"${v.vehicleId === veh.id ? ' selected' : ''}>${escapeHtml(veh.assetId)} — ${escapeHtml(veh.name)}</option>`).join('');
+  const driverOptions = fleetDriversCache.map(d => `<option value="${escapeHtml(d)}"${v.driverName === d ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('');
   return `
-    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Driver Name *</label>
-    <input id="fr_driver" type="text" value="${v.driverName ? escapeHtml(v.driverName) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Driver *</label>
+    <select id="fr_driver" onchange="toggleFleetDriverAddField()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <option value="">— Choose a driver —</option>
+      ${driverOptions}
+      <option value="__add_new__">+ Add new driver…</option>
+    </select>
+    <div id="fr_driver_new" style="display:none;gap:6px;margin-bottom:10px">
+      <input id="fr_driver_newInput" type="text" placeholder="New driver name" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+      <button onclick="addFleetDriverInline()" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Add</button>
+    </div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vehicle</label>
     <select id="fr_vehicle" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <option value="">— Not set —</option>
@@ -3676,28 +3690,70 @@ function fleetRequestFormFields(req) {
     ${fleetVehiclesCache.length === 0 ? `<div style="font-size:11px;color:var(--amber);margin:-6px 0 10px">No vehicles found — add one in Asset Tracking under category "Transport Assets" first.</div>` : ''}
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Purpose</label>
     <input id="fr_purpose" type="text" value="${v.purpose ? escapeHtml(v.purpose) : ''}" placeholder="e.g. Supply run, airport pickup" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Destination</label>
-    <input id="fr_destination" type="text" value="${v.destination ? escapeHtml(v.destination) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Trip Starts At</label>
+      <input id="fr_origin" type="text" value="${v.origin ? escapeHtml(v.origin) : ''}" placeholder="e.g. Selian Hospital" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Destination</label>
+      <input id="fr_destination" type="text" value="${v.destination ? escapeHtml(v.destination) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+    </div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Trip Date</label>
     <input id="fr_tripDate" type="date" value="${v.tripDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     <div style="display:flex;gap:10px">
-      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Odometer Start (km)</label>
+      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Beginning KM</label>
       <input id="fr_odoStart" type="number" min="0" value="${v.odometerStart ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
-      <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Odometer End (km)</label>
-      <input id="fr_odoEnd" type="number" min="0" value="${v.odometerEnd ?? ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      ${isEdit ? `<div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Ending KM</label>
+      <input id="fr_odoEnd" type="number" min="0" value="${v.odometerEnd ?? ''}" placeholder="Filled in once the trip's done" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>` : ''}
     </div>
+    ${!isEdit ? `<div style="font-size:11px;color:var(--muted);margin:-6px 0 10px">Ending KM gets filled in later, once the trip's actually done — edit this request then.</div>` : ''}
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
     <textarea id="fr_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">${v.notes ? escapeHtml(v.notes) : ''}</textarea>
   `;
 }
 
+function toggleFleetDriverAddField() {
+  const select = document.getElementById('fr_driver');
+  const row = document.getElementById('fr_driver_new');
+  if (select.value === '__add_new__') { row.style.display = 'flex'; document.getElementById('fr_driver_newInput').focus(); }
+  else { row.style.display = 'none'; }
+}
+
+async function addFleetDriverInline() {
+  const input = document.getElementById('fr_driver_newInput');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'addFleetDriver', name }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add');
+    const select = document.getElementById('fr_driver');
+    const newOption = document.createElement('option');
+    newOption.value = data.name; newOption.textContent = data.name;
+    select.insertBefore(newOption, select.lastElementChild);
+    select.value = data.name;
+    document.getElementById('fr_driver_new').style.display = 'none';
+    input.value = '';
+    fleetDriversCache.push(data.name);
+  } catch (err) {
+    alert('Could not add: ' + err.message);
+  }
+}
+
+let fleetDriversCache = [];
+
 async function openAddFleetRequestModal() {
-  // Fetched fresh so a vehicle just added in Asset Tracking shows up
+  // Fetched fresh so a vehicle or driver just added shows up
   // immediately, without needing a full page reload first.
   try {
-    const resp = await fetch('/api/get-assets?fleetVehicles=true');
-    fleetVehiclesCache = resp.ok ? (await resp.json()).vehicles || [] : [];
-  } catch (err) { console.error('Could not refresh vehicles:', err); }
+    const [vehResp, drvResp] = await Promise.all([
+      fetch('/api/get-assets?fleetVehicles=true'),
+      fetch('/api/get-assets?fleetDrivers=true'),
+    ]);
+    fleetVehiclesCache = vehResp.ok ? (await vehResp.json()).vehicles || [] : [];
+    fleetDriversCache = drvResp.ok ? (await drvResp.json()).drivers || [] : [];
+  } catch (err) { console.error('Could not refresh vehicles/drivers:', err); }
 
   const overlay = document.createElement('div');
   overlay.id = 'addFleetRequestOverlay';
@@ -3705,7 +3761,7 @@ async function openAddFleetRequestModal() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">New Fleet Request</div>
-      ${fleetRequestFormFields()}
+      ${fleetRequestFormFields(null, false)}
       <div id="fr_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('addFleetRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -3716,11 +3772,12 @@ async function openAddFleetRequestModal() {
 }
 
 async function submitAddFleetRequest() {
-  const driverName = document.getElementById('fr_driver').value.trim();
+  const driverName = document.getElementById('fr_driver').value;
   const errorBox = document.getElementById('fr_addError');
   const btn = document.getElementById('fr_addSubmit');
   errorBox.style.display = 'none';
-  if (!driverName) { errorBox.textContent = 'Enter the driver\'s name.'; errorBox.style.display = 'block'; return; }
+  if (!driverName) { errorBox.textContent = 'Choose a driver.'; errorBox.style.display = 'block'; return; }
+  if (driverName === '__add_new__') { errorBox.textContent = 'Finish adding the new driver (or pick an existing one) before continuing.'; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Submitting…';
   try {
@@ -3730,8 +3787,10 @@ async function submitAddFleetRequest() {
         action: 'addFleetRequest', driverName,
         vehicleId: document.getElementById('fr_vehicle').value,
         purpose: document.getElementById('fr_purpose').value.trim(),
+        origin: document.getElementById('fr_origin').value.trim(),
         destination: document.getElementById('fr_destination').value.trim(),
         tripDate: document.getElementById('fr_tripDate').value,
+        odometerStart: document.getElementById('fr_odoStart').value,
         notes: document.getElementById('fr_notes').value.trim(),
       }),
     });
@@ -3746,16 +3805,21 @@ async function submitAddFleetRequest() {
   }
 }
 
-function openEditFleetRequestModal(requestId) {
+async function openEditFleetRequestModal(requestId) {
   const req = fleetRequestsCache.find(r => r.id === requestId);
   if (!req) { alert('Could not find this request — try refreshing.'); return; }
+  try {
+    const resp = await fetch('/api/get-assets?fleetDrivers=true');
+    fleetDriversCache = resp.ok ? (await resp.json()).drivers || [] : [];
+  } catch (err) { console.error('Could not refresh drivers:', err); }
+
   const overlay = document.createElement('div');
   overlay.id = 'editFleetRequestOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Fleet Request</div>
-      ${fleetRequestFormFields(req)}
+      ${fleetRequestFormFields(req, true)}
       <div id="fr_editError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('editFleetRequestOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -3766,11 +3830,12 @@ function openEditFleetRequestModal(requestId) {
 }
 
 async function submitEditFleetRequest(requestId) {
-  const driverName = document.getElementById('fr_driver').value.trim();
+  const driverName = document.getElementById('fr_driver').value;
   const errorBox = document.getElementById('fr_editError');
   const btn = document.getElementById('fr_editSubmit');
   errorBox.style.display = 'none';
-  if (!driverName) { errorBox.textContent = 'Enter the driver\'s name.'; errorBox.style.display = 'block'; return; }
+  if (!driverName) { errorBox.textContent = 'Choose a driver.'; errorBox.style.display = 'block'; return; }
+  if (driverName === '__add_new__') { errorBox.textContent = 'Finish adding the new driver (or pick an existing one) before continuing.'; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
@@ -3780,6 +3845,7 @@ async function submitEditFleetRequest(requestId) {
         action: 'editFleetRequest', requestId, driverName,
         vehicleId: document.getElementById('fr_vehicle').value,
         purpose: document.getElementById('fr_purpose').value.trim(),
+        origin: document.getElementById('fr_origin').value.trim(),
         destination: document.getElementById('fr_destination').value.trim(),
         tripDate: document.getElementById('fr_tripDate').value,
         odometerStart: document.getElementById('fr_odoStart').value,
