@@ -2010,13 +2010,9 @@ async function appendFloorPlanActivity(recordId, text, by) {
 // Digital Twin Lite, confirmed directly through real discussion
 // first - genuinely light on FAM's own end, just a real, stored
 // Matterport link per building, no 3D rendering work here at all.
-// A more careful, narrower permission gate than the existing floor-
-// plan upload (which only checks on the frontend) - setting a real
-// Matterport link is a genuinely administrative, infrequent action,
-// not a day-to-day operational task, confirmed worth backend
-// enforcement here rather than trusting the hidden-button pattern
-// alone.
-const DIGITAL_TWIN_MANAGE_ROLES = ["admin", "property_manager", "system_admin", "business_owner"];
+// Confirmed directly: opened to every real role, including
+// Technician - not restricted to admin-tier roles.
+const DIGITAL_TWIN_MANAGE_ROLES = ["technician", "electrical_engineer", "mechanical_engineer", "admin", "property_manager", "procurement", "pharmacy", "stock_keeper", "business_owner", "system_admin"];
 
 function isPlausibleMatterportUrl(url) {
   return typeof url === "string" && /^https:\/\//.test(url.trim());
