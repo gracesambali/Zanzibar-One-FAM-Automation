@@ -431,7 +431,7 @@ export default async function handler(req, res) {
   // Fleet Requests, confirmed directly - the real, specific role set
   // discussed: Admin, Property Manager, Procurement, System Admin,
   // Business Owner.
-  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers"];
+  const FLEET_DATA_ROUTES = ["fleetVehicles", "fleetRequests", "fleetActivityLog", "fleetDrivers", "fleetReportSummary"];
   const requestedFleetRoute = FLEET_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedFleetRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
     return res.status(403).json({ error: "Fleet Requests is restricted to Admin, Property Manager, Procurement, System Admin, and Business Owner." });
@@ -668,6 +668,55 @@ export default async function handler(req, res) {
       });
     } catch (err) {
       console.error("fleetActivityLog read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Daily/weekly/monthly Fleet Requests reports, confirmed directly.
+  // Filtered on trip_date - a report of what trips actually happened
+  // (or are planned) in the period, not just when the paperwork was
+  // typed in. A request with no trip_date set falls back to its
+  // created_at, so nothing genuinely real silently disappears from
+  // a report just because that field was left blank. Same real
+  // EAT-timezone day boundary already proven for the Pharmacy
+  // reports - a person's "today" starts at their own midnight, not
+  // partway through their afternoon in UTC.
+  if (req.query.fleetReportSummary === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const period = req.query.period === "week" ? "week" : req.query.period === "month" ? "month" : "today";
+
+      const nowUtc = new Date();
+      const nowEat = new Date(nowUtc.getTime() + 3 * 60 * 60 * 1000);
+      let since;
+      if (period === "today") {
+        const startOfDayEat = new Date(Date.UTC(nowEat.getUTCFullYear(), nowEat.getUTCMonth(), nowEat.getUTCDate()));
+        since = new Date(startOfDayEat.getTime() - 3 * 60 * 60 * 1000);
+      } else if (period === "week") {
+        since = new Date(nowUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else {
+        since = new Date(nowUtc.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      const result = await pgQuery(
+        `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
+         from fleet_requests f
+         left join components c on c.id = f.vehicle_id
+         where coalesce(f.trip_date::timestamptz, f.created_at) >= $1
+         order by coalesce(f.trip_date::timestamptz, f.created_at) desc`,
+        [since.toISOString()]
+      );
+      const requests = result.rows.map(r => ({
+        driverName: r.driver_name, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
+        purpose: r.purpose, origin: r.origin, destination: r.destination, tripDate: r.trip_date,
+        status: r.status, odometerStart: r.odometer_start !== null ? Number(r.odometer_start) : null,
+        odometerEnd: r.odometer_end !== null ? Number(r.odometer_end) : null,
+        distanceKm: (r.odometer_start !== null && r.odometer_end !== null) ? Number(r.odometer_end) - Number(r.odometer_start) : null,
+        approvedBy: r.approved_by, notes: r.notes,
+      }));
+      return res.status(200).json({ period, since: since.toISOString(), requests });
+    } catch (err) {
+      console.error("fleetReportSummary read error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
