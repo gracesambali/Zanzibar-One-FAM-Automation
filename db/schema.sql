@@ -1115,3 +1115,34 @@ create index idx_fuel_invoices_month on fuel_invoices (invoice_month);
 -- numbers someone typed in.
 alter table fuel_invoices add column document_path text;
 alter table fuel_invoices add column document_filename text;
+
+-- ============================================================
+-- Digital Twin Lite, confirmed directly through real discussion
+-- first: Floor Plan is where this lives, not a separate tab - the
+-- exact same real image-with-markers mechanism already there for 2D
+-- (whether the image came from real architectural drawings or was
+-- generated via MagicPlan, FAM doesn't need to know or care which).
+-- The 3D side stays genuinely light on FAM's own end - a real,
+-- stored Matterport link, displayed through Matterport's own real
+-- embeddable viewer, no 3D rendering work on FAM's side at all.
+--
+-- Two genuinely different, explicitly separate kinds of capture:
+-- one building's real interior (one capture per building, matching
+-- how buildings are already represented elsewhere in this schema -
+-- a name within a facility, not a separate normalized table), and a
+-- facility's real exterior (the whole grounds, not tied to any one
+-- building, confirmed directly as its own explicit thing rather
+-- than folded into a building's own capture).
+-- ============================================================
+create table building_digital_twins (
+  facility_id       uuid not null references facilities(id) on delete cascade,
+  building_name     text not null,
+  matterport_url    text,
+  updated_by        text,
+  updated_at        timestamptz not null default now(),
+  primary key (facility_id, building_name)
+);
+
+alter table facilities add column matterport_exterior_url text;
+alter table facilities add column matterport_exterior_updated_by text;
+alter table facilities add column matterport_exterior_updated_at timestamptz;

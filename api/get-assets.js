@@ -329,6 +329,47 @@ export default async function handler(req, res) {
     return handleGetFacilities(req, res);
   }
 
+  // Real building interior capture, confirmed directly - one per
+  // building. Returns null cleanly when none exists yet, so the
+  // frontend can just show the plain 2D Floor Plan with no toggle,
+  // rather than an error.
+  if (req.query.buildingDigitalTwin === "true" && req.query.facility && req.query.building) {
+    try {
+      const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+      const facility = await getByColumn("facilities", "name", req.query.facility).catch(() => null);
+      if (!facility) return res.status(200).json({ matterportUrl: null });
+      const result = await pgQuery(
+        "select * from building_digital_twins where facility_id = $1 and building_name = $2",
+        [facility.id, req.query.building]
+      );
+      const row = result.rows[0];
+      return res.status(200).json({ matterportUrl: row?.matterport_url || null, updatedBy: row?.updated_by || null, updatedAt: row?.updated_at || null });
+    } catch (err) {
+      console.error("buildingDigitalTwin read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // The whole facility's real exterior capture, confirmed directly
+  // and explicitly as its own separate thing - not tied to any one
+  // building, visible regardless of which building is currently
+  // selected.
+  if (req.query.facilityExteriorTwin === "true" && req.query.facility) {
+    try {
+      const { getByColumn } = await import("../lib/postgresClient.js");
+      const facility = await getByColumn("facilities", "name", req.query.facility).catch(() => null);
+      if (!facility) return res.status(200).json({ matterportUrl: null });
+      return res.status(200).json({
+        matterportUrl: facility.matterport_exterior_url || null,
+        updatedBy: facility.matterport_exterior_updated_by || null,
+        updatedAt: facility.matterport_exterior_updated_at || null,
+      });
+    } catch (err) {
+      console.error("facilityExteriorTwin read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Live exchange rates for the currency switcher — TZS is the base
   // currency everything's actually stored in; this just gives the
   // frontend today's TZS->USD and TZS->BWP rates to convert display
