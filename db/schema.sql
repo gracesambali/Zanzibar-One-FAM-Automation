@@ -1134,7 +1134,7 @@ alter table fuel_invoices add column document_filename text;
 -- building, confirmed directly as its own explicit thing rather
 -- than folded into a building's own capture).
 -- ============================================================
-create table building_digital_twins (
+create table if not exists building_digital_twins (
   facility_id       uuid not null references facilities(id) on delete cascade,
   building_name     text not null,
   matterport_url    text,
@@ -1143,6 +1143,6 @@ create table building_digital_twins (
   primary key (facility_id, building_name)
 );
 
-alter table facilities add column matterport_exterior_url text;
-alter table facilities add column matterport_exterior_updated_by text;
-alter table facilities add column matterport_exterior_updated_at timestamptz;
+alter table facilities add column if not exists matterport_exterior_url text;
+alter table facilities add column if not exists matterport_exterior_updated_by text;
+alter table facilities add column if not exists matterport_exterior_updated_at timestamptz;
