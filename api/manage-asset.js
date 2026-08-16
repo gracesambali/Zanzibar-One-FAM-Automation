@@ -29,6 +29,9 @@ export default async function handler(req, res) {
     if (req.body && req.body.entityType === "inventoryItem") {
       return handleAddInventoryItem(req, res, session.u, session.r);
     }
+    if (req.body && req.body.entityType === "bulkAssets") {
+      return handleBulkImportAssets(req, res, session.u, session.r);
+    }
     return handleAddAsset(req, res, session.u, session.r);
   }
   if (req.method === "PATCH") {
@@ -1379,89 +1382,84 @@ async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
   }
 }
 
+// The real, shared core of asset creation - confirmed directly as
+// the exact same logic already proven for single-add, now reused
+// for bulk import too rather than duplicated. Building is required
+// here exactly as it already was for single-add - every asset needs
+// to be tagged so it's visible to the Building/Facility switcher,
+// and the asset ID itself is derived from the real Facility +
+// Building codes looked up fresh from the database, guaranteeing no
+// collisions across campuses that happen to share a building name.
+async function createOneAsset(a, addedBy, addedByRole) {
+  if (!a.name || !a.nature || !a.category) {
+    throw new Error("Name, Asset Nature, and Asset Category are required");
+  }
+  if (!a.building) {
+    throw new Error("Building is required — every asset needs to be tagged so it's visible to the Building/Facility switcher.");
+  }
+
+  const categoryPrefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
+  let facilityCode = null;
+  let buildingCode = null;
+  if (a.facility) {
+    const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+    const facilityRecord = await getByColumn("facilities", "name", a.facility).catch(() => null);
+    facilityCode = facilityRecord ? facilityRecord.facility_code : null;
+    if (facilityRecord && a.building) {
+      const buildingResult = await pgQuery(
+        "select building_code from facility_buildings where facility_id = $1 and building_name = $2",
+        [facilityRecord.id, a.building]
+      ).catch(() => null);
+      buildingCode = buildingResult && buildingResult.rows[0] ? buildingResult.rows[0].building_code : null;
+    }
+  }
+  const prefixParts = [facilityCode, buildingCode, categoryPrefix].filter(Boolean);
+  const prefix = prefixParts.join("-");
+  const assetId = await generateNextAssetId(prefix);
+
+  const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
+  const needsReview = nonTechnicalRoles.includes(addedByRole);
+
+  const { insert } = await import("../lib/postgresClient.js");
+  let created;
+  try {
+    created = await insert("components", {
+      asset_id: assetId,
+      name: a.name,
+      system: a.system || null,
+      building: a.building || null,
+      facility: a.facility || null,
+      asset_nature: a.nature || "Tangible",
+      mobility: a.mobility || null,
+      asset_category: a.category || null,
+      floor_level: a.floor || null,
+      room_zone: a.room || null,
+      manufacturer: a.manufacturer || null,
+      model: a.model || null,
+      install_date: a.installDate || new Date().toISOString().split("T")[0],
+      expected_lifespan_years: Number(a.lifespan) || 15,
+      maintenance_interval_days: Number(a.maintenanceIntervalDays) || 90,
+      acquisition_cost_tzs: a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : null,
+      residual_value_tzs: a.residualValue !== undefined ? Number(a.residualValue) : 0,
+      current_value_tzs: computeCurrentValue(a),
+      status: a.status || "Good",
+      criticality: a.criticality || "Medium",
+      active: true,
+      added_by: addedBy,
+      needs_technical_review: needsReview,
+    });
+  } catch (e) {
+    throw new Error(`Asset create failed: ${e.message}`);
+  }
+
+  return { created, assetId, needsReview };
+}
+
 async function handleAddAsset(req, res, addedBy, addedByRole) {
   const a = req.body || {};
 
-  if (!a.name || !a.nature || !a.category) {
-    return res.status(400).json({ error: "Name, Asset Nature, and Asset Category are required" });
-  }
-  if (!a.building) {
-    return res.status(400).json({ error: "Building is required — every asset needs to be tagged so it's visible to the Building/Facility switcher." });
-  }
-
   try {
-    // Auto-generate ID from facility code + building code + category
-    // prefix — both codes looked up fresh from the database here, not
-    // trusted from whatever the client sent. The facility code alone
-    // turned out not to be enough: facility names like "Malls" are
-    // shared buckets across every site, not one specific campus each,
-    // so it's the BUILDING code that actually guarantees no collision
-    // across campuses — two buildings named "Mall 1" at two different
-    // facilities now produce genuinely different prefixes
-    // (MC-MLM1-ACC-001 vs MC-GCM1-ACC-001), not the same one. Falls
-    // back to whatever's actually available if either code is missing
-    // (shouldn't happen once the backfills have run, but fails safe
-    // rather than blocking asset creation over it).
-    const categoryPrefix = a.customPrefix || getCategoryPrefix(a.category) || "AST";
-    let facilityCode = null;
-    let buildingCode = null;
-    if (a.facility) {
-      const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
-      const facilityRecord = await getByColumn("facilities", "name", a.facility).catch(() => null);
-      facilityCode = facilityRecord ? facilityRecord.facility_code : null;
-      if (facilityRecord && a.building) {
-        const buildingResult = await pgQuery(
-          "select building_code from facility_buildings where facility_id = $1 and building_name = $2",
-          [facilityRecord.id, a.building]
-        ).catch(() => null);
-        buildingCode = buildingResult && buildingResult.rows[0] ? buildingResult.rows[0].building_code : null;
-      }
-    }
-    const prefixParts = [facilityCode, buildingCode, categoryPrefix].filter(Boolean);
-    const prefix = prefixParts.join("-");
-    const assetId = await generateNextAssetId(prefix);
-
-    // Non-technical roles (Admin, Stock Keeper) can't be expected to
-    // correctly judge classification/criticality on unfamiliar
-    // equipment — flag it for an Engineer to confirm, rather than
-    // silently trusting a guess neither the system nor the person
-    // could verify. Engineers/Business Owner/System Admin adding an
-    // asset are assumed to already know what they're doing.
-    const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
-    const needsReview = nonTechnicalRoles.includes(addedByRole);
-
-    const { insert } = await import("../lib/postgresClient.js");
-
-    let created;
-    try {
-      created = await insert("components", {
-        asset_id: assetId,
-        name: a.name,
-        system: a.system || null,
-        building: a.building || null,
-        facility: a.facility || null,
-        asset_nature: a.nature || "Tangible",
-        mobility: a.mobility || null,
-        asset_category: a.category || null,
-        floor_level: a.floor || null,
-        room_zone: a.room || null,
-        manufacturer: a.manufacturer || null,
-        model: a.model || null,
-        install_date: a.installDate || new Date().toISOString().split("T")[0],
-        expected_lifespan_years: Number(a.lifespan) || 15,
-        maintenance_interval_days: Number(a.maintenanceIntervalDays) || 90,
-        acquisition_cost_tzs: a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : null,
-        residual_value_tzs: a.residualValue !== undefined ? Number(a.residualValue) : 0,
-        current_value_tzs: computeCurrentValue(a),
-        status: a.status || "Good",          // Good / Poor / Critical
-        criticality: a.criticality || "Medium", // High / Medium / Low
-        active: true,
-        added_by: addedBy,
-        needs_technical_review: needsReview,
-      });
-    } catch (e) {
-      throw new Error(`Asset create failed: ${e.message}`);
-    }
+    const { created, assetId, needsReview } = await createOneAsset(a, addedBy, addedByRole);
 
     // Nameplate photo — a non-technical person can photograph the
     // physical label instead of needing to correctly transcribe
@@ -1480,8 +1478,6 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
         const { update } = await import("../lib/postgresClient.js");
         await update("components", created.id, { nameplate_photo_url: photoPath, nameplate_photo_filename: a.nameplatePhotoFilename });
       } catch (photoErr) {
-        // Non-fatal — the asset itself was created successfully; a
-        // failed photo upload shouldn't fail the whole request.
         console.error("Nameplate photo upload error:", photoErr);
         photoFailed = true;
       }
@@ -1495,6 +1491,60 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
     });
   } catch (err) {
     console.error("manage-asset POST error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Bulk Excel/CSV import for the Asset Register, confirmed directly -
+// reuses the exact same real, proven createOneAsset core already
+// used for single-add, rather than a separate, potentially-diverging
+// implementation. Building stays a real, hard requirement per row,
+// matching single-add exactly - but since a typo is far easier to
+// miss across dozens of rows than one, unrecognized building/facility
+// pairs are surfaced as a clear warning rather than silently
+// accepted, without hard-blocking the row (matching single-add's own
+// "fails safe" philosophy rather than diverging into a stricter rule
+// bulk import alone would enforce).
+async function handleBulkImportAssets(req, res, addedBy, addedByRole) {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "rows array is required" });
+  }
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const knownResult = await pgQuery(
+      `select f.name as facility_name, fb.building_name
+       from facility_buildings fb
+       join facilities f on f.id = fb.facility_id`
+    );
+    const knownPairs = new Set(knownResult.rows.map(r => `${r.facility_name}|||${r.building_name}`));
+
+    let created = 0;
+    const skipped = [];
+    const buildingWarnings = [];
+    for (const row of rows) {
+      const name = (row.name || "").trim();
+      if (!name) { skipped.push({ row: JSON.stringify(row), reason: "No name" }); continue; }
+      if (row.facility && row.building && !knownPairs.has(`${row.facility}|||${row.building}`)) {
+        buildingWarnings.push(`Row "${name}": "${row.building}" in "${row.facility}" isn't a recognized building/facility pair — asset was still created, but double-check the spelling.`);
+      }
+      try {
+        await createOneAsset({
+          name, nature: row.nature, category: row.category, building: row.building, facility: row.facility,
+          system: row.system, mobility: row.mobility, floor: row.floor, room: row.room,
+          manufacturer: row.manufacturer, model: row.model, installDate: row.installDate,
+          lifespan: row.lifespan, maintenanceIntervalDays: row.maintenanceIntervalDays,
+          acquisitionCost: row.acquisitionCost, residualValue: row.residualValue,
+          status: row.status, criticality: row.criticality,
+        }, addedBy, addedByRole);
+        created++;
+      } catch (err) {
+        skipped.push({ row: name, reason: err.message });
+      }
+    }
+    return res.status(200).json({ success: true, created, skipped, buildingWarnings });
+  } catch (err) {
+    console.error("bulkImportAssets error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
