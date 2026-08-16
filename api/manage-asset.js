@@ -75,6 +75,16 @@ export default async function handler(req, res) {
     if (FLEET_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner"].includes(session.r)) {
       return res.status(403).json({ error: "Only Admin, Property Manager, Procurement, System Admin, or Business Owner can manage Fleet Requests." });
     }
+    // Requisitions, confirmed directly from Selian's real AS-IS
+    // process. No dedicated Accounts/Finance role exists in FAM yet -
+    // System Admin and Business Owner stand in for that approval
+    // stage for now, alongside Procurement for the earlier review
+    // stage. Flagged directly as a real decision worth revisiting,
+    // not silently assumed permanent.
+    const REQUISITION_ACTIONS = ["createRequisition", "editRequisition", "deleteRequisition", "requestProcurementForWorkOrder"];
+    if (REQUISITION_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
+      return res.status(403).json({ error: "You don't have permission to manage requisitions." });
+    }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
     if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
@@ -107,6 +117,10 @@ export default async function handler(req, res) {
     if (action === "deleteFuelRequest") return handleDeleteFuelRequest(req, res, session.u);
     if (action === "addFuelInvoice") return handleAddFuelInvoice(req, res, session.u);
     if (action === "deleteFuelInvoice") return handleDeleteFuelInvoice(req, res, session.u);
+    if (action === "createRequisition") return handleCreateRequisition(req, res, session.u, session.r);
+    if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r);
+    if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r);
+    if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u);
     return handleDecommission(req, res, session.u);
   }
   if (req.method === "PUT") {
@@ -960,6 +974,240 @@ async function handleDeleteFuelInvoice(req, res, deletedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteFuelInvoice error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ============================================================
+// Requisitions — Selian's real, digitized AS-IS procurement
+// workflow, confirmed directly through discussion. A requisition is
+// its own real thing, not tied to a work order — a work order is one
+// possible SOURCE of a requisition, not a procurement tracker in its
+// own right.
+// ============================================================
+async function logRequisitionActivity(action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("requisition_activity_log", { action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logRequisitionActivity failed (non-fatal):", err.message);
+  }
+}
+
+async function generateRequisitionNumber() {
+  const { query: pgQuery } = await import("../lib/postgresClient.js");
+  const result = await pgQuery("select count(*) as c from requisitions");
+  const n = Number(result.rows[0].c) + 1;
+  return `REQ-${String(n).padStart(5, "0")}`;
+}
+
+async function createOneRequisition(a, requestedBy) {
+  if (!a.itemDescription || !a.itemDescription.trim()) {
+    throw new Error("A description of what's needed is required.");
+  }
+  const { insert } = await import("../lib/postgresClient.js");
+  const requisitionNumber = await generateRequisitionNumber();
+  const created = await insert("requisitions", {
+    requisition_number: requisitionNumber,
+    source_work_order_id: a.sourceWorkOrderId || null,
+    requesting_department: a.requestingDepartment || null,
+    item_description: a.itemDescription.trim(),
+    quantity_requested: a.quantityRequested != null && a.quantityRequested !== "" ? Number(a.quantityRequested) : null,
+    unit_of_measure: a.unitOfMeasure || null,
+    is_asset: !!a.isAsset,
+    status: "Requested",
+    building: a.building || null,
+    facility: a.facility || null,
+    requested_by: requestedBy,
+    notes: a.notes || null,
+  });
+  return { created, requisitionNumber };
+}
+
+async function handleCreateRequisition(req, res, requestedBy) {
+  try {
+    const { created, requisitionNumber } = await createOneRequisition(req.body || {}, requestedBy);
+    await logRequisitionActivity("Requested", `${requisitionNumber} — "${(req.body.itemDescription || '').trim()}"${req.body.requestingDepartment ? ` (${req.body.requestingDepartment})` : ''}`, requestedBy);
+    return res.status(200).json({ success: true, id: created.id, requisitionNumber });
+  } catch (err) {
+    console.error("createRequisition error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The real bridge from a work order's existing "Request Procurement"
+// action into the new requisition engine — confirmed directly as the
+// actual point: a work order becomes a real SOURCE of a requisition,
+// not a separate, disconnected procurement tracker of its own. Links
+// back via linked_requisition_id so the work order's own screen can
+// show a live status pulled from the real requisition rather than
+// maintaining a second, separately-drifting copy of that state.
+async function handleRequestProcurementForWorkOrder(req, res, requestedBy) {
+  const { woId, itemDescription, quantityRequested, unitOfMeasure, isAsset, notes } = req.body || {};
+  if (!woId) return res.status(400).json({ error: "woId is required" });
+  try {
+    const { getByColumn, update } = await import("../lib/postgresClient.js");
+    const workOrder = await getByColumn("work_orders", "wo_id", woId).catch(() => null);
+    if (!workOrder) return res.status(404).json({ error: `Work order ${woId} not found.` });
+    if (workOrder.linked_requisition_id) {
+      return res.status(400).json({ error: "This work order already has an active requisition linked to it." });
+    }
+
+    const { created, requisitionNumber } = await createOneRequisition({
+      sourceWorkOrderId: workOrder.id,
+      itemDescription: itemDescription || workOrder.asset_name || `Parts/materials for ${woId}`,
+      quantityRequested, unitOfMeasure, isAsset, notes,
+      building: workOrder.building,
+    }, requestedBy);
+
+    await update("work_orders", workOrder.id, { linked_requisition_id: created.id, procurement_status: "Requested" });
+    await logRequisitionActivity("Requested (from Work Order)", `${requisitionNumber} — sourced from ${woId}`, requestedBy);
+    return res.status(200).json({ success: true, id: created.id, requisitionNumber });
+  } catch (err) {
+    console.error("requestProcurementForWorkOrder error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The real multi-stage lifecycle editor. Confirmed directly: the two
+// genuinely money-related transitions — Accounts approval and
+// recording payment — get their own real, narrower role check right
+// here, on top of the outer gate, since those are the two stages
+// where a mistake or a spoofed action actually costs the
+// organization something real. Every other field moves through the
+// same flexible, single editor already proven for Fleet and Annual
+// Planning, rather than a separate, single-purpose endpoint per
+// stage.
+const REQUISITION_FINANCE_ROLES = ["business_owner", "system_admin"];
+
+async function handleEditRequisition(req, res, editedBy, editedByRole) {
+  const {
+    requisitionId, itemDescription, quantityRequested, unitOfMeasure, isAsset, requestingDepartment,
+    status, chosenVendorId, procurementNotes, procurementRejectionReason,
+    accountsNotes, accountsRejectionReason,
+    paymentStatus, paymentDate, paymentReference, paymentAmount,
+    expectedDeliveryDate,
+    inspectionNotes, quantityReceived,
+    grnNumber, grnConditionNotes,
+    notes,
+  } = req.body || {};
+  if (!requisitionId) return res.status(400).json({ error: "requisitionId is required" });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const before = await getById("requisitions", requisitionId).catch(() => null);
+    if (!before) return res.status(404).json({ error: "Requisition not found." });
+
+    // The two real, narrower financial gates — checked before
+    // anything else, regardless of what else the request is trying
+    // to change at the same time.
+    const movingToAccountsApproval = status === "Approved — Awaiting Payment" && before.status !== "Approved — Awaiting Payment";
+    const recordingPayment = paymentStatus === "Paid" && before.payment_status !== "Paid";
+    if ((movingToAccountsApproval || recordingPayment) && !REQUISITION_FINANCE_ROLES.includes(editedByRole)) {
+      return res.status(403).json({ error: "Only Business Owner or System Admin can approve Accounts sign-off or record payment — standing in for a dedicated Accounts role, which FAM doesn't have yet." });
+    }
+
+    const fields = { updated_at: new Date().toISOString() };
+    const changes = [];
+    const setIfChanged = (bodyVal, column, current, label, isNumber) => {
+      if (bodyVal === undefined) return;
+      const newVal = bodyVal === "" ? null : (isNumber ? Number(bodyVal) : bodyVal);
+      if (String(current ?? "") !== String(newVal ?? "")) {
+        fields[column] = newVal;
+        changes.push(`${label}: "${current ?? '(not set)'}" → "${newVal ?? '(not set)'}"`);
+      }
+    };
+
+    setIfChanged(itemDescription !== undefined ? itemDescription.trim() : undefined, "item_description", before.item_description, "Description", false);
+    setIfChanged(quantityRequested, "quantity_requested", before.quantity_requested, "Quantity", true);
+    setIfChanged(unitOfMeasure, "unit_of_measure", before.unit_of_measure, "Unit", false);
+    setIfChanged(requestingDepartment, "requesting_department", before.requesting_department, "Department", false);
+    if (isAsset !== undefined && !!isAsset !== before.is_asset) { fields.is_asset = !!isAsset; changes.push(`Is Asset: "${before.is_asset}" → "${!!isAsset}"`); }
+    setIfChanged(chosenVendorId, "chosen_vendor_id", before.chosen_vendor_id, "Chosen Vendor", false);
+    setIfChanged(procurementNotes, "procurement_notes", before.procurement_notes, "Procurement Notes", false);
+    setIfChanged(accountsNotes, "accounts_notes", before.accounts_notes, "Accounts Notes", false);
+    setIfChanged(paymentDate, "payment_date", before.payment_date, "Payment Date", false);
+    setIfChanged(paymentReference, "payment_reference", before.payment_reference, "Payment Reference", false);
+    setIfChanged(paymentAmount, "payment_amount_tzs", before.payment_amount_tzs, "Payment Amount", true);
+    setIfChanged(expectedDeliveryDate, "expected_delivery_date", before.expected_delivery_date, "Expected Delivery", false);
+    setIfChanged(inspectionNotes, "inspection_notes", before.inspection_notes, "Inspection Notes", false);
+    setIfChanged(quantityReceived, "quantity_received", before.quantity_received, "Quantity Received", true);
+    setIfChanged(grnNumber, "grn_number", before.grn_number, "GRN Number", false);
+    setIfChanged(grnConditionNotes, "grn_condition_notes", before.grn_condition_notes, "GRN Condition Notes", false);
+    setIfChanged(notes, "notes", before.notes, "Notes", false);
+
+    if (paymentStatus !== undefined && paymentStatus !== before.payment_status) {
+      fields.payment_status = paymentStatus;
+      changes.push(`Payment Status: "${before.payment_status}" → "${paymentStatus}"`);
+    }
+
+    if (procurementRejectionReason !== undefined) {
+      fields.procurement_rejection_reason = procurementRejectionReason;
+    }
+    if (accountsRejectionReason !== undefined) {
+      fields.accounts_rejection_reason = accountsRejectionReason;
+    }
+
+    if (status !== undefined && status !== before.status) {
+      fields.status = status;
+      changes.push(`Status: "${before.status}" → "${status}"`);
+      if (status === "Procurement Review" && !before.procurement_reviewed_by) {
+        fields.procurement_reviewed_by = editedBy;
+        fields.procurement_reviewed_at = new Date().toISOString();
+      }
+      if (status === "Approved — Awaiting Payment") {
+        fields.accounts_approved_by = editedBy;
+        fields.accounts_approved_at = new Date().toISOString();
+      }
+      if (status === "Delivered — Pending Inspection") {
+        fields.delivered_at = new Date().toISOString();
+      }
+      if (status === "GRN Completed") {
+        fields.inspected_by = editedBy;
+        fields.inspected_at = new Date().toISOString();
+        if (!fields.grn_received_by) { fields.grn_received_by = editedBy; fields.grn_received_at = new Date().toISOString(); }
+      }
+    }
+
+    if (changes.length > 0) {
+      await update("requisitions", requisitionId, fields);
+      await logRequisitionActivity("Updated", `${before.requisition_number}: ${changes.join(", ")}`, editedBy);
+    }
+
+    // Keep the source work order's own status display honestly in
+    // sync — a live reflection of the real requisition, not a
+    // separate copy that could drift.
+    if (before.source_work_order_id && (fields.status || fields.payment_status)) {
+      await update("work_orders", before.source_work_order_id, { procurement_status: fields.status || before.status }).catch(err => {
+        console.error("Could not sync work order procurement_status (non-fatal):", err.message);
+      });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editRequisition error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleDeleteRequisition(req, res, deletedBy, deletedByRole) {
+  if (!REQUISITION_FINANCE_ROLES.includes(deletedByRole) && deletedByRole !== "procurement") {
+    return res.status(403).json({ error: "Only Procurement, Business Owner, or System Admin can delete a requisition." });
+  }
+  const { requisitionId } = req.body || {};
+  if (!requisitionId) return res.status(400).json({ error: "requisitionId is required" });
+  try {
+    const { getById, query: pgQuery, update } = await import("../lib/postgresClient.js");
+    const requisition = await getById("requisitions", requisitionId).catch(() => null);
+    if (!requisition) return res.status(404).json({ error: "Requisition not found." });
+    if (requisition.source_work_order_id) {
+      await update("work_orders", requisition.source_work_order_id, { linked_requisition_id: null, procurement_status: "None" }).catch(() => {});
+    }
+    await pgQuery("delete from requisitions where id = $1", [requisitionId]);
+    await logRequisitionActivity("Deleted", requisition.requisition_number, deletedBy);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deleteRequisition error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

@@ -1146,3 +1146,148 @@ create table if not exists building_digital_twins (
 alter table facilities add column if not exists matterport_exterior_url text;
 alter table facilities add column if not exists matterport_exterior_updated_by text;
 alter table facilities add column if not exists matterport_exterior_updated_at timestamptz;
+
+-- ============================================================
+-- Requisitions, confirmed directly - Selian's real, current AS-IS
+-- procurement workflow, digitized as its own real entity rather than
+-- folded into Work Orders. A work order becomes one possible SOURCE
+-- of a requisition, not a procurement tracker in its own right - a
+-- requisition can also exist standalone (a department need with no
+-- maintenance job behind it), matching what Selian's actual document
+-- describes. Every real checkpoint in their document is a real,
+-- distinct stage here: Procurement Review, Accounts approval,
+-- Payment, Delivery, Inspection, and a genuine GRN - not
+-- approximated or merged into fewer, looser steps.
+-- ============================================================
+create table if not exists requisitions (
+  id                            uuid primary key default gen_random_uuid(),
+  requisition_number            text unique not null,
+  source_work_order_id          uuid references work_orders(id) on delete set null,
+  requesting_department         text,
+  item_description               text not null,
+  quantity_requested             numeric,
+  unit_of_measure                text,
+  is_asset                       boolean not null default false,
+  status                         text not null default 'Requested',
+  building                       text,
+  facility                       text,
+
+  requested_by                   text,
+  requested_at                   timestamptz not null default now(),
+
+  procurement_reviewed_by        text,
+  procurement_reviewed_at        timestamptz,
+  procurement_notes              text,
+  procurement_rejection_reason   text,
+  chosen_vendor_id                uuid references vendors(id) on delete set null,
+
+  accounts_approved_by           text,
+  accounts_approved_at           timestamptz,
+  accounts_notes                 text,
+  accounts_rejection_reason      text,
+
+  payment_status                 text default 'Not Paid',
+  payment_date                   date,
+  payment_reference              text,
+  payment_amount_tzs             numeric(14,2),
+
+  expected_delivery_date         date,
+  delivered_at                   timestamptz,
+
+  inspected_by                   text,
+  inspected_at                   timestamptz,
+  inspection_notes               text,
+  quantity_received              numeric,
+
+  grn_number                     text,
+  grn_received_by                text,
+  grn_received_at                timestamptz,
+  grn_condition_notes             text,
+  grn_document_url               text,
+  grn_document_filename          text,
+
+  resulting_asset_id             uuid references components(id) on delete set null,
+  notes                          text,
+  created_at                     timestamptz not null default now(),
+  updated_at                     timestamptz not null default now()
+);
+create index if not exists idx_requisitions_status on requisitions (status);
+create index if not exists idx_requisitions_source_wo on requisitions (source_work_order_id);
+
+create table if not exists requisition_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  action          text not null,
+  details         text not null,
+  performed_by    text,
+  performed_at    timestamptz not null default now()
+);
+create index if not exists idx_requisition_activity_log_time on requisition_activity_log (performed_at desc);
+
+-- Vendor quote comparison already exists and works (procurement_responses)
+-- - reused directly rather than duplicated, now able to hang off a
+-- real requisition instead of only a work order. wo_id relaxed to
+-- nullable since a standalone requisition (no work order behind it)
+-- has no wo_id to carry.
+alter table procurement_responses add column if not exists requisition_id uuid references requisitions(id) on delete cascade;
+alter table procurement_responses alter column wo_id drop not null;
+
+-- Work Orders link INTO a real requisition rather than maintaining
+-- their own separate, disconnected procurement state. The old
+-- fields are deliberately left in place, untouched - real historical
+-- data, not something to silently drop.
+alter table work_orders add column if not exists linked_requisition_id uuid references requisitions(id) on delete set null;
+
+-- Confirmed directly as real gaps against Selian's document: a
+-- serial number distinct from the internal asset ID, and a genuine
+-- link back to which vendor supplied an asset and which requisition
+-- it came from - the actual bridge from procurement into Facility
+-- Asset Management the document was pointing at.
+alter table components add column if not exists serial_number text;
+alter table components add column if not exists vendor_id uuid references vendors(id) on delete set null;
+alter table components add column if not exists sourced_from_requisition_id uuid references requisitions(id) on delete set null;
+
+-- Real, one-time migration of existing work-order procurement history
+-- into the new structure - confirmed directly as the right call
+-- rather than orphaning it. Only touches work orders that actually
+-- had procurement activity (skips 'None'), and only ones not already
+-- linked, so this is safe to run more than once. Old status values
+-- mapped to the closest genuine equivalent in the new lifecycle;
+-- Accounts/Payment fields are left null for migrated rows since that
+-- history genuinely doesn't exist - not fabricated.
+insert into requisitions (
+  requisition_number, source_work_order_id, item_description, is_asset, status,
+  requested_by, requested_at, procurement_reviewed_by, procurement_rejection_reason,
+  building, facility, notes
+)
+select
+  'REQ-MIGRATED-' || substr(wo.wo_id, 4),
+  wo.id,
+  coalesce(wo.asset_name, 'Migrated from ' || wo.wo_id),
+  false,
+  case wo.procurement_status
+    when 'Requested' then 'Requested'
+    when 'Pending' then 'Procurement Review'
+    when 'Approved' then 'Approved — Awaiting Payment'
+    when 'Delivered' then 'GRN Completed'
+    when 'Fulfilled' then 'Completed'
+    when 'Rejected' then 'Rejected'
+    else 'Requested'
+  end,
+  wo.procurement_requested_by,
+  wo.created,
+  wo.procurement_approved_by,
+  wo.procurement_rejection_reason,
+  wo.building,
+  null,
+  'Migrated automatically from this work order''s original procurement fields — Accounts/Payment history was not tracked before this change, so those fields are genuinely blank here, not lost.'
+from work_orders wo
+where wo.procurement_status is not null
+  and wo.procurement_status != 'None'
+  and wo.linked_requisition_id is null;
+
+update work_orders wo
+set linked_requisition_id = r.id
+from requisitions r
+where r.source_work_order_id = wo.id
+  and wo.linked_requisition_id is null
+  and r.requisition_number like 'REQ-MIGRATED-%';
