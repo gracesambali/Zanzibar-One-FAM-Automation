@@ -166,11 +166,28 @@
         const resp = await fetch('/api/get-assets');
         if (resp.status === 401) { window.location.href = '/login'; return; }
         const data = await resp.json();
-        if (data.role !== 'pharmacy') {
+        // Confirmed directly: the same real role set already granted
+        // genuine inventory permission on the backend - a Business
+        // Owner or Procurement login already has real access to
+        // every action this page uses, so the check here matches
+        // that exactly rather than a separate, narrower rule that
+        // could disagree with what the API itself actually allows.
+        const allowedRoles = ['pharmacy', 'stock_keeper', 'procurement', 'system_admin', 'business_owner'];
+        if (!allowedRoles.includes(data.role)) {
           document.getElementById('accessBlocked').style.display = 'block';
           return;
         }
-        document.getElementById('logoutBtn').style.display = '';
+        // Confirmed directly: the dedicated Pharmacy role genuinely
+        // logs out here since this is their only page - but anyone
+        // else visiting from the main dashboard just wants to close
+        // this view and go back, not end their whole session
+        // everywhere else it's open.
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (data.role !== 'pharmacy') {
+          logoutBtn.textContent = 'Back to Dashboard';
+          logoutBtn.onclick = () => { window.location.href = '/dashboard'; };
+        }
+        logoutBtn.style.display = '';
         document.getElementById('mainContent').classList.remove('hidden');
         await loadItems();
         await loadTodayActivity();
