@@ -705,6 +705,7 @@ export default async function handler(req, res) {
   if (req.query.fuelInvoices === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
       const invoicesResult = await pgQuery("select * from fuel_invoices order by invoice_month desc");
       const invoices = [];
       for (const inv of invoicesResult.rows) {
@@ -715,11 +716,19 @@ export default async function handler(req, res) {
           [inv.invoice_month]
         );
         const actualTotal = Number(reconResult.rows[0].total);
+        // Signed fresh on every read, same as every other document in
+        // this app — the bucket is private, so this is the only real
+        // way to actually view it.
+        const documentUrl = await getSignedUrlSafe(inv.document_path).catch(err => {
+          console.error("fuelInvoices - could not sign document URL (non-fatal):", err.message);
+          return null;
+        });
         invoices.push({
           id: inv.id, invoiceMonth: inv.invoice_month, invoiceAmount: Number(inv.invoice_amount_tzs),
           stationName: inv.station_name, receivedDate: inv.received_date, notes: inv.notes,
           reconciledTotal: actualTotal, reconciledFillCount: Number(reconResult.rows[0].fill_count),
           variance: Number(inv.invoice_amount_tzs) - actualTotal,
+          documentUrl, documentFilename: inv.document_filename,
         });
       }
       return res.status(200).json({ invoices });
