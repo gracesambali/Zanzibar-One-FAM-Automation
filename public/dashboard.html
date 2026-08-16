@@ -3721,7 +3721,10 @@ function renderFuelSection() {
             ${fuelInvoicesCache.map(inv => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:8px;font-weight:600;color:var(--navy)">${escapeHtml(inv.invoiceMonth)}</td>
-                <td style="padding:8px;color:var(--muted)">${escapeHtml(inv.stationName || '—')}</td>
+                <td style="padding:8px;color:var(--muted)">
+                  ${escapeHtml(inv.stationName || '—')}
+                  ${inv.documentUrl ? `<div><a href="${inv.documentUrl}" target="_blank" style="font-size:10.5px;color:var(--navy);text-decoration:none">📎 ${escapeHtml(inv.documentFilename || 'View document')}</a></div>` : ''}
+                </td>
                 <td style="padding:8px;text-align:right">${formatCurrency(inv.invoiceAmount)}</td>
                 <td style="padding:8px;text-align:right">${formatCurrency(inv.reconciledTotal)} <span style="color:var(--muted);font-size:10.5px">(${inv.reconciledFillCount})</span></td>
                 <td style="padding:8px;text-align:right;font-weight:700;color:${inv.variance === 0 ? 'var(--green)' : 'var(--red)'}">
@@ -3938,7 +3941,10 @@ function openAddFuelInvoiceModal() {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Station Name</label>
       <input id="fi_station" type="text" placeholder="e.g. Total Arusha" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Date Received</label>
-      <input id="fi_received" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <input id="fi_received" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Invoice Document</label>
+      <input id="fi_document" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">The real invoice from the station — optional, up to 5MB.</div>
       <div id="fi_addError" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="document.getElementById('addFuelInvoiceOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -3957,15 +3963,35 @@ async function submitAddFuelInvoice() {
   if (!invoiceMonth) { errorBox.textContent = 'Choose which month this invoice covers.'; errorBox.style.display = 'block'; return; }
   if (!invoiceAmount) { errorBox.textContent = 'Enter the invoice amount.'; errorBox.style.display = 'block'; return; }
 
-  btn.disabled = true; btn.textContent = 'Logging…';
+  const file = document.getElementById('fi_document').files[0];
+  if (file && file.size > 5 * 1024 * 1024) {
+    errorBox.textContent = 'File is larger than 5MB — try a smaller file.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = file ? 'Uploading…' : 'Logging…';
   try {
+    const payload = {
+      action: 'addFuelInvoice', invoiceMonth, invoiceAmount,
+      stationName: document.getElementById('fi_station').value.trim(),
+      receivedDate: document.getElementById('fi_received').value,
+    };
+    if (file) {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      payload.filename = file.name;
+      payload.contentType = file.type || 'application/octet-stream';
+      payload.fileBase64 = base64;
+    }
+
     const resp = await fetch('/api/manage-asset', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'addFuelInvoice', invoiceMonth, invoiceAmount,
-        stationName: document.getElementById('fi_station').value.trim(),
-        receivedDate: document.getElementById('fi_received').value,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not log invoice');

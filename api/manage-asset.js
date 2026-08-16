@@ -895,16 +895,36 @@ async function handleDeleteFuelRequest(req, res, deletedBy) {
 // as the actual reconciliation record, compared on the frontend
 // against whatever was genuinely filled that same month.
 async function handleAddFuelInvoice(req, res, addedBy) {
-  const { invoiceMonth, invoiceAmount, stationName, receivedDate, notes } = req.body || {};
+  const { invoiceMonth, invoiceAmount, stationName, receivedDate, notes, filename, contentType, fileBase64 } = req.body || {};
   if (!invoiceMonth || !/^\d{4}-\d{2}$/.test(invoiceMonth)) return res.status(400).json({ error: "A valid month (YYYY-MM) is required." });
   if (invoiceAmount == null || invoiceAmount === "") return res.status(400).json({ error: "The invoice amount is required." });
+
+  // The actual document is optional — someone can log the numbers
+  // now and attach the real invoice later, same spirit as filling in
+  // actual liters once the pump visit's really happened.
+  let documentPath = null;
+  if (fileBase64) {
+    if (!filename || !contentType) return res.status(400).json({ error: "filename and contentType are required alongside fileBase64." });
+    const approxBytes = fileBase64.length * 0.75;
+    if (approxBytes > 5 * 1024 * 1024) return res.status(400).json({ error: "File is too large — the upload limit is 5MB." });
+    try {
+      const { uploadFile } = await import("../lib/storageClient.js");
+      documentPath = `fuel-invoices/${invoiceMonth}/${Date.now()}-${filename}`;
+      await uploadFile(documentPath, fileBase64, contentType);
+    } catch (err) {
+      console.error("addFuelInvoice - document upload failed:", err);
+      return res.status(500).json({ error: `Could not upload the invoice document: ${err.message}` });
+    }
+  }
+
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const created = await insert("fuel_invoices", {
       invoice_month: invoiceMonth, invoice_amount_tzs: Number(invoiceAmount),
       station_name: stationName || null, received_date: receivedDate || null, notes: notes || null, added_by: addedBy,
+      document_path: documentPath, document_filename: documentPath ? filename : null,
     });
-    await logFleetActivity("Logged Fuel Invoice", `${invoiceMonth} — ${Number(invoiceAmount).toLocaleString()} TZS${stationName ? ` (${stationName})` : ''}`, addedBy);
+    await logFleetActivity("Logged Fuel Invoice", `${invoiceMonth} — ${Number(invoiceAmount).toLocaleString()} TZS${stationName ? ` (${stationName})` : ''}${documentPath ? ` — document attached (${filename})` : ''}`, addedBy);
     return res.status(200).json({ success: true, id: created.id });
   } catch (err) {
     console.error("addFuelInvoice error:", err);
@@ -920,6 +940,17 @@ async function handleDeleteFuelInvoice(req, res, deletedBy) {
     const invoice = await getById("fuel_invoices", invoiceId).catch(() => null);
     if (!invoice) return res.status(404).json({ error: "Invoice not found." });
     await pgQuery("delete from fuel_invoices where id = $1", [invoiceId]);
+    if (invoice.document_path) {
+      try {
+        const { deleteFiles } = await import("../lib/storageClient.js");
+        await deleteFiles([invoice.document_path]);
+      } catch (err) {
+        // Non-fatal — the real record is already deleted; an orphaned
+        // file left in storage is a minor cleanup issue, not worth
+        // failing the whole delete over.
+        console.error("deleteFuelInvoice - document cleanup failed (non-fatal):", err.message);
+      }
+    }
     await logFleetActivity("Deleted Fuel Invoice", invoice.invoice_month, deletedBy);
     return res.status(200).json({ success: true });
   } catch (err) {

@@ -1108,3 +1108,10 @@ create table fuel_invoices (
   created_at            timestamptz not null default now()
 );
 create index idx_fuel_invoices_month on fuel_invoices (invoice_month);
+
+-- Real invoice document upload, confirmed directly - the actual
+-- source document from the petrol station, so a real reconciliation
+-- can be checked against the genuine paper trail, not just the
+-- numbers someone typed in.
+alter table fuel_invoices add column document_path text;
+alter table fuel_invoices add column document_filename text;
