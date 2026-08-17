@@ -4704,6 +4704,113 @@ async function deleteFleetRequestNow(requestId, driverName) {
   }
 }
 
+// Confirmed directly: the report reflects the real items already in
+// place for the currently selected fiscal year - the same data
+// already loaded on the page, not a separate, potentially-diverging
+// fetch.
+function toggleAnnualPlanReportMenu() {
+  const menu = document.getElementById('ap_reportMenu');
+  if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('ap_reportMenu');
+  if (menu && menu.style.display !== 'none' && !e.target.closest('#ap_reportMenu') && !e.target.closest('[onclick="toggleAnnualPlanReportMenu()"]')) {
+    menu.style.display = 'none';
+  }
+});
+
+function annualPlanReportRows() {
+  const items = annualPlanItemsCache;
+  const totalCost = items.reduce((sum, i) => sum + (i.estimatedCost || 0), 0);
+  return { items, totalCost };
+}
+
+function exportAnnualPlanCsv() {
+  toggleAnnualPlanReportMenu();
+  const { items, totalCost } = annualPlanReportRows();
+  const rows = [
+    ['Description', 'Category', 'Est. Quantity', 'Unit', 'Estimated Cost (TZS)', 'Procurement Method', 'Planned Quarter', 'Source of Funds', 'Status', 'Notes'],
+    ...items.map(i => [i.itemDescription, i.category || '', i.estimatedQuantity ?? '', i.unitOfMeasure || '', i.estimatedCost ?? '', i.procurementMethod || '', i.plannedQuarter || '', i.sourceOfFunds || '', i.status, i.notes || '']),
+    [],
+    ['', '', '', '', 'TOTAL', totalCost, '', '', '', ''],
+  ];
+  const csv = rows.map(row => row.map(cell => {
+    const s = String(cell ?? '');
+    return /["\n,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Annual-Plan-FY${annualPlanCurrentYear}-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function exportAnnualPlanExcel() {
+  toggleAnnualPlanReportMenu();
+  try {
+    await ensureSheetJsLoaded();
+    const { items, totalCost } = annualPlanReportRows();
+    const rows = [
+      ['Description', 'Category', 'Est. Quantity', 'Unit', 'Estimated Cost (TZS)', 'Procurement Method', 'Planned Quarter', 'Source of Funds', 'Status', 'Notes'],
+      ...items.map(i => [i.itemDescription, i.category || '', i.estimatedQuantity ?? '', i.unitOfMeasure || '', i.estimatedCost ?? '', i.procurementMethod || '', i.plannedQuarter || '', i.sourceOfFunds || '', i.status, i.notes || '']),
+      [],
+      ['', '', '', '', 'TOTAL', totalCost, '', '', '', ''],
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 26 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, `FY${annualPlanCurrentYear}`);
+    XLSX.writeFile(workbook, `Annual-Plan-FY${annualPlanCurrentYear}-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}.xlsx`);
+  } catch (err) {
+    alert('Could not export to Excel: ' + err.message);
+  }
+}
+
+function exportAnnualPlanPdf() {
+  toggleAnnualPlanReportMenu();
+  const { items, totalCost } = annualPlanReportRows();
+  const rowsHtml = items.map(i => `
+    <tr>
+      <td>${escapeHtml(i.itemDescription)}</td><td>${escapeHtml(i.category || '—')}</td>
+      <td style="text-align:right">${i.estimatedQuantity ?? '—'} ${escapeHtml(i.unitOfMeasure || '')}</td>
+      <td style="text-align:right">${i.estimatedCost != null ? formatCurrency(i.estimatedCost) : '—'}</td>
+      <td>${escapeHtml(i.procurementMethod || '—')}</td><td>${escapeHtml(i.plannedQuarter || '—')}</td>
+      <td>${escapeHtml(i.status)}</td>
+    </tr>`).join('');
+
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <html><head><title>Annual Plan FY${annualPlanCurrentYear} — ${escapeHtml(CLIENT_CONFIG.clientName)}</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
+      h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
+      .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
+      table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+      th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
+      th { background: #F7F8FA; }
+      .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      @media print { .download-btn { display:none; } }
+    </style></head><body>
+    <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+    <h1>Annual Plan — FY${annualPlanCurrentYear}</h1>
+    <div class="meta">${escapeHtml(CLIENT_CONFIG.clientName)} · Generated ${new Date().toLocaleString()} · ${items.length} item${items.length === 1 ? '' : 's'}</div>
+    <table>
+      <thead><tr><th>Description</th><th>Category</th><th>Est. Quantity</th><th>Estimated Cost</th><th>Method</th><th>Quarter</th><th>Status</th></tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="7" style="text-align:center;color:#9CA3AF">No items for this fiscal year.</td></tr>'}
+        <tr class="totals"><td colspan="3">TOTAL</td><td>${formatCurrency(totalCost)}</td><td colspan="3"></td></tr>
+      </tbody>
+    </table>
+    </body></html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+}
+
 async function renderAnnualPlanning() {
   const container = document.getElementById('view-annualplanning');
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
@@ -4767,6 +4874,14 @@ function renderAnnualPlanningTable(totalEstimatedCost, statusCounts, knownYears)
         <select onchange="switchAnnualPlanYear(this.value)" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff">
           ${yearOptions.map(y => `<option value="${y}"${y === annualPlanCurrentYear ? ' selected' : ''}>FY ${y}</option>`).join('')}
         </select>
+        <div style="position:relative">
+          <button onclick="toggleAnnualPlanReportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Report ▾</button>
+          <div id="ap_reportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:120px">
+            <button onclick="exportAnnualPlanCsv()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">CSV</button>
+            <button onclick="exportAnnualPlanExcel()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Excel</button>
+            <button onclick="exportAnnualPlanPdf()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">PDF</button>
+          </div>
+        </div>
         ${canManage ? `<button onclick="openAddAnnualPlanItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>` : ''}
       </div>
     </div>
