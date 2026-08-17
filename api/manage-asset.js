@@ -51,7 +51,7 @@ export default async function handler(req, res) {
     // Business Owner set already trusted with Asset Tracking. A
     // reasonable starting point, confirmed to be refined together
     // rather than a final decision.
-    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot", "linkInventoryBarcode", "scanInventoryIn", "scanInventoryOut", "setItemBatchTracked"];
+    const INVENTORY_MANAGEMENT_ACTIONS = ["editInventoryItem", "recordInventoryMovement", "deactivateInventoryItem", "addInventoryCategory", "addInventoryLocation", "bulkImportInventoryItems", "takeInventorySnapshot", "seedInventoryTestData", "deleteInventoryItem", "uploadInventorySnapshot", "linkInventoryBarcode", "scanInventoryIn", "scanInventoryOut", "setItemBatchTracked", "mergeInventoryItems"];
     if (INVENTORY_MANAGEMENT_ACTIONS.includes(action) && !["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(session.r)) {
       return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can manage inventory." });
     }
@@ -105,6 +105,7 @@ export default async function handler(req, res) {
     if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u);
     if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u);
     if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u);
+    if (action === "mergeInventoryItems") return handleMergeInventoryItems(req, res, session.u);
     if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u);
     if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u);
     if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u);
@@ -1690,6 +1691,69 @@ async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deactivateInventoryItem error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Merging a real duplicate, confirmed directly - e.g. the exact
+// Nitrile Gloves situation where a barcode that was never linked
+// before led to a second, separate record for the same real product.
+// Historical movements deliberately stay attributed to whichever
+// item they actually happened under - not silently rewritten to look
+// like they always belonged to the survivor. Instead, a genuine,
+// auditable transfer records exactly what happened: an OUT on the
+// item being retired, an IN on the survivor, for the same real
+// quantity - so anyone reading the history later sees a real merge
+// event, not two disconnected numbers that happen to add up.
+async function handleMergeInventoryItems(req, res, performedBy) {
+  const { sourceItemId, targetItemId } = req.body || {};
+  if (!sourceItemId || !targetItemId) return res.status(400).json({ error: "sourceItemId and targetItemId are required." });
+  if (sourceItemId === targetItemId) return res.status(400).json({ error: "Can't merge an item into itself." });
+
+  try {
+    const { getById, update, insert, query: pgQuery } = await import("../lib/postgresClient.js");
+    const source = await getById("inventory_items", sourceItemId).catch(() => null);
+    const target = await getById("inventory_items", targetItemId).catch(() => null);
+    if (!source) return res.status(404).json({ error: "The item being merged (source) was not found." });
+    if (!target) return res.status(404).json({ error: "The item being merged into (target) was not found." });
+    if (source.active === false) return res.status(400).json({ error: "This item has already been merged or deactivated." });
+
+    const sourceQty = Number(source.current_quantity) || 0;
+
+    // Real batches carry genuine lot/expiry data that belongs to the
+    // physical stock itself - moved to the survivor rather than
+    // zeroed out, so nothing about what's actually on the shelf gets
+    // lost in the merge.
+    await pgQuery("update inventory_batches set item_id = $1 where item_id = $2", [targetItemId, sourceItemId]);
+
+    // Every barcode that pointed at the source now correctly resolves
+    // to the survivor going forward - the actual fix for what caused
+    // this duplicate in the first place.
+    const relinkedResult = await pgQuery("update inventory_barcode_links set item_id = $1 where item_id = $2 returning gtin", [targetItemId, sourceItemId]);
+
+    if (sourceQty > 0) {
+      await insert("inventory_movements", {
+        item_id: sourceItemId, movement_type: "OUT", quantity: sourceQty,
+        reason: `Merged into ${target.item_code} "${target.name}"`, performed_by: performedBy,
+      });
+      await insert("inventory_movements", {
+        item_id: targetItemId, movement_type: "IN", quantity: sourceQty,
+        reason: `Merged from ${source.item_code} "${source.name}"`, performed_by: performedBy,
+      });
+      await update("inventory_items", targetItemId, { current_quantity: Number(target.current_quantity) + sourceQty, updated_at: new Date().toISOString() });
+    }
+
+    await update("inventory_items", sourceItemId, { current_quantity: 0, active: false, updated_at: new Date().toISOString() });
+
+    await logInventoryActivity(
+      "Merged Duplicate Item",
+      `${source.item_code} "${source.name}" (${sourceQty} moved) → ${target.item_code} "${target.name}"${relinkedResult.rows.length > 0 ? `, ${relinkedResult.rows.length} barcode(s) re-linked` : ''}`,
+      performedBy
+    );
+
+    return res.status(200).json({ success: true, quantityMoved: sourceQty, barcodesRelinked: relinkedResult.rows.length, newTargetQuantity: Number(target.current_quantity) + sourceQty });
+  } catch (err) {
+    console.error("mergeInventoryItems error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

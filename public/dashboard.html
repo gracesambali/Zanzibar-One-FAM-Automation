@@ -5526,6 +5526,7 @@ function renderInventoryTable() {
                   <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left">
                     <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
                     ${canManageInventory ? `<button onclick="openEditInventoryItemModal('${i.id}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Edit</button>` : ''}
+                    ${canManageInventory ? `<button onclick="openMergeInventoryItemModal('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Merge Into…</button>` : ''}
                     ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}
                   </div>
                 </td>
@@ -5563,6 +5564,91 @@ let inventoryLocationsCache = [];
 // behind the dots, closed by default and closing again on an outside
 // click, same pattern already used for the column-filter popovers.
 let openInventoryRowMenuId = null;
+// Confirmed directly: one real, reusable typeahead - shows live
+// matches with real item code and current stock right alongside each
+// name, not just a bare list of similar-sounding words. That extra
+// context is what actually lets someone recognize "oh, this already
+// exists" in the moment, not just a dropdown for its own sake.
+// Reused identically everywhere an item name gets typed - the Merge
+// picker here, Add Item, and the scan's "brand-new item" step - one
+// real mechanism, not three separate near-duplicates of it.
+function renderItemTypeaheadSuggestions(containerId, query, onSelect, excludeItemId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const q = query.trim().toLowerCase();
+  if (!q) { container.style.display = 'none'; container.innerHTML = ''; return; }
+  const matches = inventoryItemsCache
+    .filter(i => i.id !== excludeItemId && (i.name.toLowerCase().includes(q) || i.itemCode.toLowerCase().includes(q)))
+    .slice(0, 8);
+  if (matches.length === 0) { container.style.display = 'none'; container.innerHTML = ''; return; }
+  container.innerHTML = matches.map(i => `
+    <div onclick='${onSelect}(${JSON.stringify(i.id)})' style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='#fff'">
+      <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(i.name)}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(i.itemCode)} · ${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')} in stock${i.lowStock ? ' · Low Stock' : ''}</div>
+    </div>`).join('');
+  container.style.display = 'block';
+}
+
+function openMergeInventoryItemModal(sourceItemId, sourceItemCode, sourceItemName, sourceQuantity) {
+  const overlay = document.createElement('div');
+  overlay.id = 'mergeInventoryOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Merge Duplicate Item</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Merging <strong>${escapeHtml(sourceItemCode)} — ${escapeHtml(sourceItemName)}</strong> (${sourceQuantity} in stock) into another item. Its stock moves over, its barcode links move over, and this record is retired — not deleted, so the history stays intact.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Merge into which item?</label>
+      <input id="merge_search" type="text" placeholder="Type a name or item code…" autocomplete="off" oninput="renderItemTypeaheadSuggestions('merge_suggestions', this.value, 'selectMergeTarget', '${sourceItemId}')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      <div id="merge_suggestions" style="display:none;border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow-y:auto"></div>
+      <div id="merge_selected" style="display:none;margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;font-size:12.5px"></div>
+      <div id="merge_error" style="display:none;color:var(--red);font-size:12px;margin-top:10px"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button onclick="document.getElementById('mergeInventoryOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="merge_submit" disabled onclick="submitMergeInventoryItem('${sourceItemId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--border);color:#fff;font-weight:600;font-size:13px;cursor:not-allowed">Merge</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('merge_search').focus();
+}
+
+let mergeSelectedTargetId = null;
+function selectMergeTarget(itemId) {
+  mergeSelectedTargetId = itemId;
+  const item = inventoryItemsCache.find(i => i.id === itemId);
+  document.getElementById('merge_suggestions').style.display = 'none';
+  document.getElementById('merge_search').value = item ? `${item.itemCode} — ${item.name}` : '';
+  const selectedBox = document.getElementById('merge_selected');
+  selectedBox.style.display = 'block';
+  selectedBox.innerHTML = `Merging into <strong>${escapeHtml(item.itemCode)} — ${escapeHtml(item.name)}</strong> (currently ${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')})`;
+  const submitBtn = document.getElementById('merge_submit');
+  submitBtn.disabled = false;
+  submitBtn.style.background = 'var(--navy)';
+  submitBtn.style.cursor = 'pointer';
+}
+
+async function submitMergeInventoryItem(sourceItemId) {
+  if (!mergeSelectedTargetId) return;
+  const errorBox = document.getElementById('merge_error');
+  const btn = document.getElementById('merge_submit');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Merging…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'mergeInventoryItems', sourceItemId, targetItemId: mergeSelectedTargetId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not merge');
+    document.getElementById('mergeInventoryOverlay')?.remove();
+    mergeSelectedTargetId = null;
+    renderInventory();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Merge';
+  }
+}
+
 function toggleInventoryRowMenu(itemId, event) {
   event.stopPropagation();
   const menu = document.getElementById(`rowmenu_${itemId}`);
