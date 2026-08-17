@@ -3040,10 +3040,14 @@ function renderFixedAssetRegisterTable(data) {
         <button onclick="scrollToAssetTrackingLog()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐 Activity Log</button>
         <div style="position:relative">
           <button onclick="toggleExportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Export ▾</button>
-          <div id="at_exportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:140px">
-            <button onclick="exportFixedAssetRegisterCsv()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">CSV</button>
-            <button onclick="exportFixedAssetRegisterExcel()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Excel</button>
-            <button onclick="exportFixedAssetRegisterPdf()" style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">PDF</button>
+          <div id="at_exportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:200px;padding:6px 0">
+            <div style="padding:6px 14px 4px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">Current</div>
+            <button onclick="exportFixedAssetRegisterCsv()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">CSV</button>
+            <button onclick="exportFixedAssetRegisterExcel()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">Excel</button>
+            <button onclick="exportFixedAssetRegisterPdf()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)">PDF</button>
+            <div style="padding:8px 14px 4px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">Historical Snapshot</div>
+            <button onclick="openAssetRegisterPeriodModal('monthly')" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">📅 Monthly…</button>
+            <button onclick="openAssetRegisterPeriodModal('annual')" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">📅 Annual…</button>
           </div>
         </div>
       </div>
@@ -3324,6 +3328,137 @@ function exportFixedAssetRegisterPdf() {
   `);
   printWindow.document.close();
   printWindow.focus();
+}
+
+// Confirmed directly: depreciation is a continuously-changing figure,
+// so a real Annual or Monthly report means the register exactly as
+// it stood at that specific past month-end or year-end — recomputed
+// for that date, not today's numbers relabeled. "As of" is always
+// the LAST day of the chosen month or year, matching how a real
+// month-end or year-end snapshot is understood.
+function openAssetRegisterPeriodModal(period) {
+  toggleExportMenu();
+  const now = new Date();
+  const overlay = document.createElement('div');
+  overlay.id = 'assetPeriodOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+
+  const isMonthly = period === 'monthly';
+  const yearOptions = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i);
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:340px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">${isMonthly ? 'Monthly' : 'Annual'} Snapshot</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">The register exactly as it stood at the end of the ${isMonthly ? 'selected month' : 'selected year'} — recalculated for that date, including only assets acquired by then.</div>
+      ${isMonthly ? `
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Month</label>
+      <select id="ap_month" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        ${['January','February','March','April','May','June','July','August','September','October','November','December'].map((m, i) => `<option value="${i}"${i === now.getMonth() ? ' selected' : ''}>${m}</option>`).join('')}
+      </select>` : ''}
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Year</label>
+      <select id="ap_year" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
+        ${yearOptions.map(y => `<option value="${y}">${y}</option>`).join('')}
+      </select>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button onclick="downloadAssetRegisterPeriod('${period}', 'csv')" style="flex:1;padding:9px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">CSV</button>
+        <button onclick="downloadAssetRegisterPeriod('${period}', 'pdf')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">PDF</button>
+      </div>
+      <button onclick="document.getElementById('assetPeriodOverlay').remove()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function computeAssetPeriodAsOfDate(period) {
+  const year = Number(document.getElementById('ap_year').value);
+  if (period === 'monthly') {
+    const month = Number(document.getElementById('ap_month').value);
+    // Day 0 of the FOLLOWING month is the real last day of the
+    // selected month — correctly handles every month length,
+    // including February in a leap year, without hardcoding any of it.
+    return new Date(year, month + 1, 0).toISOString().split('T')[0];
+  }
+  return `${year}-12-31`;
+}
+
+function assetPeriodLabel(period) {
+  const year = document.getElementById('ap_year').value;
+  if (period === 'monthly') {
+    const monthName = document.getElementById('ap_month').selectedOptions[0].textContent;
+    return `${monthName}-${year}`;
+  }
+  return `${year}`;
+}
+
+async function downloadAssetRegisterPeriod(period, format) {
+  const asOfDate = computeAssetPeriodAsOfDate(period);
+  const label = assetPeriodLabel(period);
+  try {
+    const resp = await fetch(`/api/get-assets?fixedAssetRegister=true&asOfDate=${asOfDate}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load the snapshot');
+    const { register, totals } = data;
+    document.getElementById('assetPeriodOverlay')?.remove();
+
+    if (format === 'csv') {
+      const rows = [
+        ['Asset ID', 'Name', 'Category', 'Building', 'Acquisition Date', 'Acquisition Cost (TZS)', `Book Value as of ${asOfDate} (TZS)`, 'TRA Class', `TRA Value as of ${asOfDate} (TZS)`],
+        ...register.map(a => [a.assetId, a.name, a.category || '', a.building || '', a.acquisitionDate || '', a.acquisitionCost ?? '', a.bookValue ?? '', a.traClassLabel || 'Not set', a.traValue ?? '']),
+        [],
+        ['', '', '', '', 'TOTALS', totals.totalAcquisitionCost, totals.totalBookValue, '', totals.totalTraValue],
+      ];
+      const csv = rows.map(row => row.map(cell => {
+        const s = String(cell ?? '');
+        return /["\n,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Asset-Tracking-${label}-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      const rowsHtml = register.map(a => `
+        <tr>
+          <td>${escapeHtml(a.assetId)}</td><td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.category || '—')}</td>
+          <td>${a.acquisitionDate || '—'}</td>
+          <td style="text-align:right">${a.acquisitionCost != null ? formatCurrency(a.acquisitionCost) : '—'}</td>
+          <td style="text-align:right">${a.bookValue != null ? formatCurrency(a.bookValue) : '—'}</td>
+          <td>${escapeHtml(a.traClassLabel || 'Not set')}</td>
+          <td style="text-align:right">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
+        </tr>`).join('');
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <html><head><title>Asset Tracking ${label} Snapshot — ${escapeHtml(CLIENT_CONFIG.clientName)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
+          h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
+          .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+          th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
+          th { background: #F7F8FA; }
+          .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
+          .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+          @media print { .download-btn { display:none; } }
+        </style></head><body>
+        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+        <h1>Asset Tracking — ${label} Snapshot</h1>
+        <div class="meta">${escapeHtml(CLIENT_CONFIG.clientName)} · as of ${asOfDate} · Generated ${new Date().toLocaleString()} · ${register.length} asset${register.length === 1 ? '' : 's'}</div>
+        <table>
+          <thead><tr><th>Asset ID</th><th>Name</th><th>Category</th><th>Acquired</th><th>Acquisition Cost</th><th>Book Value</th><th>TRA Class</th><th>TRA Value</th></tr></thead>
+          <tbody>${rowsHtml}
+            <tr class="totals"><td colspan="4">TOTALS</td><td>${formatCurrency(totals.totalAcquisitionCost)}</td><td>${formatCurrency(totals.totalBookValue)}</td><td></td><td>${formatCurrency(totals.totalTraValue)}</td></tr>
+          </tbody>
+        </table>
+        </body></html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+    }
+  } catch (err) {
+    alert('Could not generate the snapshot: ' + err.message);
+  }
 }
 
 // Bulk TRA class import — built specifically so filling in real

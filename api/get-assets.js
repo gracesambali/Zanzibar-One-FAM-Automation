@@ -1380,8 +1380,15 @@ async function handleGetFixedAssetRegister(req, res) {
     const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
     const { calculateTRAValue } = await import("../lib/traDepreciation.js");
 
+    // Confirmed directly: a real Annual/Monthly report needs the
+    // register exactly as it stood at a specific past date - not
+    // just today's numbers relabeled. An asset acquired after that
+    // date genuinely didn't exist yet as of that snapshot, so it's
+    // correctly excluded, not shown with a nonsensical negative age.
+    const asOfDate = req.query.asOfDate || null;
+
     const rows = await pgListAllRecords("components");
-    const active = rows.filter(r => r.active !== false);
+    const active = rows.filter(r => r.active !== false && (!asOfDate || !r.install_date || new Date(r.install_date) <= new Date(asOfDate)));
     const classes = await pgListAllRecords("tra_classes");
     const classById = {};
     for (const c of classes) classById[c.id] = c;
@@ -1392,12 +1399,14 @@ async function handleGetFixedAssetRegister(req, res) {
         residualValue: r.residual_value_tzs !== null ? Number(r.residual_value_tzs) : undefined,
         economicLifeYears: Number(r.expected_lifespan_years) || 15,
         acquisitionDate: r.install_date,
+        asOfDate,
       });
       const matchedClass = r.tra_class_id ? classById[r.tra_class_id] : null;
       const tra = calculateTRAValue({
         acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
         acquisitionDate: r.install_date,
         rate: matchedClass ? matchedClass.rate : null,
+        asOfDate,
       });
       return {
         assetId: r.asset_id || "",
