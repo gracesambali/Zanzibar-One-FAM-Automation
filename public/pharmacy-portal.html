@@ -531,7 +531,8 @@
         </div>
         <div style="font-size:11px;color:#6B7280;margin-bottom:12px">Scanned code: ${escapeHtml(gtin)}${lotNumber ? ` · Batch ${escapeHtml(lotNumber)}` : ''}${expiryDate ? ` · Expires ${expiryDate}` : ''}</div>
         <label>Name *</label>
-        <input id="scannew_name" type="text">
+        <input id="scannew_name" type="text" autocomplete="off" oninput="renderItemTypeaheadSuggestions('scannew_name_suggestions', this.value, 'selectScanNewItemSuggestion', null, ['${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'}])" style="margin-bottom:4px">
+        <div id="scannew_name_suggestions" style="display:none;border:1px solid #E2E6ED;border-radius:8px;margin-bottom:10px;max-height:200px;overflow-y:auto"></div>
         <label>Category</label>
         <select id="scannew_category" onchange="toggleScanCategoryAddField()">
           <option value="">— Not set —</option>
@@ -615,6 +616,46 @@
         errorBox.textContent = err.message;
         errorBox.style.display = 'block';
         btn.disabled = false; btn.textContent = 'Create & Continue';
+      }
+    }
+
+    // Confirmed directly: the same real typeahead mechanism as the
+    // main dashboard - live matches with real item code and current
+    // stock shown alongside each name, so someone scanning something
+    // genuinely new can actually recognize when it isn't.
+    function renderItemTypeaheadSuggestions(containerId, query, onSelect, excludeItemId, extraArgs) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      const q = query.trim().toLowerCase();
+      if (!q) { container.style.display = 'none'; container.innerHTML = ''; return; }
+      const matches = inventoryItemsCache
+        .filter(i => i.id !== excludeItemId && (i.name.toLowerCase().includes(q) || i.itemCode.toLowerCase().includes(q)))
+        .slice(0, 8);
+      if (matches.length === 0) { container.style.display = 'none'; container.innerHTML = ''; return; }
+      const extraArgsJs = (extraArgs || []).map(a => JSON.stringify(a)).join(', ');
+      container.innerHTML = matches.map(i => `
+        <div onclick='${onSelect}(${JSON.stringify(i.id)}${extraArgsJs ? ', ' + extraArgsJs : ''})' style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #E2E6ED" onmouseenter="this.style.background='#F7F8FA'" onmouseleave="this.style.background='#fff'">
+          <div style="font-size:12.5px;font-weight:600;color:#8B1A1A">${escapeHtml(i.name)}</div>
+          <div style="font-size:11px;color:#6B7280">${escapeHtml(i.itemCode)} · ${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')} in stock${i.lowStock ? ' · Low Stock' : ''}</div>
+        </div>`).join('');
+      container.style.display = 'block';
+    }
+
+    // Same real fix as the main dashboard - selecting an existing
+    // match here links the actual scanned barcode straight to the
+    // real existing item and proceeds, rather than a separate item
+    // getting created for something that already exists.
+    async function selectScanNewItemSuggestion(itemId, gtin, lotNumber, expiryDate) {
+      const item = inventoryItemsCache.find(i => i.id === itemId);
+      if (!item) return;
+      document.getElementById('scannew_name_suggestions').style.display = 'none';
+      try {
+        const resp = await fetch('/api/manage-asset', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'linkInventoryBarcode', gtin, itemId }) });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not link');
+        renderScanQuantityStep(itemId, item.itemCode, item.name, item.isBatchTracked, gtin, lotNumber, expiryDate);
+      } catch (err) {
+        alert(`Could not link to ${item.itemCode} — ${item.name}: ${err.message}`);
       }
     }
 

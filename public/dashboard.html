@@ -5572,7 +5572,7 @@ let openInventoryRowMenuId = null;
 // Reused identically everywhere an item name gets typed - the Merge
 // picker here, Add Item, and the scan's "brand-new item" step - one
 // real mechanism, not three separate near-duplicates of it.
-function renderItemTypeaheadSuggestions(containerId, query, onSelect, excludeItemId) {
+function renderItemTypeaheadSuggestions(containerId, query, onSelect, excludeItemId, extraArgs) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const q = query.trim().toLowerCase();
@@ -5581,8 +5581,9 @@ function renderItemTypeaheadSuggestions(containerId, query, onSelect, excludeIte
     .filter(i => i.id !== excludeItemId && (i.name.toLowerCase().includes(q) || i.itemCode.toLowerCase().includes(q)))
     .slice(0, 8);
   if (matches.length === 0) { container.style.display = 'none'; container.innerHTML = ''; return; }
+  const extraArgsJs = (extraArgs || []).map(a => JSON.stringify(a)).join(', ');
   container.innerHTML = matches.map(i => `
-    <div onclick='${onSelect}(${JSON.stringify(i.id)})' style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='#fff'">
+    <div onclick='${onSelect}(${JSON.stringify(i.id)}${extraArgsJs ? ', ' + extraArgsJs : ''})' style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='#fff'">
       <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(i.name)}</div>
       <div style="font-size:11px;color:var(--muted)">${escapeHtml(i.itemCode)} · ${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')} in stock${i.lowStock ? ' · Low Stock' : ''}</div>
     </div>`).join('');
@@ -6122,7 +6123,9 @@ async function openAddInventoryItemModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Inventory Item</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
-      <input id="inv_name" type="text" placeholder="e.g. Nitrile Gloves (Box of 100)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <input id="inv_name" type="text" autocomplete="off" placeholder="e.g. Nitrile Gloves (Box of 100)" oninput="renderItemTypeaheadSuggestions('inv_name_suggestions', this.value, 'selectAddItemSuggestion', null); document.getElementById('inv_name_warning').style.display='none'" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+      <div id="inv_name_suggestions" style="display:none;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;max-height:200px;overflow-y:auto"></div>
+      <div id="inv_name_warning" style="display:none;font-size:11.5px;color:var(--amber);background:#FFF8E8;border:1px solid #F5D98A;border-radius:8px;padding:8px 10px;margin-bottom:10px"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
       <select id="inv_category" onchange="toggleInlineAddField('category'); updateBatchTrackingHint('inv_category', 'inv_batchHint')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
@@ -6197,6 +6200,22 @@ function updateBatchTrackingHint(categorySelectId, hintDivId, checkboxId) {
     // own, since real batches may already exist on this item.
     if (checkbox && implies) checkbox.checked = true;
   }
+}
+
+// Confirmed directly: selecting a suggestion doesn't silently fill
+// the field or block submission - it makes the real risk explicit
+// and lets the person decide, matching the same "warn, don't block"
+// principle already used elsewhere in this app. Someone might
+// genuinely be adding a real variant of something similar-sounding;
+// the point is making sure that's a deliberate choice, not an
+// accident like the one that produced INV-009.
+function selectAddItemSuggestion(itemId) {
+  const item = inventoryItemsCache.find(i => i.id === itemId);
+  if (!item) return;
+  document.getElementById('inv_name_suggestions').style.display = 'none';
+  const warningBox = document.getElementById('inv_name_warning');
+  warningBox.innerHTML = `⚠ This already exists: <strong>${escapeHtml(item.itemCode)} — ${escapeHtml(item.name)}</strong> (${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')} in stock). If you meant to add stock to it, close this and use Record Movement instead. Only continue if this is genuinely a different item.`;
+  warningBox.style.display = 'block';
 }
 
 function toggleInlineAddField(field, prefix) {
@@ -6570,7 +6589,8 @@ async function renderCreateNewItemFromScan(gtin, lotNumber, expiryDate) {
     </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Scanned code: ${escapeHtml(gtin)}${lotNumber ? ` · Batch ${escapeHtml(lotNumber)}` : ''}${expiryDate ? ` · Expires ${expiryDate}` : ''}</div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
-    <input id="scannew_name" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <input id="scannew_name" type="text" autocomplete="off" oninput="renderItemTypeaheadSuggestions('scannew_name_suggestions', this.value, 'selectScanNewItemSuggestion', null, ['${gtin}', ${lotNumber ? `'${lotNumber}'` : 'null'}, ${expiryDate ? `'${expiryDate}'` : 'null'}])" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+    <div id="scannew_name_suggestions" style="display:none;border:1px solid var(--border);border-radius:8px;margin-bottom:10px;max-height:200px;overflow-y:auto"></div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
     <select id="scannew_category" onchange="toggleInlineAddField('category', 'scannew_')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
       <option value="">— Not set —</option>
@@ -6625,6 +6645,30 @@ async function submitCreateNewItemFromScan(gtin, lotNumber, expiryDate) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Create & Continue';
+  }
+}
+
+// Confirmed directly as the actual fix for the exact scenario that
+// produced INV-009 in the first place: rather than just warn and
+// leave the person to redo it, selecting an existing match here
+// links the real scanned barcode straight to the real existing item
+// and proceeds - completing the task correctly in one step, since
+// we're already in a barcode-linking context and genuinely don't
+// need a second, separate item.
+async function selectScanNewItemSuggestion(itemId, gtin, lotNumber, expiryDate) {
+  const item = inventoryItemsCache.find(i => i.id === itemId);
+  if (!item) return;
+  document.getElementById('scannew_name_suggestions').style.display = 'none';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'linkInventoryBarcode', gtin, itemId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not link');
+    renderScanQuantityStep(itemId, item.itemCode, item.name, item.isBatchTracked, gtin, lotNumber, expiryDate);
+  } catch (err) {
+    alert(`Could not link to ${item.itemCode} — ${item.name}: ${err.message}`);
   }
 }
 
