@@ -1036,6 +1036,16 @@ export default async function handler(req, res) {
     return handleGetUnitFinancials(req, res);
   }
 
+  // Per-asset edit history — confirmed directly as a real, genuine
+  // gap: handleEditLog was fully written and correctly reads real
+  // data from edit_log, but this route was never actually wired up,
+  // so every request for edit history silently fell through to
+  // nothing rather than ever reaching it. handleEditAsset was writing
+  // real entries the whole time; they just weren't reachable.
+  if (req.query.editlog === "true") {
+    return handleEditLog(req, res);
+  }
+
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
     return handleGetFloorPlan(req, res);
