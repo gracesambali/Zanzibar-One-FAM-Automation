@@ -24,12 +24,38 @@ async function handleSatisfactionResponse(req, res) {
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
 
+    // Confirmed directly as a real, reported bug: clicking "No" used to
+    // write satisfaction_status AND a log entry immediately, before a
+    // reason even existed - happening a second time once the reason was
+    // actually submitted. Showing the reason form is now a pure,
+    // side-effect-free read - nothing is written until there's a real,
+    // complete answer to record.
+    if (satisfaction === "no" && !reason) {
+      return res.status(200).send(reasonFormPage(recordId));
+    }
+
+    // Confirmed directly as the real cause of duplicate activity-log
+    // entries reported in production: these one-click email/SMS links
+    // have no protection against being hit more than once - most likely
+    // an email or SMS provider's own link-scanning/security prefetch
+    // silently visiting the link before a person ever sees it, though a
+    // genuine accidental double-click or page refresh would hit the
+    // exact same gap. Checking the real, current state first makes every
+    // repeat hit a safe no-op instead of a fresh duplicate write.
+    const existing = await getById("work_orders", recordId).catch(() => null);
+    if (!existing) {
+      return res.status(404).send(simplePage("Not found", "This work order could not be found."));
+    }
+    if (existing.satisfaction_status && existing.satisfaction_status !== "Pending") {
+      return res.status(200).send(simplePage("Already recorded", "Thanks — your response was already recorded, no further action needed."));
+    }
+
     const fields = {
       satisfaction_status: satisfaction === "yes" ? "Satisfied" : "Not Satisfied",
     };
     if (satisfaction === "no") {
       fields.status = "Open"; // reopens — not a dead end
-      fields.satisfaction_reason = reason || "(no reason given)";
+      fields.satisfaction_reason = reason;
     }
 
     const patchOk = await update("work_orders", recordId, fields).then(() => true).catch(() => false);
@@ -39,29 +65,22 @@ async function handleSatisfactionResponse(req, res) {
     }
 
     // Log this into the same conversation thread as everything else.
-    const woData = await getById("work_orders", recordId).catch(() => null);
-    if (woData) {
-      const log = Array.isArray(woData.activity_log) ? woData.activity_log : [];
-      log.push({
-        type: "system",
-        text: satisfaction === "yes"
-          ? "✅ Reporter confirmed the work was completed satisfactorily."
-          : `🔄 Reporter was NOT satisfied — reopened. Reason: ${reason || "(no reason given)"}`,
-        by: "reporter",
-        at: new Date().toISOString(),
-      });
-      await update("work_orders", recordId, { activity_log: JSON.stringify(log) }).catch(() => {});
-    }
+    const log = Array.isArray(existing.activity_log) ? existing.activity_log : [];
+    log.push({
+      type: "system",
+      text: satisfaction === "yes"
+        ? "✅ Reporter confirmed the work was completed satisfactorily."
+        : `🔄 Reporter was NOT satisfied — reopened. Reason: ${reason}`,
+      by: "reporter",
+      at: new Date().toISOString(),
+    });
+    await update("work_orders", recordId, { activity_log: JSON.stringify(log) }).catch(() => {});
 
     if (satisfaction === "yes") {
       return res.status(200).send(simplePage("Thank you!", "Glad it's sorted. Thanks for confirming."));
     }
-    // "no" without a reason yet — show a tiny form to collect one.
-    if (!reason) {
-      return res.status(200).send(reasonFormPage(recordId));
-    }
 
-    await sendUnsatisfactionAlert(woData?.asset_name || "a reported issue", reason);
+    await sendUnsatisfactionAlert(existing?.asset_name || "a reported issue", reason);
 
     return res.status(200).send(simplePage("We've reopened this", "Thanks for letting us know — the team has been notified and will follow up."));
   } catch (err) {
