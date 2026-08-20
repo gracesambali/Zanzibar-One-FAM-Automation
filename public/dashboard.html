@@ -5544,7 +5544,7 @@ function renderInventoryTable() {
     </div>
 
     <div style="overflow-x:visible;background:#fff;border:1px solid var(--border);border-radius:10px">
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <table class="inv-table" style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead>
           <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
@@ -5562,7 +5562,7 @@ function renderInventoryTable() {
             : items.map(i => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}</td>
+                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)}</div></td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category || '—')}</td>
                 <td style="padding:9px 12px;text-align:right">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location || '—')}</td>
