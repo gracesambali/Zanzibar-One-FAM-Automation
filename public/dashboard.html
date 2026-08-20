@@ -308,29 +308,27 @@ button { font-family: inherit; cursor: pointer; }
 .level-detail { font-size:11.5px; color:var(--muted); margin-top:2px; }
 .level-count { font-size:12px; color:var(--muted); white-space:nowrap; font-weight:600; }
 
-/* Inventory tab table — confirmed directly as a real, reported
-   overlap bug on phone, matching the exact same underlying cause
-   already fixed for the Pharmacy Portal: seven plain columns with no
-   width protection of their own, including a direct Record Movement
-   button that never fit alongside everything else in one compact
-   row. Same proven fix — stack each row as flex, hide the
-   less-critical columns, protect what's left from wrapping, and move
-   Record Movement into the existing ⋮ menu instead of losing it.
-   Code is also hidden here (unlike Pharmacy, which never showed it
-   as its own competing column to begin with — there it was already
-   small meta-text nested inside the name cell) - five flex items
-   fighting for room on a real phone width left Name too cramped to
-   read cleanly even without overlapping; four matches what actually
-   proved clean. */
+/* Inventory tab table — confirmed directly, matching exactly how the
+   Inventory Activity Log already renders cleanly on phone: it isn't
+   a table at all, just full-width stacked blocks — one prominent
+   line, one compact meta line beneath it, no side-by-side columns
+   ever competing for horizontal room. Two prior attempts at a
+   flex-row "compact columns" version kept technically avoiding
+   overlap while still feeling cramped, because the real issue was
+   the side-by-side structure itself, not which specific columns were
+   visible. Rebuilt to genuinely match the log's own structure instead
+   of continuing to refine a fundamentally different layout. */
 @media (max-width: 700px) {
   .inv-table thead { display: none; }
-  .inv-table, .inv-table tbody, .inv-table tr { display: block; width: 100%; }
-  .inv-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .inv-table, .inv-table tbody, .inv-table tr, .inv-table td { display: block; width: 100%; }
+  .inv-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); position: relative; }
   .inv-table td { padding: 0; border: none; }
-  .inv-table td:nth-child(1), .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Code, Category, and Location hidden on phone */
-  .inv-table td:nth-child(2) { flex: 1; min-width: 0; }
-  .inv-table td:nth-child(4), .inv-table td:nth-child(6) { flex-shrink: 0; white-space: nowrap; }
-  .inv-table td:last-child { flex-shrink: 0; }
+  .inv-table td:nth-child(1) { display: none; } /* Code — shown instead as meta-text inside the name cell */
+  .inv-table td:nth-child(2) { font-weight: 600; color: var(--text); padding-right: 34px; }
+  .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Category and Location */
+  .inv-table td:nth-child(4) { display: inline-block; width: auto; text-align: left; font-size: 11px; color: var(--muted); margin-top: 3px; margin-right: 8px; }
+  .inv-table td:nth-child(6) { display: inline-block; width: auto; margin-top: 3px; }
+  .inv-table td:last-child { position: absolute; top: 10px; right: 0; width: auto; }
   .inv-table .record-movement-btn { display: none; }
   .inv-table .inv-mobile-code { display: block !important; }
 }
