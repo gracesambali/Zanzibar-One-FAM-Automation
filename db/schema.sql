@@ -1291,3 +1291,29 @@ from requisitions r
 where r.source_work_order_id = wo.id
   and wo.linked_requisition_id is null
   and r.requisition_number like 'REQ-MIGRATED-%';
+
+-- ============================================================
+-- Universal batch tracking, confirmed directly - every inventory
+-- item is now batch-tracked, not decided category by category.
+-- Items with no genuine expiry simply leave that section blank;
+-- FEFO already sorts a blank expiry to the back of priority, so this
+-- is harmless for anything that doesn't actually expire.
+-- ============================================================
+update inventory_items set is_batch_tracked = true, updated_at = now()
+where is_batch_tracked = false and active = true;
+
+-- A "legacy" batch representing each item's real, existing quantity,
+-- for any item that's now batch-tracked but has no real batch
+-- records yet (true of every existing item, since batches only get
+-- created going forward through a batch-aware Scan/Manual In).
+-- Without this, Scan Out would incorrectly report "not enough stock"
+-- for items that clearly have real quantity on hand, since FEFO
+-- deduction only draws from real batch rows, not the item's raw
+-- current_quantity field. Safe to run more than once - only touches
+-- items that genuinely have no batch record at all yet.
+insert into inventory_batches (item_id, lot_number, expiry_date, quantity, created_by)
+select id, null, null, current_quantity, 'system-backfill'
+from inventory_items
+where is_batch_tracked = true
+  and current_quantity > 0
+  and id not in (select distinct item_id from inventory_batches);
