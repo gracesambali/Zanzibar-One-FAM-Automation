@@ -374,6 +374,8 @@
           <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:4px">${escapeHtml(item.name)}</div>
           <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(item.itemCode)} — ${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')} on hand</div>
           <div id="itemDetailContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
+          <div id="itemDetailHistory" style="font-size:11.5px;color:#6B7280;margin-top:12px"></div>
+          <button onclick="openRecordMovementModal('${itemId}', '${item.name.replace(/'/g,"\\'")}', ${item.currentQuantity})" style="width:100%;margin-top:14px;padding:9px;border:none;border-radius:8px;background:#8B1A1A;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record Movement</button>
           <button class="secondary" onclick="document.getElementById('itemDetailOverlay').remove()">Close</button>
         </div>`;
       document.body.appendChild(overlay);
@@ -392,6 +394,96 @@
         }
       } else {
         document.getElementById('itemDetailContent').innerHTML = '<div style="font-style:italic">Not batch-tracked — a single running total.</div>';
+      }
+
+      // Confirmed directly: a compact, real recent-activity summary -
+      // just the last 3 movements, not a full history dump - kept
+      // short on purpose rather than turning this into a wall of text.
+      try {
+        const histResp = await fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}`);
+        const histData = await histResp.json();
+        const recent = (histData.movements || []).slice(0, 3);
+        const historyEl = document.getElementById('itemDetailHistory');
+        if (recent.length === 0) {
+          historyEl.innerHTML = '';
+        } else {
+          historyEl.innerHTML = '<div style="font-weight:700;color:#8B1A1A;margin-bottom:6px">Recent activity</div>' +
+            recent.map(m => `<div style="padding:4px 0">${m.movementType === 'IN' ? '↑' : '↓'} <strong style="color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'}">${m.quantity}</strong> — ${new Date(m.performedAt).toLocaleDateString()}${m.reason ? ' · ' + escapeHtml(m.reason) : ''}</div>`).join('');
+        }
+      } catch (err) {
+        console.error('Recent activity load failed (non-fatal):', err.message);
+      }
+    }
+
+    function openRecordMovementModal(itemId, itemName, currentQuantity) {
+      const overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.id = 'recordMovementOverlay';
+      overlay.innerHTML = `
+        <div class="modal">
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:4px">Record Movement</div>
+          <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(itemName)} — currently ${currentQuantity} in stock</div>
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <button id="mv_typeIn" onclick="setMovementType('IN')" style="flex:1;padding:10px;border:1px solid #1B7A43;border-radius:8px;background:#E8F8EF;color:#1B7A43;font-weight:700;cursor:pointer">Stock IN</button>
+            <button id="mv_typeOut" onclick="setMovementType('OUT')" style="flex:1;padding:10px;border:1px solid #E2E6ED;border-radius:8px;background:#fff;color:#6B7280;font-weight:700;cursor:pointer">Stock OUT</button>
+          </div>
+          <label>Quantity *</label>
+          <input id="mv_quantity" type="number" min="1">
+          <label>Reason</label>
+          <input id="mv_reason" type="text" placeholder="e.g. Received, Issued to Ward A">
+          <label>Department <span style="font-weight:400;color:#6B7280">(if issuing out)</span></label>
+          <input id="mv_department" type="text" placeholder="e.g. Ward A, Pharmacy">
+          <div id="mv_error" style="display:none;color:#B3261E;font-size:12px;margin-bottom:10px"></div>
+          <button id="mv_submit" onclick="submitInventoryMovement('${itemId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:#8B1A1A;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record</button>
+          <button class="secondary" onclick="document.getElementById('recordMovementOverlay').remove()">Cancel</button>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.dataset.movementType = 'IN';
+    }
+
+    function setMovementType(type) {
+      const overlay = document.getElementById('recordMovementOverlay');
+      overlay.dataset.movementType = type;
+      const inBtn = document.getElementById('mv_typeIn'), outBtn = document.getElementById('mv_typeOut');
+      if (type === 'IN') {
+        inBtn.style.background = '#E8F8EF'; inBtn.style.borderColor = '#1B7A43'; inBtn.style.color = '#1B7A43';
+        outBtn.style.background = '#fff'; outBtn.style.borderColor = '#E2E6ED'; outBtn.style.color = '#6B7280';
+      } else {
+        outBtn.style.background = '#FDE8E6'; outBtn.style.borderColor = '#B3261E'; outBtn.style.color = '#B3261E';
+        inBtn.style.background = '#fff'; inBtn.style.borderColor = '#E2E6ED'; inBtn.style.color = '#6B7280';
+      }
+    }
+
+    async function submitInventoryMovement(itemId) {
+      const overlay = document.getElementById('recordMovementOverlay');
+      const movementType = overlay.dataset.movementType;
+      const quantity = document.getElementById('mv_quantity').value;
+      const errorBox = document.getElementById('mv_error');
+      const btn = document.getElementById('mv_submit');
+      errorBox.style.display = 'none';
+      if (!quantity || Number(quantity) <= 0) { errorBox.textContent = 'Enter a quantity greater than zero.'; errorBox.style.display = 'block'; return; }
+
+      btn.disabled = true; btn.textContent = 'Recording…';
+      try {
+        const resp = await fetch('/api/manage-asset', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recordInventoryMovement', itemId, movementType, quantity,
+            reason: document.getElementById('mv_reason').value.trim(),
+            department: document.getElementById('mv_department').value.trim(),
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record movement');
+        overlay.remove();
+        document.getElementById('itemDetailOverlay')?.remove();
+        const cached = inventoryItemsCache.find(i => i.id === itemId);
+        if (cached) cached.currentQuantity = data.newQuantity;
+        renderItemList();
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Record';
       }
     }
 

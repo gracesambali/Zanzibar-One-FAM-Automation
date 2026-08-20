@@ -1638,25 +1638,68 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
   if (!itemId || !movementType || !quantity) {
     return res.status(400).json({ error: "itemId, movementType, and quantity are required" });
   }
+  const qty = Number(quantity);
   try {
-    const { getById, update, insert } = await import("../lib/postgresClient.js");
-    const { applyMovement, isLowStock } = await import("../lib/inventory.js");
+    const { getById, update, insert, listAllRecords } = await import("../lib/postgresClient.js");
+    const { applyMovement, isLowStock, planFefoDeduction } = await import("../lib/inventory.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
     if (!item) return res.status(404).json({ error: "Inventory item not found." });
 
     let newQuantity;
     try {
-      newQuantity = applyMovement(item.current_quantity, movementType, quantity);
+      newQuantity = applyMovement(item.current_quantity, movementType, qty);
     } catch (err) {
       return res.status(400).json({ error: err.message });
     }
 
+    // Confirmed directly as a real, genuine gap: every item is now
+    // batch-tracked, but this general-purpose adjustment path only
+    // ever touched the item's own total, never the real batch rows
+    // behind it - silently drifting the two apart, and confusing a
+    // later FEFO-based Scan Out. Record Movement doesn't collect a
+    // specific lot/expiry (it's a general adjustment tool, not a
+    // receiving flow), so a Stock IN here adds to - or creates - the
+    // item's real "unlabeled" batch, the same honest placeholder
+    // already used for legacy stock, rather than inventing a fake
+    // lot/expiry. A Stock OUT draws down through real batches in
+    // genuine FEFO order, exactly like a scanned Stock Out would.
+    if (item.is_batch_tracked) {
+      if (movementType === "OUT") {
+        const allBatches = await listAllRecords("inventory_batches");
+        const itemBatches = allBatches
+          .filter(b => b.item_id === itemId && Number(b.quantity) > 0)
+          .sort((a, b) => {
+            if (!a.expiry_date) return 1;
+            if (!b.expiry_date) return -1;
+            return new Date(a.expiry_date) - new Date(b.expiry_date);
+          });
+        let plan;
+        try {
+          plan = planFefoDeduction(itemBatches, qty);
+        } catch (err) {
+          return res.status(400).json({ error: err.message });
+        }
+        for (const step of plan) {
+          const batch = itemBatches.find(b => b.id === step.batchId);
+          await update("inventory_batches", step.batchId, { quantity: Number(batch.quantity) - step.quantity });
+        }
+      } else {
+        const allBatches = await listAllRecords("inventory_batches");
+        const unlabeledBatch = allBatches.find(b => b.item_id === itemId && !b.lot_number && !b.expiry_date);
+        if (unlabeledBatch) {
+          await update("inventory_batches", unlabeledBatch.id, { quantity: Number(unlabeledBatch.quantity) + qty });
+        } else {
+          await insert("inventory_batches", { item_id: itemId, lot_number: null, expiry_date: null, quantity: qty, created_by: performedBy });
+        }
+      }
+    }
+
     await insert("inventory_movements", {
-      item_id: itemId, movement_type: movementType, quantity: Number(quantity),
+      item_id: itemId, movement_type: movementType, quantity: qty,
       reason: reason || null, department: department || null, performed_by: performedBy,
     });
     await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
-    await logInventoryActivity(movementType === "IN" ? "Stock IN" : "Stock OUT", `${item.item_code} "${item.name}": ${quantity} ${item.unit_of_measure || ''}${reason ? ` (${reason})` : ''}`, performedBy);
+    await logInventoryActivity(movementType === "IN" ? "Stock IN" : "Stock OUT", `${item.item_code} "${item.name}": ${qty} ${item.unit_of_measure || ''}${reason ? ` (${reason})` : ''}`, performedBy);
 
     // Confirmed directly: low-stock notification must be active. Only
     // fires on a genuine transition into low stock — checked against
