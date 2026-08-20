@@ -112,10 +112,6 @@
         <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
         <button class="scan-btn scan-out" onclick="openScanModal('OUT')"><span class="icon">📷</span>Scan Out</button>
       </div>
-      <div style="display:flex;gap:16px;justify-content:center;margin:-4px 0 16px">
-        <button onclick="openManualScanEntry('IN')" style="border:none;background:none;color:var(--green);font-size:12.5px;font-weight:600;cursor:pointer;padding:4px">✏️ Enter Stock In manually</button>
-        <button onclick="openManualScanEntry('OUT')" style="border:none;background:none;color:var(--red);font-size:12.5px;font-weight:600;cursor:pointer;padding:4px">✏️ Enter Stock Out manually</button>
-      </div>
 
       <div class="panel">
         <div class="panel-title">Inventory</div>
@@ -600,7 +596,6 @@
             <div style="position:absolute;inset:0;border:3px solid rgba(255,255,255,0.4);pointer-events:none;margin:14%"></div>
           </div>
           <div id="scanStatus" style="font-size:12px;color:#6B7280;text-align:center;margin-bottom:10px">Point the camera at the barcode…</div>
-          <button class="secondary" onclick="openManualScanEntry('${mode}')">Can't scan? Enter manually</button>
         </div>`;
       document.body.appendChild(overlay);
 
@@ -868,61 +863,6 @@
       } catch (err) {
         errorBox.textContent = err.message; errorBox.style.display = 'block';
         btn.disabled = false; btn.textContent = scanModalMode === 'IN' ? 'Confirm Stock In' : 'Confirm Stock Out';
-      }
-    }
-
-    function openManualScanEntry(mode) {
-      closeScanModal();
-      scanModalMode = mode;
-      const overlay = document.createElement('div');
-      overlay.className = 'overlay';
-      overlay.id = 'scanModalOverlay';
-      const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}" data-batch="${i.isBatchTracked}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
-      overlay.innerHTML = `
-        <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">${mode === 'IN' ? 'Stock In' : 'Stock Out'} — Manual Entry</div>
-          <label>Item</label>
-          <select id="manual_item" onchange="renderManualScanQuantityFields()"><option value="">— Choose an item —</option>${itemOptions}</select>
-          <div id="manual_extraFields"></div>
-          <label>Quantity</label><input id="manual_quantity" type="number" min="1">
-          <div id="manual_error" class="error-box"></div>
-          <button class="primary" id="manual_submit" onclick="submitManualScanEntry()" style="background:${mode === 'IN' ? '#27AE60' : '#E74C3C'}">Confirm</button>
-          <button class="secondary" onclick="document.getElementById('scanModalOverlay').remove()">Cancel</button>
-        </div>`;
-      document.body.appendChild(overlay);
-    }
-
-    function renderManualScanQuantityFields() {
-      const select = document.getElementById('manual_item');
-      const isBatchTracked = select.selectedOptions[0]?.dataset.batch === 'true';
-      document.getElementById('manual_extraFields').innerHTML = (isBatchTracked && scanModalMode === 'IN') ? `
-        <label>Batch / Lot Number</label><input id="manual_lotNumber" type="text">
-        <label>Expiry Date</label><input id="manual_expiryDate" type="date">` : '';
-    }
-
-    async function submitManualScanEntry() {
-      const itemId = document.getElementById('manual_item').value;
-      const qty = document.getElementById('manual_quantity').value;
-      const errorBox = document.getElementById('manual_error');
-      const btn = document.getElementById('manual_submit');
-      errorBox.style.display = 'none';
-      if (!itemId) { errorBox.textContent = 'Choose an item.'; errorBox.style.display = 'block'; return; }
-      if (!qty || Number(qty) <= 0) { errorBox.textContent = 'Enter a quantity greater than zero.'; errorBox.style.display = 'block'; return; }
-      btn.disabled = true; btn.textContent = 'Saving…';
-      try {
-        const action = scanModalMode === 'IN' ? 'scanInventoryIn' : 'scanInventoryOut';
-        const body = scanModalMode === 'IN'
-          ? { action, itemId, lotNumber: document.getElementById('manual_lotNumber')?.value.trim() || null, expiryDate: document.getElementById('manual_expiryDate')?.value || null, quantity: qty }
-          : { action, itemId, quantity: qty };
-        const resp = await fetch('/api/manage-asset', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
-        document.getElementById('scanModalOverlay')?.remove();
-        await loadItems();
-        await loadTodayActivity();
-      } catch (err) {
-        errorBox.textContent = err.message; errorBox.style.display = 'block';
-        btn.disabled = false; btn.textContent = 'Confirm';
       }
     }
 
