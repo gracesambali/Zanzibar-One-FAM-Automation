@@ -322,10 +322,10 @@ button { font-family: inherit; cursor: pointer; }
 
 <div class="header">
   <div class="header-left">
-    <div class="header-logo"><img src="/selian-logo.png" alt="GVC"></div>
+    <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
     <div>
-      <div class="header-title" id="header-title">Selian Lutheran Hospital</div>
-      <div class="header-sub" id="header-subtitle">Facility Asset Management System</div>
+      <div class="header-title" id="header-title">Gracing Ventures FAM</div>
+      <div class="header-sub" id="header-subtitle">Selian Lutheran Hospital</div>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px">
@@ -535,19 +535,24 @@ const CLIENT_CONFIG = {
   pageTitle: "GVC Facility Asset Manager"
 };
 
-// Applies whatever's currently in CLIENT_CONFIG to the page — called
-// once immediately with the defaults above, then again if the fetch
-// below brings back different values. The header title follows
-// CLIENT_CONFIG.clientName the same way the subtitle already did,
-// rather than being hardcoded separately — the actual client's name
-// is the prominent thing now, with the product name as the plain,
-// fixed description underneath it.
+// Confirmed directly: the app's own brand (Gracing Ventures FAM) is
+// now the prominent header text, not the specific client's name -
+// the core codebase is shared across every client, so its own header
+// should carry the product's identity, not one client's. The actual
+// client name moves to the subtitle instead of disappearing entirely
+// - still real, useful context once there's more than one client's
+// data to keep straight, just no longer the headline. clientName
+// itself is deliberately left untouched here - report and export
+// filenames still need to correctly identify which real client's
+// data they represent, not the software vendor's name.
+const APP_BRAND_NAME = "Gracing Ventures FAM";
+
 function applyClientConfigToPage() {
-  document.title = CLIENT_CONFIG.pageTitle + " — " + CLIENT_CONFIG.clientName;
+  document.title = APP_BRAND_NAME + " — " + CLIENT_CONFIG.clientName;
   const title = document.getElementById('header-title');
-  if (title) title.textContent = CLIENT_CONFIG.clientName;
+  if (title) title.textContent = APP_BRAND_NAME;
   const sub = document.getElementById('header-subtitle');
-  if (sub) sub.textContent = "Facility Asset Management System";
+  if (sub) sub.textContent = CLIENT_CONFIG.clientName;
 }
 
 applyClientConfigToPage();
@@ -11687,7 +11692,7 @@ function generateCertificate(recordId) {
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <div class="border">
         <div class="header">
-          <img class="logo" src="/selian-logo.png" alt="GVC">
+          <img class="logo" src="/logo.png" alt="GVC">
           <div class="title">Certificate of Maintenance</div>
           <div class="subtitle">${CLIENT_CONFIG.clientName} — ${CLIENT_CONFIG.buildingLabel}</div>
         </div>
@@ -11777,7 +11782,7 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     const qrBlob = await qrResp.blob();
     const qrObjUrl = URL.createObjectURL(qrBlob);
 
-    const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/selian-logo.png')]);
+    const [qrImg, logoImg] = await Promise.all([loadImageEl(qrObjUrl), loadImageEl('/logo.png')]);
 
     // Inter is already the app's own font — canvas won't use a webfont
     // until it's explicitly confirmed loaded, otherwise text silently
@@ -12026,7 +12031,7 @@ function buildPeriodReportHtml(data, title, periodLabel) {
     <body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
       <div class="report-header">
-        <img src="/selian-logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
+        <img src="/logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
         <div>
           <h1>${title}</h1>
           <div class="sub" style="margin-bottom:0">Prepared for ${CLIENT_CONFIG.clientName} · ${periodLabel}</div>
