@@ -5329,7 +5329,8 @@ function removeInventoryItemLocally(itemId) {
 // Column-header filter/sort state for Inventory, matching the exact
 // pattern already proven on Asset Tracking - Category and Location
 // are value filters, Quantity is a sort.
-let inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null };
+let inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null, page: 1 };
+const INVENTORY_PAGE_SIZE = 50;
 let openInventoryColumnPopover = null;
 
 // Real camera-based scanning, confirmed directly: no separate app
@@ -5401,19 +5402,26 @@ function toggleInventoryColumnPopover(column) {
 }
 function setInventoryFilter(field, value) {
   inventoryFilters[field] = value;
+  inventoryFilters.page = 1;
   openInventoryColumnPopover = null;
   renderInventoryTable();
 }
 function setInventorySort(direction) {
   inventoryFilters.sortColumn = direction ? 'currentQuantity' : null;
   inventoryFilters.sortDirection = direction;
+  inventoryFilters.page = 1;
   openInventoryColumnPopover = null;
   renderInventoryTable();
 }
 function clearInventoryFilters() {
-  inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null };
+  inventoryFilters = { category: '', location: '', sortColumn: null, sortDirection: null, page: 1 };
   openInventoryColumnPopover = null;
   renderInventoryTable();
+}
+function setInventoryPage(page) {
+  inventoryFilters.page = page;
+  renderInventoryTable();
+  document.getElementById('view-inventory')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderInventoryColumnPopover(column) {
@@ -5468,6 +5476,19 @@ function renderInventoryTable() {
   const lowStockCount = items.filter(i => i.lowStock).length;
   const totalValue = items.reduce((sum, i) => sum + (i.unitCost != null ? i.unitCost * i.currentQuantity : 0), 0);
 
+  // Confirmed directly as a real, reported performance issue: with no
+  // limit on how many rows render at once, the entire filtered list was
+  // rebuilt in full on every single filter click - fine for a small
+  // list, genuinely laggy as real inventory grows. totalFilteredCount
+  // and the summary stats above stay accurate to the WHOLE filtered
+  // set; only what actually gets drawn into the DOM is bounded.
+  const totalFilteredCount = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalFilteredCount / INVENTORY_PAGE_SIZE));
+  if (inventoryFilters.page > totalPages) inventoryFilters.page = totalPages;
+  if (inventoryFilters.page < 1) inventoryFilters.page = 1;
+  const pageStart = (inventoryFilters.page - 1) * INVENTORY_PAGE_SIZE;
+  items = items.slice(pageStart, pageStart + INVENTORY_PAGE_SIZE);
+
   let html = `<div style="padding:24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
       <div>
@@ -5486,7 +5507,7 @@ function renderInventoryTable() {
     <div id="inventoryYearTabs" style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:2px"></div>
 
     <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Items</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${totalFilteredCount}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Items</div></div>
       <div class="summary-card"><div class="summary-val" style="color:${lowStockCount > 0 ? 'var(--red)' : 'var(--green)'}">${lowStockCount}</div><div class="summary-label">Low Stock</div></div>
       ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Estimated Stock Value</div></div>` : ''}
       ${anyFilterActive ? `<button onclick="clearInventoryFilters()" style="align-self:center;padding:6px 12px;font-size:12px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">Clear filters</button>` : ''}
@@ -5523,17 +5544,18 @@ function renderInventoryTable() {
                 <td style="padding:9px 12px;text-align:right;white-space:nowrap;position:relative">
                   ${canManageInventory ? `<button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
                   <button onclick="toggleInventoryRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--muted);cursor:pointer;line-height:1">⋮</button>
-                  <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left">
-                    <button onclick="openInventoryHistoryModal('${i.id}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
-                    ${canManageInventory ? `<button onclick="openEditInventoryItemModal('${i.id}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Edit</button>` : ''}
-                    ${canManageInventory ? `<button onclick="openMergeInventoryItemModal('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Merge Into…</button>` : ''}
-                    ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${i.name.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}
-                  </div>
+                  <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left"></div>
                 </td>
               </tr>`).join('')}
         </tbody>
       </table>
     </div>
+    ${totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px">
+      <button onclick="setInventoryPage(${inventoryFilters.page - 1})" ${inventoryFilters.page <= 1 ? 'disabled' : ''} style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:${inventoryFilters.page <= 1 ? 'var(--border)' : 'var(--navy)'};cursor:${inventoryFilters.page <= 1 ? 'default' : 'pointer'}">← Previous</button>
+      <span style="font-size:12.5px;color:var(--muted)">Page ${inventoryFilters.page} of ${totalPages} · ${totalFilteredCount} item${totalFilteredCount === 1 ? '' : 's'}</span>
+      <button onclick="setInventoryPage(${inventoryFilters.page + 1})" ${inventoryFilters.page >= totalPages ? 'disabled' : ''} style="padding:6px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:${inventoryFilters.page >= totalPages ? 'var(--border)' : 'var(--navy)'};cursor:${inventoryFilters.page >= totalPages ? 'default' : 'pointer'}">Next →</button>
+    </div>` : ''}
 
     <div id="inventoryActivityLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
@@ -5658,6 +5680,19 @@ function toggleInventoryRowMenu(itemId, event) {
   if (openInventoryRowMenuId && openInventoryRowMenuId !== itemId) {
     const prevMenu = document.getElementById(`rowmenu_${openInventoryRowMenuId}`);
     if (prevMenu) prevMenu.style.display = 'none';
+  }
+  if (!isOpen && !menu.dataset.built) {
+    const canManageInventory = ['stock_keeper', 'procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
+    const i = inventoryItemsCache.find(x => x.id === itemId);
+    if (i) {
+      const safeName = i.name.replace(/'/g, "\\'");
+      menu.innerHTML = `
+        <button onclick="openInventoryHistoryModal('${i.id}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
+        ${canManageInventory ? `<button onclick="openEditInventoryItemModal('${i.id}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Edit</button>` : ''}
+        ${canManageInventory ? `<button onclick="openMergeInventoryItemModal('${i.id}', '${escapeHtml(i.itemCode)}', '${safeName}', ${i.currentQuantity})" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Merge Into…</button>` : ''}
+        ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}`;
+      menu.dataset.built = 'true';
+    }
   }
   menu.style.display = isOpen ? 'none' : 'block';
   openInventoryRowMenuId = isOpen ? null : itemId;
