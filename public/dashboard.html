@@ -5499,8 +5499,6 @@ function renderInventoryTable() {
         <button onclick="openAddInventoryItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>
         <button onclick="openScanModal('IN')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📷 Scan In</button>
         <button onclick="openScanModal('OUT')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">📷 Scan Out</button>
-        <button onclick="openManualScanEntry('IN')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✏️ Manual Stock In</button>
-        <button onclick="openManualScanEntry('OUT')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✏️ Manual Stock Out</button>
         <button onclick="openUploadInventorySheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
         <button onclick="openUploadPreviousYearModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Upload Previous Year</button>
       </div>` : ''}
@@ -6525,7 +6523,6 @@ async function openScanModal(mode) {
         <div style="position:absolute;inset:0;border:3px solid rgba(255,255,255,0.4);pointer-events:none;margin:14%"></div>
       </div>
       <div id="scanStatus" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Point the camera at the barcode…</div>
-      <button onclick="openManualScanEntry('${mode}')" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">Can't scan? Enter manually</button>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -6742,13 +6739,13 @@ function renderScanQuantityStep(itemId, itemCode, itemName, isBatchTracked, gtin
     <div style="background:var(--bg);border-radius:10px;padding:12px 14px;margin-bottom:14px">
       <div style="font-size:13px;font-weight:700;color:var(--navy)">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
       ${isBatchTracked && lotNumber ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">Batch ${escapeHtml(lotNumber)}${expiryDate ? ` · Expires ${expiryDate}` : ''}</div>` : ''}
-      ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `<div style="font-size:11px;color:var(--amber);margin-top:4px">⚠ This item is batch-tracked but no batch info was in the scan — enter it below.</div>` : ''}
+      ${isBatchTracked && scanModalMode === 'IN' && (!lotNumber || !expiryDate) ? `<div style="font-size:11px;color:var(--amber);margin-top:4px">⚠ This item is batch-tracked but ${!lotNumber && !expiryDate ? 'no batch info was in the scan' : !lotNumber ? 'no lot number was in the scan' : 'no expiry date was in the scan'} — enter it below.</div>` : ''}
     </div>
-    ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `
+    ${isBatchTracked && scanModalMode === 'IN' && (!lotNumber || !expiryDate) ? `
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Batch / Lot Number</label>
-    <input id="scan_lotNumber" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <input id="scan_lotNumber" type="text" value="${escapeHtml(lotNumber || '')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Expiry Date</label>
-    <input id="scan_expiryDate" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <input id="scan_expiryDate" type="date" value="${expiryDate || ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     ` : ''}
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Quantity</label>
     <input id="scan_quantity" type="number" min="1" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px" autofocus>
@@ -6794,74 +6791,6 @@ async function submitScanQuantity(itemId, scannedLot, scannedExpiry) {
 // The manual fallback — bypasses the camera and any barcode entirely,
 // picking the item directly. Confirmed directly: this whole feature
 // needs to work even when scanning doesn't, not fail outright.
-function openManualScanEntry(mode) {
-  closeScanModal();
-  scanModalMode = mode;
-  const overlay = document.createElement('div');
-  overlay.id = 'scanModalOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
-  const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}" data-batch="${i.isBatchTracked}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:20px">
-      <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px">${mode === 'IN' ? 'Stock In' : 'Stock Out'} — Manual Entry</div>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Item</label>
-      <select id="manual_item" onchange="renderManualScanQuantityFields()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option value="">— Choose an item —</option>
-        ${itemOptions}
-      </select>
-      <div id="manual_extraFields"></div>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Quantity</label>
-      <input id="manual_quantity" type="number" min="1" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
-      <div id="manual_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
-        <button onclick="document.getElementById('scanModalOverlay').remove()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
-        <button id="manual_submit" onclick="submitManualScanEntry()" style="flex:1;padding:10px;border:none;border-radius:8px;background:${mode === 'IN' ? 'var(--green)' : 'var(--red)'};color:#fff;font-weight:600;font-size:13px;cursor:pointer">Confirm</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-function renderManualScanQuantityFields() {
-  const select = document.getElementById('manual_item');
-  const isBatchTracked = select.selectedOptions[0]?.dataset.batch === 'true';
-  const extra = document.getElementById('manual_extraFields');
-  extra.innerHTML = (isBatchTracked && scanModalMode === 'IN') ? `
-    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Batch / Lot Number</label>
-    <input id="manual_lotNumber" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Expiry Date</label>
-    <input id="manual_expiryDate" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-  ` : '';
-}
-
-async function submitManualScanEntry() {
-  const itemId = document.getElementById('manual_item').value;
-  const qty = document.getElementById('manual_quantity').value;
-  const errorBox = document.getElementById('manual_error');
-  const btn = document.getElementById('manual_submit');
-  errorBox.style.display = 'none';
-  if (!itemId) { errorBox.textContent = 'Choose an item.'; errorBox.style.display = 'block'; return; }
-  if (!qty || Number(qty) <= 0) { errorBox.textContent = 'Enter a quantity greater than zero.'; errorBox.style.display = 'block'; return; }
-
-  btn.disabled = true; btn.textContent = 'Saving…';
-  try {
-    const action = scanModalMode === 'IN' ? 'scanInventoryIn' : 'scanInventoryOut';
-    const body = scanModalMode === 'IN'
-      ? { action, itemId, lotNumber: document.getElementById('manual_lotNumber')?.value.trim() || null, expiryDate: document.getElementById('manual_expiryDate')?.value || null, quantity: qty }
-      : { action, itemId, quantity: qty };
-    const resp = await fetch('/api/manage-asset', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
-    document.getElementById('scanModalOverlay')?.remove();
-    refreshInventoryQuietly();
-  } catch (err) {
-    errorBox.textContent = err.message;
-    errorBox.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Confirm';
-  }
-}
-
 function openRecordMovementModal(itemId, itemName, currentQuantity) {
   const overlay = document.createElement('div');
   overlay.id = 'recordMovementOverlay';
