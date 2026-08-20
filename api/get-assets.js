@@ -19,12 +19,12 @@ export default async function handler(req, res) {
   // existing pilot unless these env vars are deliberately set.
   if (req.query.clientconfig === "true") {
     return res.status(200).json({
-      clientName: process.env.CLIENT_NAME || "Selian Lutheran Hospital",
-      buildingLabel: process.env.CLIENT_BUILDING_LABEL || "Selian Lutheran Hospital",
+      clientName: process.env.CLIENT_NAME || "Facility Asset Manager",
+      buildingLabel: process.env.CLIENT_BUILDING_LABEL || "Facility Asset Manager",
       region: process.env.CLIENT_REGION || "Arusha",
       district: process.env.CLIENT_DISTRICT || "Arusha",
-      building: process.env.CLIENT_BUILDING || "Selian Lutheran Hospital",
-      accentColor: process.env.CLIENT_ACCENT_COLOR || "#8B1A1A",
+      building: process.env.CLIENT_BUILDING || "Facility Asset Manager",
+      accentColor: process.env.CLIENT_ACCENT_COLOR || "#003566",
       pageTitle: process.env.CLIENT_PAGE_TITLE || "GVC Facility Asset Manager",
     });
   }
