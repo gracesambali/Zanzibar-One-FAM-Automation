@@ -308,35 +308,35 @@ button { font-family: inherit; cursor: pointer; }
 .level-detail { font-size:11.5px; color:var(--muted); margin-top:2px; }
 .level-count { font-size:12px; color:var(--muted); white-space:nowrap; font-weight:600; }
 
-/* Inventory tab table — confirmed directly, matching exactly how the
-   Inventory Activity Log already renders cleanly on phone: it isn't
-   a table at all, just full-width stacked blocks — one prominent
-   line, one compact meta line beneath it, no side-by-side columns
-   ever competing for horizontal room.
-   Two real, separate issues reported and fixed here: hiding Category
-   and Location entirely traded "broken" for "not enough real
-   information" - both now shown in the same compact meta line as
-   Code (Code · Category · Location), grouped together rather than
-   scattered, instead of disappearing. And max-width:700px never
-   covered phone landscape orientation at all - a real phone in
-   landscape commonly reaches 800-930px wide, so the original,
-   unfixed wide table was still showing there the whole time. Raised
-   to 930px to genuinely cover landscape on the largest real phones,
-   not just portrait. */
-@media (max-width: 930px) {
+/* Inventory tab table — confirmed directly per explicit instruction:
+   an exact copy of the Pharmacy Portal's own proven .item-table
+   structure (base styles, cell classes, and mobile media query),
+   not a separate, independently-designed implementation. Several
+   rounds of iterating on a different structure never converged on
+   what the Pharmacy Portal's own table already did correctly from
+   the start - copying it directly, rather than continuing to design
+   toward it, is the actual fix. */
+.inv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.inv-table th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--border); }
+.inv-table td { padding: 12px; border-bottom: 1px solid #F0F2F6; }
+.inv-table tr:hover td { background: var(--bg); }
+.inv-table .item-name-cell { font-weight: 600; color: var(--text); }
+.inv-table .item-meta-cell { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.inv-table .item-qty-cell { text-align: right; font-weight: 700; color: var(--navy); font-size: 14.5px; }
+.inv-table .badge { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 10px; margin-top: 4px; white-space: nowrap; }
+.inv-table .badge-low { background: var(--red-bg); color: var(--red); }
+.inv-table .badge-ok { background: var(--green-bg); color: var(--green); }
+
+@media (max-width: 700px) {
   .inv-table thead { display: none; }
-  .inv-table, .inv-table tbody, .inv-table tr, .inv-table td { display: block; width: 100%; }
-  .inv-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); position: relative; }
+  .inv-table, .inv-table tbody, .inv-table tr { display: block; width: 100%; }
+  .inv-table tr { padding: 12px 0; border-bottom: 1px solid #F0F2F6; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .inv-table td { padding: 0; border: none; }
-  .inv-table td:nth-child(1) { display: none; } /* Code — shown instead as part of the meta line inside the name cell */
-  .inv-table td:nth-child(2) { font-weight: 600; color: var(--text); font-size: 14px; padding-right: 34px; }
-  .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Category and Location — shown instead as part of the same meta line, not lost */
-  .inv-table td:nth-child(4) { display: inline-block; width: auto; text-align: left; font-size: 13px; color: var(--muted); margin-top: 4px; margin-right: 10px; }
-  .inv-table td:nth-child(6) { display: inline-block; width: auto; margin-top: 4px; }
-  .inv-table td:nth-child(6) span { font-size: 12.5px !important; padding: 3px 10px !important; }
-  .inv-table td:last-child { position: absolute; top: 10px; right: 0; width: auto; }
+  .inv-table td:nth-child(2), .inv-table td:nth-child(3) { display: none; } /* Category and Location hidden on phone - name, quantity, and status are what actually matters when scanning on the go */
+  .inv-table td:first-child { flex: 1; min-width: 0; }
+  .inv-table td:nth-child(4), .inv-table td:nth-child(5) { flex-shrink: 0; white-space: nowrap; }
+  .inv-table td:last-child { flex-shrink: 0; }
   .inv-table .record-movement-btn { display: none; }
-  .inv-table .inv-mobile-code { display: block !important; font-size: 13px !important; margin-top: 4px !important; }
 }
 
 @media (max-width: 700px) {
@@ -5550,34 +5550,31 @@ function renderInventoryTable() {
     </div>
 
     <div style="overflow-x:visible;background:#fff;border:1px solid var(--border);border-radius:10px">
-      <table class="inv-table" style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <table class="inv-table">
         <thead>
-          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
+          <tr>
+            <th>Item</th>
             ${inventoryColumnHeaderHtml('category', 'Category', 'left')}
-            ${inventoryColumnHeaderHtml('currentQuantity', 'Quantity', 'right')}
             ${inventoryColumnHeaderHtml('location', 'Location', 'left')}
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
-            <th style="padding:10px 12px"></th>
+            ${inventoryColumnHeaderHtml('currentQuantity', 'Quantity', 'right')}
+            <th>Status</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           ${items.length === 0
-            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">${anyFilterActive ? 'No items match this filter.' : `No inventory items yet.${canManageInventory ? ' Add the first one above.' : ''}`}</td></tr>`
+            ? `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">${anyFilterActive ? 'No items match this filter.' : `No inventory items yet.${canManageInventory ? ' Add the first one above.' : ''}`}</td></tr>`
             : items.map(i => `
-              <tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)} · ${escapeHtml(i.category || '—')} · ${escapeHtml(i.location || '—')}</div></td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category || '—')}</td>
-                <td style="padding:9px 12px;text-align:right">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location || '—')}</td>
-                <td style="padding:9px 12px">
-                  ${i.lowStock
-                    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--red-bg);color:var(--red)">⚠ Low Stock</span>`
-                    : `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green)">OK</span>`}
+              <tr>
+                <td>
+                  <div class="item-name-cell">${escapeHtml(i.name)}</div>
+                  <div class="item-meta-cell">${escapeHtml(i.itemCode)}</div>
                 </td>
-                <td style="padding:9px 12px;text-align:right;white-space:nowrap;position:relative">
+                <td>${escapeHtml(i.category || '—')}</td>
+                <td>${escapeHtml(i.location || '—')}</td>
+                <td class="item-qty-cell">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
+                <td>${i.lowStock ? '<span class="badge badge-low">⚠ Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;position:relative">
                   ${canManageInventory ? `<button class="record-movement-btn" onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
                   <button onclick="toggleInventoryRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--muted);cursor:pointer;line-height:1">⋮</button>
                   <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left"></div>
@@ -5814,22 +5811,23 @@ async function switchInventoryYearView(yearOrLive) {
         ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Recorded Value</div></div>` : ''}
       </div>
       <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
-        <table class="inv-table" style="width:100%;border-collapse:collapse;font-size:12.5px">
-          <thead><tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Category</th>
-            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Quantity</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Location</th>
+        <table class="inv-table">
+          <thead><tr>
+            <th>Item</th>
+            <th>Category</th>
+            <th>Location</th>
+            <th style="text-align:right">Quantity</th>
           </tr></thead>
           <tbody>
-            ${items.length === 0 ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
-              items.map(i => `<tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)} · ${escapeHtml(i.category || '—')} · ${escapeHtml(i.location || '—')}</div></td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category||'—')}</td>
-                <td style="padding:9px 12px;text-align:right">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location||'—')}</td>
+            ${items.length === 0 ? `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
+              items.map(i => `<tr>
+                <td>
+                  <div class="item-name-cell">${escapeHtml(i.name)}</div>
+                  <div class="item-meta-cell">${escapeHtml(i.itemCode)}</div>
+                </td>
+                <td>${escapeHtml(i.category||'—')}</td>
+                <td>${escapeHtml(i.location||'—')}</td>
+                <td class="item-qty-cell">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
               </tr>`).join('')}
           </tbody>
         </table>
