@@ -346,10 +346,10 @@
       }
       listEl.innerHTML = `
         <table class="item-table">
-          <thead><tr><th>Item</th><th>Category</th><th>Location</th><th style="text-align:right">Quantity</th><th>Status</th></tr></thead>
+          <thead><tr><th>Item</th><th>Category</th><th>Location</th><th style="text-align:right">Quantity</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${items.map(i => `
-              <tr onclick="openItemDetail('${i.id}')">
+              <tr>
                 <td>
                   <div class="item-name-cell">${escapeHtml(i.name)}</div>
                   <div class="item-meta-cell">${escapeHtml(i.itemCode)}${i.isBatchTracked ? ' · Batch-tracked' : ''}</div>
@@ -358,71 +358,114 @@
                 <td>${escapeHtml(i.location || '—')}</td>
                 <td class="item-qty-cell">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
                 <td>${i.lowStock ? '<span class="badge badge-low">Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;position:relative">
+                  <button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid #8B1A1A;border-radius:6px;background:#fff;color:#8B1A1A;cursor:pointer;margin-right:4px">Record Movement</button>
+                  <button onclick="togglePharmacyRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid #E2E6ED;border-radius:6px;background:#fff;color:#6B7280;cursor:pointer;line-height:1">⋮</button>
+                  <div id="pharmrowmenu_${i.id}" style="display:none;position:absolute;top:34px;right:0;background:#fff;border:1px solid #E2E6ED;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left"></div>
+                </td>
               </tr>`).join('')}
           </tbody>
         </table>`;
     }
 
-    async function openItemDetail(itemId) {
-      const item = inventoryItemsCache.find(i => i.id === itemId);
-      if (!item) return;
+    // Confirmed directly: matches the exact ⋮ row-menu pattern already
+    // proven on the main Inventory tab, rather than one bundled modal
+    // that always fetches both batches and history regardless of what
+    // was actually needed. Record Movement is now its own instant,
+    // always-visible button - genuinely zero fetch to open, since it
+    // only ever needed the item's name and current quantity, both
+    // already sitting in inventoryItemsCache. Batches and History are
+    // separate, on-demand actions behind the menu, each requesting
+    // only the one thing it actually shows - so as History naturally
+    // grows into something substantial over time, it stays its own
+    // dedicated space rather than crowding the one action (Record
+    // Movement) that should always stay quick and uncluttered.
+    let openPharmacyRowMenuId = null;
+
+    function togglePharmacyRowMenu(itemId, event) {
+      event.stopPropagation();
+      const menu = document.getElementById(`pharmrowmenu_${itemId}`);
+      if (!menu) return;
+      const isOpen = menu.style.display !== 'none';
+      if (openPharmacyRowMenuId && openPharmacyRowMenuId !== itemId) {
+        const prevMenu = document.getElementById(`pharmrowmenu_${openPharmacyRowMenuId}`);
+        if (prevMenu) prevMenu.style.display = 'none';
+      }
+      if (!isOpen && !menu.dataset.built) {
+        const item = inventoryItemsCache.find(i => i.id === itemId);
+        if (item) {
+          const safeName = item.name.replace(/'/g, "\\'");
+          menu.innerHTML = `
+            ${item.isBatchTracked ? `<button onclick="openBatchesModal('${itemId}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:#1A1A2E;cursor:pointer">Batches</button>` : ''}
+            <button onclick="openHistoryModal('${itemId}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:#1A1A2E;cursor:pointer;border-top:${item.isBatchTracked ? '1px solid #E2E6ED' : 'none'}">History</button>`;
+          menu.dataset.built = 'true';
+        }
+      }
+      menu.style.display = isOpen ? 'none' : 'block';
+      openPharmacyRowMenuId = isOpen ? null : itemId;
+    }
+    document.addEventListener('click', (e) => {
+      if (openPharmacyRowMenuId && !e.target.closest(`#pharmrowmenu_${openPharmacyRowMenuId}`) && !e.target.closest('[onclick*="togglePharmacyRowMenu"]')) {
+        const menu = document.getElementById(`pharmrowmenu_${openPharmacyRowMenuId}`);
+        if (menu) menu.style.display = 'none';
+        openPharmacyRowMenuId = null;
+      }
+    });
+
+    async function openBatchesModal(itemId, itemName) {
+      document.getElementById(`pharmrowmenu_${itemId}`).style.display = 'none';
+      openPharmacyRowMenuId = null;
       const overlay = document.createElement('div');
       overlay.className = 'overlay';
-      overlay.id = 'itemDetailOverlay';
+      overlay.id = 'batchesOverlay';
       overlay.innerHTML = `
         <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:4px">${escapeHtml(item.name)}</div>
-          <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(item.itemCode)} — ${item.currentQuantity} ${escapeHtml(item.unitOfMeasure || '')} on hand</div>
-          <div id="itemDetailContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
-          <div id="itemDetailHistory" style="font-size:11.5px;color:#6B7280;margin-top:12px"></div>
-          <button onclick="openRecordMovementModal('${itemId}', '${item.name.replace(/'/g,"\\'")}', ${item.currentQuantity})" style="width:100%;margin-top:14px;padding:9px;border:none;border-radius:8px;background:#8B1A1A;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record Movement</button>
-          <button class="secondary" onclick="document.getElementById('itemDetailOverlay').remove()">Close</button>
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">Batches — ${escapeHtml(itemName)}</div>
+          <div id="batchesContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
+          <button class="secondary" onclick="document.getElementById('batchesOverlay').remove()">Close</button>
         </div>`;
       document.body.appendChild(overlay);
-
-      // Confirmed directly as the real cause of reported lag opening
-      // an item's details: these two real network calls used to run
-      // one after the other - the second didn't even start until the
-      // first fully finished. Since every item is now batch-tracked,
-      // this happened on every single item open. Firing both together
-      // and waiting on both at once cuts the real wait roughly in
-      // half, bounded by whichever one is actually slower, not the
-      // sum of both. The history request also now asks for just the
-      // 3 rows actually shown, instead of pulling the full 200-row
-      // history over the network only to use 3 of them.
-      const [batchesResult, historyResult] = await Promise.allSettled([
-        item.isBatchTracked ? fetch(`/api/get-assets?inventoryBatches=true&itemId=${itemId}`).then(r => r.json()) : Promise.resolve(null),
-        fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}&limit=3`).then(r => r.json()),
-      ]);
-
-      if (item.isBatchTracked) {
-        if (batchesResult.status === 'fulfilled') {
-          const batches = batchesResult.value?.batches || [];
-          document.getElementById('itemDetailContent').innerHTML = batches.length === 0
-            ? '<div style="font-style:italic">No active batches.</div>'
-            : '<div style="font-weight:700;color:#8B1A1A;margin-bottom:8px">Batches (soonest expiry first)</div>' +
-              batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
-        } else {
-          document.getElementById('itemDetailContent').innerHTML = `<span style="color:#B3261E">${batchesResult.reason?.message || 'Could not load batches'}</span>`;
-        }
-      } else {
-        document.getElementById('itemDetailContent').innerHTML = '<div style="font-style:italic">Not batch-tracked — a single running total.</div>';
+      try {
+        const resp = await fetch(`/api/get-assets?inventoryBatches=true&itemId=${itemId}`);
+        const data = await resp.json();
+        const batches = data.batches || [];
+        document.getElementById('batchesContent').innerHTML = batches.length === 0
+          ? '<div style="font-style:italic">No active batches.</div>'
+          : '<div style="font-weight:700;color:#8B1A1A;margin-bottom:8px">Soonest expiry first</div>' +
+            batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
+      } catch (err) {
+        document.getElementById('batchesContent').innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
       }
+    }
 
-      // Confirmed directly: a compact, real recent-activity summary -
-      // just the last 3 movements, not a full history dump - kept
-      // short on purpose rather than turning this into a wall of text.
-      if (historyResult.status === 'fulfilled') {
-        const recent = (historyResult.value?.movements || []).slice(0, 3);
-        const historyEl = document.getElementById('itemDetailHistory');
-        if (recent.length === 0) {
-          historyEl.innerHTML = '';
-        } else {
-          historyEl.innerHTML = '<div style="font-weight:700;color:#8B1A1A;margin-bottom:6px">Recent activity</div>' +
-            recent.map(m => `<div style="padding:4px 0">${m.movementType === 'IN' ? '↑' : '↓'} <strong style="color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'}">${m.quantity}</strong> — ${new Date(m.performedAt).toLocaleDateString()}${m.reason ? ' · ' + escapeHtml(m.reason) : ''}</div>`).join('');
-        }
-      } else {
-        console.error('Recent activity load failed (non-fatal):', historyResult.reason?.message);
+    async function openHistoryModal(itemId, itemName) {
+      document.getElementById(`pharmrowmenu_${itemId}`).style.display = 'none';
+      openPharmacyRowMenuId = null;
+      const overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.id = 'historyOverlay';
+      overlay.innerHTML = `
+        <div class="modal" style="max-height:80vh;overflow-y:auto">
+          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">History — ${escapeHtml(itemName)}</div>
+          <div id="historyContent" style="font-size:12px;color:#6B7280">Loading…</div>
+          <button class="secondary" onclick="document.getElementById('historyOverlay').remove()">Close</button>
+        </div>`;
+      document.body.appendChild(overlay);
+      try {
+        const resp = await fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}`);
+        const data = await resp.json();
+        const movements = data.movements || [];
+        document.getElementById('historyContent').innerHTML = movements.length === 0
+          ? '<div style="font-style:italic">No movements recorded yet.</div>'
+          : movements.map(m => `
+            <div style="padding:8px 0;border-bottom:1px solid #F0F2F6">
+              <span style="font-weight:700;color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'}">${m.movementType === 'IN' ? '↑ IN' : '↓ OUT'} ${m.quantity}</span>
+              ${m.reason ? `<span style="color:#1A1A2E"> — ${escapeHtml(m.reason)}</span>` : ''}
+              ${m.department ? `<span style="color:#6B7280"> (${escapeHtml(m.department)})</span>` : ''}
+              <div style="font-size:10.5px;color:#6B7280;margin-top:2px">${escapeHtml(m.performedBy || 'unknown')} · ${new Date(m.performedAt).toLocaleString()}</div>
+            </div>`).join('');
+      } catch (err) {
+        document.getElementById('historyContent').innerHTML = `<span style="color:#B3261E">Could not load history: ${err.message}</span>`;
       }
     }
 
@@ -487,7 +530,6 @@
         const data = await resp.json();
         if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record movement');
         overlay.remove();
-        document.getElementById('itemDetailOverlay')?.remove();
         const cached = inventoryItemsCache.find(i => i.id === itemId);
         if (cached) cached.currentQuantity = data.newQuantity;
         renderItemList();
