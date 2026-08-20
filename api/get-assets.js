@@ -1445,7 +1445,7 @@ async function handleGetFixedAssetRegister(req, res) {
       totals,
       traClasses: classes.map(c => ({ id: c.id, label: c.label, rate: Number(c.rate) })),
       placeholderNotice: classes.length === 4 && classes.every(c => ["Computers & data equipment", "Vehicles & earthmoving equipment", "Other machinery & equipment", "Buildings & structures"].includes(c.label))
-        ? "These are still the starting placeholder categories — replace them with Selian's real item types and rates under \"Manage TRA Categories\" below."
+        ? "These are still the starting placeholder categories — replace them with this client's real item types and rates under \"Manage TRA Categories\" below."
         : null,
     });
   } catch (err) {

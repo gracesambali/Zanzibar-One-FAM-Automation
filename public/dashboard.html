@@ -3473,7 +3473,7 @@ async function downloadAssetRegisterPeriod(period, format) {
 // so the class column is read leniently — "Class 1", "class1", "1",
 // and "CLASS_1" all resolve the same way, rather than requiring exact
 // formatting nobody would naturally type.
-// Add/edit a real TRA category — the actual place Selian's finance-
+// Add/edit a real TRA category — the actual place a client's finance-
 // provided item type and rate get entered, once, rather than being
 // fixed in code. One shared modal for both add and edit; classId
 // present means editing an existing one.
@@ -3562,7 +3562,7 @@ function openImportTraClassesModal() {
 }
 
 // Just trims now — categories are real, arbitrary names (whatever
-// Selian's finance contact actually calls them), not a fixed set of
+// a client's finance contact actually calls them), not a fixed set of
 // codes to map onto. The backend matches case-insensitively against
 // the real tra_classes table and reports back anything that doesn't
 // match a real category, rather than this guessing at one.
@@ -4514,7 +4514,7 @@ function fleetRequestFormFields(req, isEdit) {
     <input id="fr_purpose" type="text" value="${v.purpose ? escapeHtml(v.purpose) : ''}" placeholder="e.g. Supply run, airport pickup" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     <div style="display:flex;gap:10px">
       <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Trip Starts At</label>
-      <input id="fr_origin" type="text" value="${v.origin ? escapeHtml(v.origin) : ''}" placeholder="e.g. Selian Hospital" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
+      <input id="fr_origin" type="text" value="${v.origin ? escapeHtml(v.origin) : ''}" placeholder="e.g. Main Office" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
       <div style="flex:1"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Destination</label>
       <input id="fr_destination" type="text" value="${v.destination ? escapeHtml(v.destination) : ''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></div>
     </div>
