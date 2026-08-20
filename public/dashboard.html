@@ -312,20 +312,25 @@ button { font-family: inherit; cursor: pointer; }
    Inventory Activity Log already renders cleanly on phone: it isn't
    a table at all, just full-width stacked blocks — one prominent
    line, one compact meta line beneath it, no side-by-side columns
-   ever competing for horizontal room. Two prior attempts at a
-   flex-row "compact columns" version kept technically avoiding
-   overlap while still feeling cramped, because the real issue was
-   the side-by-side structure itself, not which specific columns were
-   visible. Rebuilt to genuinely match the log's own structure instead
-   of continuing to refine a fundamentally different layout. */
-@media (max-width: 700px) {
+   ever competing for horizontal room.
+   Two real, separate issues reported and fixed here: hiding Category
+   and Location entirely traded "broken" for "not enough real
+   information" - both now shown in the same compact meta line as
+   Code (Code · Category · Location), grouped together rather than
+   scattered, instead of disappearing. And max-width:700px never
+   covered phone landscape orientation at all - a real phone in
+   landscape commonly reaches 800-930px wide, so the original,
+   unfixed wide table was still showing there the whole time. Raised
+   to 930px to genuinely cover landscape on the largest real phones,
+   not just portrait. */
+@media (max-width: 930px) {
   .inv-table thead { display: none; }
   .inv-table, .inv-table tbody, .inv-table tr, .inv-table td { display: block; width: 100%; }
   .inv-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); position: relative; }
   .inv-table td { padding: 0; border: none; }
-  .inv-table td:nth-child(1) { display: none; } /* Code — shown instead as meta-text inside the name cell */
+  .inv-table td:nth-child(1) { display: none; } /* Code — shown instead as part of the meta line inside the name cell */
   .inv-table td:nth-child(2) { font-weight: 600; color: var(--text); padding-right: 34px; }
-  .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Category and Location */
+  .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Category and Location — shown instead as part of the same meta line, not lost */
   .inv-table td:nth-child(4) { display: inline-block; width: auto; text-align: left; font-size: 11px; color: var(--muted); margin-top: 3px; margin-right: 8px; }
   .inv-table td:nth-child(6) { display: inline-block; width: auto; margin-top: 3px; }
   .inv-table td:last-child { position: absolute; top: 10px; right: 0; width: auto; }
@@ -5562,7 +5567,7 @@ function renderInventoryTable() {
             : items.map(i => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)}</div></td>
+                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)} · ${escapeHtml(i.category || '—')} · ${escapeHtml(i.location || '—')}</div></td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category || '—')}</td>
                 <td style="padding:9px 12px;text-align:right">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location || '—')}</td>
@@ -5820,7 +5825,7 @@ async function switchInventoryYearView(yearOrLive) {
             ${items.length === 0 ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
               items.map(i => `<tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)}</div></td>
+                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)} · ${escapeHtml(i.category || '—')} · ${escapeHtml(i.location || '—')}</div></td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category||'—')}</td>
                 <td style="padding:9px 12px;text-align:right">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location||'—')}</td>
