@@ -7,7 +7,7 @@
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; }
-  :root { --navy:#8B1A1A; --navy-light:#A83232; --navy-pale:#F5DFDF; --bg:#F0F2F6; --white:#FFFFFF; --text:#1A1A2E; --muted:#6B7280; --border:#E2E6ED; --green:#1B7A43; --green-bg:#E8F8EF; --red:#B3261E; --red-bg:#FDE8E6; }
+  :root { --navy:#003566; --navy-light:#1a4f80; --navy-pale:#DCE6F0; --bg:#F0F2F6; --white:#FFFFFF; --text:#1A1A2E; --muted:#6B7280; --border:#E2E6ED; --green:#1B7A43; --green-bg:#E8F8EF; --red:#B3261E; --red-bg:#FDE8E6; }
   body { font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
   .header { background:var(--navy); color:#fff; padding:20px 32px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .header-left { display:flex; align-items:center; gap:14px; min-width:0; }
@@ -80,10 +80,10 @@
 
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
   .modal { background:#fff; border-radius:14px; max-width:420px; width:100%; padding:20px; max-height:90vh; overflow-y:auto; }
-  .modal label { font-size:11px; font-weight:600; color:#8B1A1A; display:block; margin-bottom:4px; }
+  .modal label { font-size:11px; font-weight:600; color:#003566; display:block; margin-bottom:4px; }
   .modal input, .modal select { width:100%; padding:9px 12px; border:1px solid #E2E6ED; border-radius:8px; font-size:13px; margin-bottom:10px; }
-  .modal button.primary { width:100%; padding:11px; border:none; border-radius:8px; background:#8B1A1A; color:#fff; font-weight:600; font-size:13.5px; cursor:pointer; }
-  .modal button.secondary { width:100%; padding:11px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#8B1A1A; font-weight:600; font-size:13.5px; cursor:pointer; margin-top:8px; }
+  .modal button.primary { width:100%; padding:11px; border:none; border-radius:8px; background:#003566; color:#fff; font-weight:600; font-size:13.5px; cursor:pointer; }
+  .modal button.secondary { width:100%; padding:11px; border:1px solid #E2E6ED; border-radius:8px; background:#fff; color:#003566; font-weight:600; font-size:13.5px; cursor:pointer; margin-top:8px; }
   .error-box { color:#B3261E; font-size:12px; margin-bottom:10px; display:none; }
   #accessBlocked { text-align:center; padding:60px 24px; }
 </style>
@@ -102,7 +102,7 @@
 
   <div id="accessBlocked" style="display:none">
     <div style="font-size:32px;margin-bottom:12px">🔒</div>
-    <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:6px">Access Restricted</div>
+    <div style="font-size:15px;font-weight:700;color:#003566;margin-bottom:6px">Access Restricted</div>
     <div style="font-size:13px;color:#6B7280">This page is only available to the Pharmacy role.</div>
   </div>
 
@@ -305,13 +305,13 @@
           <html><head><title>Pharmacy ${label} Report</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-            h1 { font-size: 18px; color: #8B1A1A; margin-bottom: 2px; }
+            h1 { font-size: 18px; color: #003566; margin-bottom: 2px; }
             .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
             table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
             th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
             th { background: #F7F8FA; }
-            .totals td { font-weight: 700; border-top: 2px solid #8B1A1A; }
-            .download-btn { background:#8B1A1A; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+            .totals td { font-weight: 700; border-top: 2px solid #003566; }
+            .download-btn { background:#003566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
             @media print { .download-btn { display:none; } }
           </style></head><body>
           <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
@@ -355,7 +355,7 @@
                 <td class="item-qty-cell">${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')}</td>
                 <td>${i.lowStock ? '<span class="badge badge-low">Low Stock</span>' : '<span class="badge badge-ok">OK</span>'}</td>
                 <td style="text-align:right;white-space:nowrap;position:relative">
-                  <button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid #8B1A1A;border-radius:6px;background:#fff;color:#8B1A1A;cursor:pointer;margin-right:4px">Record Movement</button>
+                  <button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid #003566;border-radius:6px;background:#fff;color:#003566;cursor:pointer;margin-right:4px">Record Movement</button>
                   <button onclick="togglePharmacyRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid #E2E6ED;border-radius:6px;background:#fff;color:#6B7280;cursor:pointer;line-height:1">⋮</button>
                   <div id="pharmrowmenu_${i.id}" style="display:none;position:absolute;top:34px;right:0;background:#fff;border:1px solid #E2E6ED;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left"></div>
                 </td>
@@ -416,7 +416,7 @@
       overlay.id = 'batchesOverlay';
       overlay.innerHTML = `
         <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">Batches — ${escapeHtml(itemName)}</div>
+          <div style="font-size:15px;font-weight:700;color:#003566;margin-bottom:14px">Batches — ${escapeHtml(itemName)}</div>
           <div id="batchesContent" style="font-size:12.5px;color:#6B7280">Loading…</div>
           <button class="secondary" onclick="document.getElementById('batchesOverlay').remove()">Close</button>
         </div>`;
@@ -427,7 +427,7 @@
         const batches = data.batches || [];
         document.getElementById('batchesContent').innerHTML = batches.length === 0
           ? '<div style="font-style:italic">No active batches.</div>'
-          : '<div style="font-weight:700;color:#8B1A1A;margin-bottom:8px">Soonest expiry first</div>' +
+          : '<div style="font-weight:700;color:#003566;margin-bottom:8px">Soonest expiry first</div>' +
             batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
       } catch (err) {
         document.getElementById('batchesContent').innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
@@ -442,7 +442,7 @@
       overlay.id = 'historyOverlay';
       overlay.innerHTML = `
         <div class="modal" style="max-height:80vh;overflow-y:auto">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:14px">History — ${escapeHtml(itemName)}</div>
+          <div style="font-size:15px;font-weight:700;color:#003566;margin-bottom:14px">History — ${escapeHtml(itemName)}</div>
           <div id="historyContent" style="font-size:12px;color:#6B7280">Loading…</div>
           <button class="secondary" onclick="document.getElementById('historyOverlay').remove()">Close</button>
         </div>`;
@@ -471,7 +471,7 @@
       overlay.id = 'recordMovementOverlay';
       overlay.innerHTML = `
         <div class="modal">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A;margin-bottom:4px">Record Movement</div>
+          <div style="font-size:15px;font-weight:700;color:#003566;margin-bottom:4px">Record Movement</div>
           <div style="font-size:12px;color:#6B7280;margin-bottom:14px">${escapeHtml(itemName)} — currently ${currentQuantity} in stock</div>
           <div style="display:flex;gap:8px;margin-bottom:14px">
             <button id="mv_typeIn" onclick="setMovementType('IN')" style="flex:1;padding:10px;border:1px solid #1B7A43;border-radius:8px;background:#E8F8EF;color:#1B7A43;font-weight:700;cursor:pointer">Stock IN</button>
@@ -484,7 +484,7 @@
           <label>Department <span style="font-weight:400;color:#6B7280">(if issuing out)</span></label>
           <input id="mv_department" type="text" placeholder="e.g. Ward A, Pharmacy">
           <div id="mv_error" style="display:none;color:#B3261E;font-size:12px;margin-bottom:10px"></div>
-          <button id="mv_submit" onclick="submitInventoryMovement('${itemId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:#8B1A1A;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record</button>
+          <button id="mv_submit" onclick="submitInventoryMovement('${itemId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:#003566;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Record</button>
           <button class="secondary" onclick="document.getElementById('recordMovementOverlay').remove()">Cancel</button>
         </div>`;
       document.body.appendChild(overlay);
@@ -588,7 +588,7 @@
       overlay.innerHTML = `
         <div class="modal">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div style="font-size:15px;font-weight:700;color:#8B1A1A">${mode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+            <div style="font-size:15px;font-weight:700;color:#003566">${mode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
             <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
           </div>
           <div id="scanVideoWrap" style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:12px">
@@ -647,7 +647,7 @@
       const container = overlay.querySelector('.modal');
       const itemOptions = inventoryItemsCache.map(i => `<option value="${i.id}">${escapeHtml(i.itemCode)} — ${escapeHtml(i.name)}</option>`).join('');
       container.innerHTML += `
-        <div style="font-size:12.5px;color:#8B1A1A;margin-bottom:8px">This barcode hasn't been seen before. Which item is it?</div>
+        <div style="font-size:12.5px;color:#003566;margin-bottom:8px">This barcode hasn't been seen before. Which item is it?</div>
         <div style="font-size:11px;color:#6B7280;margin-bottom:10px">Scanned code: ${escapeHtml(gtin)}</div>
         <select id="scan_linkItem"><option value="">— Choose an item —</option>${itemOptions}</select>
         <div id="scan_linkError" class="error-box"></div>
@@ -670,7 +670,7 @@
       const container = overlay.querySelector('.modal');
       container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A">Add New Item</div>
+          <div style="font-size:15px;font-weight:700;color:#003566">Add New Item</div>
           <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
         </div>
         <div style="font-size:11px;color:#6B7280;margin-bottom:12px">Scanned code: ${escapeHtml(gtin)}${lotNumber ? ` · Batch ${escapeHtml(lotNumber)}` : ''}${expiryDate ? ` · Expires ${expiryDate}` : ''}</div>
@@ -685,7 +685,7 @@
         </select>
         <div id="scannew_category_new" style="display:none;gap:6px;margin-bottom:10px">
           <input id="scannew_category_newInput" type="text" placeholder="New category name" style="flex:1">
-          <button onclick="addScanNewCategory()" style="padding:9px 14px;border:1px solid #8B1A1A;border-radius:8px;background:#fff;color:#8B1A1A;font-weight:600;font-size:12.5px;cursor:pointer">Add</button>
+          <button onclick="addScanNewCategory()" style="padding:9px 14px;border:1px solid #003566;border-radius:8px;background:#fff;color:#003566;font-weight:600;font-size:12.5px;cursor:pointer">Add</button>
         </div>
         <label>Unit of Measure</label>
         <input id="scannew_unit" type="text" placeholder="e.g. boxes, pieces">
@@ -779,7 +779,7 @@
       const extraArgsJs = (extraArgs || []).map(a => JSON.stringify(a)).join(', ');
       container.innerHTML = matches.map(i => `
         <div onclick='${onSelect}(${JSON.stringify(i.id)}${extraArgsJs ? ', ' + extraArgsJs : ''})' style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #E2E6ED" onmouseenter="this.style.background='#F7F8FA'" onmouseleave="this.style.background='#fff'">
-          <div style="font-size:12.5px;font-weight:600;color:#8B1A1A">${escapeHtml(i.name)}</div>
+          <div style="font-size:12.5px;font-weight:600;color:#003566">${escapeHtml(i.name)}</div>
           <div style="font-size:11px;color:#6B7280">${escapeHtml(i.itemCode)} · ${i.currentQuantity} ${escapeHtml(i.unitOfMeasure || '')} in stock${i.lowStock ? ' · Low Stock' : ''}</div>
         </div>`).join('');
       container.style.display = 'block';
@@ -826,11 +826,11 @@
       const container = overlay.querySelector('.modal');
       container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-          <div style="font-size:15px;font-weight:700;color:#8B1A1A">${scanModalMode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
+          <div style="font-size:15px;font-weight:700;color:#003566">${scanModalMode === 'IN' ? '📷 Scan In' : '📷 Scan Out'}</div>
           <button onclick="closeScanModal()" style="border:none;background:none;font-size:20px;color:#6B7280;cursor:pointer;line-height:1">×</button>
         </div>
         <div style="background:#F0F2F6;border-radius:10px;padding:12px 14px;margin-bottom:14px">
-          <div style="font-size:13px;font-weight:700;color:#8B1A1A">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
+          <div style="font-size:13px;font-weight:700;color:#003566">${escapeHtml(itemCode || '')} — ${escapeHtml(itemName || '')}</div>
           ${isBatchTracked && lotNumber ? `<div style="font-size:11.5px;color:#6B7280;margin-top:4px">Batch ${escapeHtml(lotNumber)}${expiryDate ? ' · Expires ' + expiryDate : ''}</div>` : ''}
           ${isBatchTracked && scanModalMode === 'IN' && !lotNumber ? `<div style="font-size:11px;color:#B45309;margin-top:4px">⚠ Batch-tracked but no batch info in the scan — enter it below.</div>` : ''}
         </div>
