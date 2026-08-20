@@ -5499,6 +5499,8 @@ function renderInventoryTable() {
         <button onclick="openAddInventoryItemModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Item</button>
         <button onclick="openScanModal('IN')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📷 Scan In</button>
         <button onclick="openScanModal('OUT')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">📷 Scan Out</button>
+        <button onclick="openManualScanEntry('IN')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">✏️ Manual Stock In</button>
+        <button onclick="openManualScanEntry('OUT')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✏️ Manual Stock Out</button>
         <button onclick="openUploadInventorySheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
         <button onclick="openUploadPreviousYearModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">📅 Upload Previous Year</button>
       </div>` : ''}

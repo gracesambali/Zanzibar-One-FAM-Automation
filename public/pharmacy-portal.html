@@ -112,6 +112,10 @@
         <button class="scan-btn scan-in" onclick="openScanModal('IN')"><span class="icon">📷</span>Scan In</button>
         <button class="scan-btn scan-out" onclick="openScanModal('OUT')"><span class="icon">📷</span>Scan Out</button>
       </div>
+      <div style="display:flex;gap:16px;justify-content:center;margin:-4px 0 16px">
+        <button onclick="openManualScanEntry('IN')" style="border:none;background:none;color:var(--green);font-size:12.5px;font-weight:600;cursor:pointer;padding:4px">✏️ Enter Stock In manually</button>
+        <button onclick="openManualScanEntry('OUT')" style="border:none;background:none;color:var(--red);font-size:12.5px;font-weight:600;cursor:pointer;padding:4px">✏️ Enter Stock Out manually</button>
+      </div>
 
       <div class="panel">
         <div class="panel-title">Inventory</div>
