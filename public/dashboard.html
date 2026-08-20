@@ -308,6 +308,33 @@ button { font-family: inherit; cursor: pointer; }
 .level-detail { font-size:11.5px; color:var(--muted); margin-top:2px; }
 .level-count { font-size:12px; color:var(--muted); white-space:nowrap; font-weight:600; }
 
+/* Inventory tab table — confirmed directly as a real, reported
+   overlap bug on phone, matching the exact same underlying cause
+   already fixed for the Pharmacy Portal: seven plain columns with no
+   width protection of their own, including a direct Record Movement
+   button that never fit alongside everything else in one compact
+   row. Same proven fix — stack each row as flex, hide the
+   less-critical columns, protect what's left from wrapping, and move
+   Record Movement into the existing ⋮ menu instead of losing it.
+   Code is also hidden here (unlike Pharmacy, which never showed it
+   as its own competing column to begin with — there it was already
+   small meta-text nested inside the name cell) - five flex items
+   fighting for room on a real phone width left Name too cramped to
+   read cleanly even without overlapping; four matches what actually
+   proved clean. */
+@media (max-width: 700px) {
+  .inv-table thead { display: none; }
+  .inv-table, .inv-table tbody, .inv-table tr { display: block; width: 100%; }
+  .inv-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .inv-table td { padding: 0; border: none; }
+  .inv-table td:nth-child(1), .inv-table td:nth-child(3), .inv-table td:nth-child(5) { display: none; } /* Code, Category, and Location hidden on phone */
+  .inv-table td:nth-child(2) { flex: 1; min-width: 0; }
+  .inv-table td:nth-child(4), .inv-table td:nth-child(6) { flex-shrink: 0; white-space: nowrap; }
+  .inv-table td:last-child { flex-shrink: 0; }
+  .inv-table .record-movement-btn { display: none; }
+  .inv-table .inv-mobile-code { display: block !important; }
+}
+
 @media (max-width: 700px) {
   .dash-grid { grid-template-columns: 1fr; }
   .dash-grid-4 { grid-template-columns: 1fr; }
@@ -5547,7 +5574,7 @@ function renderInventoryTable() {
                     : `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green)">OK</span>`}
                 </td>
                 <td style="padding:9px 12px;text-align:right;white-space:nowrap;position:relative">
-                  ${canManageInventory ? `<button onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
+                  ${canManageInventory ? `<button class="record-movement-btn" onclick="openRecordMovementModal('${i.id}', '${i.name.replace(/'/g,"\\'")}', ${i.currentQuantity})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer;margin-right:4px">Record Movement</button>` : ''}
                   <button onclick="toggleInventoryRowMenu('${i.id}', event)" style="padding:4px 9px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--muted);cursor:pointer;line-height:1">⋮</button>
                   <div id="rowmenu_${i.id}" style="display:none;position:absolute;top:36px;right:8px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:15;min-width:120px;text-align:left"></div>
                 </td>
@@ -5692,7 +5719,8 @@ function toggleInventoryRowMenu(itemId, event) {
     if (i) {
       const safeName = i.name.replace(/'/g, "\\'");
       menu.innerHTML = `
-        <button onclick="openInventoryHistoryModal('${i.id}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">History</button>
+        ${canManageInventory ? `<button onclick="document.getElementById('rowmenu_${i.id}').style.display='none'; openInventoryRowMenuId=null; openRecordMovementModal('${i.id}', '${safeName}', ${i.currentQuantity})" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">Record Movement</button>` : ''}
+        <button onclick="openInventoryHistoryModal('${i.id}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:${canManageInventory ? '1px solid var(--border)' : 'none'}">History</button>
         ${canManageInventory ? `<button onclick="openEditInventoryItemModal('${i.id}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Edit</button>` : ''}
         ${canManageInventory ? `<button onclick="openMergeInventoryItemModal('${i.id}', '${escapeHtml(i.itemCode)}', '${safeName}', ${i.currentQuantity})" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Merge Into…</button>` : ''}
         ${canManageInventory ? `<button onclick="deleteInventoryItemNow('${i.id}', '${escapeHtml(i.itemCode)}', '${safeName}')" style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:none;font-size:12.5px;color:var(--red);cursor:pointer;border-top:1px solid var(--border)">Delete</button>` : ''}`;
@@ -5782,7 +5810,7 @@ async function switchInventoryYearView(yearOrLive) {
         ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Recorded Value</div></div>` : ''}
       </div>
       <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <table class="inv-table" style="width:100%;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Code</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
@@ -5794,7 +5822,7 @@ async function switchInventoryYearView(yearOrLive) {
             ${items.length === 0 ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
               items.map(i => `<tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(i.itemCode)}</td>
-                <td style="padding:9px 12px">${escapeHtml(i.name)}</td>
+                <td style="padding:9px 12px">${escapeHtml(i.name)}<div class="inv-mobile-code" style="display:none;font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(i.itemCode)}</div></td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.category||'—')}</td>
                 <td style="padding:9px 12px;text-align:right">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(i.location||'—')}</td>
