@@ -519,7 +519,8 @@ export default async function handler(req, res) {
   if (req.query.inventoryMovements === "true" && req.query.itemId) {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from inventory_movements where item_id = $1 order by performed_at desc limit 200", [req.query.itemId]);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 200);
+      const result = await pgQuery("select * from inventory_movements where item_id = $1 order by performed_at desc limit $2", [req.query.itemId, limit]);
       return res.status(200).json({
         movements: result.rows.map(r => ({
           movementType: r.movement_type, quantity: Number(r.quantity), reason: r.reason,

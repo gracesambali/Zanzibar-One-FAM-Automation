@@ -380,17 +380,30 @@
         </div>`;
       document.body.appendChild(overlay);
 
+      // Confirmed directly as the real cause of reported lag opening
+      // an item's details: these two real network calls used to run
+      // one after the other - the second didn't even start until the
+      // first fully finished. Since every item is now batch-tracked,
+      // this happened on every single item open. Firing both together
+      // and waiting on both at once cuts the real wait roughly in
+      // half, bounded by whichever one is actually slower, not the
+      // sum of both. The history request also now asks for just the
+      // 3 rows actually shown, instead of pulling the full 200-row
+      // history over the network only to use 3 of them.
+      const [batchesResult, historyResult] = await Promise.allSettled([
+        item.isBatchTracked ? fetch(`/api/get-assets?inventoryBatches=true&itemId=${itemId}`).then(r => r.json()) : Promise.resolve(null),
+        fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}&limit=3`).then(r => r.json()),
+      ]);
+
       if (item.isBatchTracked) {
-        try {
-          const resp = await fetch(`/api/get-assets?inventoryBatches=true&itemId=${itemId}`);
-          const data = await resp.json();
-          const batches = data.batches || [];
+        if (batchesResult.status === 'fulfilled') {
+          const batches = batchesResult.value?.batches || [];
           document.getElementById('itemDetailContent').innerHTML = batches.length === 0
             ? '<div style="font-style:italic">No active batches.</div>'
             : '<div style="font-weight:700;color:#8B1A1A;margin-bottom:8px">Batches (soonest expiry first)</div>' +
               batches.map(b => `<div style="padding:6px 0;border-bottom:1px solid #F0F2F6;display:flex;justify-content:space-between"><span>${escapeHtml(b.lotNumber || 'Unlabeled')}${b.expiryDate ? ' · exp ' + b.expiryDate : ''}</span><span style="font-weight:700">${b.quantity}</span></div>`).join('');
-        } catch (err) {
-          document.getElementById('itemDetailContent').innerHTML = `<span style="color:#B3261E">${err.message}</span>`;
+        } else {
+          document.getElementById('itemDetailContent').innerHTML = `<span style="color:#B3261E">${batchesResult.reason?.message || 'Could not load batches'}</span>`;
         }
       } else {
         document.getElementById('itemDetailContent').innerHTML = '<div style="font-style:italic">Not batch-tracked — a single running total.</div>';
@@ -399,10 +412,8 @@
       // Confirmed directly: a compact, real recent-activity summary -
       // just the last 3 movements, not a full history dump - kept
       // short on purpose rather than turning this into a wall of text.
-      try {
-        const histResp = await fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}`);
-        const histData = await histResp.json();
-        const recent = (histData.movements || []).slice(0, 3);
+      if (historyResult.status === 'fulfilled') {
+        const recent = (historyResult.value?.movements || []).slice(0, 3);
         const historyEl = document.getElementById('itemDetailHistory');
         if (recent.length === 0) {
           historyEl.innerHTML = '';
@@ -410,8 +421,8 @@
           historyEl.innerHTML = '<div style="font-weight:700;color:#8B1A1A;margin-bottom:6px">Recent activity</div>' +
             recent.map(m => `<div style="padding:4px 0">${m.movementType === 'IN' ? '↑' : '↓'} <strong style="color:${m.movementType === 'IN' ? '#1B7A43' : '#B3261E'}">${m.quantity}</strong> — ${new Date(m.performedAt).toLocaleDateString()}${m.reason ? ' · ' + escapeHtml(m.reason) : ''}</div>`).join('');
         }
-      } catch (err) {
-        console.error('Recent activity load failed (non-fatal):', err.message);
+      } else {
+        console.error('Recent activity load failed (non-fatal):', historyResult.reason?.message);
       }
     }
 
