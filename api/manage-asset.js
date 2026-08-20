@@ -1348,9 +1348,6 @@ async function handleScanInventoryIn(req, res, performedBy) {
 
     let batch = null;
     if (item.is_batch_tracked) {
-      if (!lotNumber && !expiryDate) {
-        return res.status(400).json({ error: "This item is batch-tracked — a lot number or expiry date is required." });
-      }
       const existingBatches = await listAllRecords("inventory_batches");
       batch = existingBatches.find(b => b.item_id === itemId && (b.lot_number || "") === (lotNumber || "") && (b.expiry_date || "") === (expiryDate || ""));
       if (batch) {
