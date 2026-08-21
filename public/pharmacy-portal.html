@@ -47,7 +47,12 @@
   .item-table .item-meta-cell { font-size:11px; color:var(--muted); margin-top:2px; }
   .item-qty-cell { text-align:right; font-weight:700; color:var(--navy); font-size:14.5px; }
 
-  @media (max-width:700px) {
+  /* Confirmed directly: max-width:700px never covered phone
+     landscape orientation - a real phone in landscape commonly
+     reaches 800-930px wide, wider than this breakpoint, so the
+     original wide table was still rendering there. Raised to
+     genuinely cover landscape on real phones, not just portrait. */
+  @media (max-width:930px) {
     .item-table thead { display:none; }
     .item-table, .item-table tbody, .item-table tr { display:block; width:100%; }
     .item-table tr { padding:12px 0; border-bottom:1px solid #F0F2F6; display:flex; justify-content:space-between; align-items:center; gap:8px; }

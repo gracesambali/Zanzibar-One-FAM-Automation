@@ -327,7 +327,14 @@ button { font-family: inherit; cursor: pointer; }
 .inv-table .badge-low { background: var(--red-bg); color: var(--red); }
 .inv-table .badge-ok { background: var(--green-bg); color: var(--green); }
 
-@media (max-width: 700px) {
+/* Confirmed directly: max-width:700px never covered phone landscape
+   orientation - a real phone in landscape commonly reaches 800-930px
+   wide. This exact fix (930px) was already proven correct once
+   before, in an earlier session - it was lost when this table was
+   later rebuilt as a direct copy of the Pharmacy Portal's own table,
+   which carried the identical, never-fixed landscape gap. Fixed here
+   in both files together this time, not just one. */
+@media (max-width: 930px) {
   .inv-table thead { display: none; }
   .inv-table, .inv-table tbody, .inv-table tr { display: block; width: 100%; }
   .inv-table tr { padding: 12px 0; border-bottom: 1px solid #F0F2F6; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
