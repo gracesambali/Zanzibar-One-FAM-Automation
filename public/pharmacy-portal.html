@@ -51,14 +51,20 @@
      landscape orientation - a real phone in landscape commonly
      reaches 800-930px wide, wider than this breakpoint, so the
      original wide table was still rendering there. Raised to
-     genuinely cover landscape on real phones, not just portrait. */
+     genuinely cover landscape on real phones, not just portrait.
+     Also confirmed directly, testing the identical structure in
+     Inventory under real, tighter constraint: a long item name could
+     still collide with quantity/status/menu when forced onto one
+     line. flex-wrap lets them drop to a second line instead, and the
+     name gets a real minimum width so it isn't squeezed to nothing
+     first. */
   @media (max-width:930px) {
     .item-table thead { display:none; }
     .item-table, .item-table tbody, .item-table tr { display:block; width:100%; }
-    .item-table tr { padding:12px 0; border-bottom:1px solid #F0F2F6; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .item-table tr { padding:12px 0; border-bottom:1px solid #F0F2F6; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px 8px; }
     .item-table td { padding:0; border:none; }
     .item-table td:nth-child(2), .item-table td:nth-child(3) { display:none; } /* Category and Location hidden on phone - name, quantity, and status are what actually matters when scanning on the go */
-    .item-table td:first-child { flex:1; min-width:0; }
+    .item-table td:first-child { flex: 1 1 140px; min-width: 140px; }
     /* Confirmed directly as a real, reported overlap bug: quantity,
        status, and the action cell had no width constraints of their
        own, so their content could wrap and overlap the row's white

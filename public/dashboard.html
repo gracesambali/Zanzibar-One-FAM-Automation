@@ -333,14 +333,23 @@ button { font-family: inherit; cursor: pointer; }
    before, in an earlier session - it was lost when this table was
    later rebuilt as a direct copy of the Pharmacy Portal's own table,
    which carried the identical, never-fixed landscape gap. Fixed here
-   in both files together this time, not just one. */
+   in both files together this time, not just one.
+   A second, real problem found testing with the sidebar genuinely
+   present (previous verification only ever rendered this table in
+   isolation, at the full viewport width, which is not what a real
+   phone actually gives it once the sidebar's own width is
+   subtracted): a long item name still collided with quantity/status/
+   menu when forced onto one line under real, tighter constraint.
+   flex-wrap allows them to drop to a second line instead of forcing
+   a collision, and the name gets a real minimum width so it isn't
+   squeezed into an unreadably narrow sliver first. */
 @media (max-width: 930px) {
   .inv-table thead { display: none; }
   .inv-table, .inv-table tbody, .inv-table tr { display: block; width: 100%; }
-  .inv-table tr { padding: 12px 0; border-bottom: 1px solid #F0F2F6; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .inv-table tr { padding: 12px 0; border-bottom: 1px solid #F0F2F6; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 8px; }
   .inv-table td { padding: 0; border: none; }
   .inv-table td:nth-child(2), .inv-table td:nth-child(3) { display: none; } /* Category and Location hidden on phone - name, quantity, and status are what actually matters when scanning on the go */
-  .inv-table td:first-child { flex: 1; min-width: 0; }
+  .inv-table td:first-child { flex: 1 1 140px; min-width: 140px; }
   .inv-table td:nth-child(4), .inv-table td:nth-child(5) { flex-shrink: 0; white-space: nowrap; }
   .inv-table td:last-child { flex-shrink: 0; }
   .inv-table .record-movement-btn { display: none; }
@@ -12867,7 +12876,16 @@ function restoreSidebarState() {
     // narrow screens so a phone doesn't start with half its width eaten
     // by the sidebar. Nothing is hidden or removed, just starts compact;
     // one tap still reaches everything.
-    if (window.innerWidth <= 700) sidebar.classList.add('collapsed');
+    // Confirmed directly as the real, root cause of a long-standing
+    // landscape rendering bug: this threshold must match the table's
+    // own mobile breakpoint (930px) exactly. When they were mismatched
+    // (this was 700, the table was 930), any real phone in landscape
+    // (commonly 800-930px wide) hit a genuine gap — the table
+    // correctly switched to its compact layout, but the sidebar
+    // stayed fully expanded at 220px, silently eating space the
+    // compact table CSS was never designed to lose, since it was only
+    // ever tested in isolation, without a sidebar present at all.
+    if (window.innerWidth <= 930) sidebar.classList.add('collapsed');
   }
 }
 restoreSidebarState();
