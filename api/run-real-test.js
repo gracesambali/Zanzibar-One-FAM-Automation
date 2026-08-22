@@ -145,7 +145,7 @@ async function sendEmail(f, urgency, daysUntil, message) {
     urgency,
     daysUntil,
     existingWoId: null,
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+    fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
   });
 
   return fetch("https://api.resend.com/emails", {
@@ -155,11 +155,11 @@ async function sendEmail(f, urgency, daysUntil, message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
+      subject: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
       html,
-      text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
+      text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}.`,
     }),
   });
 }
