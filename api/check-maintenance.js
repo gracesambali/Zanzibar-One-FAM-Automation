@@ -155,9 +155,9 @@ export default async function handler(req, res) {
     // overlapping emails to the same audience. Always sends, even on a
     // quiet day — "nothing open, nothing triggered" is still a real,
     // visible signal rather than silence someone has to interpret.
-    await sendDailySummary(results.length);
+    const emailQuota = await sendDailySummary(results.length);
 
-    await sendHeartbeat(records.length, results);
+    await sendHeartbeat(records.length, results, null, emailQuota);
 
     // Sync "Current Value (TZS)" to match the live depreciation
     // calculation. The dashboard already computes this on every page
@@ -476,9 +476,16 @@ async function checkPlanDeadlines() {
 // heartbeat. Four things, each counted separately and kept brief —
 // work orders opened today, closed today, maintenance alerts, and
 // sensor alerts.
+// Confirmed directly from Resend's own docs: every real send response
+// carries x-resend-daily-quota and x-resend-monthly-quota headers -
+// daily is only sent to free-plan accounts, monthly always. Returned
+// here (rather than an extra, throwaway API call just to check usage)
+// so the heartbeat, which sends immediately after this in the real
+// call order, can report genuine, current numbers - at most one
+// email off, from this exact send.
 async function sendDailySummary(maintenanceTriggeredToday) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
-  if (toList.length === 0) return;
+  if (toList.length === 0) return null;
 
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
@@ -542,7 +549,7 @@ async function sendDailySummary(maintenanceTriggeredToday) {
         </div>
       </div>`;
 
-    await fetch("https://api.resend.com/emails", {
+    const resp = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -552,8 +559,14 @@ async function sendDailySummary(maintenanceTriggeredToday) {
         html,
       }),
     });
+
+    return {
+      dailyQuota: resp.headers.get("x-resend-daily-quota"),
+      monthlyQuota: resp.headers.get("x-resend-monthly-quota"),
+    };
   } catch (err) {
     console.error("sendDailySummary error:", err);
+    return null;
   }
 }
 
@@ -771,7 +784,7 @@ function buildRentNoticeEmailHtml(subject, recipientName, message) {
     </div>`;
 }
 
-async function sendHeartbeat(checkedCount, results, errorMessage) {
+async function sendHeartbeat(checkedCount, results, errorMessage, emailQuota) {
   const to = process.env.HEARTBEAT_EMAIL || process.env.ALERT_TO_EMAIL;
   if (!to) return;
 
@@ -780,9 +793,24 @@ async function sendHeartbeat(checkedCount, results, errorMessage) {
     ? `⚠ GVC FAM Heartbeat — CHECK FAILED (${todayString()})`
     : `✓ GVC FAM Heartbeat — ${todayString()}`;
 
+  // Confirmed directly from Resend's own docs: x-resend-daily-quota
+  // is only ever sent to free-plan accounts (paid plans have no daily
+  // cap), so a real, current daily figure is genuinely absent once
+  // Grace moves off free - shown only when Resend actually sent it,
+  // not hidden or faked as zero. Monthly is always present when any
+  // quota data exists at all. Both are genuinely absent on the
+  // failure path, since sendDailySummary - the real source of this
+  // data - never ran before the error occurred.
+  let quotaLine = "";
+  if (emailQuota?.monthlyQuota != null) {
+    const parts = [`${emailQuota.monthlyQuota} sent this month`];
+    if (emailQuota.dailyQuota != null) parts.push(`${emailQuota.dailyQuota} sent today (free plan, 100/day cap)`);
+    quotaLine = `\n\nResend usage — ${parts.join(", ")}.`;
+  }
+
   const body = isFailure
     ? `The daily maintenance check FAILED to run today.\n\nError: ${errorMessage}\n\nThis needs attention — client alerts may not have been sent.`
-    : `Daily maintenance check ran successfully.\n\nAssets checked: ${checkedCount}\nAlerts sent: ${results.length}\n${results.length ? "\n" + results.map(r => `- ${r.asset}: ${r.urgency} (${r.type})`).join("\n") : ""}`;
+    : `Daily maintenance check ran successfully.\n\nAssets checked: ${checkedCount}\nAlerts sent: ${results.length}\n${results.length ? "\n" + results.map(r => `- ${r.asset}: ${r.urgency} (${r.type})`).join("\n") : ""}${quotaLine}`;
 
   try {
     await fetch("https://api.resend.com/emails", {
