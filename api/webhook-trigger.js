@@ -160,9 +160,9 @@ async function sendEmail(f, urgency, message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
+      subject: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
           <div style="background:${urgency === "OVERDUE" ? "#dc2626" : urgency === "URGENT" ? "#d97706" : "#1A3566"};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">

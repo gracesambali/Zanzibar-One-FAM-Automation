@@ -257,7 +257,7 @@ async function sendDigestEmail(items, warrantyItems) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const overdueCount = items.filter(i => i.urgency === "OVERDUE").length;
   const urgentCount = items.filter(i => i.urgency === "URGENT").length;
   const upcomingCount = items.filter(i => i.urgency === "UPCOMING").length;
@@ -440,7 +440,7 @@ async function checkPlanDeadlines() {
           method: "POST",
           headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+            from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
             to: [creatorEntry.email],
             subject: `${planTitle} — target end in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
             html: `
@@ -529,7 +529,7 @@ async function sendDailySummary(maintenanceTriggeredToday) {
     const sensorAlertsToday = sensorCountResult ? Number(sensorCountResult.rows[0].count) || 0 : 0;
 
     const dateLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+    const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
     const anythingHappened = openedToday > 0 || closedToday > 0 || maintenanceTriggeredToday > 0 || sensorAlertsToday > 0;
 
     const html = `
@@ -703,7 +703,7 @@ async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMess
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
           to: [u.tenant_email],
           subject: tenantSubject,
           html: buildRentNoticeEmailHtml(tenantSubject, u.tenant_name, tenantMessage),
@@ -737,7 +737,7 @@ async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMess
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
           to: pmEmails,
           subject: pmSubject,
           html: buildRentNoticeEmailHtml(pmSubject, "Property Manager", pmMessage),
@@ -779,7 +779,7 @@ function buildRentNoticeEmailHtml(subject, recipientName, message) {
       <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
         <p style="font-size:14px;line-height:1.6;margin-top:0">Dear ${recipientName},</p>
         <p style="font-size:14px;line-height:1.6">${message}</p>
-        <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}</p>
+        <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}</p>
       </div>
     </div>`;
 }

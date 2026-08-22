@@ -120,7 +120,7 @@ async function sendUnsatisfactionAlert(assetName, reason) {
     .map(e => e.email);
   if (toList.length === 0) return;
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#dc2626;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -431,7 +431,7 @@ async function handleUnitPortalReportIssue(req, res) {
     // correctly stays EE/ME for technical issues; PM doesn't do the
     // electrical or mechanical work, just needs to know it's happening.
     const recipients = directory.filter(e => e.role === loginRole || e.role === "property_manager" || e.role === "business_owner" || e.role === "system_admin");
-    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+    const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
 
     const toList = recipients.map(e => e.email).filter(Boolean);
     if (toList.length > 0) {
@@ -697,7 +697,7 @@ export default async function handler(req, res) {
       console.error("lead capture: could not store lead:", err.message);
     }
     try {
-      const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+      const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
       await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
@@ -871,7 +871,7 @@ async function sendEmail(message, description, location) {
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) return;
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">

@@ -1775,7 +1775,7 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 // and SMS, since this is the "go do this job" moment and shouldn't
 // depend on someone happening to check their inbox.
 async function notifyTechnicianOfAssignment(technicianContact, woId, assetName) {
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   if (technicianContact.email) {
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
@@ -1825,7 +1825,7 @@ async function notifyTechnicianOfAssignment(technicianContact, woId, assetName) 
 async function notifyAssignerConfirmation(assignerUsername, technicianUsername, woId, assetName) {
   const assignerContact = getContactForUsername(assignerUsername);
   if (!assignerContact || !assignerContact.email) return;
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -1855,7 +1855,7 @@ async function notifyAssignerConfirmation(assignerUsername, technicianUsername, 
 // directions get both channels for now, can be trimmed back later
 // once real usage shows whether that's more than actually needed.
 async function notifyAssignerOfDecline(assignerContact, technicianUsername, reason, woId, assetName) {
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   if (assignerContact.email) {
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
@@ -1915,7 +1915,7 @@ async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, 
     if (tech && !recipients.some(r => r.username === tech.username)) recipients.push(tech);
   }
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const toList = recipients.map(e => e.email).filter(Boolean);
   if (toList.length > 0) {
     const html = `
@@ -1968,7 +1968,7 @@ async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
   const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
   if (toList.length === 0) return;
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#B45309;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -2004,7 +2004,7 @@ async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, 
   const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
   const toList = recipients.map(e => e.email).filter(Boolean);
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   if (toList.length > 0) {
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
@@ -2058,7 +2058,7 @@ async function notifyRequesterOfRejection(requesterUsername, woId, assetName, re
   const contact = getContactForUsername(requesterUsername);
   if (!contact || !contact.email) return;
 
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#dc2626;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -2092,7 +2092,7 @@ async function sendSatisfactionRequest(contact, recordId, assetName) {
 
   try {
     if (isEmail) {
-      const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+      const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
           <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">

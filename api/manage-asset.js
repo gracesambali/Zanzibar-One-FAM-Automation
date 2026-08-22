@@ -181,14 +181,14 @@ async function sendLowStockAlert({ itemName, itemCode, currentQuantity, reorderL
     try {
       const html = buildGenericAlertEmailHtml({
         title: "Low Stock Alert", message,
-        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
         color: "#F59E0B",
       });
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
           to: emailList,
           subject: `Low Stock Alert — ${itemName} (${itemCode})`,
           html,
@@ -260,14 +260,14 @@ async function sendFleetApprovalAlert({ driverName, vehicleName, destination, tr
     try {
       const html = buildGenericAlertEmailHtml({
         title: "Fleet Request Approved", message,
-        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
         color: "#2563EB",
       });
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
           to: emailList,
           subject: `Fleet Request Approved — ${driverName}`,
           html,
@@ -750,14 +750,14 @@ async function sendFuelApprovalAlert({ driverName, vehicleName, estimatedLiters,
     try {
       const html = buildGenericAlertEmailHtml({
         title: "Fuel Request Approved", message,
-        fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+        fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
         color: "#2563EB",
       });
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+          from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
           to: emailList,
           subject: `Fuel Request Approved — ${driverName}`,
           html,
@@ -2705,7 +2705,7 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
     const creatorEntry = directory.find(e => e.username === createdBy);
     if (!creatorEntry || !creatorEntry.email) return;
 
-    const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+    const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
         <div style="background:#1A3566;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">

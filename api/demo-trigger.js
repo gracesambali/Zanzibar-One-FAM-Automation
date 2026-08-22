@@ -204,7 +204,7 @@ async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
     urgency,
     daysUntil,
     existingWoId,
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+    fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
   });
 
   return fetch("https://api.resend.com/emails", {
@@ -214,11 +214,11 @@ async function sendEmail(f, urgency, daysUntil, existingWoId, message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
+      subject: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
       html,
-      text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
+      text: `${message}\n\nSent by ${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}.`,
     }),
   });
 }
@@ -270,7 +270,7 @@ async function handleSimpleTestAlert(req, res) {
   try {
     const message = req.query.asset
       ? await buildRealMessage(req.query.asset, forcedUrgency)
-      : `Fire Pump FP-002 at Basement 1 - service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
+      : `Fire Pump FP-002 at Basement 1 - service due 2026-07-20. 3 days remaining. This is a live alert from ${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}.`;
 
     if (!message) {
       return res.status(404).json({ error: `Asset "${req.query.asset}" not found.` });
@@ -312,7 +312,7 @@ async function buildRealMessage(assetId, forcedUrgency) {
     return `[TEST] [${forcedUrgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${fakeDate.toISOString().split("T")[0]}. ${timing}. This is a simulated test alert - the real maintenance schedule for this asset has not been changed.`;
   }
 
-  return `${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${f.next_service_due}. This is a live alert from ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`;
+  return `${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${f.next_service_due}. This is a live alert from ${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}.`;
 }
 
 async function logDemoAlert(message, assetId, forcedUrgency) {
@@ -336,7 +336,7 @@ async function sendSimpleTestEmail(message) {
   const html = buildGenericAlertEmailHtml({
     title: "Maintenance Alert",
     message,
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+    fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
   });
 
   return fetch("https://api.resend.com/emails", {
@@ -346,11 +346,11 @@ async function sendSimpleTestEmail(message) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
-      subject: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} — Maintenance Alert`,
+      subject: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} — Maintenance Alert`,
       html,
-      text: `${message}\n\nThis alert was sent by ${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"}.`,
+      text: `${message}\n\nThis alert was sent by ${process.env.ALERT_FROM_NAME || "Facility Asset Management System"}.`,
     }),
   });
 }

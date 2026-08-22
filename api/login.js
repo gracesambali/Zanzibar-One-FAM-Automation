@@ -238,7 +238,7 @@ async function handleConfirmPasswordReset(req, res) {
 }
 
 async function sendResetEmail(email, displayName, token) {
-  const fromName = process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager";
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const appUrl = process.env.APP_URL || "https://fam.gracingventures.com";
   const link = `${appUrl}/set-password?token=${token}`;
   const html = `

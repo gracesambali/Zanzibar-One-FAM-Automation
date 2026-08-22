@@ -351,7 +351,7 @@ async function sendSensorAlertEmail({ assetName, location, sensorType, value, un
     value,
     unit,
     targetRange: targetRange || "(not set)",
-    fromName: process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager",
+    fromName: process.env.ALERT_FROM_NAME || "Facility Asset Management System",
   });
 
   return fetch("https://api.resend.com/emails", {
@@ -361,7 +361,7 @@ async function sendSensorAlertEmail({ assetName, location, sensorType, value, un
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "GVC Facility Asset Manager"} <${process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
       to: toList,
       subject: `Sensor Alert — ${sensorType} out of range: ${assetName}${woId ? ` (${woId})` : ""}`,
       html,
