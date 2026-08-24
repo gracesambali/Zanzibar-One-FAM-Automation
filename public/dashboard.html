@@ -828,6 +828,7 @@ let currentNatureFilter = "All";
 let currentMobilityFilter = "All";
 let currentCategoryFilter = "All";
 let currentFloorFilter = "All";
+let currentZoneFilter = "All";
 let currentCriticalityFilter = "All";
 let currentRoomFilter = "All";
 let currentStatusFilter = "All";
@@ -1622,6 +1623,7 @@ function getFilteredAssets() {
     if(currentMobilityFilter!=="All" && a.mobility!==currentMobilityFilter) return false;
     if(currentCategoryFilter!=="All" && a.category!==currentCategoryFilter) return false;
     if(currentFloorFilter!=="All" && a.floor!==currentFloorFilter) return false;
+    if(currentZoneFilter!=="All" && a.zone!==currentZoneFilter) return false;
     if(currentRoomFilter!=="All" && a.room!==currentRoomFilter) return false;
     if(currentSearch) {
       const q = currentSearch.toLowerCase();
@@ -1750,34 +1752,40 @@ function renderAssets() {
     const uniqueFloors = [...new Set(filteredBySystem.map(a=>a.floor).filter(Boolean))]
       .sort((a,b) => displayFloor(a).localeCompare(displayFloor(b), undefined, {numeric:true}));
     const filteredByFloor = currentFloorFilter==="All" ? filteredBySystem : filteredBySystem.filter(a=>a.floor===currentFloorFilter);
-    const uniqueRooms = [...new Set(filteredByFloor.map(a=>a.room).filter(Boolean))].sort();
+    const uniqueZones = [...new Set(filteredByFloor.map(a=>a.zone).filter(Boolean))].sort();
+    const filteredByZone = currentZoneFilter==="All" ? filteredByFloor : filteredByFloor.filter(a=>a.zone===currentZoneFilter);
+    const uniqueRooms = [...new Set(filteredByZone.map(a=>a.room).filter(Boolean))].sort();
 
     html += `<div class="filter-row" style="gap:6px;flex-wrap:wrap">
-      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Types</option>
         ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
       </select>
-      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Mobility</option>
         ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
       </select>` : ''}
-      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Categories</option>
         ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="currentSystemFilter=this.value;currentFloorFilter='All';currentRoomFilter='All';renderAssets()">
+      <select class="filter-select" onchange="currentSystemFilter=this.value;currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Systems</option>
         ${uniqueSystemsInBranch.map(s=>`<option value="${s}"${currentSystemFilter===s?' selected':''}>${s}</option>`).join('')}
       </select>
-      <select class="filter-select" onchange="currentFloorFilter=this.value;currentRoomFilter='All';renderAssets()">
+      <select class="filter-select" onchange="currentFloorFilter=this.value;currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
         <option value="All">All Floors</option>
         ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${displayFloor(f)}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="currentZoneFilter=this.value;currentRoomFilter='All';renderAssets()">
+        <option value="All">All Zones</option>
+        ${uniqueZones.map(z=>`<option value="${z}"${currentZoneFilter===z?' selected':''}>${escapeHtml(z)}</option>`).join('')}
       </select>
       <select class="filter-select" onchange="currentRoomFilter=this.value;renderAssets()">
         <option value="All">All Rooms/Zones</option>
         ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${displayRoom(r)}</option>`).join('')}
       </select>
-      ${(currentNatureFilter!=='All'||currentMobilityFilter!=='All'||currentCategoryFilter!=='All'||currentSystemFilter!=='All'||currentFloorFilter!=='All'||currentRoomFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
+      ${(currentNatureFilter!=='All'||currentMobilityFilter!=='All'||currentCategoryFilter!=='All'||currentSystemFilter!=='All'||currentFloorFilter!=='All'||currentZoneFilter!=='All'||currentRoomFilter!=='All') ? `<button class="filter-btn" onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear</button>` : ''}
     </div>`;
   } else {
     // No classification data yet (pre-backfill) — still offer a plain System filter
@@ -2073,8 +2081,9 @@ function openEditForm(idx) {
         ${systemDefs.map(s=>`<option value="${s.name}"${a.system===s.name?' selected':''}>${s.name}</option>`).join('')}
       </select>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label><input id="ea_floor" value="${displayFloor(a.floor)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Zone/Wing</label><input id="ea_zone" value="${(a.zone||'').replace(/"/g,'&quot;')}" placeholder="e.g. Wing A" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="ea_room" value="${displayRoom(a.room)||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
       </div>
 
@@ -2171,6 +2180,7 @@ async function submitAssetEdit(recordId) {
     "Asset Category": document.getElementById('ea_category').value,
     "System": document.getElementById('ea_system').value,
     "Floor/Level": document.getElementById('ea_floor').value.trim(),
+    "Zone": document.getElementById('ea_zone').value.trim(),
     "Room/Zone": document.getElementById('ea_room').value.trim(),
     "Manufacturer": document.getElementById('ea_manufacturer').value.trim(),
     "Model": document.getElementById('ea_model').value.trim(),
@@ -2259,6 +2269,8 @@ function openRelocateForm(recordId, assetName) {
         ${Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="F${n}">Floor ${n} (F${n})</option>`).join('')}
         <option value="RF">Rooftop (RF)</option>
       </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Zone/Wing</label>
+      <input id="rel_zone" placeholder="e.g. Wing A — leave blank for no change" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Room/Zone</label>
       <input id="rel_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reason for relocation</label>
@@ -2276,6 +2288,7 @@ async function submitRelocation(recordId) {
   const facility = document.getElementById('rel_facility').value.trim();
   const building = document.getElementById('rel_building').value.trim();
   const floor = document.getElementById('rel_floor').value.trim();
+  const zone = document.getElementById('rel_zone').value.trim();
   const room = document.getElementById('rel_room').value.trim();
   const reason = document.getElementById('rel_reason').value.trim();
   const errorBox = document.getElementById('relocateError');
@@ -2291,8 +2304,8 @@ async function submitRelocation(recordId) {
     errorBox.style.display = 'block';
     return;
   }
-  if (!building && !floor && !room) {
-    errorBox.textContent = 'Enter at least a new building, floor, or room/zone.';
+  if (!building && !floor && !zone && !room) {
+    errorBox.textContent = 'Enter at least a new building, floor, zone, or room.';
     errorBox.style.display = 'block';
     return;
   }
@@ -2305,7 +2318,7 @@ async function submitRelocation(recordId) {
     const resp = await fetch('/api/manage-asset', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId, newFloor: floor, newRoom: room, newBuilding: building, reason }),
+      body: JSON.stringify({ recordId, newFloor: floor, newZone: zone, newRoom: room, newBuilding: building, reason }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to relocate');
@@ -12307,7 +12320,7 @@ function openAddAssetForm() {
         ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
       </select>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor/Level</label>
           <select id="na_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
             <option value="GF">Ground Floor (GF)</option>
@@ -12319,6 +12332,7 @@ function openAddAssetForm() {
             <option value="RF">Rooftop (RF)</option>
           </select>
         </div>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Zone/Wing</label><input id="na_zone" placeholder="e.g. Wing A" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone</label><input id="na_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px"></div>
       </div>
 
@@ -12621,6 +12635,7 @@ async function submitNewAsset() {
         facility: document.getElementById('na_facility').value,
         system: document.getElementById('na_system').value,
         floor: document.getElementById('na_floor').value,
+        zone: document.getElementById('na_zone').value.trim(),
         room: document.getElementById('na_room').value.trim(),
         manufacturer: document.getElementById('na_manufacturer').value.trim(),
         model: document.getElementById('na_model').value.trim(),

@@ -1207,6 +1207,7 @@ async function normalizeRecord(row, documents) {
     name: row.name || "",
     system: row.system || "",
     floor: row.floor_level || "",
+    zone: row.zone || "",
     room: row.room_zone || "",
     building: row.building || "",
     facility: row.facility || "",
@@ -1607,7 +1608,7 @@ async function handlePublicQuickview(req, res) {
     return res.status(200).json({
       id: row.asset_id || "", name: row.name || "", system: row.system || "",
       category: row.asset_category || "",
-      floor: row.floor_level || "", room: row.room_zone || "",
+      floor: row.floor_level || "", zone: row.zone || "", room: row.room_zone || "",
       status: row.status || "Good",
       manufacturer: row.manufacturer || "",
       model: row.model || "",

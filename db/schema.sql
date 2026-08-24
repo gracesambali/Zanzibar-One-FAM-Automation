@@ -1317,3 +1317,19 @@ from inventory_items
 where is_batch_tracked = true
   and current_quantity > 0
   and id not in (select distinct item_id from inventory_batches);
+
+-- ============================================================
+-- Real, separate Zone field for assets, confirmed directly per
+-- explicit discussion: Floor, Zone, and Room are three genuinely
+-- independent levels of a real physical hierarchy (e.g. "Ground
+-- Floor, Wing A, Consultation Office 8"), not one field standing in
+-- for another. Zone sits within a floor (confirmed directly, not a
+-- structure that can span multiple floors), extending the existing
+-- Floor -> Room cascading filter into a real three-level chain.
+-- Matches how floor_level and room_zone already work: not part of
+-- the bulk asset upload (neither of those are today either), only
+-- entered through the Add/Edit Asset forms and the Relocate flow.
+-- ============================================================
+alter table components add column if not exists zone text;
+alter table relocation_log add column if not exists old_zone text;
+alter table relocation_log add column if not exists new_zone text;

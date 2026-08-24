@@ -1849,6 +1849,7 @@ async function createOneAsset(a, addedBy, addedByRole) {
       mobility: a.mobility || null,
       asset_category: a.category || null,
       floor_level: a.floor || null,
+      zone: a.zone || null,
       room_zone: a.room || null,
       manufacturer: a.manufacturer || null,
       model: a.model || null,
@@ -2046,15 +2047,16 @@ async function findByAssetId(assetId) {
 }
 
 async function handleRelocate(req, res, relocatedBy) {
-  const { recordId, newFloor, newRoom, newBuilding, reason } = req.body || {};
+  const { recordId, newFloor, newZone, newRoom, newBuilding, reason } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
-  if (!newFloor && !newRoom && !newBuilding) return res.status(400).json({ error: "At least a new building, floor, or room/zone is required" });
+  if (!newFloor && !newZone && !newRoom && !newBuilding) return res.status(400).json({ error: "At least a new building, floor, zone, or room is required" });
 
   try {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
 
     const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
     const oldFloor = current.floor_level || "";
+    const oldZone = current.zone || "";
     const oldRoom = current.room_zone || "";
     const oldBuilding = current.building || "";
     const assetId = current.asset_id || "";
@@ -2062,6 +2064,7 @@ async function handleRelocate(req, res, relocatedBy) {
 
     const updateFields = {};
     if (newFloor) updateFields.floor_level = newFloor;
+    if (newZone) updateFields.zone = newZone;
     if (newRoom) updateFields.room_zone = newRoom;
     if (newBuilding) updateFields.building = newBuilding;
 
@@ -2070,13 +2073,13 @@ async function handleRelocate(req, res, relocatedBy) {
 
     await insert("relocation_log", {
       asset_id: assetId, asset_name: assetName,
-      old_floor: oldFloor, old_room_zone: oldRoom, old_building: oldBuilding,
-      new_floor: newFloor || oldFloor, new_room_zone: newRoom || oldRoom, new_building: newBuilding || oldBuilding,
+      old_floor: oldFloor, old_zone: oldZone, old_room_zone: oldRoom, old_building: oldBuilding,
+      new_floor: newFloor || oldFloor, new_zone: newZone || oldZone, new_room_zone: newRoom || oldRoom, new_building: newBuilding || oldBuilding,
       relocated_by: relocatedBy, date: new Date().toISOString(), reason: reason || null,
     }).catch(e => console.error("Relocation log write failed (non-fatal):", e.message));
 
-    const oldLocation = [oldFloor, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
-    const newLocation = [newFloor || oldFloor, newRoom || oldRoom, newBuilding || oldBuilding].filter(Boolean).join(" / ");
+    const oldLocation = [oldFloor, oldZone, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
+    const newLocation = [newFloor || oldFloor, newZone || oldZone, newRoom || oldRoom, newBuilding || oldBuilding].filter(Boolean).join(" / ");
     await logAssetActivity(assetId, "Location", oldLocation, newLocation, relocatedBy);
 
     return res.status(200).json({ success: true });
@@ -2093,7 +2096,7 @@ async function handleRelocate(req, res, relocatedBy) {
 // Postgres column, used only internally.
 const EDITABLE_FIELDS = [
   "Name", "System", "Asset Nature", "Mobility", "Asset Category",
-  "Floor/Level", "Room/Zone", "Manufacturer", "Model", "Install Date",
+  "Floor/Level", "Zone", "Room/Zone", "Manufacturer", "Model", "Install Date",
   "Warranty Expiry Date",
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
@@ -2102,7 +2105,7 @@ const EDITABLE_FIELDS = [
 
 const EDITABLE_FIELD_COLUMNS = {
   "Name": "name", "System": "system", "Asset Nature": "asset_nature", "Mobility": "mobility",
-  "Asset Category": "asset_category", "Floor/Level": "floor_level", "Room/Zone": "room_zone",
+  "Asset Category": "asset_category", "Floor/Level": "floor_level", "Zone": "zone", "Room/Zone": "room_zone",
   "Manufacturer": "manufacturer", "Model": "model", "Install Date": "install_date",
   "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
   "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
