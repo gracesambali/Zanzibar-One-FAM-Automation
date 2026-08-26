@@ -151,6 +151,11 @@ export default async function handler(req, res) {
     // date instead of an asset's install date.
     const rentNoticeCount = await checkRentNoticesDue();
 
+    // Finance reminders — confirmed directly: a fixed 7-day window for
+    // any bill or liability payment coming due, same daily check as
+    // everything else here rather than a separate notification system.
+    const financeReminderCount = await checkFinanceReminders();
+
     // One real Daily Summary, replacing what used to be two separate,
     // overlapping emails to the same audience. Always sends, even on a
     // quiet day — "nothing open, nothing triggered" is still a real,
@@ -166,7 +171,7 @@ export default async function handler(req, res) {
     // accurate figure too, not something computed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, rentNoticesSent: rentNoticeCount, results });
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, rentNoticesSent: rentNoticeCount, financeRemindersSent: financeReminderCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -685,6 +690,107 @@ async function checkRentNoticesDue() {
     return notifiedCount;
   } catch (err) {
     console.error("checkRentNoticesDue error:", err);
+    return 0;
+  }
+}
+
+// Finance reminders — confirmed directly: a fixed 7-day window, no
+// per-bill configuration, matching the exact same real pattern
+// already proven for rent notices. reminder_sent_for holds the due
+// date the reminder was already sent for, rather than a boolean flag
+// - comparing it directly against the current due date naturally
+// resets itself once a bill or liability's due date genuinely
+// advances, with no separate reset step needed. One real combined
+// email + SMS digest for everything due, not one message per item.
+async function checkFinanceReminders() {
+  try {
+    const { query: pgQuery, update } = await import("../lib/postgresClient.js");
+    const today = new Date();
+
+    const dueBills = await pgQuery(
+      `select id, name, amount, currency, next_due_date, reminder_sent_for
+       from bills
+       where status = 'active'
+         and next_due_date <= current_date + interval '7 days'
+         and next_due_date >= current_date
+         and (reminder_sent_for is null or reminder_sent_for != next_due_date)`
+    );
+
+    const dueLiabilities = await pgQuery(
+      `select id, lender, next_payment_amount, currency, next_payment_date, reminder_sent_for
+       from liabilities
+       where status = 'active'
+         and next_payment_date is not null
+         and next_payment_date <= current_date + interval '7 days'
+         and next_payment_date >= current_date
+         and (reminder_sent_for is null or reminder_sent_for != next_payment_date)`
+    );
+
+    if (dueBills.rows.length === 0 && dueLiabilities.rows.length === 0) return 0;
+
+    const contacts = [...getContactsForRole("business_owner"), ...getContactsForRole("system_admin")];
+    const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+    const phones = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
+
+    const billLines = dueBills.rows.map(b => {
+      const daysLeft = Math.round((new Date(b.next_due_date).getTime() - today.getTime()) / 86400000);
+      return `${b.name}: ${Number(b.amount).toLocaleString()} ${b.currency} due ${b.next_due_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+    });
+    const liabilityLines = dueLiabilities.rows.map(l => {
+      const daysLeft = Math.round((new Date(l.next_payment_date).getTime() - today.getTime()) / 86400000);
+      const amt = l.next_payment_amount != null ? `${Number(l.next_payment_amount).toLocaleString()} ${l.currency}` : "amount not set";
+      return `${l.lender} repayment: ${amt} due ${l.next_payment_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+    });
+
+    const allLines = [...billLines, ...liabilityLines];
+    const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 7 days.\n${allLines.join("\n")}`.slice(0, 320);
+
+    if (emails.length > 0) {
+      try {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
+            to: emails,
+            subject: `💰 ${allLines.length} Payment${allLines.length === 1 ? "" : "s"} Due Within 7 Days`,
+            html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1A1A2E">
+              <p>The following payment${allLines.length === 1 ? " is" : "s are"} due within the next 7 days:</p>
+              <ul>${allLines.map(l => `<li>${l}</li>`).join("")}</ul>
+            </div>`,
+          }),
+        });
+      } catch (err) { console.error("Finance reminder email failed:", err.message); }
+    }
+
+    if (phones.length > 0) {
+      try {
+        await fetch("https://apisms.beem.africa/v1/send", {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source_addr: process.env.BEEM_SENDER_ID || "INFO",
+            schedule_time: "", encoding: 0,
+            message: smsMessage,
+            recipients: buildBeemRecipients(phones),
+          }),
+        });
+      } catch (err) { console.error("Finance reminder SMS failed:", err.message); }
+    }
+
+    for (const b of dueBills.rows) {
+      await update("bills", b.id, { reminder_sent_for: b.next_due_date }).catch(() => {});
+    }
+    for (const l of dueLiabilities.rows) {
+      await update("liabilities", l.id, { reminder_sent_for: l.next_payment_date }).catch(() => {});
+    }
+
+    return allLines.length;
+  } catch (err) {
+    console.error("checkFinanceReminders error:", err);
     return 0;
   }
 }
