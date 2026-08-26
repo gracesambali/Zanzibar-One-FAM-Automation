@@ -1317,13 +1317,13 @@ function applySimplifiedNavIfNeeded() {
   // Matches api/finance.js's own FINANCE_ROLES exactly - a hidden
   // button here is a UX nicety, not the real gate; the backend
   // enforces this independently either way.
-  // Confirmed directly, twice: every role except Technician - not
-  // restricted to Business Owner/System Admin as an earlier version
-  // had it. Matches api/finance.js's own FINANCE_EXCLUDED_ROLES
-  // exactly; this is a UX nicety either way, since the backend
-  // enforces this independently regardless of what this button shows.
-  const financeRoleAllowed = currentUserRole !== 'technician';
-  if (financeBtn) financeBtn.style.display = (financeRoleAllowed && financeEnabled) ? '' : 'none';
+  // Confirmed directly: no role check needed here at all - Technician
+  // never reaches this branch in the first place, since the earlier,
+  // separate simplifiedNav check already routes them to their own
+  // flat nav before this code ever runs. The real restriction lives
+  // in api/finance.js's own server-side check, which applies
+  // regardless of what this button shows.
+  if (financeBtn) financeBtn.style.display = financeEnabled ? '' : 'none';
 }
 
 // Confirmed directly: collapsed by default — the actual point of
