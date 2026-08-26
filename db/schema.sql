@@ -1466,3 +1466,44 @@ alter table bills add column if not exists vendor_id uuid references vendors(id)
 alter table liabilities add column if not exists vendor_id uuid references vendors(id) on delete set null;
 alter table transactions add column if not exists vendor_id uuid references vendors(id) on delete set null;
 create index if not exists idx_transactions_vendor on transactions (vendor_id) where vendor_id is not null;
+
+-- ============================================================
+-- Payroll — confirmed directly: the system adds the involved people,
+-- their amounts, and real payment details (bank account or mobile
+-- money number). A genuinely separate table from bills, not bills
+-- with a user attached - the bank/mobile money fields are specific
+-- to paying a real person, not something every generic bill needs.
+-- Links to the real, existing users table (the actual login/account
+-- system already backing Manage Staff) rather than a third, separate
+-- "employees" list. Same access as the rest of Finance, confirmed
+-- directly - no tighter restriction than requireFinanceRole already
+-- provides everywhere else in this module.
+-- ============================================================
+create table if not exists payroll_entries (
+  id                  uuid primary key default gen_random_uuid(),
+  organization_id     uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063',
+  user_id             uuid not null references users(id) on delete cascade,
+  salary_amount       numeric(14,2) not null,
+  currency            text not null default 'TZS',
+  payment_method      text not null check (payment_method in ('bank', 'mobile_money')),
+  account_holder_name text not null,
+  account_number      text not null,
+  bank_name           text,
+  frequency           text not null default 'monthly' check (frequency in ('monthly', 'annual')),
+  next_pay_date       date not null,
+  status              text not null default 'active' check (status in ('active', 'paused')),
+  reminder_sent_for    date,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+create index if not exists idx_payroll_entries_org_due on payroll_entries (organization_id, next_pay_date);
+create unique index if not exists idx_payroll_entries_one_per_user on payroll_entries (user_id) where status = 'active';
+
+create table if not exists payroll_documents (
+  id                uuid primary key default gen_random_uuid(),
+  payroll_entry_id  uuid not null references payroll_entries(id) on delete cascade,
+  url               text not null,
+  filename          text,
+  uploaded_at       timestamptz not null default now()
+);
+create index if not exists idx_payroll_documents_entry on payroll_documents (payroll_entry_id);
