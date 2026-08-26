@@ -18,12 +18,17 @@
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
 
-const FINANCE_ROLES = ["system_admin", "business_owner"];
+// Confirmed directly, twice: Finance appears for every role except
+// Technician - not restricted to Business Owner/System Admin as an
+// earlier version of this file incorrectly had it. The complete role
+// list is confirmed directly against ROLE_PERMISSIONS in
+// dashboard.html rather than assumed.
+const FINANCE_EXCLUDED_ROLES = ["technician"];
 const ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063"; // the one real org that exists today
 
 function requireFinanceRole(session, res) {
-  if (!FINANCE_ROLES.includes(session.r)) {
-    res.status(403).json({ error: "Finance is restricted to System Admin and Business Owner." });
+  if (FINANCE_EXCLUDED_ROLES.includes(session.r)) {
+    res.status(403).json({ error: "Finance is not available to this role." });
     return false;
   }
   return true;
@@ -34,6 +39,14 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: "Not logged in" });
   setSessionCookie(res, session.u, session.r);
 
+  // Confirmed directly as a real gap and fixed: this check must apply
+  // to every method, not just writes. It previously sat after the GET
+  // branch's own early returns, meaning any logged-in role - including
+  // Technician - could already read every Finance number directly via
+  // the API, even though the sidebar button was correctly hidden for
+  // them. A hidden button was never the real gate; this is.
+  if (!requireFinanceRole(session, res)) return;
+
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleListCategories(req, res);
     if (req.query.transactions === "true") return handleListTransactions(req, res);
@@ -42,8 +55,6 @@ export default async function handler(req, res) {
     if (req.query.summary === "true") return handleFinanceSummary(req, res);
     return res.status(400).json({ error: "Unknown GET request" });
   }
-
-  if (!requireFinanceRole(session, res)) return;
 
   if (req.method === "POST") {
     const action = req.body && req.body.action;
