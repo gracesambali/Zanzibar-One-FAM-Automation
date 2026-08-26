@@ -726,7 +726,18 @@ async function checkFinanceReminders() {
          and (reminder_sent_for is null or reminder_sent_for != next_payment_date)`
     );
 
-    if (dueBills.rows.length === 0 && dueLiabilities.rows.length === 0) return 0;
+    const duePayroll = await pgQuery(
+      `select p.id, p.salary_amount, p.currency, p.next_pay_date, p.reminder_sent_for,
+              u.display_name, u.username
+       from payroll_entries p
+       join users u on u.id = p.user_id
+       where p.status = 'active'
+         and p.next_pay_date <= current_date + interval '7 days'
+         and p.next_pay_date >= current_date
+         and (p.reminder_sent_for is null or p.reminder_sent_for != p.next_pay_date)`
+    );
+
+    if (dueBills.rows.length === 0 && dueLiabilities.rows.length === 0 && duePayroll.rows.length === 0) return 0;
 
     const contacts = [...getContactsForRole("business_owner"), ...getContactsForRole("system_admin")];
     const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
@@ -741,8 +752,13 @@ async function checkFinanceReminders() {
       const amt = l.next_payment_amount != null ? `${Number(l.next_payment_amount).toLocaleString()} ${l.currency}` : "amount not set";
       return `${l.lender} repayment: ${amt} due ${l.next_payment_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
     });
+    const payrollLines = duePayroll.rows.map(p => {
+      const daysLeft = Math.round((new Date(p.next_pay_date).getTime() - today.getTime()) / 86400000);
+      const name = p.display_name || p.username;
+      return `Salary — ${name}: ${Number(p.salary_amount).toLocaleString()} ${p.currency} due ${p.next_pay_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+    });
 
-    const allLines = [...billLines, ...liabilityLines];
+    const allLines = [...billLines, ...liabilityLines, ...payrollLines];
     const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 7 days.\n${allLines.join("\n")}`.slice(0, 320);
 
     if (emails.length > 0) {
@@ -786,6 +802,9 @@ async function checkFinanceReminders() {
     }
     for (const l of dueLiabilities.rows) {
       await update("liabilities", l.id, { reminder_sent_for: l.next_payment_date }).catch(() => {});
+    }
+    for (const p of duePayroll.rows) {
+      await update("payroll_entries", p.id, { reminder_sent_for: p.next_pay_date }).catch(() => {});
     }
 
     return allLines.length;

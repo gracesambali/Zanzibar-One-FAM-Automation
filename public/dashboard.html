@@ -5302,7 +5302,7 @@ function renderFinanceShell() {
       <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0 0 4px">Finance</h2>
       <p style="font-size:13px;color:var(--muted);margin:0 0 20px">Income, expenses, bills, and liabilities — Gracing Ventures' own records, not client data.</p>
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px">
-        ${['overview', 'transactions', 'bills', 'liabilities', 'vendors'].map(t => `
+        ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll'].map(t => `
           <button onclick="switchFinanceSubTab('${t}')" id="finSubTab-${t}" style="padding:10px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:${financeSubTab===t?'var(--navy)':'var(--muted)'};border-bottom:2px solid ${financeSubTab===t?'var(--navy)':'transparent'}">
             ${t.charAt(0).toUpperCase() + t.slice(1)}
           </button>`).join('')}
@@ -5330,6 +5330,7 @@ async function renderFinanceSubTab(tab) {
   if (tab === 'bills') return renderFinanceBills();
   if (tab === 'liabilities') return renderFinanceLiabilities();
   if (tab === 'vendors') return renderFinanceVendors();
+  if (tab === 'payroll') return renderFinancePayroll();
 }
 
 // --- Overview ---
@@ -5793,6 +5794,122 @@ function financeVendorDropdownOptions(selectedId) {
     `<option value="${v.id}"${selectedId === v.id ? ' selected' : ''}>${escapeHtml(v.name)}</option>`
   ).join('');
   return `<option value="">— No vendor —</option>${options}`;
+}
+
+// --- Payroll ---
+
+// Real account numbers are sensitive even among roles who can see
+// Finance generally - shown masked by default in the list, with the
+// full number only in the add-entry confirmation and inside the
+// modal itself, not printed openly in a table every time the tab
+// loads.
+function maskAccountNumber(number) {
+  if (!number || number.length <= 4) return number || '';
+  return '•••• ' + number.slice(-4);
+}
+
+async function renderFinancePayroll() {
+  const el = document.getElementById('finance-subtab-content');
+  el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const resp = await fetch('/api/finance?payroll=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load payroll');
+    const payroll = data.payroll || [];
+    el.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button onclick="openAddPayrollModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Payroll Entry</button>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#F8FAFC;text-align:left">
+            <th style="padding:10px 12px">Employee</th><th style="padding:10px 12px">Salary</th><th style="padding:10px 12px">Payment To</th>
+            <th style="padding:10px 12px">Next Pay Date</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
+          </tr></thead>
+          <tbody>
+            ${payroll.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No payroll entries set up yet.</td></tr>` :
+              payroll.map(p => `
+                <tr style="border-top:1px solid var(--border)">
+                  <td style="padding:10px 12px;font-weight:600">${escapeHtml(p.employeeName)}</td>
+                  <td style="padding:10px 12px;font-weight:600">${formatCurrency(p.salaryAmount)}</td>
+                  <td style="padding:10px 12px;color:var(--muted)">${p.paymentMethod === 'bank' ? 'Bank' : 'Mobile Money'} · ${maskAccountNumber(p.accountNumber)}</td>
+                  <td style="padding:10px 12px">${p.nextPayDate}</td>
+                  <td style="padding:10px 12px">${p.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
+                  <td style="padding:10px 12px;text-align:right">${p.status === 'active' ? `<button onclick="markFinancePayrollPaid('${p.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}</td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (err) {
+    el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function openAddPayrollModal() {
+  showFinanceModal('Add Payroll Entry', `<div id="fp_form_area">Loading staff…</div>`);
+  const resp = await fetch('/api/finance?staffForPayroll=true');
+  const data = await resp.json();
+  const staffOptions = (data.staff || []).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  document.getElementById('fp_form_area').innerHTML = `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Staff Member</label>
+    <select id="fp_user" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${staffOptions}</select>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Salary Amount (TZS)</label>
+    <input id="fp_salary" type="number" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Payment Method</label>
+    <select id="fp_method" onchange="document.getElementById('fp_bank_row').style.display = this.value === 'bank' ? '' : 'none'" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="mobile_money">Mobile Money</option><option value="bank">Bank Transfer</option>
+    </select>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Account Holder Name</label>
+    <input id="fp_holder" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Account / Mobile Money Number</label>
+    <input id="fp_account" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <div id="fp_bank_row" style="display:none">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Bank Name</label>
+      <input id="fp_bank" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    </div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Frequency</label>
+    <select id="fp_frequency" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <option value="monthly">Monthly</option><option value="annual">Annual</option>
+    </select>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Next Pay Date</label>
+    <input id="fp_next_date" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <div id="fp_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+    <button onclick="submitAddPayroll()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Payroll Entry</button>
+  `;
+}
+
+async function submitAddPayroll() {
+  const errEl = document.getElementById('fp_error');
+  errEl.textContent = '';
+  const resp = await fetch('/api/finance', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'addPayrollEntry',
+      userId: document.getElementById('fp_user').value,
+      salaryAmount: document.getElementById('fp_salary').value,
+      paymentMethod: document.getElementById('fp_method').value,
+      accountHolderName: document.getElementById('fp_holder').value.trim(),
+      accountNumber: document.getElementById('fp_account').value.trim(),
+      bankName: document.getElementById('fp_bank')?.value.trim() || '',
+      frequency: document.getElementById('fp_frequency').value,
+      nextPayDate: document.getElementById('fp_next_date').value,
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { errEl.textContent = data.error || 'Could not save payroll entry'; return; }
+  closeFinanceModal();
+  renderFinancePayroll();
+}
+
+async function markFinancePayrollPaid(payrollEntryId) {
+  if (!confirm('Mark this salary as paid? This logs the expense and advances to the next pay date.')) return;
+  const resp = await fetch('/api/finance', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'markPayrollPaid', payrollEntryId }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { alert(data.error || 'Could not mark payroll paid'); return; }
+  renderFinancePayroll();
 }
 
 // --- Shared modal shell for all Finance forms ---
