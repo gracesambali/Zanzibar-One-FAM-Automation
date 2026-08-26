@@ -1333,3 +1333,123 @@ where is_batch_tracked = true
 alter table components add column if not exists zone text;
 alter table relocation_log add column if not exists old_zone text;
 alter table relocation_log add column if not exists new_zone text;
+
+-- ============================================================
+-- Finance / Accounting — confirmed directly: a real, separate
+-- business entity within FAM, not a client-facing facility module.
+-- Explicitly for every client, not just internal use - gated by a
+-- real per-organization toggle so a client with existing accounting
+-- software (QuickBooks, Zoho Books, etc.) can opt out entirely,
+-- while a client with nothing can use this as their real system.
+-- Assets deliberately not duplicated here - the Finance view reads
+-- the existing Asset Register's own depreciated value directly
+-- rather than tracking asset value a second time in a separate
+-- place.
+-- ============================================================
+alter table organizations add column if not exists finance_enabled boolean not null default true;
+
+create table if not exists transaction_categories (
+  id               uuid primary key default gen_random_uuid(),
+  organization_id  uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063',
+  name             text not null,
+  type             text not null check (type in ('income', 'expense')),
+  is_default       boolean not null default false,
+  created_at       timestamptz not null default now()
+);
+create index if not exists idx_transaction_categories_org on transaction_categories (organization_id);
+
+create table if not exists transactions (
+  id               uuid primary key default gen_random_uuid(),
+  organization_id  uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063',
+  type             text not null check (type in ('income', 'expense')),
+  category_id      uuid references transaction_categories(id) on delete set null,
+  amount           numeric(14,2) not null,
+  currency         text not null default 'TZS',
+  transaction_date date not null default current_date,
+  description      text,
+  recorded_by      text,
+  created_at       timestamptz not null default now()
+);
+create index if not exists idx_transactions_org_date on transactions (organization_id, transaction_date desc);
+
+create table if not exists transaction_documents (
+  id              uuid primary key default gen_random_uuid(),
+  transaction_id  uuid not null references transactions(id) on delete cascade,
+  url             text not null,
+  filename        text,
+  uploaded_at     timestamptz not null default now()
+);
+create index if not exists idx_transaction_documents_txn on transaction_documents (transaction_id);
+
+create table if not exists bills (
+  id                uuid primary key default gen_random_uuid(),
+  organization_id   uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063',
+  name              text not null,
+  amount            numeric(14,2) not null,
+  currency          text not null default 'TZS',
+  frequency         text not null check (frequency in ('monthly', 'annual')),
+  next_due_date     date not null,
+  category_id       uuid references transaction_categories(id) on delete set null,
+  status            text not null default 'active' check (status in ('active', 'paused')),
+  reminder_sent_for date,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index if not exists idx_bills_org_due on bills (organization_id, next_due_date);
+
+create table if not exists bill_documents (
+  id          uuid primary key default gen_random_uuid(),
+  bill_id     uuid not null references bills(id) on delete cascade,
+  url         text not null,
+  filename    text,
+  uploaded_at timestamptz not null default now()
+);
+create index if not exists idx_bill_documents_bill on bill_documents (bill_id);
+
+create table if not exists liabilities (
+  id                    uuid primary key default gen_random_uuid(),
+  organization_id       uuid not null references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063',
+  lender                text not null,
+  principal             numeric(14,2) not null,
+  currency              text not null default 'TZS',
+  interest_rate         numeric(6,3),
+  start_date            date not null default current_date,
+  repayment_frequency   text not null check (repayment_frequency in ('monthly', 'annual', 'lump_sum')),
+  next_payment_date     date,
+  next_payment_amount   numeric(14,2),
+  remaining_balance     numeric(14,2) not null,
+  status                text not null default 'active' check (status in ('active', 'paid_off')),
+  reminder_sent_for     date,
+  notes                 text,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create index if not exists idx_liabilities_org_status on liabilities (organization_id, status);
+
+create table if not exists liability_documents (
+  id            uuid primary key default gen_random_uuid(),
+  liability_id  uuid not null references liabilities(id) on delete cascade,
+  url           text not null,
+  filename      text,
+  uploaded_at   timestamptz not null default now()
+);
+create index if not exists idx_liability_documents_liability on liability_documents (liability_id);
+
+-- Real, sensible starting categories, confirmed directly - a preset
+-- list with room to add more, matching the exact same pattern already
+-- proven for TRA categories.
+insert into transaction_categories (organization_id, name, type, is_default)
+select '73ae9f3b-bbef-4f4a-b3df-3cca81c49063', name, type, true
+from (values
+  ('Service Revenue', 'income'), ('Product Sales', 'income'), ('Consulting Fees', 'income'),
+  ('Interest Income', 'income'), ('Other Income', 'income'),
+  ('Rent', 'expense'), ('Utilities', 'expense'), ('Salaries & Wages', 'expense'),
+  ('Office Supplies', 'expense'), ('Software & Subscriptions', 'expense'),
+  ('Professional Services', 'expense'), ('Marketing', 'expense'), ('Travel', 'expense'),
+  ('Equipment', 'expense'), ('Insurance', 'expense'), ('Loan Repayment', 'expense'),
+  ('Taxes', 'expense'), ('Maintenance & Repairs', 'expense'), ('Other Expense', 'expense')
+) as defaults(name, type)
+where not exists (
+  select 1 from transaction_categories
+  where organization_id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063' and name = defaults.name and type = defaults.type
+);
