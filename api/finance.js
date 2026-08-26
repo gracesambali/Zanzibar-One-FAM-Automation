@@ -53,6 +53,7 @@ export default async function handler(req, res) {
     if (req.query.bills === "true") return handleListBills(req, res);
     if (req.query.liabilities === "true") return handleListLiabilities(req, res);
     if (req.query.summary === "true") return handleFinanceSummary(req, res);
+    if (req.query.vendorSpend === "true") return handleVendorSpend(req, res);
     return res.status(400).json({ error: "Unknown GET request" });
   }
 
@@ -155,7 +156,7 @@ async function handleListTransactions(req, res) {
 }
 
 async function handleAddTransaction(req, res, recordedBy) {
-  const { type, categoryId, amount, date, description } = req.body || {};
+  const { type, categoryId, amount, date, description, vendorId } = req.body || {};
   if (!["income", "expense"].includes(type)) return res.status(400).json({ error: "Type must be income or expense." });
   const amt = Number(amount);
   if (!amt || amt <= 0) return res.status(400).json({ error: "Enter a real amount greater than zero." });
@@ -165,7 +166,7 @@ async function handleAddTransaction(req, res, recordedBy) {
     const txn = await insert("transactions", {
       organization_id: ORG_ID, type, category_id: categoryId || null,
       amount: amt, transaction_date: date || new Date().toISOString().split("T")[0],
-      description: description || null, recorded_by: recordedBy,
+      description: description || null, recorded_by: recordedBy, vendor_id: vendorId || null,
     });
     return res.status(200).json({ success: true, transactionId: txn.id });
   } catch (err) {
@@ -218,7 +219,7 @@ async function handleListBills(req, res) {
 }
 
 async function handleAddBill(req, res) {
-  const { name, amount, frequency, nextDueDate, categoryId } = req.body || {};
+  const { name, amount, frequency, nextDueDate, categoryId, vendorId } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: "A bill name is required." });
   const amt = Number(amount);
   if (!amt || amt <= 0) return res.status(400).json({ error: "Enter a real amount greater than zero." });
@@ -229,7 +230,7 @@ async function handleAddBill(req, res) {
     const { insert } = await import("../lib/postgresClient.js");
     const bill = await insert("bills", {
       organization_id: ORG_ID, name: name.trim(), amount: amt, frequency,
-      next_due_date: nextDueDate, category_id: categoryId || null,
+      next_due_date: nextDueDate, category_id: categoryId || null, vendor_id: vendorId || null,
     });
     return res.status(200).json({ success: true, billId: bill.id });
   } catch (err) {
@@ -291,6 +292,7 @@ async function handleMarkBillPaid(req, res, recordedBy) {
       organization_id: ORG_ID, type: "expense", category_id: bill.category_id,
       amount: bill.amount, transaction_date: bill.next_due_date,
       description: `${bill.name} (bill payment)`, recorded_by: recordedBy,
+      vendor_id: bill.vendor_id,
     });
 
     const currentDue = new Date(bill.next_due_date);
@@ -346,7 +348,7 @@ async function handleListLiabilities(req, res) {
 }
 
 async function handleAddLiability(req, res) {
-  const { lender, principal, interestRate, startDate, repaymentFrequency, nextPaymentDate, nextPaymentAmount, notes } = req.body || {};
+  const { lender, principal, interestRate, startDate, repaymentFrequency, nextPaymentDate, nextPaymentAmount, notes, vendorId } = req.body || {};
   if (!lender || !lender.trim()) return res.status(400).json({ error: "A lender name is required." });
   const principalAmt = Number(principal);
   if (!principalAmt || principalAmt <= 0) return res.status(400).json({ error: "Enter a real principal amount greater than zero." });
@@ -361,7 +363,7 @@ async function handleAddLiability(req, res) {
       repayment_frequency: repaymentFrequency,
       next_payment_date: nextPaymentDate || null,
       next_payment_amount: nextPaymentAmount != null && nextPaymentAmount !== "" ? Number(nextPaymentAmount) : null,
-      remaining_balance: principalAmt, notes: notes || null,
+      remaining_balance: principalAmt, notes: notes || null, vendor_id: vendorId || null,
     });
     return res.status(200).json({ success: true, liabilityId: liability.id });
   } catch (err) {
@@ -412,6 +414,7 @@ async function handleRecordLiabilityPayment(req, res, recordedBy) {
       organization_id: ORG_ID, type: "expense", category_id: null,
       amount: paymentAmt, transaction_date: date || new Date().toISOString().split("T")[0],
       description: `Loan repayment — ${liability.lender}`, recorded_by: recordedBy,
+      vendor_id: liability.vendor_id,
     });
 
     await update("liabilities", liabilityId, {
@@ -491,6 +494,43 @@ async function handleFinanceSummary(req, res) {
     });
   } catch (err) {
     console.error("finance summary error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------
+// Vendor spend — confirmed directly as the real goal: make it easy
+// to see total spend against a specific vendor. Sums directly against
+// the real, unified transactions ledger, since every real expense -
+// whether entered directly or generated from a bill/liability payment
+// - already carries the same vendor_id there. One clean sum per
+// vendor, not three separate aggregations across different shapes.
+// ---------------------------------------------------------------
+
+async function handleVendorSpend(req, res) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `select v.id, v.vendor_name, v.email, v.phone,
+              coalesce(sum(t.amount) filter (where t.type = 'expense'), 0) as total_spend,
+              count(t.id) filter (where t.type = 'expense') as transaction_count,
+              max(t.transaction_date) filter (where t.type = 'expense') as last_transaction_date
+       from vendors v
+       left join transactions t on t.vendor_id = v.id and t.organization_id = $1
+       where v.active = true
+       group by v.id, v.vendor_name, v.email, v.phone
+       order by total_spend desc, v.vendor_name asc`,
+      [ORG_ID]
+    );
+    return res.status(200).json({
+      vendors: result.rows.map(r => ({
+        id: r.id, name: r.vendor_name, email: r.email, phone: r.phone,
+        totalSpend: Number(r.total_spend), transactionCount: Number(r.transaction_count),
+        lastTransactionDate: r.last_transaction_date,
+      })),
+    });
+  } catch (err) {
+    console.error("finance vendor spend error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

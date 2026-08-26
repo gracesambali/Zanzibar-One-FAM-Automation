@@ -1453,3 +1453,16 @@ where not exists (
   select 1 from transaction_categories
   where organization_id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063' and name = defaults.name and type = defaults.type
 );
+
+-- Real link from Finance into the existing, already-proven vendors
+-- table, confirmed directly rather than building a second, parallel
+-- vendor concept. Explicit goal, stated directly: make it easy to see
+-- total spend against a specific vendor. transactions carries the
+-- link on every row (whether entered directly or generated from a
+-- bill/liability payment), so vendor spend is always one real sum
+-- against the one, unified ledger - not three separate aggregations
+-- across bills, liabilities, and transactions with different shapes.
+alter table bills add column if not exists vendor_id uuid references vendors(id) on delete set null;
+alter table liabilities add column if not exists vendor_id uuid references vendors(id) on delete set null;
+alter table transactions add column if not exists vendor_id uuid references vendors(id) on delete set null;
+create index if not exists idx_transactions_vendor on transactions (vendor_id) where vendor_id is not null;
