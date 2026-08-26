@@ -5347,17 +5347,96 @@ async function renderFinanceOverview() {
       { label: 'Active Liabilities', value: data.totalLiabilities, color: 'var(--navy)' },
       { label: 'Bills Due (30 days)', value: data.billsDueNext30Days, color: 'var(--amber, #B45309)' },
     ];
+    const catColors = ['var(--navy)', 'var(--green)', 'var(--red)', 'var(--amber, #B45309)', '#7C3AED', '#0891B2', 'var(--muted)'];
+    const categoryBreakdown = data.categoryBreakdown || [];
     el.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
         ${cards.map(c => `
           <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
             <div style="font-size:20px;font-weight:800;color:${c.color}">${formatCurrency(c.value)}</div>
           </div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px">
+        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+          <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">Income vs Expense</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Last 6 months</div>
+          <canvas id="finance-trend-chart" width="440" height="200"></canvas>
+          <div style="display:flex;gap:16px;margin-top:10px;font-size:11.5px">
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green);margin-right:5px"></span>Income</span>
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--red);margin-right:5px"></span>Expense</span>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+          <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">Expense by Category</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Last 6 months</div>
+          ${categoryBreakdown.length === 0 ? `<div style="padding:40px 0;text-align:center;color:var(--muted);font-size:12.5px">No expenses recorded yet.</div>` : `
+          <div class="donut-wrap" style="display:flex;align-items:center;gap:16px">
+            <canvas id="finance-category-donut" width="120" height="120"></canvas>
+            <div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px">
+              ${categoryBreakdown.map((c, i) => `
+                <div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${catColors[i % catColors.length]};margin-right:5px"></span>${escapeHtml(c.category)} <strong>${formatCurrency(c.total)}</strong></div>
+              `).join('')}
+            </div>
+          </div>`}
+        </div>
       </div>`;
+
+    // Canvas drawing happens after the HTML above is actually in the
+    // DOM - the canvas element has to exist before getContext() works,
+    // matching the same two-step pattern already used for the Asset
+    // Health donut on the main dashboard.
+    const trendCanvas = document.getElementById('finance-trend-chart');
+    if (trendCanvas) drawFinanceTrendChart(trendCanvas, data.monthlyTrend || []);
+    if (categoryBreakdown.length > 0) {
+      const donutCanvas = document.getElementById('finance-category-donut');
+      // Plain hex values here, separate from the var(--x) legend colors
+      // above - canvas fillStyle doesn't understand CSS custom
+      // property syntax, it needs real color values directly.
+      const canvasColors = ['#003566', '#1B7A43', '#E74C3C', '#B45309', '#7C3AED', '#0891B2', '#6B7280'];
+      if (donutCanvas) drawDonut(donutCanvas, categoryBreakdown.map((c, i) => ({
+        value: c.total, color: canvasColors[i % canvasColors.length],
+      })), 120);
+    }
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
+}
+
+// Real, grouped bar chart for income vs expense per month - no
+// external charting library, matching the same lightweight, native
+// canvas approach already used elsewhere in this app (drawDonut).
+function drawFinanceTrendChart(canvas, monthlyTrend) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (monthlyTrend.length === 0) return;
+
+  const padding = { top: 10, bottom: 24, left: 10, right: 10 };
+  const chartW = w - padding.left - padding.right;
+  const chartH = h - padding.top - padding.bottom;
+  const maxVal = Math.max(1, ...monthlyTrend.map(m => Math.max(m.income, m.expense)));
+  const groupW = chartW / monthlyTrend.length;
+  const barW = groupW * 0.32;
+
+  monthlyTrend.forEach((m, i) => {
+    const groupX = padding.left + i * groupW;
+    const incomeH = (m.income / maxVal) * chartH;
+    const expenseH = (m.expense / maxVal) * chartH;
+
+    ctx.fillStyle = '#1B7A43';
+    ctx.fillRect(groupX + groupW * 0.14, padding.top + chartH - incomeH, barW, incomeH);
+
+    ctx.fillStyle = '#E74C3C';
+    ctx.fillRect(groupX + groupW * 0.54, padding.top + chartH - expenseH, barW, expenseH);
+
+    ctx.fillStyle = '#6B7280';
+    ctx.font = '10px Arial';
+    ctx.textAlign = 'center';
+    const [, monthNum] = m.month.split('-');
+    const monthLabel = ['', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(monthNum, 10)];
+    ctx.fillText(monthLabel, groupX + groupW / 2, h - 6);
+  });
 }
 
 // --- Transactions ---

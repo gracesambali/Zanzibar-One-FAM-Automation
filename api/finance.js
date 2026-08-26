@@ -485,12 +485,53 @@ async function handleFinanceSummary(req, res) {
       [ORG_ID]
     );
 
+    // Real, 6-month income/expense trend for the Overview chart -
+    // generate_series ensures a month with zero activity still shows
+    // as a real zero bar, not a gap that looks like missing data.
+    const monthlyTrend = await query(
+      `select
+         to_char(month_start, 'YYYY-MM') as month,
+         coalesce(sum(t.amount) filter (where t.type = 'income'), 0) as income,
+         coalesce(sum(t.amount) filter (where t.type = 'expense'), 0) as expense
+       from generate_series(date_trunc('month', current_date - interval '5 months'), date_trunc('month', current_date), interval '1 month') as month_start
+       left join transactions t on date_trunc('month', t.transaction_date) = month_start and t.organization_id = $1
+       group by month_start
+       order by month_start asc`,
+      [ORG_ID]
+    );
+
+    // Real expense-by-category breakdown for the Overview chart -
+    // top 6 by spend, with anything beyond that folded into a real
+    // "Other" total rather than an unreadably long legend. Scoped to
+    // the same 6-month window as the trend chart above - confirmed
+    // directly this needed fixing, since an all-time total here would
+    // silently mismatch what the trend chart shows for the same
+    // period, which would read as broken rather than intentional.
+    const categoryBreakdown = await query(
+      `select coalesce(c.name, 'Uncategorized') as category, sum(t.amount) as total
+       from transactions t
+       left join transaction_categories c on c.id = t.category_id
+       where t.organization_id = $1 and t.type = 'expense'
+         and t.transaction_date >= date_trunc('month', current_date - interval '5 months')
+       group by c.name
+       order by total desc`,
+      [ORG_ID]
+    );
+
     return res.status(200).json({
       totalIncome: income,
       totalExpense: expense,
       netPosition: income - expense,
       totalLiabilities: Number(liabilityTotal.rows[0].total),
       billsDueNext30Days: Number(upcomingBills.rows[0].total),
+      monthlyTrend: monthlyTrend.rows.map(r => ({ month: r.month, income: Number(r.income), expense: Number(r.expense) })),
+      categoryBreakdown: (() => {
+        const rows = categoryBreakdown.rows.map(r => ({ category: r.category, total: Number(r.total) }));
+        const top = rows.slice(0, 6);
+        const rest = rows.slice(6).reduce((sum, r) => sum + r.total, 0);
+        if (rest > 0) top.push({ category: "Other", total: rest });
+        return top;
+      })(),
     });
   } catch (err) {
     console.error("finance summary error:", err);
