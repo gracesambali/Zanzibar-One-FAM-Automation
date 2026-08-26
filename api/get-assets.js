@@ -1224,8 +1224,8 @@ async function normalizeRecord(row, documents) {
     manufacturer: row.manufacturer || "",
     model: row.model || "",
     installDate: row.install_date || "",
-    status: row.status || "Good",           // Good / Poor / Critical (merged with old Condition)
-    criticality: row.criticality || "Medium", // High / Medium / Low
+    status: row.status || "Good",           // Good / Poor
+    criticality: row.criticality || "Low", // High / Low
     lastService: row.last_service || "",
     nextService: row.next_service_due || "",
     lifespan: Number(row.expected_lifespan_years) || 15,

@@ -687,13 +687,13 @@ function guessAssetDefaults(name) {
   if (text.includes("generator")) return { system: "Electrical", criticality: "High", lifespan: 20 };
   if (text.includes("transformer") || text.includes("switchgear")) return { system: "Electrical", criticality: "High", lifespan: 25 };
   if (text.includes("ups")) return { system: "Electrical", criticality: "High", lifespan: 8 };
-  if (text.includes("chiller") || text.includes("ahu") || text.includes("cooling tower") || text.includes("fan coil")) return { system: "HVAC", criticality: "Medium", lifespan: 20 };
+  if (text.includes("chiller") || text.includes("ahu") || text.includes("cooling tower") || text.includes("fan coil")) return { system: "HVAC", criticality: "High", lifespan: 20 };
   if (text.includes("lift") || text.includes("elevator")) return { system: "Vertical Transport", criticality: "High", lifespan: 25 };
-  if (text.includes("pump")) return { system: "Plumbing", criticality: "Medium", lifespan: 15 };
-  if (text.includes("cctv") || text.includes("camera")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 7 };
-  if (text.includes("access control") || text.includes("door reader")) return { system: "CCTV & Access Control", criticality: "Medium", lifespan: 10 };
+  if (text.includes("pump")) return { system: "Plumbing", criticality: "High", lifespan: 15 };
+  if (text.includes("cctv") || text.includes("camera")) return { system: "CCTV & Access Control", criticality: "High", lifespan: 7 };
+  if (text.includes("access control") || text.includes("door reader")) return { system: "CCTV & Access Control", criticality: "High", lifespan: 10 };
   if (text.includes("smoke detector") || text.includes("fire detection") || text.includes("fire panel")) return { system: "Fire Detection", criticality: "High", lifespan: 15 };
-  if (text.includes("bms") || text.includes("controls")) return { system: "Controls", criticality: "Medium", lifespan: 15 };
+  if (text.includes("bms") || text.includes("controls")) return { system: "Controls", criticality: "High", lifespan: 15 };
   if (text.includes("barrier") || text.includes("parking")) return { system: "Parking System", criticality: "Low", lifespan: 10 };
   return null; // no confident guess — let the person choose, no wrong assumption offered
 }
@@ -1200,7 +1200,7 @@ function filterByBuilding(items) {
 }
 
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
-function critBadge(c) { return c==="High"?"badge-high":c==="Medium"?"badge-medium":"badge-low"; }
+function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 
 // A plain total-duration line, deliberately separate from SLA — this
 // is just "how long has this actually been open," with no target
@@ -1414,9 +1414,7 @@ function renderDashboard() {
   const total = dashAssets.length;
   const operational = dashAssets.filter(a=>a.status==="Good").length;
   const schedMaint = dashAssets.filter(a=>a.status==="Poor").length;
-  const needsAttn = dashAssets.filter(a=>a.status==="Critical").length;
   const opPct = Math.round((operational/total)*100);
-  const attnPct = Math.round((needsAttn/total)*100);
   const criticalAlerts = dashAssets.filter(a=>a.criticality==="High" && a.status!=="Operational").length;
   const plannedNext30 = dashAssets.filter(a=>{ const d=daysUntil(a.nextService); return d>=0 && d<=windowDays; }).length;
 
@@ -1452,7 +1450,7 @@ function renderDashboard() {
   html += `<div class="dash-kpi-grid">
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--navy-pale);color:var(--navy)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg></div><div><div class="dash-kpi-val" style="color:var(--navy)">${fmt(total)}</div><div class="dash-kpi-label">Total Assets · All 17 levels</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--green-bg);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div><div class="dash-kpi-val" style="color:var(--green)">${operational}</div><div class="dash-kpi-label">Good · ${opPct}%</div></div></div>
-    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${needsAttn}</div><div class="dash-kpi-label">Critical · ${attnPct}%</div></div></div>
+    <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--amber-bg);color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div><div class="dash-kpi-val" style="color:var(--amber)">${schedMaint}</div><div class="dash-kpi-label">Poor · ${Math.round(schedMaint/total*100)}%</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--red-bg);color:var(--red)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div><div class="dash-kpi-val" style="color:var(--red)">${criticalAlerts}</div><div class="dash-kpi-label">Critical Alerts · High priority</div></div></div>
     <div class="dash-kpi"><div class="dash-kpi-icon" style="background:var(--blue-bg);color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="dash-kpi-val" style="color:var(--blue)">${plannedNext30}</div><div class="dash-kpi-label">Planned — Next ${windowDays} Days</div></div></div>
   </div>`;
@@ -1460,7 +1458,7 @@ function renderDashboard() {
   // Row 1: Asset Health + Maintenance Overview
   html += `<div class="dash-grid">`;
 
-  html += `<div class="dash-panel"><div class="dash-panel-title">Asset Health Overview</div><div class="donut-wrap"><canvas id="health-donut" width="140" height="140"></canvas><div style="display:flex;flex-direction:column;gap:2px"><div class="donut-legend"><span class="donut-dot" style="background:var(--green)"></span>Operational <strong>${operational}</strong> (${opPct}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--amber)"></span>Scheduled Maintenance <strong>${schedMaint}</strong> (${Math.round(schedMaint/total*100)}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--red)"></span>Needs Attention <strong>${needsAttn}</strong> (${attnPct}%)</div></div></div></div>`;
+  html += `<div class="dash-panel"><div class="dash-panel-title">Asset Health Overview</div><div class="donut-wrap"><canvas id="health-donut" width="140" height="140"></canvas><div style="display:flex;flex-direction:column;gap:2px"><div class="donut-legend"><span class="donut-dot" style="background:var(--green)"></span>Good <strong>${operational}</strong> (${opPct}%)</div><div class="donut-legend"><span class="donut-dot" style="background:var(--amber)"></span>Poor <strong>${schedMaint}</strong> (${Math.round(schedMaint/total*100)}%)</div></div></div></div>`;
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Overview</div><div style="display:flex;flex-direction:column;gap:4px">`;
   // Live data from work orders — group by month
@@ -1624,7 +1622,7 @@ function renderDashboard() {
 
   setTimeout(() => {
     const hc = document.getElementById('health-donut');
-    if(hc) drawDonut(hc, [{value:operational,color:'#27AE60'},{value:schedMaint,color:'#F39C12'},{value:needsAttn,color:'#E74C3C'}], 140);
+    if(hc) drawDonut(hc, [{value:operational,color:'#27AE60'},{value:schedMaint,color:'#F39C12'}], 140);
   }, 50);
 }
 
@@ -1722,7 +1720,7 @@ function renderAssets() {
   currentAssetDetailIdx = null;
   const systems = ["All", ...systemDefs.map(s=>s.name)];
   const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
-  const attn = assets.filter(a=>a.status==="Critical").length;
+  const good = assets.filter(a=>a.status==="Good").length;
   const sched = assets.filter(a=>a.status==="Poor").length;
 
   let html = `<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:12px">
@@ -1732,8 +1730,8 @@ function renderAssets() {
   html += `<div class="summary-grid">
     <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${total}</div><div class="summary-label">Total Assets</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${crit}</div><div class="summary-label">Critical Systems</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--green)">${good}</div><div class="summary-label">Good</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Poor</div></div>
-    <div class="summary-card"><div class="summary-val" style="color:var(--red)">${attn}</div><div class="summary-label">Critical</div></div>
   </div>`;
 
   // Search input uses renderAssetResults() ONLY — never renderAssets() —
@@ -1752,12 +1750,10 @@ function renderAssets() {
       <option value="All">All Status</option>
       <option value="Good"${currentStatusFilter==='Good'?' selected':''}>Good</option>
       <option value="Poor"${currentStatusFilter==='Poor'?' selected':''}>Poor</option>
-      <option value="Critical"${currentStatusFilter==='Critical'?' selected':''}>Critical</option>
     </select>
     <select class="filter-select" onchange="currentCriticalityFilter=this.value;renderAssets()">
-      <option value="All">All Criticality</option>
+      <option value="All">All Critical Importance</option>
       <option value="High"${currentCriticalityFilter==='High'?' selected':''}>High</option>
-      <option value="Medium"${currentCriticalityFilter==='Medium'?' selected':''}>Medium</option>
       <option value="Low"${currentCriticalityFilter==='Low'?' selected':''}>Low</option>
     </select>
   </div>`;
@@ -2127,12 +2123,12 @@ function openEditForm(idx) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
           <select id="ea_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-            <option${a.status==='Good'?' selected':''}>Good</option><option${a.status==='Poor'?' selected':''}>Poor</option><option${a.status==='Critical'?' selected':''}>Critical</option>
+            <option${a.status==='Good'?' selected':''}>Good</option><option${a.status==='Poor'?' selected':''}>Poor</option>
           </select>
         </div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+        <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Critical Importance</label>
           <select id="ea_criticality" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-            <option value="Low"${a.criticality==='Low'?' selected':''}>Low</option><option value="Medium"${a.criticality==='Medium'?' selected':''}>Medium</option><option value="High"${a.criticality==='High'?' selected':''}>High</option>
+            <option value="Low"${a.criticality==='Low'?' selected':''}>Low</option><option value="High"${a.criticality==='High'?' selected':''}>High</option>
           </select>
         </div>
       </div>
@@ -12496,7 +12492,7 @@ function generateCertificate(recordId) {
 // asset objects. Used by both the full register download and the
 // single-asset download button.
 function exportAssetsXLSX(assetList, filenameSuffix) {
-  const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Criticality","Last Service","Next Service Due"];
+  const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Critical Importance","Last Service","Next Service Due"];
   const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), displayRoom(a.room), a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -12663,7 +12659,7 @@ function exportSingleAssetFormat(assetId, format) {
   }
 
   if (format === 'csv') {
-    const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Criticality','Last Service','Next Service Due'];
+    const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Critical Importance','Last Service','Next Service Due'];
     const row = [asset.id, asset.name, asset.system, asset.category, asset.floor, asset.room, asset.manufacturer, asset.model, asset.installDate, asset.status, asset.criticality, asset.lastService, asset.nextService];
     const csv = headers.join(',') + '\n' + row.map(v => `"${v||''}"`).join(',');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -12691,7 +12687,7 @@ function exportSingleAssetFormat(assetId, format) {
         <tr><td>Model</td><td>${asset.model||'—'}</td></tr>
         <tr><td>Install Date</td><td>${asset.installDate||'—'}</td></tr>
         <tr><td>Status</td><td>${asset.status||'—'}</td></tr>
-        <tr><td>Criticality</td><td>${asset.criticality||'—'}</td></tr>
+        <tr><td>Critical Importance</td><td>${asset.criticality||'—'}</td></tr>
         <tr><td>Last Service</td><td>${asset.lastService||'—'}</td></tr>
         <tr><td>Next Service Due</td><td>${asset.nextService||'—'}</td></tr>
       </table>
@@ -12737,7 +12733,7 @@ function printMaintenancePlan(windowDays) {
       <h1>Maintenance Plan — Next ${windowDays} Days</h1>
       <div class="sub">Prepared for ${CLIENT_CONFIG.clientName} · Generated ${new Date().toISOString().split('T')[0]} · Window: through ${cutoff.toISOString().split('T')[0]} · ${filtered.length} asset${filtered.length!==1?'s':''} due</div>
       ${filtered.length === 0 ? '<div class="empty">Nothing due for service within this window.</div>' : `
-      <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Criticality</th><th>Status</th><th>Next Service Due</th></tr></thead>
+      <table><thead><tr><th>Asset ID</th><th>Name</th><th>System</th><th>Location</th><th>Critical Importance</th><th>Status</th><th>Next Service Due</th></tr></thead>
       <tbody>${rows}</tbody></table>`}
     </body></html>
   `);
@@ -13059,11 +13055,11 @@ function openAddAssetForm() {
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
       <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option>Good</option><option>Poor</option><option>Critical</option>
+        <option>Good</option><option>Poor</option>
       </select>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Criticality</label>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Critical Importance</label>
       <select id="na_criticality" onchange="userTouchedCriticality=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option>
+        <option value="Low" selected>Low</option><option value="High">High</option>
       </select>
 
       <div id="na_financeFields" style="display:${(TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation)) ? 'block' : 'none'}">
