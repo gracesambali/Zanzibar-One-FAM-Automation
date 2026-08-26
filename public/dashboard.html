@@ -1126,6 +1126,7 @@ function rerenderActiveTab() {
   else if (tab === 'dashboard') renderDashboard();
   else if (tab === 'assets') renderAssets();
   else if (tab === 'units') renderUnits();
+  else if (tab === 'finance') renderFinance();
 }
 
 // Changing Facility resets Building back to "all buildings within that
@@ -5295,7 +5296,10 @@ function renderFinanceShell() {
   const container = document.getElementById('view-finance');
   container.innerHTML = `
     <div style="padding:24px">
-      <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0 0 20px">Finance</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">Finance</h2>
+        ${currencySwitcherHtml('finance')}
+      </div>
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px">
         ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll'].map(t => `
           <button onclick="switchFinanceSubTab('${t}')" id="finSubTab-${t}" style="padding:10px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:${financeSubTab===t?'var(--navy)':'var(--muted)'};border-bottom:2px solid ${financeSubTab===t?'var(--navy)':'transparent'}">
