@@ -1507,3 +1507,16 @@ create table if not exists payroll_documents (
   uploaded_at       timestamptz not null default now()
 );
 create index if not exists idx_payroll_documents_entry on payroll_documents (payroll_entry_id);
+
+-- ============================================================
+-- Condition simplified to two real values (Good, Poor), and
+-- Criticality renamed to Critical Importance with two real values
+-- (Low, High), confirmed directly. Existing data migrated to the
+-- closest remaining option, confirmed directly rather than left
+-- orphaned: Critical condition -> Poor (preserves the "needs
+-- attention" signal rather than losing it by defaulting toward
+-- Good), Medium importance -> High (erring toward caution - under-
+-- flagging a genuinely important asset is the costlier mistake).
+-- ============================================================
+update components set status = 'Poor' where status = 'Critical';
+update components set criticality = 'High' where criticality = 'Medium';

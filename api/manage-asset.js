@@ -1860,7 +1860,7 @@ async function createOneAsset(a, addedBy, addedByRole) {
       residual_value_tzs: a.residualValue !== undefined ? Number(a.residualValue) : 0,
       current_value_tzs: computeCurrentValue(a),
       status: a.status || "Good",
-      criticality: a.criticality || "Medium",
+      criticality: a.criticality || "Low",
       active: true,
       added_by: addedBy,
       needs_technical_review: needsReview,
