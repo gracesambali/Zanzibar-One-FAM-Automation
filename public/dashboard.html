@@ -5295,8 +5295,7 @@ function renderFinanceShell() {
   const container = document.getElementById('view-finance');
   container.innerHTML = `
     <div style="padding:24px">
-      <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0 0 4px">Finance</h2>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 20px">Income, expenses, bills, and liabilities — Gracing Ventures' own records, not client data.</p>
+      <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0 0 20px">Finance</h2>
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px">
         ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll'].map(t => `
           <button onclick="switchFinanceSubTab('${t}')" id="finSubTab-${t}" style="padding:10px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:${financeSubTab===t?'var(--navy)':'var(--muted)'};border-bottom:2px solid ${financeSubTab===t?'var(--navy)':'transparent'}">
