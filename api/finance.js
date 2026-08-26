@@ -56,6 +56,7 @@ export default async function handler(req, res) {
     if (req.query.vendorSpend === "true") return handleVendorSpend(req, res);
     if (req.query.payroll === "true") return handleListPayroll(req, res);
     if (req.query.staffForPayroll === "true") return handleListStaffForPayroll(req, res);
+    if (req.query.documents === "true") return handleListDocuments(req, res);
     return res.status(400).json({ error: "Unknown GET request" });
   }
 
@@ -719,6 +720,44 @@ async function handleMarkPayrollPaid(req, res, recordedBy) {
     return res.status(200).json({ success: true, nextPayDate: nextDue.toISOString().split("T")[0] });
   } catch (err) {
     console.error("markPayrollPaid error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------
+// Listing real attachments - confirmed directly this was the actual
+// gap: the backend to upload has existed since Session 163, and
+// tested correctly, but there was never a real way to see or open
+// what had already been attached, only a bare count. Reuses the
+// exact same real signed-URL pattern already proven for asset and
+// work order documents, rather than a new mechanism.
+// ---------------------------------------------------------------
+
+const DOCUMENT_TABLES = {
+  transaction: { table: "transaction_documents", fk: "transaction_id" },
+  bill: { table: "bill_documents", fk: "bill_id" },
+  liability: { table: "liability_documents", fk: "liability_id" },
+};
+
+async function handleListDocuments(req, res) {
+  const { recordType, recordId } = req.query;
+  const config = DOCUMENT_TABLES[recordType];
+  if (!config || !recordId) return res.status(400).json({ error: "A real recordType (transaction/bill/liability) and recordId are required." });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+    const result = await pgQuery(
+      `select id, url, filename, uploaded_at from ${config.table} where ${config.fk} = $1 order by uploaded_at desc`,
+      [recordId]
+    );
+    const documents = await Promise.all(result.rows.map(async r => ({
+      id: r.id, filename: r.filename, uploadedAt: r.uploaded_at,
+      signedUrl: await getSignedUrlSafe(r.url),
+    })));
+    return res.status(200).json({ documents });
+  } catch (err) {
+    console.error("finance documents read error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

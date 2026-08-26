@@ -5464,7 +5464,10 @@ async function renderFinanceTransactions() {
                   <td style="padding:10px 12px">${escapeHtml(t.category)}</td>
                   <td style="padding:10px 12px">${escapeHtml(t.description || '—')}</td>
                   <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(t.amount)}</td>
-                  <td style="padding:10px 12px;text-align:right"><button onclick="deleteFinanceTransaction('${t.id}')" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:12px">Delete</button></td>
+                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                    <button onclick="openFinanceAttachmentsModal('transaction','${t.id}','${escapeHtml(t.description || t.category)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${t.documentCount || 0}</button>
+                    <button onclick="deleteFinanceTransaction('${t.id}')" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:12px">Delete</button>
+                  </td>
                 </tr>`).join('')}
           </tbody>
         </table>
@@ -5576,7 +5579,10 @@ async function renderFinanceBills() {
                   <td style="padding:10px 12px">${b.nextDueDate}</td>
                   <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(b.amount)}</td>
                   <td style="padding:10px 12px">${b.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
-                  <td style="padding:10px 12px;text-align:right"><button onclick="markFinanceBillPaid('${b.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button></td>
+                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                    <button onclick="openFinanceAttachmentsModal('bill','${b.id}','${escapeHtml(b.name)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${b.documentCount || 0}</button>
+                    ${b.status === 'active' ? `<button onclick="markFinanceBillPaid('${b.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}
+                  </td>
                 </tr>`).join('')}
           </tbody>
         </table>
@@ -5664,7 +5670,10 @@ async function renderFinanceLiabilities() {
                   <td style="padding:10px 12px;font-weight:600">${formatCurrency(l.remainingBalance)}</td>
                   <td style="padding:10px 12px">${l.nextPaymentDate || '—'}</td>
                   <td style="padding:10px 12px">${l.status === 'active' ? '<span style="color:var(--amber,#B45309)">Active</span>' : '<span style="color:var(--green)">Paid Off</span>'}</td>
-                  <td style="padding:10px 12px;text-align:right">${l.status === 'active' ? `<button onclick="openRecordPaymentModal('${l.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Record Payment</button>` : ''}</td>
+                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                    <button onclick="openFinanceAttachmentsModal('liability','${l.id}','${escapeHtml(l.lender)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${l.documentCount || 0}</button>
+                    ${l.status === 'active' ? `<button onclick="openRecordPaymentModal('${l.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Record Payment</button>` : ''}
+                  </td>
                 </tr>`).join('')}
           </tbody>
         </table>
@@ -5906,6 +5915,93 @@ async function markFinancePayrollPaid(payrollEntryId) {
   const data = await resp.json();
   if (!resp.ok) { alert(data.error || 'Could not mark payroll paid'); return; }
   renderFinancePayroll();
+}
+
+// --- Attachments — shared across transactions, bills, and liabilities ---
+
+const FINANCE_UPLOAD_ACTIONS = {
+  transaction: 'uploadTransactionDocument',
+  bill: 'uploadBillDocument',
+  liability: 'uploadLiabilityDocument',
+};
+
+async function openFinanceAttachmentsModal(recordType, recordId, recordLabel) {
+  showFinanceModal(`Attachments — ${escapeHtml(recordLabel)}`, `<div id="fa_body">Loading…</div>`);
+  await loadFinanceAttachments(recordType, recordId);
+}
+
+async function loadFinanceAttachments(recordType, recordId) {
+  const body = document.getElementById('fa_body');
+  if (!body) return;
+  try {
+    const resp = await fetch(`/api/finance?documents=true&recordType=${recordType}&recordId=${recordId}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load attachments');
+    const docs = data.documents || [];
+    body.innerHTML = `
+      ${docs.length === 0 ? `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">No files attached yet.</div>` : `
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+        ${docs.map(d => `
+          <a href="${d.signedUrl}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--navy);font-size:12.5px">
+            📎 ${escapeHtml(d.filename)}
+          </a>`).join('')}
+      </div>`}
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Attach a file (max 5MB)</label>
+      <input id="fa_file" type="file" style="width:100%;font-size:12.5px;margin-bottom:8px">
+      <div id="fa_status" style="font-size:12px;margin-bottom:8px"></div>
+      <button onclick="submitFinanceAttachment('${recordType}','${recordId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Upload</button>
+    `;
+  } catch (err) {
+    body.innerHTML = `<div style="color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function submitFinanceAttachment(recordType, recordId) {
+  const fileInput = document.getElementById('fa_file');
+  const statusEl = document.getElementById('fa_status');
+  const file = fileInput?.files?.[0];
+  if (!file) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Choose a file first.'; return; }
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'File is larger than 5MB. Try a smaller file.';
+    return;
+  }
+
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Uploading…';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const resp = await fetch('/api/finance', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: FINANCE_UPLOAD_ACTIONS[recordType], recordId,
+        filename: file.name, contentType: file.type || 'application/octet-stream', fileBase64: base64,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `✓ Uploaded ${file.name}`;
+    if (fileInput) fileInput.value = '';
+    await loadFinanceAttachments(recordType, recordId);
+    // Refresh whichever list is currently open, so its own document
+    // count reflects the real, just-added file without needing a
+    // separate manual refresh.
+    if (recordType === 'transaction') renderFinanceTransactions();
+    if (recordType === 'bill') renderFinanceBills();
+    if (recordType === 'liability') renderFinanceLiabilities();
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = err.message;
+  }
 }
 
 // --- Shared modal shell for all Finance forms ---
