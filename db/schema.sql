@@ -1538,3 +1538,15 @@ create table if not exists bms_category_notification_roles (
   unique (category, role)
 );
 create index if not exists idx_bms_notif_roles_category on bms_category_notification_roles (category);
+
+-- ============================================================
+-- Demo BMS sensors — confirmed directly: a real, explicit flag
+-- rather than a naming convention (which would be too easy to miss
+-- or misuse), so demo sensors are unambiguously distinguishable from
+-- real, live ones. Purpose confirmed directly: showing prospective
+-- clients/stakeholders what full BMS coverage looks like across all
+-- five categories, especially the ones without real sensors
+-- connected yet - temporary, removed once real sensors replace it.
+-- ============================================================
+alter table sensors add column if not exists is_demo boolean not null default false;
+alter table readings add column if not exists is_demo boolean not null default false;
