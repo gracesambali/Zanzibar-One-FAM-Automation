@@ -1842,10 +1842,11 @@ function renderAssets() {
     html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAssetTrackingCategories()">
         <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Classes ${assetTrackingCategoriesOpen ? '▾' : '▸'}</div>
-        ${assetTrackingCategoriesOpen ? `<div style="display:flex;gap:8px">
-          <button onclick="event.stopPropagation();openImportTraClassesModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import</button>
-          <button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Class</button>
-        </div>` : ''}
+        <div style="display:flex;gap:8px">
+          <button onclick="event.stopPropagation();scrollToAssetTrackingLog()" title="Jump to TRA Activity Log" style="padding:6px 10px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐</button>
+          ${assetTrackingCategoriesOpen ? `<button onclick="event.stopPropagation();openImportTraClassesModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import</button>
+          <button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Class</button>` : ''}
+        </div>
       </div>
       ${assetTrackingCategoriesOpen ? `
       <div style="font-size:11.5px;color:var(--muted);margin:12px 0 12px">The real item types and rates your finance contact provides, entered here once — this is what every asset's TRA Class dropdown pulls from, and what the register calculates against.</div>
@@ -1863,14 +1864,14 @@ function renderAssets() {
     </div>`;
   }
 
+  html += `<div id="assetResultsContainer"></div>`;
+
   if (canManageTra) {
     html += `<div id="assetTrackingLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">TRA Activity Log</div>
       <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
   }
-
-  html += `<div id="assetResultsContainer"></div>`;
 
   document.getElementById('view-assets').innerHTML = html;
   renderAssetResults(); // populate the results container on initial/full render
@@ -3032,6 +3033,14 @@ async function loadAssetTrackingLog() {
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
   }
+}
+
+// Confirmed directly: the log lives below the whole asset register
+// now, not right after the TRA Classes panel - this scrolls there on
+// demand from the icon at the top, rather than requiring a manual
+// scroll past a potentially long asset list.
+function scrollToAssetTrackingLog() {
+  document.getElementById('assetTrackingLogPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 
