@@ -2564,6 +2564,13 @@ function showSensorDetail(recordId) {
       </div>
 
       <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:2px">Reading History</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Last 100 readings</div>
+        <canvas id="sensorHistoryChart" width="600" height="180"></canvas>
+        <div id="sensorHistoryStatus" style="font-size:12px;color:var(--muted);margin-top:8px">Loading…</div>
+      </div>
+
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
         <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Notes & Status</div>
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
         <select id="sensorEditStatus" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px">
@@ -2586,6 +2593,91 @@ function showSensorDetail(recordId) {
       </div>
     </div>
   `;
+
+  loadSensorHistoryChart(s.sensorId);
+}
+
+// Real reading history, fetched after the instant detail render above
+// rather than blocking it - matches the same pattern already used
+// elsewhere (Finance's cost overview) for anything that needs its own
+// network round trip.
+async function loadSensorHistoryChart(sensorId) {
+  const statusEl = document.getElementById('sensorHistoryStatus');
+  const canvas = document.getElementById('sensorHistoryChart');
+  if (!statusEl || !canvas) return;
+  try {
+    const resp = await fetch(`/api/sensors?readingsHistory=true&sensorId=${encodeURIComponent(sensorId)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load history');
+    const readings = data.readings || [];
+    if (readings.length === 0) {
+      statusEl.textContent = 'No readings recorded yet.';
+      return;
+    }
+    drawSensorHistoryChart(canvas, readings);
+    statusEl.textContent = `${readings.length} reading${readings.length === 1 ? '' : 's'} shown, oldest to most recent.`;
+  } catch (err) {
+    statusEl.textContent = 'Could not load history: ' + err.message;
+  }
+}
+
+// A real line chart for one sensor's own readings over time - no
+// external charting library, matching the same lightweight, native
+// canvas approach already used elsewhere in this app (drawDonut,
+// the Finance trend chart). Points colored by their real withinRange
+// flag, so an anomaly is visible directly on the chart, not just in
+// the badge on the list row.
+function drawSensorHistoryChart(canvas, readings) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const values = readings.map(r => r.value).filter(v => v !== null);
+  if (values.length === 0) return;
+
+  const padding = { top: 10, bottom: 10, left: 10, right: 10 };
+  const chartW = w - padding.left - padding.right;
+  const chartH = h - padding.top - padding.bottom;
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  // A flat line (every reading identical) would divide by zero below -
+  // give it a real, small artificial range so it still draws sensibly
+  // as a flat line instead of collapsing to nothing.
+  const range = (maxVal - minVal) || Math.max(1, Math.abs(maxVal) * 0.1) || 1;
+  const stepX = readings.length > 1 ? chartW / (readings.length - 1) : 0;
+
+  function pointFor(i) {
+    const v = readings[i].value;
+    const x = padding.left + i * stepX;
+    const y = v === null ? null : padding.top + chartH - ((v - minVal) / range) * chartH;
+    return { x, y };
+  }
+
+  // The connecting line itself, navy, skipping any null-value gaps
+  // rather than drawing a false connection across missing data.
+  ctx.strokeStyle = '#003566';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < readings.length; i++) {
+    const p = pointFor(i);
+    if (p.y === null) { started = false; continue; }
+    if (!started) { ctx.moveTo(p.x, p.y); started = true; }
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+
+  // Individual points on top, colored by the real withinRange flag -
+  // red for a genuine out-of-range reading, green for in-range, grey
+  // for not-yet-evaluated (e.g. still building spike history).
+  for (let i = 0; i < readings.length; i++) {
+    const p = pointFor(i);
+    if (p.y === null) continue;
+    ctx.fillStyle = readings[i].withinRange === true ? '#1B7A43' : readings[i].withinRange === false ? '#E74C3C' : '#9CA3AF';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 // --- Add Sensor ---
