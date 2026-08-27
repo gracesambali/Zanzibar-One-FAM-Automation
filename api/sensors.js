@@ -34,6 +34,7 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleGetCategories(req, res);
+    if (req.query.readingsHistory === "true") return handleGetReadingsHistory(req, res);
     if (req.query.notificationRoles === "true") return handleGetNotificationRoles(req, res);
     return handleGetReadings(req, res);
   }
@@ -516,6 +517,45 @@ async function handleAddSensor(req, res, addedBy) {
       return res.status(400).json({ error: "A sensor with this ID already exists." });
     }
     console.error("handleAddSensor error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Real reading history for one sensor - the actual data behind
+// "record, chart, and track". Confirmed directly: charting belongs in
+// the per-sensor detail view, not the list (which would mean many
+// small charts competing for attention). The last 100 readings, oldest
+// first, is enough for a real trend without an unbounded query as a
+// sensor accumulates months of data.
+// ---------------------------------------------------------------------
+
+async function handleGetReadingsHistory(req, res) {
+  const { sensorId } = req.query;
+  if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `select timestamp, value, unit, within_range
+       from readings
+       where sensor_id = $1
+       order by timestamp desc
+       limit 100`,
+      [sensorId]
+    );
+    // Oldest first for charting, even though the query itself fetches
+    // newest-first (so the LIMIT keeps the real, most recent readings,
+    // not the oldest ones from a sensor with a long history).
+    const readings = result.rows.reverse().map(r => ({
+      timestamp: r.timestamp,
+      value: r.value !== null ? Number(r.value) : null,
+      unit: r.unit,
+      withinRange: r.within_range,
+    }));
+    return res.status(200).json({ readings });
+  } catch (err) {
+    console.error("handleGetReadingsHistory error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
