@@ -425,9 +425,9 @@ button { font-family: inherit; cursor: pointer; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
         <span class="tab-label">Asset Register</span>
       </button>
-      <button class="tab-btn nested" data-tab="sensors" data-label="Sensors" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensors')" onmouseleave="hideSidebarTooltip()">
+      <button class="tab-btn nested" data-tab="sensors" data-label="BMS" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'BMS')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span class="tab-label">Sensors</span>
+        <span class="tab-label">BMS</span>
       </button>
       <button class="tab-btn nested" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
@@ -2419,11 +2419,19 @@ async function renderSensorMonitor(isRefresh) {
   }
 
   try {
-    const resp = await fetch('/api/sensors');
+    const [resp, catResp] = await Promise.all([
+      fetch('/api/sensors'),
+      isRefresh ? Promise.resolve(null) : fetch('/api/sensors?categories=true'),
+    ]);
     if (resp.status === 401) { window.location.href = '/login'; return; }
     if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
     const data = await resp.json();
     const sensors = data.sensors || [];
+    if (catResp) {
+      const catData = await catResp.json();
+      window.bmsCategoriesCache = catData.categories || [];
+    }
+    const categories = window.bmsCategoriesCache || [];
 
     // The test tool panel (dropdown, value input, result box) is built
     // ONLY on first load, never on a refresh - refreshing used to rebuild
@@ -2431,6 +2439,17 @@ async function renderSensorMonitor(isRefresh) {
     // dropdown selection a split second after a test ran. Now a refresh
     // only ever touches #sensorListArea below.
     if (!isRefresh) {
+      const headerHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">BMS</h2>
+          <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, and water — extracted from your smart equipment or BMS. FAM bridges it to notifications and maintenance.</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button onclick="openBmsNotificationSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔔 Notification Settings</button>
+          <button onclick="openAddSensorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Sensor</button>
+        </div>
+      </div>`;
+
       const toolHtml = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
         <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tool</div>
         <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Pick a sensor and enter a test reading. If the value falls outside its target range, a real email + SMS fires and a real Work Order opens — the same as a genuine sensor breach. A value within range is just recorded, no alert.</div>
@@ -2445,7 +2464,7 @@ async function renderSensorMonitor(isRefresh) {
         <div id="sensorTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
       </div>
       <div id="sensorListArea"></div>`;
-      container.innerHTML = toolHtml;
+      container.innerHTML = headerHtml + toolHtml;
       updateSensorTestHint();
     }
 
@@ -2461,28 +2480,46 @@ async function renderSensorMonitor(isRefresh) {
     </div>`;
 
     if (sensors.length === 0) {
-      listHtml += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No sensors registered yet — once a sensor is added to the Sensors table and starts sending readings, it will appear here automatically.</div>`;
+      listHtml += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No sensors registered yet — click "+ Add Sensor" above to register your first one.</div>`;
     } else {
-      listHtml += `<div class="asset-list">`;
-      sensors.forEach(s => {
-        const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
-        const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
-        const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
-        listHtml += `<button class="asset-row" onclick="showSensorDetail('${s.recordId}')" style="text-align:left">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
-            <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;min-width:100px">
-            <div style="font-size:11px;color:var(--muted)">Latest Reading</div>
-            <div style="font-size:16px;font-weight:700;color:var(--navy)">${valueDisplay}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-            <span class="badge ${badgeClass}">${badgeLabel}</span>
-          </div>
-        </button>`;
-      });
-      listHtml += `</div>`;
+      const sensorsByCategory = {};
+      for (const cat of categories.length ? categories : (window.bmsCategoriesCache || [])) sensorsByCategory[cat.key] = [];
+      for (const s of sensors) {
+        if (!sensorsByCategory[s.category]) sensorsByCategory[s.category] = [];
+        sensorsByCategory[s.category].push(s);
+      }
+
+      const catList = categories.length ? categories : (window.bmsCategoriesCache || []);
+      for (const cat of catList) {
+        const catSensors = sensorsByCategory[cat.key] || [];
+        listHtml += `<div style="margin-top:20px">
+          <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:8px">${escapeHtml(cat.label)} <span style="font-weight:400;color:var(--muted);font-size:12px">(${catSensors.length})</span></div>`;
+        if (catSensors.length === 0) {
+          listHtml += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No sensors in this category yet.</div>`;
+        } else {
+          listHtml += `<div class="asset-list">`;
+          catSensors.forEach(s => {
+            const badgeClass = s.withinRange === true ? 'badge-good' : s.withinRange === false ? 'badge-overdue' : 'badge-medium';
+            const badgeLabel = s.withinRange === true ? 'In Range' : s.withinRange === false ? 'Out of Range' : 'No Data';
+            const valueDisplay = (s.latestValue !== null && s.latestValue !== undefined) ? `${s.latestValue}${s.latestUnit || ''}` : '—';
+            listHtml += `<button class="asset-row" onclick="showSensorDetail('${s.recordId}')" style="text-align:left">
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${s.assetName}</span><span class="asset-id">${s.sensorId}</span></div>
+                <div class="asset-meta">${s.location || '—'} · ${s.sensorType} · Target: ${s.targetRange || 'not set'}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0;min-width:100px">
+                <div style="font-size:11px;color:var(--muted)">Latest Reading</div>
+                <div style="font-size:16px;font-weight:700;color:var(--navy)">${valueDisplay}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span class="badge ${badgeClass}">${badgeLabel}</span>
+              </div>
+            </button>`;
+          });
+          listHtml += `</div>`;
+        }
+        listHtml += `</div>`;
+      }
       window.lastSensors = sensors;
       listHtml += `<div style="font-size:11px;color:var(--muted);margin-top:12px;text-align:right">Last checked ${new Date().toLocaleTimeString()} · refreshes automatically every 5 minutes</div>`;
     }
@@ -2549,6 +2586,135 @@ function showSensorDetail(recordId) {
       </div>
     </div>
   `;
+}
+
+// --- Add Sensor ---
+
+const BMS_SENSOR_TYPES = [
+  { value: 'alarm', label: 'Alarm (real fault codes)' },
+  { value: 'equipment', label: 'Equipment (OK/Fault)' },
+  { value: 'door', label: 'Door (Open/Closed)' },
+  { value: 'temperature', label: 'Temperature' },
+  { value: 'humidity', label: 'Humidity' },
+  { value: 'runtime', label: 'Runtime (hours)' },
+  { value: 'electrical', label: 'Electrical (kWh)' },
+  { value: 'water', label: 'Water (Liters)' },
+];
+
+function openAddSensorModal() {
+  const assetOptions = assets.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${a.id})</option>`).join('');
+  const typeOptions = BMS_SENSOR_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('');
+  showBmsModal('Add Sensor', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor / Device ID</label>
+    <input id="as_sensorId" placeholder="e.g. ELEC-ROOFTOP-01" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Must exactly match the device ID your BMS/smart equipment is already configured to send.</div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Linked Asset</label>
+    <select id="as_assetId" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${assetOptions}</select>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor Type</label>
+    <select id="as_sensorType" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <div id="as_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+    <button onclick="submitAddSensor()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Register Sensor</button>
+  `);
+}
+
+async function submitAddSensor() {
+  const errEl = document.getElementById('as_error');
+  errEl.textContent = '';
+  const resp = await fetch('/api/sensors', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'addSensor',
+      sensorId: document.getElementById('as_sensorId').value.trim(),
+      assetId: document.getElementById('as_assetId').value,
+      sensorType: document.getElementById('as_sensorType').value,
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { errEl.textContent = data.error || 'Could not add sensor'; return; }
+  closeBmsModal();
+  renderSensorMonitor();
+}
+
+// --- Notification Settings ---
+
+async function openBmsNotificationSettingsModal() {
+  showBmsModal('BMS Notification Settings', `<div id="ns_body">Loading…</div>`);
+  const [catResp, rolesResp] = await Promise.all([
+    fetch('/api/sensors?categories=true'),
+    fetch('/api/sensors?notificationRoles=true'),
+  ]);
+  const catData = await catResp.json();
+  const rolesData = await rolesResp.json();
+  const categories = catData.categories || [];
+  const rolesByCategory = rolesData.rolesByCategory || {};
+  const allRoles = ['technician', 'electrical_engineer', 'mechanical_engineer', 'property_manager', 'procurement', 'business_owner', 'system_admin'];
+  const roleLabels = { technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer', property_manager: 'Property Manager', procurement: 'Procurement', business_owner: 'Business Owner', system_admin: 'System Admin' };
+
+  document.getElementById('ns_body').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Choose which roles get notified when a sensor in each category triggers a real alert. Assigned once per category — every sensor in it inherits this automatically.</div>
+    ${categories.map(cat => `
+      <div style="margin-bottom:16px">
+        <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:6px">${escapeHtml(cat.label)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          ${allRoles.map(role => `
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text)">
+              <input type="checkbox" class="ns-role-check" data-category="${cat.key}" value="${role}" ${(rolesByCategory[cat.key] || []).includes(role) ? 'checked' : ''}>
+              ${roleLabels[role]}
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `).join('')}
+    <div id="ns_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+    <button onclick="submitBmsNotificationSettings()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save</button>
+  `;
+}
+
+async function submitBmsNotificationSettings() {
+  const errEl = document.getElementById('ns_error');
+  errEl.textContent = '';
+  const checks = [...document.querySelectorAll('.ns-role-check')];
+  const byCategory = {};
+  for (const c of checks) {
+    if (!byCategory[c.dataset.category]) byCategory[c.dataset.category] = [];
+    if (c.checked) byCategory[c.dataset.category].push(c.value);
+  }
+  try {
+    for (const category of Object.keys(byCategory)) {
+      const resp = await fetch('/api/sensors', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setNotificationRoles', category, roles: byCategory[category] }),
+      });
+      if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || 'Could not save'); }
+    }
+    closeBmsModal();
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
+}
+
+// --- Shared modal shell for BMS ---
+
+function showBmsModal(title, bodyHtml) {
+  const existing = document.getElementById('bms-modal-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'bms-modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="font-size:15px;font-weight:700;color:var(--navy);margin:0">${title}</h3>
+        <button onclick="closeBmsModal()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+      </div>
+      ${bodyHtml}
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeBmsModal() {
+  const overlay = document.getElementById('bms-modal-overlay');
+  if (overlay) overlay.remove();
 }
 
 async function saveSensorEdit(recordId) {
