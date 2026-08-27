@@ -574,18 +574,18 @@ async function handleGetReadingsHistory(req, res) {
 
 const DEMO_SEED_DEFINITIONS = [
   {
-    sensorId: "DEMO-RUNTIME-01", sensorType: "runtime", unit: "hours",
+    sensorId: "SAMPLE-RUNTIME-01", sensorType: "runtime", unit: "hours",
     // Steady daily runtime, then a real, visible spike on the last day
     // - demonstrates the actual spike-detection behavior, not just a
     // flat, uneventful line.
     values: [7.8, 8.1, 7.9, 8.0, 7.7, 8.2, 8.0, 7.9, 8.1, 7.8, 8.0, 7.9, 14.6],
   },
   {
-    sensorId: "DEMO-ELECTRICAL-01", sensorType: "electrical", unit: "kWh",
+    sensorId: "SAMPLE-ELECTRICAL-01", sensorType: "electrical", unit: "kWh",
     values: [98, 102, 97, 101, 99, 103, 100, 98, 102, 99, 101, 100, 148],
   },
   {
-    sensorId: "DEMO-WATER-01", sensorType: "water", unit: "Liters",
+    sensorId: "SAMPLE-WATER-01", sensorType: "water", unit: "Liters",
     values: [410, 425, 400, 418, 412, 430, 405, 415, 420, 408, 422, 412, 640],
   },
 ];
@@ -600,7 +600,7 @@ async function handleSeedDemoData(req, res, addedBy) {
     // than a generic, unlinked placeholder.
     const assetsResult = await pgQuery("select asset_id, name from components where active = true limit 3");
     if (assetsResult.rows.length === 0) {
-      return res.status(400).json({ error: "No real assets exist yet to link demo sensors to. Add at least one asset first." });
+      return res.status(400).json({ error: "No real assets exist yet to link sample sensors to. Add at least one asset first." });
     }
 
     const created = [];
@@ -616,7 +616,7 @@ async function handleSeedDemoData(req, res, addedBy) {
       await insert("sensors", {
         sensor_id: def.sensorId, asset_id: asset.asset_id, sensor_type: def.sensorType,
         status: "Active", is_demo: true,
-        activity_log: JSON.stringify([{ text: `Demo sensor seeded by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
+        activity_log: JSON.stringify([{ text: `Sample sensor added by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
       });
 
       const now = new Date();
