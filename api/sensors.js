@@ -41,6 +41,8 @@ export default async function handler(req, res) {
   if (req.method === "POST") {
     const action = req.body && req.body.action;
     if (action === "addSensor") return handleAddSensor(req, res, session.u);
+    if (action === "seedDemoData") return handleSeedDemoData(req, res, session.u);
+    if (action === "clearDemoData") return handleClearDemoData(req, res);
     if (action === "setNotificationRoles") return handleSetNotificationRoles(req, res);
     return handleRunTest(req, res, session.u); // no action field - the existing test tool's plain body
   }
@@ -155,6 +157,7 @@ async function handleGetReadings(req, res) {
         sensorId: s.sensor_id || "",
         sensorType,
         category: categoryForSensorType(sensorTypeLower),
+        isDemo: s.is_demo === true,
         assetId,
         assetName: component.name || assetId,
         location: component.room_zone || "",
@@ -556,6 +559,100 @@ async function handleGetReadingsHistory(req, res) {
     return res.status(200).json({ readings });
   } catch (err) {
     console.error("handleGetReadingsHistory error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Demo BMS data - confirmed directly: clearly labeled example data for
+// showing prospective clients/stakeholders what full coverage looks
+// like across all five categories, especially runtime/electrical/
+// water which have no real sensors connected yet at most sites.
+// Temporary by design - handleClearDemoData removes it cleanly once
+// real sensors take over.
+// ---------------------------------------------------------------------
+
+const DEMO_SEED_DEFINITIONS = [
+  {
+    sensorId: "DEMO-RUNTIME-01", sensorType: "runtime", unit: "hours",
+    // Steady daily runtime, then a real, visible spike on the last day
+    // - demonstrates the actual spike-detection behavior, not just a
+    // flat, uneventful line.
+    values: [7.8, 8.1, 7.9, 8.0, 7.7, 8.2, 8.0, 7.9, 8.1, 7.8, 8.0, 7.9, 14.6],
+  },
+  {
+    sensorId: "DEMO-ELECTRICAL-01", sensorType: "electrical", unit: "kWh",
+    values: [98, 102, 97, 101, 99, 103, 100, 98, 102, 99, 101, 100, 148],
+  },
+  {
+    sensorId: "DEMO-WATER-01", sensorType: "water", unit: "Liters",
+    values: [410, 425, 400, 418, 412, 430, 405, 415, 420, 408, 422, 412, 640],
+  },
+];
+
+async function handleSeedDemoData(req, res, addedBy) {
+  try {
+    const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
+    const { categoryForSensorType } = await import("../lib/bmsCategories.js");
+
+    // Real, existing assets to link the demo sensors to, so the
+    // demonstration reflects this facility's actual equipment rather
+    // than a generic, unlinked placeholder.
+    const assetsResult = await pgQuery("select asset_id, name from components where active = true limit 3");
+    if (assetsResult.rows.length === 0) {
+      return res.status(400).json({ error: "No real assets exist yet to link demo sensors to. Add at least one asset first." });
+    }
+
+    const created = [];
+    for (let i = 0; i < DEMO_SEED_DEFINITIONS.length; i++) {
+      const def = DEMO_SEED_DEFINITIONS[i];
+      const asset = assetsResult.rows[i % assetsResult.rows.length];
+
+      // Real, per-org uniqueness - re-seeding after a partial clear
+      // shouldn't fail on a duplicate sensor_id.
+      const existing = await pgQuery("select id from sensors where sensor_id = $1", [def.sensorId]);
+      if (existing.rows.length > 0) continue;
+
+      await insert("sensors", {
+        sensor_id: def.sensorId, asset_id: asset.asset_id, sensor_type: def.sensorType,
+        status: "Active", is_demo: true,
+        activity_log: JSON.stringify([{ text: `Demo sensor seeded by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
+      });
+
+      const now = new Date();
+      for (let d = def.values.length - 1; d >= 0; d--) {
+        const daysAgo = def.values.length - 1 - d;
+        const ts = new Date(now); ts.setDate(ts.getDate() - daysAgo);
+        // Same 40%-above-recent-average spike rule the real ingestion
+        // endpoint uses, computed here directly against this seed's
+        // own steady values, so the demo's colored points genuinely
+        // match what the real system would have flagged.
+        const priorValues = def.values.slice(0, d);
+        const avg = priorValues.length >= 3 ? priorValues.slice(-14).reduce((a, b) => a + b, 0) / Math.min(priorValues.length, 14) : null;
+        const withinRange = avg === null ? null : def.values[d] <= avg * 1.4;
+        await insert("readings", {
+          timestamp: ts.toISOString(), sensor_id: def.sensorId, asset_id: asset.asset_id,
+          value: def.values[d], unit: def.unit, within_range: withinRange, is_demo: true,
+        });
+      }
+      created.push(def.sensorId);
+    }
+
+    return res.status(200).json({ success: true, created });
+  } catch (err) {
+    console.error("handleSeedDemoData error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleClearDemoData(req, res) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    await pgQuery("delete from readings where is_demo = true");
+    const result = await pgQuery("delete from sensors where is_demo = true returning sensor_id");
+    return res.status(200).json({ success: true, removed: result.rows.map(r => r.sensor_id) });
+  } catch (err) {
+    console.error("handleClearDemoData error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
