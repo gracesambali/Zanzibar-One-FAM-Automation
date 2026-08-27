@@ -33,7 +33,20 @@ const UNIT_BY_TYPE = {
   humidity: "%RH",
   door: "Open-Closed",
   equipment: "OK-Fault",
+  alarm: "OK-Fault",
+  runtime: "hours",
+  electrical: "kWh",
+  water: "Liters",
 };
+
+// Confirmed directly: consumption/runtime readings arrive as a real
+// period amount already (the BMS sends "120 kWh used today"), not a
+// cumulative meter total - so no delta computation is needed, a new
+// reading compares directly against the recent average of prior ones.
+const SPIKE_TYPES = ["runtime", "electrical", "water"];
+const SPIKE_THRESHOLD_MULTIPLIER = 1.4; // confirmed directly: 40% above recent normal
+const SPIKE_LOOKBACK_DAYS = 14;
+const SPIKE_MIN_PRIOR_READINGS = 3; // too little history to call anything a real spike yet
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -44,7 +57,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Invalid or missing sensor webhook secret" });
   }
 
-  const { device_id, reading, type, ts } = req.body || {};
+  const { device_id, reading, type, ts, fault_message } = req.body || {};
   if (!device_id || reading === undefined || !type) {
     return res.status(400).json({ error: "device_id, reading, and type are required" });
   }
@@ -69,6 +82,18 @@ export default async function handler(req, res) {
       // Binary sensors: 0 = normal, 1 = abnormal. No numeric range to parse.
       withinRange = reading === 0;
       targetRangeDisplay = type === "door" ? "Closed (0)" : "OK (0)";
+    } else if (type === "alarm") {
+      // Confirmed directly: the BMS sends real, named fault codes, not
+      // just a bare signal - reading stays binary (0/1) so it's still
+      // chartable as fault occurrences over time, but the real fault
+      // detail flows into the alert text and log instead of a generic
+      // "OK/Fault" label, so a person actually knows what's wrong.
+      withinRange = reading === 0;
+      targetRangeDisplay = reading === 0 ? "OK (0)" : (fault_message || "Fault (unspecified)");
+    } else if (SPIKE_TYPES.includes(type)) {
+      const spikeCheck = await checkForSpike(device_id, reading);
+      withinRange = spikeCheck.withinRange;
+      targetRangeDisplay = spikeCheck.display;
     } else {
       const targetRangeRaw = type === "temperature"
         ? component?.target_range_temp
@@ -116,6 +141,35 @@ function checkWithinRange(value, rangeStr) {
   const min = parseFloat(match[1]);
   const max = parseFloat(match[3]);
   return value >= min && value <= max;
+}
+
+// Confirmed directly: alert on a real spike against recent normal
+// usage (40% above the last 2 weeks' average), not a fixed threshold -
+// nobody sets a static "target range" for monthly electricity use the
+// way they do for a fridge's temperature. Too little history (fewer
+// than SPIKE_MIN_PRIOR_READINGS) means there's nothing real yet to
+// call a spike against, so this returns null (not evaluated) rather
+// than guessing - matching the same "no target range set" null case
+// checkWithinRange already returns above.
+async function checkForSpike(sensorId, reading) {
+  const { query } = await import("../lib/postgresClient.js");
+  const result = await query(
+    `select avg(value) as avg_value, count(*) as reading_count
+     from readings
+     where sensor_id = $1 and timestamp >= now() - interval '${SPIKE_LOOKBACK_DAYS} days'`,
+    [sensorId]
+  );
+  const count = Number(result.rows[0]?.reading_count || 0);
+  if (count < SPIKE_MIN_PRIOR_READINGS) {
+    return { withinRange: null, display: `(building history — ${count}/${SPIKE_MIN_PRIOR_READINGS} readings so far)` };
+  }
+  const avg = Number(result.rows[0].avg_value);
+  const threshold = avg * SPIKE_THRESHOLD_MULTIPLIER;
+  const isSpike = reading > threshold;
+  return {
+    withinRange: !isSpike,
+    display: `${SPIKE_LOOKBACK_DAYS}-day avg ${avg.toFixed(1)}, spike threshold ${threshold.toFixed(1)} (+${Math.round((SPIKE_THRESHOLD_MULTIPLIER - 1) * 100)}%)`,
+  };
 }
 
 async function fetchSensorBySensorId(sensorId) {
