@@ -1520,3 +1520,21 @@ create index if not exists idx_payroll_documents_entry on payroll_documents (pay
 -- ============================================================
 update components set status = 'Poor' where status = 'Critical';
 update components set criticality = 'High' where criticality = 'Medium';
+
+-- ============================================================
+-- BMS category notification roles — confirmed directly: per-category,
+-- not per-sensor. At real scale (100+ sensors), asking for specific
+-- email/phone contacts on every single sensor is genuinely tedious
+-- and doesn't hold up - a role assigned once per category (Technician,
+-- Electrical Engineer, etc.) is what actually notifies people, reusing
+-- the exact same role/contact system (getContactsForRole) already
+-- proven elsewhere in this app, not a new, separate contact list.
+-- ============================================================
+create table if not exists bms_category_notification_roles (
+  id        uuid primary key default gen_random_uuid(),
+  category  text not null check (category in ('alarm_fault', 'environmental', 'runtime', 'electrical', 'water')),
+  role      text not null,
+  created_at timestamptz not null default now(),
+  unique (category, role)
+);
+create index if not exists idx_bms_notif_roles_category on bms_category_notification_roles (category);

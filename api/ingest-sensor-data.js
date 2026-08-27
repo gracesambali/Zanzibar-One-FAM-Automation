@@ -120,9 +120,17 @@ export default async function handler(req, res) {
 
       const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem: component?.system });
 
+      // Confirmed directly: per-category notification roles, not
+      // per-sensor contacts - reuses the exact same role/contact
+      // system already proven elsewhere in this app. Falls back to
+      // the global ALERT_TO_EMAIL/ALERT_TO_PHONE recipients if this
+      // category has no roles configured yet, so a real alert never
+      // silently reaches nobody just because setup isn't finished.
+      const { toList, phoneList } = await getRecipientsForType(type);
+
       await Promise.all([
-        sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
-        sendSensorAlertSms({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId }),
+        sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId, toList }),
+        sendSensorAlertSms({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId, phoneList }),
         logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorTypeLabel} reading ${reading}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}.` }),
       ]);
     }
@@ -244,9 +252,41 @@ async function logAlert({ assetId, assetName, location, urgency, message }) {
   }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
-async function sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange, woId }) {
-  const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
-  if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
+// Confirmed directly: per-category notification roles, not per-sensor
+// contacts - resolves a sensor type to its real category, looks up
+// which roles are configured to be notified for that category, and
+// pulls their real contact info via the same getContactsForRole
+// already proven elsewhere. Falls back to the global
+// ALERT_TO_EMAIL/ALERT_TO_PHONE recipients if no roles are configured
+// for this category yet, so a real alert never silently reaches
+// nobody during setup.
+async function getRecipientsForType(sensorType) {
+  const { categoryForSensorType } = await import("../lib/bmsCategories.js");
+  const { getContactsForRole } = await import("../lib/staffDirectory.js");
+  const { query } = await import("../lib/postgresClient.js");
+
+  const category = categoryForSensorType(sensorType);
+  let toList = [];
+  let phoneList = [];
+
+  if (category) {
+    const rolesResult = await query(
+      "select role from bms_category_notification_roles where category = $1",
+      [category]
+    );
+    const contacts = rolesResult.rows.flatMap(r => getContactsForRole(r.role));
+    toList = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+    phoneList = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
+  }
+
+  if (toList.length === 0) toList = parseEmailList(process.env.ALERT_TO_EMAIL);
+  if (phoneList.length === 0) phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
+
+  return { toList, phoneList };
+}
+
+async function sendSensorAlertEmail({ assetName, location, sensorType, value, unit, targetRange, woId, toList }) {
+  if (toList.length === 0) { console.error("No email recipients configured for this BMS category"); return; }
 
   const html = buildSensorAlertEmailHtml({
     assetName,
@@ -285,9 +325,8 @@ function sanitizeForSms(text) {
     .replace(/[^\x00-\x7F]/g, "");
 }
 
-async function sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange, woId }) {
-  const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
+async function sendSensorAlertSms({ assetName, location, sensorType, value, unit, targetRange, woId, phoneList }) {
+  if (phoneList.length === 0) { console.error("No SMS recipients configured for this BMS category"); return; }
 
   const rawMessage = `Sensor alert: ${assetName} at ${location} - ${sensorType} reading ${value}${unit}, expected ${targetRange || "(not set)"}. ${woId || ""}`;
   const cleanMessage = sanitizeForSms(rawMessage);
