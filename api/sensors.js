@@ -18,6 +18,7 @@ import { getSession, setSessionCookie } from "../lib/auth.js";
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
 import { buildSensorAlertEmailHtml } from "../lib/emailTemplate.js";
 import { getAssignedRole } from "../lib/routing.js";
+import { BMS_CATEGORIES, categoryForSensorType } from "../lib/bmsCategories.js";
 
 const UNIT_BY_TYPE = {
   Temperature: "\u00b0C",
@@ -31,8 +32,17 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: "Not logged in" });
   setSessionCookie(res, session.u, session.r);
 
-  if (req.method === "GET") return handleGetReadings(req, res);
-  if (req.method === "POST") return handleRunTest(req, res, session.u);
+  if (req.method === "GET") {
+    if (req.query.categories === "true") return handleGetCategories(req, res);
+    if (req.query.notificationRoles === "true") return handleGetNotificationRoles(req, res);
+    return handleGetReadings(req, res);
+  }
+  if (req.method === "POST") {
+    const action = req.body && req.body.action;
+    if (action === "addSensor") return handleAddSensor(req, res, session.u);
+    if (action === "setNotificationRoles") return handleSetNotificationRoles(req, res);
+    return handleRunTest(req, res, session.u); // no action field - the existing test tool's plain body
+  }
   if (req.method === "PATCH") return handleEditSensor(req, res, session.u);
   return res.status(405).json({ error: "Method not allowed" });
 }
@@ -117,16 +127,24 @@ async function handleGetReadings(req, res) {
       const component = componentByAssetId[assetId] || {};
       const latest = latestBySensor[s.sensor_id];
       const sensorType = s.sensor_type || "";
+      const sensorTypeLower = sensorType.toLowerCase();
 
       let targetRange;
-      if (sensorType === "Humidity") {
+      if (sensorTypeLower === "humidity") {
         targetRange = component.target_range_humidity || null;
-      } else if (sensorType === "Temperature") {
+      } else if (sensorTypeLower === "temperature") {
         targetRange = component.target_range_temp || null;
-      } else if (sensorType === "Door") {
+      } else if (sensorTypeLower === "door") {
         targetRange = "Closed (0)";
-      } else if (sensorType === "Equipment Status") {
+      } else if (sensorTypeLower === "equipment" || sensorTypeLower === "equipment status") {
         targetRange = "OK (0)";
+      } else if (sensorTypeLower === "alarm") {
+        targetRange = "OK (0)";
+      } else if (["runtime", "electrical", "water"].includes(sensorTypeLower)) {
+        // Spike-based, not a fixed range - real threshold only exists
+        // at the moment a reading is evaluated, not as a static value
+        // to display here.
+        targetRange = "40% above 14-day average";
       } else {
         targetRange = null;
       }
@@ -135,6 +153,7 @@ async function handleGetReadings(req, res) {
         recordId: s.id,
         sensorId: s.sensor_id || "",
         sensorType,
+        category: categoryForSensorType(sensorTypeLower),
         assetId,
         assetName: component.name || assetId,
         location: component.room_zone || "",
@@ -407,4 +426,96 @@ async function sendSensorAlertSms({ assetName, location, sensorType, value, unit
   const responseText = await resp.text();
   console.log("Beem response (sensor alert):", resp.status, responseText);
   return { ok: resp.ok, text: async () => responseText };
+}
+
+// ---------------------------------------------------------------------
+// The five real BMS categories - lets the frontend build its grouping
+// and notification-role UI without hardcoding the list twice.
+// ---------------------------------------------------------------------
+
+async function handleGetCategories(req, res) {
+  return res.status(200).json({ categories: BMS_CATEGORIES });
+}
+
+// ---------------------------------------------------------------------
+// Per-category notification roles - confirmed directly: assigned once
+// per category (Alarm & Fault -> Technicians, Electrical -> Electrical
+// Engineer, etc.), not per individual sensor. At real scale this is
+// the only way the feature stays usable - a new sensor inherits
+// whatever's already configured for its category automatically.
+// ---------------------------------------------------------------------
+
+async function handleGetNotificationRoles(req, res) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery("select category, role from bms_category_notification_roles order by category, role");
+    const byCategory = {};
+    for (const cat of BMS_CATEGORIES) byCategory[cat.key] = [];
+    for (const row of result.rows) {
+      if (!byCategory[row.category]) byCategory[row.category] = [];
+      byCategory[row.category].push(row.role);
+    }
+    return res.status(200).json({ rolesByCategory: byCategory });
+  } catch (err) {
+    console.error("handleGetNotificationRoles error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleSetNotificationRoles(req, res) {
+  const { category, roles } = req.body || {};
+  const validCategories = BMS_CATEGORIES.map(c => c.key);
+  if (!validCategories.includes(category)) return res.status(400).json({ error: "Unknown category." });
+  if (!Array.isArray(roles)) return res.status(400).json({ error: "roles must be a real array." });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    // Replace the whole set for this category in one clean pass, rather
+    // than reconciling adds/removes individually - simpler and correct
+    // either way, since the full desired list is always sent from the
+    // frontend's own checkbox state, not a partial diff.
+    await pgQuery("delete from bms_category_notification_roles where category = $1", [category]);
+    for (const role of roles) {
+      await pgQuery(
+        "insert into bms_category_notification_roles (category, role) values ($1, $2) on conflict (category, role) do nothing",
+        [category, role]
+      );
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleSetNotificationRoles error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Register a new sensor - the real, previously-missing piece. sensorId
+// is entered by hand rather than generated, since it must match
+// whatever device ID the physical BMS/smart equipment is already
+// configured to send - not something FAM can invent on its behalf.
+// ---------------------------------------------------------------------
+
+async function handleAddSensor(req, res, addedBy) {
+  const { sensorId, assetId, sensorType } = req.body || {};
+  if (!sensorId || !sensorId.trim()) return res.status(400).json({ error: "A real sensor/device ID is required." });
+  if (!assetId) return res.status(400).json({ error: "Choose a real asset to link this sensor to." });
+  if (!categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const sensor = await insert("sensors", {
+      sensor_id: sensorId.trim(),
+      asset_id: assetId,
+      sensor_type: sensorType,
+      status: "Active",
+      activity_log: JSON.stringify([{ text: `Registered by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
+    });
+    return res.status(200).json({ success: true, sensorId: sensor.sensor_id });
+  } catch (err) {
+    if (err.message && err.message.includes("sensors_sensor_id_key")) {
+      return res.status(400).json({ error: "A sensor with this ID already exists." });
+    }
+    console.error("handleAddSensor error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
