@@ -472,10 +472,6 @@ button { font-family: inherit; cursor: pointer; }
       <span class="nav-group-arrow">▸</span>
     </button>
     <div id="navGroupItems-holdings" style="display:none">
-      <button class="tab-btn nested" data-tab="fixedassets" data-label="Asset Tracking" id="fixedAssetsNavBtn" onclick="switchTab('fixedassets')" onmouseenter="showSidebarTooltip(this, 'Asset Tracking')" onmouseleave="hideSidebarTooltip()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-        <span class="tab-label">Asset Tracking</span>
-      </button>
       <button class="tab-btn nested" data-tab="inventory" data-label="Inventory" id="inventoryNavBtn" onclick="switchTab('inventory')" onmouseenter="showSidebarTooltip(this, 'Inventory')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
         <span class="tab-label">Inventory</span>
@@ -561,7 +557,7 @@ button { font-family: inherit; cursor: pointer; }
   <div id="view-workorders" class="view"></div>
   <div id="view-plannedmaintenance" class="view"></div>
   <div id="view-units" class="view"></div>
-  <div id="view-fixedassets" class="view"></div>
+
   <div id="view-inventory" class="view"></div>
   <div id="view-staffmanagement" class="view"></div>
   <div id="view-annualplanning" class="view"></div>
@@ -637,11 +633,11 @@ let currentUsername = ""; // the actual login identity chat participation is che
 let currentWODetailId = null; // which work order's detail view is open right now, if any — lets polling refresh it in place instead of yanking someone back to the list
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
-// TEMPORARY (Grace, July 2026): showing cost/depreciation data to every role
-// for now, while access control is worked out per-client. Flip this to
-// `false` (and set the same flag in api/get-assets.js) to restore the
-// original rule — Business Owner and System Admin only.
-const TEMP_SHOW_COST_TO_ALL = true;
+// Confirmed directly: financial info should not be visible to all
+// users - flipped back to the real, original rule now that access
+// control is being worked out properly (Asset Register/Asset
+// Tracking merge). Matches the exact same flip in api/get-assets.js.
+const TEMP_SHOW_COST_TO_ALL = false;
 
 // Legacy imported assets use "L1", "L14" etc. In this building, L1 is the
 // Ground Floor and L15 is the top floor (no separate rooftop level) — so
@@ -842,6 +838,8 @@ let currentCategoryFilter = "All";
 let currentFloorFilter = "All";
 let currentZoneFilter = "All";
 let currentCriticalityFilter = "All";
+let currentTraClassFilter = "All";
+let assetTrackingCategoriesOpen = false; // collapsed by default - secondary/admin content, not the primary reason someone's on this page
 let currentRoomFilter = "All";
 let currentStatusFilter = "All";
 let currentSortBy = "default";
@@ -863,7 +861,7 @@ let facilitiesData = []; // [{ name, buildings: [...] }], fetched once at init
 // bounce someone to a different tab and lose their place/filters.
 // Deliberately not changing loadAssetsAndInit's general behavior for
 // every other caller, just adding one narrow, flagged exception.
-let returnToAssetTrackingAfterEdit = false;
+
 let traClassesCache = []; // [{ id, label, rate }], fetched once at init, refreshed after any TRA category edit
 
 // Currency switcher — TZS is what's actually stored everywhere; this
@@ -1382,7 +1380,7 @@ function switchTab(tab) {
   if(tab==='workorders') renderWorkOrders();
   if(tab==='plannedmaintenance') renderPlannedMaintenance();
   if(tab==='units') renderUnits();
-  if(tab==='fixedassets') renderFixedAssetRegister();
+
   if(tab==='inventory') renderInventory();
   if(tab==='staffmanagement') renderStaffManagement();
   if(tab==='annualplanning') renderAnnualPlanning();
@@ -1643,6 +1641,7 @@ function getFilteredAssets() {
     if(currentSystemFilter!=="All" && a.system!==currentSystemFilter) return false;
     if(currentStatusFilter!=="All" && a.status!==currentStatusFilter) return false;
     if(currentCriticalityFilter!=="All" && a.criticality!==currentCriticalityFilter) return false;
+    if(currentTraClassFilter!=="All" && (currentTraClassFilter==='__unset__' ? !!a.traClassId : a.traClassId!==currentTraClassFilter)) return false;
     if(currentNatureFilter!=="All" && a.nature!==currentNatureFilter) return false;
     if(currentMobilityFilter!=="All" && a.mobility!==currentMobilityFilter) return false;
     if(currentCategoryFilter!=="All" && a.category!==currentCategoryFilter) return false;
@@ -1723,6 +1722,11 @@ function renderAssets() {
   const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
   const good = assets.filter(a=>a.status==="Good").length;
   const sched = assets.filter(a=>a.status==="Poor").length;
+  // Confirmed directly: financial info restricted to the same roles
+  // Asset Tracking always used - the merged data already lives on
+  // each asset (acquisitionCost, currentValue, traValue), so these
+  // are real, client-side sums, not a new fetch.
+  const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
 
   let html = `<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:12px">
     <button onclick="openUploadAssetSheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
@@ -1734,6 +1738,18 @@ function renderAssets() {
     <div class="summary-card"><div class="summary-val" style="color:var(--green)">${good}</div><div class="summary-label">Good</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${sched}</div><div class="summary-label">Poor</div></div>
   </div>`;
+  if (canManageTra) {
+    const totalAcquisitionCost = assets.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0);
+    const totalBookValue = assets.reduce((sum, a) => sum + (a.currentValue || 0), 0);
+    const totalTraValue = assets.reduce((sum, a) => sum + (a.traValue || 0), 0);
+    const noTraClass = assets.filter(a => !a.traClassId).length;
+    html += `<div class="summary-grid" style="margin-top:10px">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalAcquisitionCost)}</div><div class="summary-label">Total Acquisition Cost</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalBookValue)}</div><div class="summary-label">Total Book Value</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalTraValue)}</div><div class="summary-label">Total TRA Value</div></div>
+      <div class="summary-card"><div class="summary-val" style="color:var(--muted)">${noTraClass}</div><div class="summary-label">No TRA Class Set</div></div>
+    </div>`;
+  }
 
   // Search input uses renderAssetResults() ONLY — never renderAssets() —
   // so typing never rebuilds this input itself. Rebuilding it mid-type
@@ -1757,6 +1773,11 @@ function renderAssets() {
       <option value="High"${currentCriticalityFilter==='High'?' selected':''}>High</option>
       <option value="Low"${currentCriticalityFilter==='Low'?' selected':''}>Low</option>
     </select>
+    ${canManageTra ? `<select class="filter-select" onchange="currentTraClassFilter=this.value;renderAssets()">
+      <option value="All">All TRA Classes</option>
+      <option value="__unset__"${currentTraClassFilter==='__unset__'?' selected':''}>— Not set —</option>
+      ${traClassesCache.map(c => `<option value="${c.id}"${currentTraClassFilter===c.id?' selected':''}>${escapeHtml(c.label)}</option>`).join('')}
+    </select>` : ''}
   </div>`;
 
   // Full hierarchy + location filter row, in order: Nature -> Mobility -> Category
@@ -1817,10 +1838,43 @@ function renderAssets() {
     html += `</div>`;
   }
 
+  if (canManageTra) {
+    html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAssetTrackingCategories()">
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Classes ${assetTrackingCategoriesOpen ? '▾' : '▸'}</div>
+        ${assetTrackingCategoriesOpen ? `<div style="display:flex;gap:8px">
+          <button onclick="event.stopPropagation();openImportTraClassesModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import</button>
+          <button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Class</button>
+        </div>` : ''}
+      </div>
+      ${assetTrackingCategoriesOpen ? `
+      <div style="font-size:11.5px;color:var(--muted);margin:12px 0 12px">The real item types and rates your finance contact provides, entered here once — this is what every asset's TRA Class dropdown pulls from, and what the register calculates against.</div>
+      ${traClassesCache.length === 0
+        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No TRA classes yet — add the first one above.</div>`
+        : traClassesCache.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
+            <div style="display:flex;gap:6px">
+              <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
+              <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
+            </div>
+          </div>`).join('')}
+      ` : ''}
+    </div>`;
+  }
+
+  if (canManageTra) {
+    html += `<div id="assetTrackingLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">TRA Activity Log</div>
+      <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+  }
+
   html += `<div id="assetResultsContainer"></div>`;
 
   document.getElementById('view-assets').innerHTML = html;
   renderAssetResults(); // populate the results container on initial/full render
+  if (canManageTra) loadAssetTrackingLog();
 
   // Cost summaries load in the background every time this tab renders
   // — the list shows immediately without waiting, then quietly
@@ -1931,6 +1985,8 @@ function showDetail(idx) {
     fields.push(["Acquisition Cost (TZS)", a.acquisitionCost ? Number(a.acquisitionCost).toLocaleString() : "Not set"]);
     fields.push(["Current Value (Calculated)", a.currentValue !== null && a.currentValue !== undefined ? Number(a.currentValue).toLocaleString() + (a.fullyDepreciated ? " (fully depreciated)" : "") : "—"]);
     if (a.annualDepreciation) fields.push(["Annual Depreciation", Number(a.annualDepreciation).toLocaleString() + " /yr"]);
+    fields.push(["TRA Class", a.traClassName || "— Not set —"]);
+    if (a.traClassId) fields.push(["TRA Value (Declining Balance)", a.traValue !== null && a.traValue !== undefined ? Number(a.traValue).toLocaleString() : "—"]);
   }
   fields.forEach(([l,v])=>{
     html += `<div class="detail-field"><div class="detail-field-label">${l}</div><div class="detail-field-value">${v}</div></div>`;
@@ -2142,11 +2198,11 @@ function openEditForm(idx) {
       ` : ''}
 
       ${['procurement', 'system_admin', 'business_owner'].includes(currentUserRole) ? `
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class <span style="font-weight:400;color:var(--muted)">(for Asset Tracking)</span></label>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class</label>
       <select id="ea_traClass" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value=""${!a.traClassId?' selected':''}>— Not set —</option>
         ${traClassesCache.map(c => `<option value="${c.id}"${a.traClassId===c.id?' selected':''}>${escapeHtml(c.label)} (${(c.rate*100).toFixed(1)}%)</option>`).join('')}
-        ${traClassesCache.length === 0 ? `<option value="" disabled>No categories set up yet — add one from the Asset Tracking tab</option>` : ''}
+        ${traClassesCache.length === 0 ? `<option value="" disabled>No TRA classes set up yet — use Manage TRA Classes on the Asset Register</option>` : ''}
       </select>
       ` : ''}
 
@@ -2154,7 +2210,7 @@ function openEditForm(idx) {
       <textarea id="ea_note" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px">${(a.note||'').replace(/</g,'&lt;')}</textarea>
 
       <div style="display:flex;gap:8px;margin-top:6px">
-        <button onclick="returnToAssetTrackingAfterEdit = false; closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
         <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
       </div>
     </div>
@@ -2950,301 +3006,14 @@ function copyUnitPortalLink(unitId) {
   });
 }
 
-// The organization-wide Fixed Asset Register — book value and TRA
-// value side by side for every active asset, confirmed directly to
-// live as its own tab rather than folded into the operational Asset
-// Register, since this serves a genuinely different audience
-// (auditors, TRA, hospital management) than the maintenance-focused
-// view everything else here is built around.
-let fixedAssetRegisterCache = null;
-
-async function renderFixedAssetRegister() {
-  const container = document.getElementById('view-fixedassets');
-  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
-  try {
-    const resp = await fetch('/api/get-assets?fixedAssetRegister=true');
-    if (resp.status === 403) {
-      // A real restriction, not an error — shown as a clear,
-      // deliberate message rather than something that looks broken.
-      container.innerHTML = `<div style="padding:60px 24px;text-align:center">
-        <div style="font-size:32px;margin-bottom:12px">🔒</div>
-        <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
-        <div style="font-size:13px;color:var(--muted);max-width:360px;margin:0 auto">Asset Tracking is only available to Procurement, System Admin, and Business Owner.</div>
-      </div>`;
-      return;
-    }
-    if (!resp.ok) throw new Error('Failed to load the register (' + resp.status + ')');
-    const data = await resp.json();
-    fixedAssetRegisterCache = data;
-    renderFixedAssetRegisterTable(data);
-  } catch (err) {
-    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load Asset Tracking: ${err.message}</div>`;
-  }
-}
-
-// Reuses the existing, already-proven asset edit form rather than
-// building separate inline-editing logic — confirmed directly: doer
-// and timestamp need to be recorded for any edit made here, which
-// this form already does correctly (edit_log for every field, plus
-// the Asset Tracking activity log specifically for TRA Class), so
-// this connects to that rather than duplicating it.
-function openEditFormFromAssetTracking(assetId) {
-  const idx = assets.findIndex(a => a.assetId === assetId);
-  if (idx === -1) { alert(`Could not find ${assetId} — try refreshing the page.`); return; }
-  returnToAssetTrackingAfterEdit = true;
-  openEditForm(idx);
-}
-
-// Column-header filter/sort state, confirmed directly to replace the
-// old separate filter dropdown row entirely — clicking a column
-// header itself now reveals the relevant options for that column.
-let assetTrackingFilters = { category: '', traClassId: '', sortColumn: null, sortDirection: null };
-let assetTrackingCategoriesOpen = false; // collapsed by default - secondary/admin content, not the primary reason someone's on this page
-let openColumnPopover = null;
-
-function toggleAssetTrackingCategories() {
-  assetTrackingCategoriesOpen = !assetTrackingCategoriesOpen;
-  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-}
-
-function toggleColumnPopover(column) {
-  openColumnPopover = openColumnPopover === column ? null : column;
-  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-}
-
-function setAssetTrackingFilter(field, value) {
-  assetTrackingFilters[field] = value;
-  openColumnPopover = null;
-  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-}
-
-function setAssetTrackingSort(column, direction) {
-  // direction === null means "All" was chosen - clears sorting on
-  // this column entirely rather than sorting with no real direction.
-  assetTrackingFilters.sortColumn = direction ? column : null;
-  assetTrackingFilters.sortDirection = direction;
-  openColumnPopover = null;
-  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-}
-
-function clearAllAssetTrackingFilters() {
-  assetTrackingFilters = { category: '', traClassId: '', sortColumn: null, sortDirection: null };
-  openColumnPopover = null;
-  renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-}
-
-// One small, shared popover renderer — a sort popover (Ascending/
-// Descending/All) for the numeric and date columns, or a value-filter
-// popover (a real option per distinct value present, plus All) for
-// Category and TRA Class. Positioned as a simple dropdown right under
-// whichever header was clicked.
-function renderColumnPopover(column) {
-  if (openColumnPopover !== column) return '';
-  const sortColumns = { acquisitionDate: 'Acquired', acquisitionCost: 'Acquisition Cost', bookValue: 'Book Value', traValue: 'TRA Value' };
-  let optionsHtml;
-  if (column in sortColumns) {
-    const isAsc = assetTrackingFilters.sortColumn === column && assetTrackingFilters.sortDirection === 'asc';
-    const isDesc = assetTrackingFilters.sortColumn === column && assetTrackingFilters.sortDirection === 'desc';
-    const isAll = assetTrackingFilters.sortColumn !== column;
-    optionsHtml = `
-      <button onclick="setAssetTrackingSort('${column}', 'asc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAsc ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">Ascending</button>
-      <button onclick="setAssetTrackingSort('${column}', 'desc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isDesc ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Descending</button>
-      <button onclick="setAssetTrackingSort('${column}', null)" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${isAll ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">All</button>`;
-  } else if (column === 'category') {
-    const uniqueCategories = [...new Set(fixedAssetRegisterCache.register.map(a => a.category).filter(Boolean))].sort();
-    optionsHtml = `
-      <button onclick="setAssetTrackingFilter('category', '')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${!assetTrackingFilters.category ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">All</button>
-      ${uniqueCategories.map(c => `<button onclick="setAssetTrackingFilter('category', '${c.replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.category===c ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(c)}</button>`).join('')}`;
-  } else if (column === 'traClassId') {
-    const classes = fixedAssetRegisterCache.traClasses || [];
-    optionsHtml = `
-      <button onclick="setAssetTrackingFilter('traClassId', '')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${!assetTrackingFilters.traClassId ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer">All</button>
-      <button onclick="setAssetTrackingFilter('traClassId', '__unset__')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.traClassId==='__unset__' ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">Not set</button>
-      ${classes.map(c => `<button onclick="setAssetTrackingFilter('traClassId', '${c.id}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${assetTrackingFilters.traClassId===c.id ? 'var(--navy-pale)' : 'none'};font-size:12px;color:var(--text);cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(c.label)}</button>`).join('')}`;
-  }
-  return `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:170px;max-height:240px;overflow-y:auto">${optionsHtml}</div>`;
-}
-
-function columnHeaderHtml(column, label, align) {
-  const hasActiveFilter = (column === 'category' && assetTrackingFilters.category) ||
-    (column === 'traClassId' && assetTrackingFilters.traClassId) ||
-    (assetTrackingFilters.sortColumn === column);
-  const arrow = assetTrackingFilters.sortColumn === column ? (assetTrackingFilters.sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
-  return `<th style="text-align:${align};padding:10px 12px;color:${hasActiveFilter ? 'var(--navy)' : 'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none" onclick="toggleColumnPopover('${column}')">${label}${arrow} ▾${renderColumnPopover(column)}</th>`;
-}
-
-function renderFixedAssetRegisterTable(data) {
-  const container = document.getElementById('view-fixedassets');
-  const { totals, traClasses } = data;
-  fixedAssetRegisterCache = data; // kept current so the popover functions above can always read fresh category/class options
-  // Everyone (except Technician) can see this tab, but managing the
-  // actual categories or assigning them to assets is restricted to
-  // Procurement, System Admin, and Business Owner, confirmed
-  // directly — enforced for real on the backend too, this is just
-  // the matching UI so restricted roles see a genuine view-only page
-  // rather than buttons that would just fail if clicked.
-  const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
-
-  // Filtering and sorting are entirely client-side — the full
-  // register is already loaded, so any change just re-renders from
-  // the same cached data rather than a new fetch.
-  const { category: categoryFilter, traClassId: traFilter, sortColumn, sortDirection } = assetTrackingFilters;
-  let register = data.register.filter(a =>
-    (!categoryFilter || a.category === categoryFilter) &&
-    (!traFilter || (traFilter === '__unset__' ? !a.traClassId : a.traClassId === traFilter))
-  );
-  if (sortColumn) {
-    register = [...register].sort((a, b) => {
-      const av = a[sortColumn], bv = b[sortColumn];
-      // Nulls always sort to the end, regardless of direction - a
-      // missing value isn't meaningfully "highest" or "lowest".
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      const cmp = av > bv ? 1 : av < bv ? -1 : 0;
-      return sortDirection === 'asc' ? cmp : -cmp;
-    });
-  }
-
-  // Filtered totals — the summary cards reflect whatever's actually
-  // showing in the table below them, not the full unfiltered set.
-  const filteredTotals = {
-    totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
-    totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
-    totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
-    assetsWithNoTraClass: register.filter(a => !a.traClassId).length,
-  };
-  const anyFilterActive = categoryFilter || traFilter || sortColumn;
-
-  let html = `<div style="padding:24px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div>
-        <div style="font-size:18px;font-weight:700;color:var(--navy)">Asset Tracking</div>
-        <div style="font-size:12px;color:var(--muted)">Book value (straight-line) and TRA value (declining balance) side by side, for every asset — the organization-wide view for audit, tax, and management reporting.</div>
-      </div>
-      <div style="display:flex;gap:8px;position:relative">
-        ${canManageTra ? `<button onclick="openImportTraClassesModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import TRA Classes</button>` : ''}
-        <button onclick="scrollToAssetTrackingLog()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐 Activity Log</button>
-        <div style="position:relative">
-          <button onclick="toggleExportMenu()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ Export ▾</button>
-          <div id="at_exportMenu" style="display:none;position:absolute;top:38px;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:10;min-width:200px;padding:6px 0">
-            <div style="padding:6px 14px 4px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">Current</div>
-            <button onclick="exportFixedAssetRegisterCsv()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">CSV</button>
-            <button onclick="exportFixedAssetRegisterExcel()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">Excel</button>
-            <button onclick="exportFixedAssetRegisterPdf()" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)">PDF</button>
-            <div style="padding:8px 14px 4px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.03em">Historical Snapshot</div>
-            <button onclick="openAssetRegisterPeriodModal('monthly')" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">📅 Monthly…</button>
-            <button onclick="openAssetRegisterPeriodModal('annual')" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;font-size:12.5px;color:var(--text);cursor:pointer">📅 Annual…</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    ${data.placeholderNotice ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:12px;color:#92400E">
-      ⚠️ ${data.placeholderNotice}
-    </div>` : ''}
-
-    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAssetTrackingCategories()">
-        <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Categories ${assetTrackingCategoriesOpen ? '▾' : '▸'}</div>
-        ${canManageTra && assetTrackingCategoriesOpen ? `<button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Category</button>` : ''}
-      </div>
-      ${assetTrackingCategoriesOpen ? `
-      <div style="font-size:11.5px;color:var(--muted);margin:12px 0 12px">${canManageTra ? 'The real item types and rates your finance contact provides, entered here once — this is what every asset\'s TRA Class dropdown pulls from, and what the register calculates against.' : 'View only — only Procurement, System Admin, or Business Owner can add, edit, or delete these categories.'}</div>
-      ${traClasses.length === 0
-        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No categories yet${canManageTra ? ' — add the first one above.' : '.'}</div>`
-        : traClasses.map(c => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="font-size:13px;color:var(--text)">${escapeHtml(c.label)} <span style="color:var(--muted)">— ${(c.rate*100).toFixed(1)}%</span></div>
-            ${canManageTra ? `<div style="display:flex;gap:6px">
-              <button onclick="openAddTraClassModal('${c.id}', '${c.label.replace(/'/g,"\\'")}', ${c.rate})" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
-              <button onclick="deleteTraClass('${c.id}', '${c.label.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Delete</button>
-            </div>` : ''}
-          </div>`).join('')}
-      ` : ''}
-    </div>
-
-    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${register.length}</div><div class="summary-label">${anyFilterActive ? 'Filtered' : 'Total'} Assets</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(filteredTotals.totalAcquisitionCost)}</div><div class="summary-label">Acquisition Cost</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--green)">${formatCurrency(filteredTotals.totalBookValue)}</div><div class="summary-label">Book Value</div></div>
-      <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${formatCurrency(filteredTotals.totalTraValue)}</div><div class="summary-label">TRA Value</div></div>
-      ${filteredTotals.assetsWithNoTraClass > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--red)">${filteredTotals.assetsWithNoTraClass}</div><div class="summary-label">Missing TRA Class</div></div>` : ''}
-      ${anyFilterActive ? `<button onclick="clearAllAssetTrackingFilters()" style="align-self:center;padding:6px 12px;font-size:12px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">Clear filters</button>` : ''}
-    </div>
-
-    <div style="overflow-x:visible;background:#fff;border:1px solid var(--border);border-radius:10px">
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-        <thead>
-          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Asset ID</th>
-            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
-            ${columnHeaderHtml('category', 'Category', 'left')}
-            ${columnHeaderHtml('acquisitionDate', 'Acquired', 'left')}
-            ${columnHeaderHtml('acquisitionCost', 'Acquisition Cost', 'right')}
-            ${columnHeaderHtml('bookValue', 'Book Value', 'right')}
-            ${columnHeaderHtml('traClassId', 'TRA Class', 'left')}
-            ${columnHeaderHtml('traValue', 'TRA Value', 'right')}
-            <th style="padding:10px 12px"></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${register.length === 0
-            ? `<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">${anyFilterActive ? 'No assets match this filter.' : 'No assets yet.'}</td></tr>`
-            : register.map(a => `
-              <tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.assetId)}</td>
-                <td style="padding:9px 12px">${escapeHtml(a.name)}</td>
-                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.category || '—')}</td>
-                <td style="padding:9px 12px;color:var(--muted)">${a.acquisitionDate || '—'}</td>
-                <td style="padding:9px 12px;text-align:right">${a.acquisitionCost != null ? formatCurrency(a.acquisitionCost) : '—'}</td>
-                <td style="padding:9px 12px;text-align:right;color:var(--green)">${a.bookValue != null ? formatCurrency(a.bookValue) : '—'}</td>
-                <td style="padding:9px 12px">
-                  ${a.traClassLabel
-                    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--navy-pale);color:var(--navy)">${escapeHtml(a.traClassLabel)}</span>`
-                    : `<span style="font-size:11px;color:var(--red);font-style:italic">Not set</span>`}
-                </td>
-                <td style="padding:9px 12px;text-align:right;color:var(--amber)">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
-                <td style="padding:9px 12px;text-align:right"><button onclick="openEditFormFromAssetTracking('${a.assetId}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button></td>
-              </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <div id="assetTrackingLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
-      <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
-    </div>
-  </div>`;
-
-  container.innerHTML = html;
-  traClassesCache = traClasses; // keep the asset edit form's dropdown in sync with whatever's real right now
-  loadAssetTrackingLog();
-}
-
-// Closes an open column popover when clicking anywhere outside of it
-// or its header, same pattern already used for the export menu.
-document.addEventListener('click', (e) => {
-  if (openColumnPopover && !e.target.closest('th')) {
-    openColumnPopover = null;
-    if (fixedAssetRegisterCache) renderFixedAssetRegisterTable(fixedAssetRegisterCache);
-  }
-});
-
-function toggleExportMenu() {
-  const menu = document.getElementById('at_exportMenu');
-  if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-}
-document.addEventListener('click', (e) => {
-  const menu = document.getElementById('at_exportMenu');
-  if (menu && menu.style.display !== 'none' && !e.target.closest('#at_exportMenu') && !e.target.closest('[onclick="toggleExportMenu()"]')) {
-    menu.style.display = 'none';
-  }
-});
-
 // Always loaded as part of the normal page load now, not lazily on a
 // toggle — confirmed directly: the log should be visible at the
 // bottom even with nothing in it yet, not hidden behind a click.
+function toggleAssetTrackingCategories() {
+  assetTrackingCategoriesOpen = !assetTrackingCategoriesOpen;
+  renderAssets();
+}
+
 async function loadAssetTrackingLog() {
   const content = document.getElementById('assetTrackingLogContent');
   if (!content) return;
@@ -3265,68 +3034,7 @@ async function loadAssetTrackingLog() {
   }
 }
 
-// The button no longer shows/hides anything — the log is already
-// always visible — it just scrolls the person straight there without
-// them needing to scroll manually.
-function scrollToAssetTrackingLog() {
-  document.getElementById('assetTrackingLogPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
 
-// Every export respects whatever filter AND sort is currently active
-// on screen — exporting should give you exactly what you're looking
-// at, not silently the full unfiltered/unsorted set.
-function getFilteredRegisterForExport() {
-  if (!fixedAssetRegisterCache) return null;
-  const { category: categoryFilter, traClassId: traFilter, sortColumn, sortDirection } = assetTrackingFilters;
-  let register = fixedAssetRegisterCache.register.filter(a =>
-    (!categoryFilter || a.category === categoryFilter) &&
-    (!traFilter || (traFilter === '__unset__' ? !a.traClassId : a.traClassId === traFilter))
-  );
-  if (sortColumn) {
-    register = [...register].sort((a, b) => {
-      const av = a[sortColumn], bv = b[sortColumn];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      const cmp = av > bv ? 1 : av < bv ? -1 : 0;
-      return sortDirection === 'asc' ? cmp : -cmp;
-    });
-  }
-  const totals = {
-    totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
-    totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
-    totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
-  };
-  return { register, totals };
-}
-
-function exportFixedAssetRegisterCsv() {
-  const filtered = getFilteredRegisterForExport();
-  if (!filtered) { alert('The register hasn\'t finished loading yet.'); return; }
-  const { register, totals } = filtered;
-
-  const rows = [
-    ['Asset ID', 'Name', 'Category', 'Building', 'Acquisition Date', 'Acquisition Cost (TZS)', 'Book Value (TZS)', 'TRA Class', 'TRA Value (TZS)'],
-    ...register.map(a => [a.assetId, a.name, a.category || '', a.building || '', a.acquisitionDate || '', a.acquisitionCost ?? '', a.bookValue ?? '', a.traClassLabel || 'Not set', a.traValue ?? '']),
-    [],
-    ['', '', '', '', 'TOTALS', totals.totalAcquisitionCost, totals.totalBookValue, '', totals.totalTraValue],
-  ];
-  const csv = rows.map(row => row.map(cell => {
-    const s = String(cell ?? '');
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  }).join(',')).join('\n');
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Asset-Tracking-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  toggleExportMenu();
-}
 
 // SheetJS loaded from CDN on first use, not up front — most sessions
 // on this page won't need an Excel export, so there's no reason to
@@ -3345,216 +3053,6 @@ function ensureSheetJsLoaded() {
   return sheetJsLoadPromise;
 }
 
-async function exportFixedAssetRegisterExcel() {
-  const filtered = getFilteredRegisterForExport();
-  if (!filtered) { alert('The register hasn\'t finished loading yet.'); return; }
-  toggleExportMenu();
-  try {
-    await ensureSheetJsLoaded();
-    const { register, totals } = filtered;
-    const rows = [
-      ['Asset ID', 'Name', 'Category', 'Building', 'Acquisition Date', 'Acquisition Cost (TZS)', 'Book Value (TZS)', 'TRA Class', 'TRA Value (TZS)'],
-      ...register.map(a => [a.assetId, a.name, a.category || '', a.building || '', a.acquisitionDate || '', a.acquisitionCost ?? '', a.bookValue ?? '', a.traClassLabel || 'Not set', a.traValue ?? '']),
-      [],
-      ['', '', '', '', 'TOTALS', totals.totalAcquisitionCost, totals.totalBookValue, '', totals.totalTraValue],
-    ];
-    const worksheet = XLSX.utils.aoa_to_sheet(rows);
-    worksheet['!cols'] = [{ wch: 14 }, { wch: 26 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 16 }];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Asset Tracking');
-    XLSX.writeFile(workbook, `Asset-Tracking-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.xlsx`);
-  } catch (err) {
-    alert('Could not export to Excel: ' + err.message);
-  }
-}
-
-// PDF export uses the browser's own print-to-PDF, opened in a new
-// window with a clean, print-formatted version of the table — far
-// more reliable across real-world browsers than a client-side PDF
-// generation library, and needs no extra dependency at all.
-function exportFixedAssetRegisterPdf() {
-  const filtered = getFilteredRegisterForExport();
-  if (!filtered) { alert('The register hasn\'t finished loading yet.'); return; }
-  toggleExportMenu();
-  const { register, totals } = filtered;
-
-  const rowsHtml = register.map(a => `
-    <tr>
-      <td>${escapeHtml(a.assetId)}</td><td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.category || '—')}</td>
-      <td>${a.acquisitionDate || '—'}</td>
-      <td style="text-align:right">${a.acquisitionCost != null ? formatCurrency(a.acquisitionCost) : '—'}</td>
-      <td style="text-align:right">${a.bookValue != null ? formatCurrency(a.bookValue) : '—'}</td>
-      <td>${escapeHtml(a.traClassLabel || 'Not set')}</td>
-      <td style="text-align:right">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
-    </tr>`).join('');
-
-  const printWindow = window.open('', '_blank');
-  printWindow.document.write(`
-    <html><head><title>Asset Tracking — ${escapeHtml(CLIENT_CONFIG.clientName)}</title>
-    <style>
-      body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-      h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
-      .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
-      table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-      th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
-      th { background: #F7F8FA; }
-      .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
-      @media print { .download-btn { display:none; } }
-    </style></head><body>
-    <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
-    <h1>Asset Tracking — ${escapeHtml(CLIENT_CONFIG.clientName)}</h1>
-    <div class="meta">Generated ${new Date().toLocaleString()} · ${register.length} asset${register.length === 1 ? '' : 's'}</div>
-    <table>
-      <thead><tr><th>Asset ID</th><th>Name</th><th>Category</th><th>Acquired</th><th>Acquisition Cost</th><th>Book Value</th><th>TRA Class</th><th>TRA Value</th></tr></thead>
-      <tbody>${rowsHtml}
-        <tr class="totals"><td colspan="4">TOTALS</td><td>${formatCurrency(totals.totalAcquisitionCost)}</td><td>${formatCurrency(totals.totalBookValue)}</td><td></td><td>${formatCurrency(totals.totalTraValue)}</td></tr>
-      </tbody>
-    </table>
-    </body></html>
-  `);
-  printWindow.document.close();
-  printWindow.focus();
-}
-
-// Confirmed directly: depreciation is a continuously-changing figure,
-// so a real Annual or Monthly report means the register exactly as
-// it stood at that specific past month-end or year-end — recomputed
-// for that date, not today's numbers relabeled. "As of" is always
-// the LAST day of the chosen month or year, matching how a real
-// month-end or year-end snapshot is understood.
-function openAssetRegisterPeriodModal(period) {
-  toggleExportMenu();
-  const now = new Date();
-  const overlay = document.createElement('div');
-  overlay.id = 'assetPeriodOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
-
-  const isMonthly = period === 'monthly';
-  const yearOptions = Array.from({ length: 6 }, (_, i) => now.getFullYear() - i);
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:340px;max-width:90vw">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">${isMonthly ? 'Monthly' : 'Annual'} Snapshot</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">The register exactly as it stood at the end of the ${isMonthly ? 'selected month' : 'selected year'} — recalculated for that date, including only assets acquired by then.</div>
-      ${isMonthly ? `
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Month</label>
-      <select id="ap_month" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        ${['January','February','March','April','May','June','July','August','September','October','November','December'].map((m, i) => `<option value="${i}"${i === now.getMonth() ? ' selected' : ''}>${m}</option>`).join('')}
-      </select>` : ''}
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Year</label>
-      <select id="ap_year" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
-        ${yearOptions.map(y => `<option value="${y}">${y}</option>`).join('')}
-      </select>
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button onclick="downloadAssetRegisterPeriod('${period}', 'csv')" style="flex:1;padding:9px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">CSV</button>
-        <button onclick="downloadAssetRegisterPeriod('${period}', 'pdf')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">PDF</button>
-      </div>
-      <button onclick="document.getElementById('assetPeriodOverlay').remove()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">Cancel</button>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-function computeAssetPeriodAsOfDate(period) {
-  const year = Number(document.getElementById('ap_year').value);
-  if (period === 'monthly') {
-    const month = Number(document.getElementById('ap_month').value);
-    // Day 0 of the FOLLOWING month is the real last day of the
-    // selected month — correctly handles every month length,
-    // including February in a leap year, without hardcoding any of it.
-    return new Date(year, month + 1, 0).toISOString().split('T')[0];
-  }
-  return `${year}-12-31`;
-}
-
-function assetPeriodLabel(period) {
-  const year = document.getElementById('ap_year').value;
-  if (period === 'monthly') {
-    const monthName = document.getElementById('ap_month').selectedOptions[0].textContent;
-    return `${monthName}-${year}`;
-  }
-  return `${year}`;
-}
-
-async function downloadAssetRegisterPeriod(period, format) {
-  const asOfDate = computeAssetPeriodAsOfDate(period);
-  const label = assetPeriodLabel(period);
-  try {
-    const resp = await fetch(`/api/get-assets?fixedAssetRegister=true&asOfDate=${asOfDate}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load the snapshot');
-    const { register, totals } = data;
-    document.getElementById('assetPeriodOverlay')?.remove();
-
-    if (format === 'csv') {
-      const rows = [
-        ['Asset ID', 'Name', 'Category', 'Building', 'Acquisition Date', 'Acquisition Cost (TZS)', `Book Value as of ${asOfDate} (TZS)`, 'TRA Class', `TRA Value as of ${asOfDate} (TZS)`],
-        ...register.map(a => [a.assetId, a.name, a.category || '', a.building || '', a.acquisitionDate || '', a.acquisitionCost ?? '', a.bookValue ?? '', a.traClassLabel || 'Not set', a.traValue ?? '']),
-        [],
-        ['', '', '', '', 'TOTALS', totals.totalAcquisitionCost, totals.totalBookValue, '', totals.totalTraValue],
-      ];
-      const csv = rows.map(row => row.map(cell => {
-        const s = String(cell ?? '');
-        return /["\n,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-      }).join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Asset-Tracking-${label}-${CLIENT_CONFIG.clientName.replace(/\s+/g, '-')}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } else {
-      const rowsHtml = register.map(a => `
-        <tr>
-          <td>${escapeHtml(a.assetId)}</td><td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.category || '—')}</td>
-          <td>${a.acquisitionDate || '—'}</td>
-          <td style="text-align:right">${a.acquisitionCost != null ? formatCurrency(a.acquisitionCost) : '—'}</td>
-          <td style="text-align:right">${a.bookValue != null ? formatCurrency(a.bookValue) : '—'}</td>
-          <td>${escapeHtml(a.traClassLabel || 'Not set')}</td>
-          <td style="text-align:right">${a.traValue != null ? formatCurrency(a.traValue) : '—'}</td>
-        </tr>`).join('');
-      const printWindow = window.open('', '_blank');
-      printWindow.document.write(`
-        <html><head><title>Asset Tracking ${label} Snapshot — ${escapeHtml(CLIENT_CONFIG.clientName)}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-          h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
-          .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
-          table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-          th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
-          th { background: #F7F8FA; }
-          .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
-          .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
-          @media print { .download-btn { display:none; } }
-        </style></head><body>
-        <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
-        <h1>Asset Tracking — ${label} Snapshot</h1>
-        <div class="meta">${escapeHtml(CLIENT_CONFIG.clientName)} · as of ${asOfDate} · Generated ${new Date().toLocaleString()} · ${register.length} asset${register.length === 1 ? '' : 's'}</div>
-        <table>
-          <thead><tr><th>Asset ID</th><th>Name</th><th>Category</th><th>Acquired</th><th>Acquisition Cost</th><th>Book Value</th><th>TRA Class</th><th>TRA Value</th></tr></thead>
-          <tbody>${rowsHtml}
-            <tr class="totals"><td colspan="4">TOTALS</td><td>${formatCurrency(totals.totalAcquisitionCost)}</td><td>${formatCurrency(totals.totalBookValue)}</td><td></td><td>${formatCurrency(totals.totalTraValue)}</td></tr>
-          </tbody>
-        </table>
-        </body></html>
-      `);
-      printWindow.document.close();
-      printWindow.focus();
-    }
-  } catch (err) {
-    alert('Could not generate the snapshot: ' + err.message);
-  }
-}
-
-// Bulk TRA class import — built specifically so filling in real
-// values for potentially hundreds of assets isn't a one-by-one manual
-// task through each asset's edit form. The person handing over these
-// values is likely an accountant, not someone thinking in code names,
-// so the class column is read leniently — "Class 1", "class1", "1",
-// and "CLASS_1" all resolve the same way, rather than requiring exact
-// formatting nobody would naturally type.
 // Add/edit a real TRA category — the actual place a client's finance-
 // provided item type and rate get entered, once, rather than being
 // fixed in code. One shared modal for both add and edit; classId
@@ -3600,7 +3098,10 @@ async function submitTraClass(classId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
     document.getElementById('addTraClassOverlay')?.remove();
-    renderFixedAssetRegister();
+    await refreshAssetsFromServer();
+    const traResp = await fetch('/api/get-assets?traClasses=true');
+    if (traResp.ok) { const traData = await traResp.json(); traClassesCache = traData.classes || []; }
+    renderAssets();
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -3618,7 +3119,10 @@ async function deleteTraClass(classId, label) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
-    renderFixedAssetRegister();
+    await refreshAssetsFromServer();
+    const traResp = await fetch('/api/get-assets?traClasses=true');
+    if (traResp.ok) { const traData = await traResp.json(); traClassesCache = traData.classes || []; }
+    renderAssets();
   } catch (err) {
     alert('Could not delete: ' + err.message);
   }
@@ -3710,7 +3214,7 @@ async function submitTraClassImport() {
     statusEl.style.display = 'block';
     btn.textContent = 'Done';
 
-    if (data.updated > 0) renderFixedAssetRegister(); // refresh the table behind the modal so the real new values show once closed
+    if (data.updated > 0) { await refreshAssetsFromServer(); renderAssets(); } // refresh the table behind the modal so the real new values show once closed
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.style.color = 'var(--red)';
@@ -6966,7 +6470,8 @@ async function submitAssetSheetUpload() {
     statusEl.innerHTML = statusHtml;
     statusEl.style.display = 'block';
     btn.textContent = 'Done';
-    renderFixedAssetRegister();
+    await refreshAssetsFromServer();
+    renderAssets();
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.style.color = 'var(--red)';
@@ -12591,8 +12096,14 @@ function generateCertificate(recordId) {
 // asset objects. Used by both the full register download and the
 // single-asset download button.
 function exportAssetsXLSX(assetList, filenameSuffix) {
+  const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
   const headers = ["Asset ID","Name","System","Class","Level","Location","Manufacturer","Model","Install Date","Status","Critical Importance","Last Service","Next Service Due"];
-  const rows = assetList.map(a => [a.id, a.name, a.system, a.category, displayFloor(a.floor), displayRoom(a.room), a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService]);
+  if (canManageTra) headers.push("Acquisition Cost (TZS)", "Current Value (TZS)", "TRA Class", "TRA Value (TZS)");
+  const rows = assetList.map(a => {
+    const row = [a.id, a.name, a.system, a.category, displayFloor(a.floor), displayRoom(a.room), a.manufacturer, a.model, a.installDate, a.status, a.criticality, a.lastService, a.nextService];
+    if (canManageTra) row.push(a.acquisitionCost ?? '', a.currentValue ?? '', a.traClassName || '', a.traValue ?? '');
+    return row;
+  });
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
@@ -12758,8 +12269,13 @@ function exportSingleAssetFormat(assetId, format) {
   }
 
   if (format === 'csv') {
+    const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
     const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Critical Importance','Last Service','Next Service Due'];
     const row = [asset.id, asset.name, asset.system, asset.category, asset.floor, asset.room, asset.manufacturer, asset.model, asset.installDate, asset.status, asset.criticality, asset.lastService, asset.nextService];
+    if (canManageTra) {
+      headers.push('Acquisition Cost (TZS)', 'Current Value (TZS)', 'TRA Class', 'TRA Value (TZS)');
+      row.push(asset.acquisitionCost ?? '', asset.currentValue ?? '', asset.traClassName || '', asset.traValue ?? '');
+    }
     const csv = headers.join(',') + '\n' + row.map(v => `"${v||''}"`).join(',');
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -13575,13 +13091,7 @@ async function loadAssetsAndInit() {
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.content').style.display = 'block';
     applySimplifiedNavIfNeeded();
-    if (returnToAssetTrackingAfterEdit) {
-      // A narrow, targeted exception — checked and cleared together
-      // right here, so it can never linger stale into an unrelated
-      // later reload.
-      returnToAssetTrackingAfterEdit = false;
-      switchTab('fixedassets');
-    } else if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
+    if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
       switchTab('workorders');
     } else {
       renderDashboard();
