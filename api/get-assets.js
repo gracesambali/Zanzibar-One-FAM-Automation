@@ -402,14 +402,10 @@ export default async function handler(req, res) {
   // the activity log — is restricted to Procurement, System Admin,
   // and Business Owner. A restricted role isn't shown a stripped-down
   // version; the real data is never sent to them at all.
-  const ASSET_TRACKING_DATA_ROUTES = ["fixedAssetRegister", "traClasses", "assetTrackingLog"];
+  const ASSET_TRACKING_DATA_ROUTES = ["traClasses", "assetTrackingLog"];
   const requestedAssetTrackingRoute = ASSET_TRACKING_DATA_ROUTES.find(r => req.query[r] === "true");
   if (requestedAssetTrackingRoute && !["procurement", "system_admin", "business_owner"].includes(session.r)) {
-    return res.status(403).json({ error: "Asset Tracking is restricted to Procurement, System Admin, and Business Owner." });
-  }
-
-  if (req.query.fixedAssetRegister === "true") {
-    return handleGetFixedAssetRegister(req, res);
+    return res.status(403).json({ error: "TRA/Asset financial data is restricted to Procurement, System Admin, and Business Owner." });
   }
 
   // The editable TRA categories themselves — used by the asset edit
@@ -1110,15 +1106,21 @@ export default async function handler(req, res) {
     const showInactive = req.query.includeInactive === "true";
     let assets = showInactive ? allAssets : allAssets.filter(a => a.active);
 
-    // TEMPORARY (Grace, July 2026): showing cost/depreciation data to every
-    // role for now, while access control is worked out per-client. Flip this
-    // back to `false` to restore the original rule — Business Owner and
-    // System Admin only — nothing else needs to change when you do.
-    const TEMP_SHOW_COST_TO_ALL = true;
+    // Confirmed directly: financial info should not be visible to all
+    // users - flipped back to the real, original rule now that access
+    // control is being worked out properly (Asset Register/Asset
+    // Tracking merge). Matches the exact same flip in dashboard.html.
+    const TEMP_SHOW_COST_TO_ALL = false;
 
     const role = session.r || "technician";
     if (!TEMP_SHOW_COST_TO_ALL && !can(role, "viewCostAndDepreciation")) {
-      assets = assets.map(({ acquisitionCost, residualValue, currentValue, ...rest }) => rest);
+      // Confirmed directly as a real, genuine gap and fixed: the
+      // previous version only stripped 3 of the real financial
+      // fields, silently leaving annualDepreciation, fullyDepreciated,
+      // and traClassId visible to every role regardless of this
+      // check. Now strips every real financial/depreciation field
+      // consistently.
+      assets = assets.map(({ acquisitionCost, residualValue, currentValue, annualDepreciation, fullyDepreciated, traClassId, traValue, traClassName, ...rest }) => rest);
     }
 
     const staffEntry = getContactForUsername(session.u);
@@ -1143,6 +1145,13 @@ async function fetchAllRecords() {
 
   const components = await pgListAllRecords("components");
 
+  // Real TRA class data, fetched once and looked up by id - the exact
+  // same "fetch once, pass down" pattern already used for documents
+  // just below, rather than a separate query per asset.
+  const traClasses = await pgListAllRecords("tra_classes");
+  const traClassById = {};
+  for (const c of traClasses) traClassById[c.id] = c;
+
   // Compliance Documents lived inline on the Airtable record; in
   // Postgres they're a separate child table (component_documents).
   // One query for all documents, grouped in memory by component —
@@ -1159,7 +1168,7 @@ async function fetchAllRecords() {
   // never a stored one — see the comment on nameplatePhoto below) —
   // run them all in parallel rather than one at a time, or a
   // dashboard load with many assets would be slow.
-  return Promise.all(components.map(row => normalizeRecord(row, docsByComponent[row.id] || [])));
+  return Promise.all(components.map(row => normalizeRecord(row, docsByComponent[row.id] || [], traClassById)));
 }
 
 // Converts a Postgres components row into the exact same object shape
@@ -1168,12 +1177,24 @@ async function fetchAllRecords() {
 // lastService, nextService, lifespan, note, ...). Deliberately kept
 // as close as possible to the pre-migration Airtable version below,
 // field for field, so nothing downstream needs to change.
-async function normalizeRecord(row, documents) {
+async function normalizeRecord(row, documents, traClassById) {
   const depreciation = calculateCurrentValue({
     acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
     residualValue: row.residual_value_tzs !== null ? Number(row.residual_value_tzs) : undefined,
     economicLifeYears: Number(row.expected_lifespan_years) || 15,
     acquisitionDate: row.install_date,
+  });
+
+  // Real TRA declining-balance value, matching the exact same
+  // calculateTRAValue logic already proven in fixedAssetRegister -
+  // reused here rather than duplicated, so the merged per-asset view
+  // shows the same real number the standalone register always did.
+  const { calculateTRAValue } = await import("../lib/traDepreciation.js");
+  const matchedTraClass = row.tra_class_id ? (traClassById || {})[row.tra_class_id] : null;
+  const tra = calculateTRAValue({
+    acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
+    acquisitionDate: row.install_date,
+    rate: matchedTraClass ? matchedTraClass.rate : null,
   });
 
   // The nameplate_photo_url column stores a storage PATH, not a URL —
@@ -1254,6 +1275,8 @@ async function normalizeRecord(row, documents) {
     annualDepreciation: depreciation.annualDepreciation,
     fullyDepreciated: depreciation.fullyDepreciated,
     traClassId: row.tra_class_id || null,
+    traClassName: matchedTraClass ? matchedTraClass.label : null,
+    traValue: tra.traCurrentValue,
 
     maintenanceIntervalDays: Number(row.maintenance_interval_days) || 90,
 
@@ -1385,81 +1408,6 @@ async function handleGetUnits(req, res) {
     return res.status(200).json({ units: filteredUnits });
   } catch (err) {
     console.error("handleGetUnits error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-}
-
-// Every active asset, with book value (straight-line) and TRA value
-// (declining balance, placeholder classes) computed side by side —
-// the organization-wide register view, distinct from the per-asset
-// detail already available elsewhere. Deliberately includes assets
-// with no TRA class assigned yet (traValue null) rather than
-// excluding them — an incomplete register is more useful to see and
-// fix than a silently filtered one.
-async function handleGetFixedAssetRegister(req, res) {
-  try {
-    const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-    const { calculateTRAValue } = await import("../lib/traDepreciation.js");
-
-    // Confirmed directly: a real Annual/Monthly report needs the
-    // register exactly as it stood at a specific past date - not
-    // just today's numbers relabeled. An asset acquired after that
-    // date genuinely didn't exist yet as of that snapshot, so it's
-    // correctly excluded, not shown with a nonsensical negative age.
-    const asOfDate = req.query.asOfDate || null;
-
-    const rows = await pgListAllRecords("components");
-    const active = rows.filter(r => r.active !== false && (!asOfDate || !r.install_date || new Date(r.install_date) <= new Date(asOfDate)));
-    const classes = await pgListAllRecords("tra_classes");
-    const classById = {};
-    for (const c of classes) classById[c.id] = c;
-
-    const register = active.map(r => {
-      const bookDepreciation = calculateCurrentValue({
-        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
-        residualValue: r.residual_value_tzs !== null ? Number(r.residual_value_tzs) : undefined,
-        economicLifeYears: Number(r.expected_lifespan_years) || 15,
-        acquisitionDate: r.install_date,
-        asOfDate,
-      });
-      const matchedClass = r.tra_class_id ? classById[r.tra_class_id] : null;
-      const tra = calculateTRAValue({
-        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : undefined,
-        acquisitionDate: r.install_date,
-        rate: matchedClass ? matchedClass.rate : null,
-        asOfDate,
-      });
-      return {
-        assetId: r.asset_id || "",
-        name: r.name || "",
-        category: r.asset_category || "",
-        building: r.building || "",
-        acquisitionDate: r.install_date || null,
-        acquisitionCost: r.acquisition_cost_tzs !== null ? Number(r.acquisition_cost_tzs) : null,
-        bookValue: bookDepreciation.currentValue,
-        traClassId: r.tra_class_id || null,
-        traClassLabel: matchedClass ? matchedClass.label : null,
-        traValue: tra.traCurrentValue,
-      };
-    });
-
-    const totals = {
-      totalAcquisitionCost: register.reduce((sum, a) => sum + (a.acquisitionCost || 0), 0),
-      totalBookValue: register.reduce((sum, a) => sum + (a.bookValue || 0), 0),
-      totalTraValue: register.reduce((sum, a) => sum + (a.traValue || 0), 0),
-      assetsWithNoTraClass: register.filter(a => !a.traClassId).length,
-    };
-
-    return res.status(200).json({
-      register,
-      totals,
-      traClasses: classes.map(c => ({ id: c.id, label: c.label, rate: Number(c.rate) })),
-      placeholderNotice: classes.length === 4 && classes.every(c => ["Computers & data equipment", "Vehicles & earthmoving equipment", "Other machinery & equipment", "Buildings & structures"].includes(c.label))
-        ? "These are still the starting placeholder categories — replace them with this client's real item types and rates under \"Manage TRA Categories\" below."
-        : null,
-    });
-  } catch (err) {
-    console.error("handleGetFixedAssetRegister error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
