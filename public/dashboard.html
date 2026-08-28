@@ -2833,13 +2833,18 @@ function closeBmsModal() {
 }
 
 async function decommissionSensor(sensorId, assetName) {
-  const reason = prompt(`Decommissioning "${sensorId}" (${assetName}). Optional reason (e.g. "duplicate of another sensor"):`);
-  if (reason === null) return; // cancelled
+  let reason = null;
+  while (true) {
+    reason = prompt(`Decommissioning "${sensorId}" (${assetName}). A reason is required (e.g. "duplicate of another sensor"):`, reason || '');
+    if (reason === null) return; // cancelled
+    if (reason.trim()) break; // a real reason was given
+    alert('A reason is required to decommission a sensor - this prevents accidental removal.');
+  }
 
   try {
     const resp = await fetch('/api/sensors', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'decommissionSensor', sensorId, reason: reason || undefined }),
+      body: JSON.stringify({ action: 'decommissionSensor', sensorId, reason: reason.trim() }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to decommission sensor');
@@ -13295,14 +13300,19 @@ async function submitNewAsset() {
 }
 
 async function decommissionAsset(recordId, assetName) {
-  const reason = prompt(`Decommissioning "${assetName}". Optional reason (e.g. "replaced before end of lifecycle"):`);
-  if (reason === null) return; // cancelled
+  let reason = null;
+  while (true) {
+    reason = prompt(`Decommissioning "${assetName}". A reason is required (e.g. "replaced before end of lifecycle"):`, reason || '');
+    if (reason === null) return; // cancelled
+    if (reason.trim()) break; // a real reason was given
+    alert('A reason is required to decommission an asset - this prevents accidental removal.');
+  }
 
   try {
     const resp = await fetch('/api/manage-asset', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId, reason }),
+      body: JSON.stringify({ recordId, reason: reason.trim() }),
     });
     if (!resp.ok) throw new Error('Failed to decommission asset');
     alert('Asset decommissioned. Its history stays intact, but it no longer appears in the active register.');

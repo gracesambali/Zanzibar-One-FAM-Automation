@@ -2018,6 +2018,9 @@ async function handleDecommission(req, res, decommissionedBy) {
   if (!recordId) {
     return res.status(400).json({ error: "recordId required" });
   }
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: "A reason is required to decommission an asset - this prevents accidental removal." });
+  }
 
   try {
     const { getById, update } = await import("../lib/postgresClient.js");

@@ -673,6 +673,9 @@ async function handleClearDemoData(req, res) {
 async function handleDecommissionSensor(req, res, decommissionedBy) {
   const { sensorId, reason } = req.body || {};
   if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: "A reason is required to decommission a sensor - this prevents accidental removal." });
+  }
 
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
