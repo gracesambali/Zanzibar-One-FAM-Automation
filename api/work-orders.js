@@ -81,7 +81,7 @@ export default async function handler(req, res) {
 
   // Merged endpoints: ?report=true for maintenance report, ?checklist=CLASS for checklists
   if (req.method === "GET" && req.query.report === "true") {
-    return handleMaintenanceReport(req, res);
+    return handleMaintenanceReport(req, res, session.org);
   }
   // checklist may be an empty string — that's the normal case when no
   // asset-class keyword matched client-side. The tiered resolver below
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     try {
-      const records = await fetchAllWorkOrders();
+      const records = await fetchAllWorkOrders(session.org);
       const { computeSLACompliance, loadSLATargetsMap } = await import("../lib/slaTracking.js");
       const slaTargetsMap = await loadSLATargetsMap();
       const workOrders = await Promise.all(records.map(async r => {
@@ -186,11 +186,11 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "POST" && req.body && req.body.orderSparePart) {
-    return handleOrderSparePart(req, res, session.u);
+    return handleOrderSparePart(req, res, session.u, session.org);
   }
 
   if (req.method === "POST") {
-    return handleScheduleInspection(req, res, session.u);
+    return handleScheduleInspection(req, res, session.u, session.org);
   }
 
   if (req.method === "PUT" && req.body && req.body.action === "uploadWorkOrderPhoto") {
@@ -783,7 +783,7 @@ export default async function handler(req, res) {
         const existingCodes = new Set(existing.filter(f => f.facility_code).map(f => f.facility_code));
         const code = generateUniqueCode(name.trim(), existingCodes);
 
-        const created = await insert("facilities", { name: name.trim(), facility_code: code });
+        const created = await insert("facilities", { name: name.trim(), facility_code: code, organization_id: session.org });
         return res.status(200).json({ success: true, facility: { id: created.id, name: created.name, code: created.facility_code } });
       } catch (err) {
         console.error("addFacility error:", err);
@@ -815,7 +815,7 @@ export default async function handler(req, res) {
         const existingCodes = new Set(existingResult.rows.map(r => r.building_code));
         const code = generateUniqueCode(buildingName.trim(), existingCodes);
 
-        const created = await insert("facility_buildings", { facility_id: facilityId, building_name: buildingName.trim(), building_code: code });
+        const created = await insert("facility_buildings", { facility_id: facilityId, building_name: buildingName.trim(), building_code: code, organization_id: session.org });
         return res.status(200).json({ success: true, building: { name: created.building_name, code: created.building_code } });
       } catch (err) {
         console.error("addBuilding error:", err);
@@ -848,6 +848,7 @@ export default async function handler(req, res) {
           tenant_phone: tenantPhone || null,
           lease_status: leaseStatus || "Vacant",
           added_by: session.u,
+          organization_id: session.org,
         };
         if (contractDate) {
           fields.contract_date = contractDate;
@@ -1237,6 +1238,7 @@ export default async function handler(req, res) {
           active: true,
           added_by: session.u,
           last_edited_in_fam_at: new Date().toISOString(),
+          organization_id: session.org,
         }, { typecast: true });
 
         return res.status(200).json({ success: true, vendor: {
@@ -1327,7 +1329,7 @@ export default async function handler(req, res) {
       }
       try {
         const { insert } = await import("../lib/postgresClient.js");
-        const created = await insert("procurement_responses", { wo_id: woId, vendor_name: vendorName.trim(), chosen: false });
+        const created = await insert("procurement_responses", { wo_id: woId, vendor_name: vendorName.trim(), chosen: false, organization_id: session.org });
         return res.status(200).json({ success: true, responseId: created.id });
       } catch (err) {
         console.error("addProcurementResponse error:", err);
@@ -1621,9 +1623,9 @@ async function handleUploadWorkOrderPhoto(req, res, uploadedBy) {
   }
 }
 
-async function fetchAllWorkOrders() {
+async function fetchAllWorkOrders(organizationId) {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  return pgListAllRecords("work_orders");
+  return pgListAllRecords("work_orders", organizationId);
 }
 
 async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) {
@@ -2230,10 +2232,10 @@ async function handleGetVendors(req, res) {
   }
 }
 
-async function handleMaintenanceReport(req, res) {
+async function handleMaintenanceReport(req, res, organizationId) {
   const { status, from, to, asset } = req.query;
   try {
-    const records = await fetchAllWorkOrders();
+    const records = await fetchAllWorkOrders(organizationId);
     let filtered = records;
     if (status) filtered = filtered.filter(r => (r.status || "") === status);
     if (asset) filtered = filtered.filter(r => (r.asset_id || "") === asset);
@@ -2301,7 +2303,7 @@ async function handleMaintenanceReport(req, res) {
 // Corrective (auto-generated from a breakdown report). This is how
 // someone books a compliance/verification check (guideline Section 18)
 // that isn't tied to the asset's regular service schedule.
-async function handleScheduleInspection(req, res, scheduledBy) {
+async function handleScheduleInspection(req, res, scheduledBy, organizationId) {
   const { assetId, notes } = req.body || {};
   if (!assetId) {
     return res.status(400).json({ error: "assetId required" });
@@ -2311,7 +2313,7 @@ async function handleScheduleInspection(req, res, scheduledBy) {
     const { getByColumn, insert } = await import("../lib/postgresClient.js");
 
     // Look up the asset so the work order has real Name/System/Location, same as other WO types
-    const f = await getByColumn("components", "asset_id", assetId).catch(() => { throw new Error("Could not look up asset"); });
+    const f = await getByColumn("components", "asset_id", assetId, organizationId).catch(() => { throw new Error("Could not look up asset"); });
     if (!f) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
     const woId = `WO-${Date.now()}`;
@@ -2328,6 +2330,7 @@ async function handleScheduleInspection(req, res, scheduledBy) {
       assigned_role: getAssignedRole(f.system, f.name) || null,
       maintenance_type: "Inspection",
       activity_log: "[]",
+      organization_id: organizationId,
     });
 
     return res.status(200).json({ success: true, woId, recordId: created.id });
@@ -2347,7 +2350,7 @@ async function handleScheduleInspection(req, res, scheduledBy) {
 // EXISTING procurement-request flow on it (openProcurementRequestModal
 // on the frontend). Same request -> approve -> fulfill pipeline as
 // every other procurement request. No second workflow.
-async function handleOrderSparePart(req, res, orderedBy) {
+async function handleOrderSparePart(req, res, orderedBy, organizationId) {
   const { assetId } = req.body || {};
   if (!assetId) {
     return res.status(400).json({ error: "assetId required" });
@@ -2357,7 +2360,7 @@ async function handleOrderSparePart(req, res, orderedBy) {
     const { getByColumn, insert } = await import("../lib/postgresClient.js");
 
     // Look up the asset so the work order has real Name/System/Location, same as every other WO type
-    const f = await getByColumn("components", "asset_id", assetId).catch(() => { throw new Error("Could not look up asset"); });
+    const f = await getByColumn("components", "asset_id", assetId, organizationId).catch(() => { throw new Error("Could not look up asset"); });
     if (!f) return res.status(404).json({ error: `Asset "${assetId}" not found` });
 
     const woId = `WO-${Date.now()}`;
@@ -2374,6 +2377,7 @@ async function handleOrderSparePart(req, res, orderedBy) {
       assigned_role: getAssignedRole(f.system, f.name) || null,
       maintenance_type: "Procurement",
       activity_log: "[]",
+      organization_id: organizationId,
     });
 
     return res.status(200).json({ success: true, woId, recordId: created.id });
