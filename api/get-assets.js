@@ -38,7 +38,7 @@ export default async function handler(req, res) {
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u, session.r);
+  setSessionCookie(res, session.u, session.r, session.org);
 
   // Real SLA targets — the promised response/resolution numbers per
   // urgency tier, editable by staff (write side lives in

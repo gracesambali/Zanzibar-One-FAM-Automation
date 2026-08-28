@@ -30,7 +30,7 @@ const UNIT_BY_TYPE = {
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in" });
-  setSessionCookie(res, session.u, session.r);
+  setSessionCookie(res, session.u, session.r, session.org);
 
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleGetCategories(req, res);

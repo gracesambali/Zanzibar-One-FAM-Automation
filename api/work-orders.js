@@ -77,7 +77,7 @@ export default async function handler(req, res) {
   if (!session) {
     return res.status(401).json({ error: "Not logged in" });
   }
-  setSessionCookie(res, session.u, session.r);
+  setSessionCookie(res, session.u, session.r, session.org);
 
   // Merged endpoints: ?report=true for maintenance report, ?checklist=CLASS for checklists
   if (req.method === "GET" && req.query.report === "true") {
