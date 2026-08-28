@@ -212,11 +212,15 @@ export default async function handler(req, res) {
 
       const facilities = await pgListAllRecords("facilities");
       const existingCodes = new Set(facilities.filter(f => f.facility_code).map(f => f.facility_code));
+      // facility_code is a real, globally unique constraint (not
+      // per-org) - existingCodes has to stay unfiltered for that
+      // reason, but only this org's own facilities get touched below.
+      const ownFacilities = facilities.filter(f => f.organization_id === session.org);
 
       let assigned = 0, skipped = 0;
       const results = [];
 
-      for (const f of facilities) {
+      for (const f of ownFacilities) {
         if (f.facility_code) { skipped++; continue; }
         const code = generateUniqueCode(f.name, existingCodes);
         existingCodes.add(code); // reserve it immediately so the NEXT facility in this same loop can't also claim it
@@ -225,7 +229,7 @@ export default async function handler(req, res) {
         assigned++;
       }
 
-      return res.status(200).json({ success: true, totalFacilities: facilities.length, assigned, skipped, results });
+      return res.status(200).json({ success: true, totalFacilities: ownFacilities.length, assigned, skipped, results });
     } catch (err) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -254,11 +258,15 @@ export default async function handler(req, res) {
       const buildingsResult = await pgQuery("select * from facility_buildings");
       const buildings = buildingsResult.rows;
       const existingCodes = new Set(buildings.filter(b => b.building_code).map(b => b.building_code));
+      // Same reasoning as the facility backfill above: building_code
+      // is a real, globally unique constraint, so existingCodes stays
+      // unfiltered - only this org's own buildings get touched below.
+      const ownBuildings = buildings.filter(b => b.organization_id === session.org);
 
       let assigned = 0, skipped = 0;
       const results = [];
 
-      for (const b of buildings) {
+      for (const b of ownBuildings) {
         if (b.building_code) { skipped++; continue; }
         const code = generateUniqueCode(b.building_name, existingCodes);
         existingCodes.add(code); // reserve it immediately, same reasoning as the facility backfill
@@ -270,7 +278,7 @@ export default async function handler(req, res) {
         assigned++;
       }
 
-      return res.status(200).json({ success: true, totalBuildings: buildings.length, assigned, skipped, results });
+      return res.status(200).json({ success: true, totalBuildings: ownBuildings.length, assigned, skipped, results });
     } catch (err) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -326,7 +334,7 @@ export default async function handler(req, res) {
   // switcher in the nav. One selection here scopes everything — the
   // whole point is that it's never a per-tab filter.
   if (req.query.facilities === "true") {
-    return handleGetFacilities(req, res);
+    return handleGetFacilities(req, res, session.org);
   }
 
   // Real building interior capture, confirmed directly - one per
@@ -336,7 +344,7 @@ export default async function handler(req, res) {
   if (req.query.buildingDigitalTwin === "true" && req.query.facility && req.query.building) {
     try {
       const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
-      const facility = await getByColumn("facilities", "name", req.query.facility).catch(() => null);
+      const facility = await getByColumn("facilities", "name", req.query.facility, session.org).catch(() => null);
       if (!facility) return res.status(200).json({ matterportUrl: null });
       const result = await pgQuery(
         "select * from building_digital_twins where facility_id = $1 and building_name = $2",
@@ -357,7 +365,7 @@ export default async function handler(req, res) {
   if (req.query.facilityExteriorTwin === "true" && req.query.facility) {
     try {
       const { getByColumn } = await import("../lib/postgresClient.js");
-      const facility = await getByColumn("facilities", "name", req.query.facility).catch(() => null);
+      const facility = await getByColumn("facilities", "name", req.query.facility, session.org).catch(() => null);
       if (!facility) return res.status(200).json({ matterportUrl: null });
       return res.status(200).json({
         matterportUrl: facility.matterport_exterior_url || null,
@@ -386,7 +394,7 @@ export default async function handler(req, res) {
   // carries its own tenant info; assets tag onto a unit by name, same
   // plain-text convention as Building/Facility.
   if (req.query.units === "true") {
-    return handleGetUnits(req, res);
+    return handleGetUnits(req, res, session.org);
   }
 
   // Organization-wide Fixed Asset Register — every asset with BOTH
@@ -656,7 +664,7 @@ export default async function handler(req, res) {
   if (req.query.fleetVehicles === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select id, asset_id, name from components where asset_category = 'Transport Assets' and active = true order by name asc");
+      const result = await pgQuery("select id, asset_id, name from components where asset_category = 'Transport Assets' and active = true and organization_id = $1 order by name asc", [session.org]);
       return res.status(200).json({ vehicles: result.rows.map(r => ({ id: r.id, assetId: r.asset_id, name: r.name })) });
     } catch (err) {
       console.error("fleetVehicles read error:", err);
@@ -1040,12 +1048,12 @@ export default async function handler(req, res) {
   // nothing rather than ever reaching it. handleEditAsset was writing
   // real entries the whole time; they just weren't reachable.
   if (req.query.editlog === "true") {
-    return handleEditLog(req, res);
+    return handleEditLog(req, res, session.org);
   }
 
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
-    return handleGetFloorPlan(req, res);
+    return handleGetFloorPlan(req, res, session.org);
   }
 
   // API integration key retrieval — for setting up ERP/SAP connections.
@@ -1059,18 +1067,18 @@ export default async function handler(req, res) {
   // Vercel's Hobby-plan 12-function limit. Same pattern already used
   // for editlog/floorplan/apikeyinfo above.
   if (req.query.monthlyreport === "true") {
-    return handleMonthlyReport(req, res);
+    return handleMonthlyReport(req, res, session.org);
   }
 
   // Weekly report — same underlying logic, 7-day window instead of 30.
   if (req.query.weeklyreport === "true") {
-    return handleWeeklyReport(req, res);
+    return handleWeeklyReport(req, res, session.org);
   }
 
   // Planned Maintenance — standalone budgeted projects, separate from
   // Work Orders entirely (confirmed: does not spawn real Work Orders).
   if (req.query.plannedmaintenance === "true") {
-    return handleGetPlannedMaintenance(req, res);
+    return handleGetPlannedMaintenance(req, res, session.org);
   }
 
   // Staff performance — restricted to decision-makers, checked here
@@ -1098,7 +1106,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const allAssets = await fetchAllRecords();
+    const allAssets = await fetchAllRecords(session.org);
     // Decommissioned assets are hidden from the live register by
     // default (soft-deleted, not destroyed) — their history stays
     // intact for past work orders and certificates. Pass
@@ -1140,14 +1148,21 @@ export default async function handler(req, res) {
   }
 }
 
-async function fetchAllRecords() {
+async function fetchAllRecords(organizationId) {
   const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
 
-  const components = await pgListAllRecords("components");
+  const components = await pgListAllRecords("components", organizationId);
 
   // Real TRA class data, fetched once and looked up by id - the exact
   // same "fetch once, pass down" pattern already used for documents
-  // just below, rather than a separate query per asset.
+  // just below, rather than a separate query per asset. Genuinely
+  // client-specific (a different client's own tax/depreciation
+  // categories), so filtered the same way components is.
+  // Confirmed directly: tra_classes has no organization_id column at
+  // all - left unfiltered rather than guessed at, since whether these
+  // (standard Tanzania Revenue Authority depreciation categories)
+  // should be global or genuinely per-client is a real, separate
+  // decision, not something to assume here.
   const traClasses = await pgListAllRecords("tra_classes");
   const traClassById = {};
   for (const c of traClasses) traClassById[c.id] = c;
@@ -1306,11 +1321,11 @@ async function normalizeRecord(row, documents, traClassById) {
 // A QR sticker is physically stuck on equipment where anyone can scan it,
 // so financial data never belongs here regardless of what's shown
 // internally in the dashboard.
-async function handleGetUnits(req, res) {
+async function handleGetUnits(req, res, organizationId) {
   try {
     const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
     const { signChatLogAttachments, getSignedUrlSafe } = await import("../lib/storageClient.js");
-    const rows = await pgListAllRecords("units");
+    const rows = await pgListAllRecords("units", organizationId);
 
     // Balance per unit — computed here from two batched queries (all
     // invoices, all payments) rather than one query per unit, same
@@ -1334,7 +1349,7 @@ async function handleGetUnits(req, res) {
     // the financial queries above.
     const { computeUnitSLASummary, loadSLATargetsMap } = await import("../lib/slaTracking.js");
     const slaTargetsMap = await loadSLATargetsMap();
-    const woByUnitResult = await pgQuery("select unit, urgency, created, completed_date, activity_log from work_orders where unit is not null and unit != ''");
+    const woByUnitResult = await pgQuery("select unit, urgency, created, completed_date, activity_log from work_orders where unit is not null and unit != '' and organization_id = $1", [organizationId]);
     const workOrdersByUnitName = {};
     for (const wo of woByUnitResult.rows) {
       if (!workOrdersByUnitName[wo.unit]) workOrdersByUnitName[wo.unit] = [];
@@ -1481,11 +1496,11 @@ async function handleGetExchangeRates(req, res) {
   }
 }
 
-async function handleGetFacilities(req, res) {
+async function handleGetFacilities(req, res, organizationId) {
   try {
     const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
-    const facilityRows = await pgListAllRecords("facilities");
-    const buildingRows = await pgQuery("select * from facility_buildings");
+    const facilityRows = await pgListAllRecords("facilities", organizationId);
+    const buildingRows = await pgQuery("select * from facility_buildings where organization_id = $1", [organizationId]);
 
     const buildingsByFacility = {};
     const buildingCodesByFacility = {};
@@ -1582,13 +1597,13 @@ async function handlePublicQuickview(req, res) {
   }
 }
 
-async function handleEditLog(req, res) {
+async function handleEditLog(req, res, organizationId) {
   const assetId = req.query.id;
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      "select * from edit_log where asset_id = $1 order by timestamp desc",
-      [assetId]
+      "select * from edit_log where asset_id = $1 and organization_id = $2 order by timestamp desc",
+      [assetId, organizationId]
     );
     const entries = result.rows.map(r => ({
       field: r.field_changed || "",
@@ -1607,7 +1622,7 @@ async function handleEditLog(req, res) {
 // given floor. The image itself lives in Airtable as an attachment (upload
 // it directly in the Floor Plans table — Airtable hosts it automatically,
 // no separate file storage needed).
-async function handleGetFloorPlan(req, res) {
+async function handleGetFloorPlan(req, res, organizationId) {
   const floor = req.query.floorplan;
 
   try {
@@ -1615,7 +1630,7 @@ async function handleGetFloorPlan(req, res) {
     const { getSignedUrlSafe } = await import("../lib/storageClient.js");
 
     // 1. Find the floor plan image for this floor
-    const planRow = await getByColumn("floor_plans", "floor", floor).catch(() => null);
+    const planRow = await getByColumn("floor_plans", "floor", floor, organizationId).catch(() => null);
     // image_url stores a storage PATH, not a URL — signed fresh here,
     // same reasoning as the nameplate photo pattern.
     let imageUrl = null;
@@ -1633,7 +1648,7 @@ async function handleGetFloorPlan(req, res) {
     const activityLog = JSON.stringify(planRow ? (planRow.activity_log || []) : []);
 
     // 2. Find all saved marker positions for assets on this floor
-    const posResult = await pgQuery("select * from asset_positions where floor = $1", [floor]).catch(() => null);
+    const posResult = await pgQuery("select * from asset_positions where floor = $1 and organization_id = $2", [floor, organizationId]).catch(() => null);
     let positions = [];
     if (posResult) {
       positions = posResult.rows.map(r => ({
@@ -1681,17 +1696,17 @@ async function handleGetApiKeyInfo(req, res, session) {
 // Monthly report — merged in from monthly-report.js (see routing above)
 // ---------------------------------------------------------------------
 
-async function handleMonthlyReport(req, res) {
-  return buildPeriodReport(req, res, 30);
+async function handleMonthlyReport(req, res, organizationId) {
+  return buildPeriodReport(req, res, 30, organizationId);
 }
 
-async function handleWeeklyReport(req, res) {
-  return buildPeriodReport(req, res, 7);
+async function handleWeeklyReport(req, res, organizationId) {
+  return buildPeriodReport(req, res, 7, organizationId);
 }
 
-async function buildPeriodReport(req, res, days) {
+async function buildPeriodReport(req, res, days, organizationId) {
   try {
-    const records = await fetchAllLogRecords();
+    const records = await fetchAllLogRecords(organizationId);
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
 
@@ -1702,7 +1717,7 @@ async function buildPeriodReport(req, res, days) {
     // Work order data — maintenance types worked and real status counts,
     // not just raw alert events. This is what actually makes the report
     // a summary of the period, not just a slice of recent alerts.
-    const allWorkOrders = await fetchAllWorkOrdersForReport();
+    const allWorkOrders = await fetchAllWorkOrdersForReport(organizationId);
     const workOrdersInPeriod = allWorkOrders.filter(r => r.created && new Date(r.created) >= cutoff);
 
     // Build a lookup by WO ID so alerts (which embed "Work Order WO-xxx"
@@ -1773,14 +1788,14 @@ async function buildPeriodReport(req, res, days) {
   }
 }
 
-async function fetchAllWorkOrdersForReport() {
+async function fetchAllWorkOrdersForReport(organizationId) {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  return pgListAllRecords("work_orders");
+  return pgListAllRecords("work_orders", organizationId);
 }
 
-async function fetchAllLogRecords() {
+async function fetchAllLogRecords(organizationId) {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  return pgListAllRecords("alert_log");
+  return pgListAllRecords("alert_log", organizationId);
 }
 
 function countBy(records, field) {
@@ -1799,11 +1814,11 @@ function countBy(records, field) {
 // mechanism.
 // ---------------------------------------------------------------------
 
-async function handleGetPlannedMaintenance(req, res) {
+async function handleGetPlannedMaintenance(req, res, organizationId) {
   try {
     const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
     const { getSignedUrlSafe } = await import("../lib/storageClient.js");
-    const rows = await pgListAllRecords("planned_maintenance");
+    const rows = await pgListAllRecords("planned_maintenance", organizationId);
 
     // Gap closed: planned_maintenance_documents now exists (added
     // alongside the actual upload feature — see handleUploadPlanDocument
@@ -1868,7 +1883,7 @@ async function handleStaffPerformance(req, res) {
   }
 
   try {
-    const workOrders = await fetchAllWorkOrdersForReport();
+    const workOrders = await fetchAllWorkOrdersForReport(session.org);
 
     // Per-person: work orders closed, and average days from Created to
     // Completed Date — a real, honest measure of turnaround speed.
@@ -1985,7 +2000,7 @@ async function handlePendingForMe(req, res) {
   if (!session) return res.status(401).json({ error: "Not logged in" });
 
   try {
-    const workOrders = await fetchAllWorkOrdersForReport();
+    const workOrders = await fetchAllWorkOrdersForReport(session.org);
     const role = session.r;
     const items = computePendingItems(workOrders, role);
 

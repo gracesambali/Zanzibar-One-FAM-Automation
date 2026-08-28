@@ -181,8 +181,22 @@ async function checkForSpike(sensorId, reading) {
 }
 
 async function fetchSensorBySensorId(sensorId) {
-  const { getByColumn } = await import("../lib/postgresClient.js");
-  return getByColumn("sensors", "sensor_id", sensorId).catch(() => null);
+  // Confirmed directly: sensor_id is now unique per client, not
+  // globally - a physical device's webhook has no organization
+  // context at all, so if the same sensor_id ever exists for more
+  // than one client, this can't safely guess which one a reading
+  // belongs to. Failing loudly here is the only safe option - the
+  // alternative (silently picking one via an unordered "limit 1")
+  // risks a real reading being attributed to the wrong client's
+  // sensor, triggering an alert or work order for someone else
+  // entirely.
+  const { query: pgQuery } = await import("../lib/postgresClient.js");
+  const result = await pgQuery("select * from sensors where sensor_id = $1", [sensorId]).catch(() => null);
+  if (!result || result.rows.length === 0) return null;
+  if (result.rows.length > 1) {
+    throw new Error(`sensor_id "${sensorId}" is registered under more than one client - cannot safely determine which one this reading belongs to. Each client's device IDs must be unique.`);
+  }
+  return result.rows[0];
 }
 
 async function fetchComponentByAssetId(assetId) {
