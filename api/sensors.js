@@ -43,6 +43,7 @@ export default async function handler(req, res) {
     if (action === "addSensor") return handleAddSensor(req, res, session.u);
     if (action === "seedDemoData") return handleSeedDemoData(req, res, session.u);
     if (action === "clearDemoData") return handleClearDemoData(req, res);
+    if (action === "decommissionSensor") return handleDecommissionSensor(req, res, session.u);
     if (action === "setNotificationRoles") return handleSetNotificationRoles(req, res);
     return handleRunTest(req, res, session.u); // no action field - the existing test tool's plain body
   }
@@ -186,7 +187,11 @@ async function handleGetReadings(req, res) {
 
 async function fetchAllSensors() {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  return pgListAllRecords("sensors");
+  const sensors = await pgListAllRecords("sensors");
+  // Confirmed directly: a decommissioned sensor's history stays
+  // intact, but it no longer appears in the active BMS list - same
+  // soft-delete pattern already used for assets.
+  return sensors.filter(s => s.active !== false);
 }
 
 async function fetchRecentReadings() {
@@ -653,6 +658,39 @@ async function handleClearDemoData(req, res) {
     return res.status(200).json({ success: true, removed: result.rows.map(r => r.sensor_id) });
   } catch (err) {
     console.error("handleClearDemoData error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Decommission a sensor - the real, previously-missing piece for
+// cleaning up duplicates. Confirmed directly: same soft-delete pattern
+// already used for assets (components.active) - history stays intact,
+// it just stops appearing in the active BMS list.
+// ---------------------------------------------------------------------
+
+async function handleDecommissionSensor(req, res, decommissionedBy) {
+  const { sensorId, reason } = req.body || {};
+  if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `update sensors set active = false, decommissioned_by = $1 where sensor_id = $2 returning id, activity_log`,
+      [decommissionedBy, sensorId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Sensor not found." });
+
+    const existingLog = result.rows[0].activity_log || [];
+    const newLog = [...existingLog, {
+      text: `Decommissioned by ${decommissionedBy}${reason ? `: ${reason}` : ""}`,
+      by: decommissionedBy, at: new Date().toISOString(),
+    }];
+    await pgQuery(`update sensors set activity_log = $1 where sensor_id = $2`, [JSON.stringify(newLog), sensorId]);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleDecommissionSensor error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
