@@ -2560,6 +2560,7 @@ function showSensorDetail(recordId) {
           <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer;flex-shrink:0">Decommission</button>
         </div>
         <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <div class="detail-field"><div class="detail-field-label">Asset ID</div><div class="detail-field-value">${s.assetId || '—'}</div></div>
           <div class="detail-field"><div class="detail-field-label">Sensor Type</div><div class="detail-field-value">${s.sensorType}</div></div>
           <div class="detail-field"><div class="detail-field-label">Location</div><div class="detail-field-value">${s.location || '—'}</div></div>
           <div class="detail-field"><div class="detail-field-label">Target Range</div><div class="detail-field-value">${s.targetRange || 'not set'}</div></div>
