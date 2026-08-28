@@ -37,7 +37,7 @@ function requireFinanceRole(session, res) {
 export default async function handler(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in" });
-  setSessionCookie(res, session.u, session.r);
+  setSessionCookie(res, session.u, session.r, session.org);
 
   // Confirmed directly as a real gap and fixed: this check must apply
   // to every method, not just writes. It previously sat after the GET

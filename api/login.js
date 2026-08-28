@@ -72,7 +72,7 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Incorrect username or password" });
       }
       const role = user.role;
-      setSessionCookie(res, username, role);
+      setSessionCookie(res, username, role, user.organization_id);
       return res.status(200).json({ success: true, role, permissions: ROLES[role] });
     }
   } catch (err) {
@@ -101,7 +101,10 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Incorrect username or password" });
   }
 
-  setSessionCookie(res, username, matched.role);
+  // Confirmed directly: every legacy env-var login here is existing
+  // Master System staff, not a Gracing Ventures (or any future
+  // client's) account - defaults to the Master System's own org id.
+  setSessionCookie(res, username, matched.role, "73ae9f3b-bbef-4f4a-b3df-3cca81c49063");
   return res.status(200).json({ success: true, role: matched.role, permissions: ROLES[matched.role] });
   // --- end legacy fallback --------------------------------------------
 }
