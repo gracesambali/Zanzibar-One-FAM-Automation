@@ -35,6 +35,7 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleGetCategories(req, res);
     if (req.query.readingsHistory === "true") return handleGetReadingsHistory(req, res);
+    if (req.query.decommissioned === "true") return handleGetDecommissionedSensors(req, res);
     if (req.query.notificationRoles === "true") return handleGetNotificationRoles(req, res);
     return handleGetReadings(req, res);
   }
@@ -691,6 +692,44 @@ async function handleDecommissionSensor(req, res, decommissionedBy) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleDecommissionSensor error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Real, decommissioned sensors - confirmed directly: a decommissioned
+// sensor's history stays intact, but it was previously impossible to
+// even see it existed once removed from the active list. Separate
+// from the main list rather than a toggle on it, since decommissioned
+// sensors are a genuinely different, occasional-reference concern,
+// not something anyone needs mixed into day-to-day monitoring.
+// ---------------------------------------------------------------------
+
+async function handleGetDecommissionedSensors(req, res) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `select s.sensor_id, s.sensor_type, s.asset_id, s.decommissioned_by, s.activity_log, c.name as asset_name
+       from sensors s
+       left join components c on c.asset_id = s.asset_id
+       where s.active = false
+       order by s.sensor_id`
+    );
+    const sensors = result.rows.map(r => {
+      const log = r.activity_log || [];
+      const lastEntry = log.length > 0 ? log[log.length - 1] : null;
+      return {
+        sensorId: r.sensor_id,
+        sensorType: r.sensor_type,
+        assetName: r.asset_name || r.asset_id || "",
+        decommissionedBy: r.decommissioned_by || "",
+        decommissionedAt: lastEntry ? lastEntry.at : null,
+        reasonText: lastEntry ? lastEntry.text : "",
+      };
+    });
+    return res.status(200).json({ sensors });
+  } catch (err) {
+    console.error("handleGetDecommissionedSensors error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

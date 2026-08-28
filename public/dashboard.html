@@ -2445,6 +2445,7 @@ async function renderSensorMonitor(isRefresh) {
           <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, and water — extracted from your smart equipment or BMS. FAM bridges it to notifications and maintenance.</p>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
+          <button onclick="openBmsDecommissionedModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">👁 Decommissioned</button>
           <button onclick="openBmsNotificationSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔔 Notification Settings</button>
           <button onclick="openAddSensorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Sensor</button>
         </div>
@@ -2554,7 +2555,10 @@ function showSensorDetail(recordId) {
     <button onclick="renderSensorMonitor(false)" style="margin-bottom:14px;padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">← Back to Sensors</button>
     <div class="detail-panel">
       <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
-        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">${s.assetName} — ${s.sensorId}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
+          <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer;flex-shrink:0">Decommission</button>
+        </div>
         <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
           <div class="detail-field"><div class="detail-field-label">Sensor Type</div><div class="detail-field-value">${s.sensorType}</div></div>
           <div class="detail-field"><div class="detail-field-label">Location</div><div class="detail-field-value">${s.location || '—'}</div></div>
@@ -2578,10 +2582,7 @@ function showSensorDetail(recordId) {
         </select>
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
         <textarea id="sensorEditNotes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-height:70px;margin-bottom:10px">${s.notes || ''}</textarea>
-        <div style="display:flex;gap:8px">
-          <button onclick="saveSensorEdit('${recordId}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Save Changes</button>
-          <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>
-        </div>
+        <button onclick="saveSensorEdit('${recordId}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Save Changes</button>
       </div>
 
       <div style="padding:20px 24px">
@@ -2732,6 +2733,24 @@ async function submitAddSensor() {
 }
 
 // --- Notification Settings ---
+
+// --- Decommissioned Sensors ---
+
+async function openBmsDecommissionedModal() {
+  showBmsModal('Decommissioned Sensors', `<div id="dc_body">Loading…</div>`);
+  const resp = await fetch('/api/sensors?decommissioned=true');
+  const data = await resp.json();
+  const sensors = data.sensors || [];
+  document.getElementById('dc_body').innerHTML = sensors.length === 0
+    ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No sensors have been decommissioned.</div>`
+    : sensors.map(s => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">${escapeHtml(s.sensorId)} <span style="font-weight:400;color:var(--muted)">— ${escapeHtml(s.assetName)}</span></div>
+        <div style="font-size:11.5px;color:var(--text);margin-top:2px">${escapeHtml(s.reasonText || 'No reason given.')}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(s.decommissionedBy)}${s.decommissionedAt ? ' · ' + new Date(s.decommissionedAt).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''}</div>
+      </div>
+    `).join('');
+}
 
 async function openBmsNotificationSettingsModal() {
   showBmsModal('BMS Notification Settings', `<div id="ns_body">Loading…</div>`);
