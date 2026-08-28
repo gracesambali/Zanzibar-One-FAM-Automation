@@ -1560,3 +1560,34 @@ alter table readings add column if not exists is_demo boolean not null default f
 -- ============================================================
 alter table sensors add column if not exists active boolean not null default true;
 alter table sensors add column if not exists decommissioned_by text;
+
+-- ============================================================
+-- FAM Master System / client organizations — confirmed directly:
+-- the Master System (all its current data) stays exactly as it is,
+-- untouched, and remains where all future development happens.
+-- Gracing Ventures is a genuinely new, separate, blank organization —
+-- client account #1 — not a rename or repurposing of anything that
+-- already exists. Every table already defaults to the Master's own
+-- org id; this only adds the new org and the missing link (users
+-- weren't tied to any organization at all before this).
+-- ============================================================
+-- Confirmed directly: no more "internal" framing anywhere, including
+-- in the data's own labeling - this only renames the existing org
+-- row's display name to match the real, current terminology. Nothing
+-- about the data within it changes.
+update organizations set name = 'FAM Master System' where id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+
+insert into organizations (id, name) values
+  ('e8f2a914-6b3d-4c71-9a85-2d5e7f1b3c90', 'Gracing Ventures');
+
+alter table users add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+
+-- Grace's real account for the new, blank Gracing Ventures
+-- organization — confirmed directly as the sole user for now.
+-- No password set here; she sets her own via the existing
+-- request-password-reset flow (already proven to work correctly for
+-- a user with no password yet), so a real password is never
+-- something this system - or anyone building it - ever handles.
+insert into users (username, email, display_name, role, organization_id) values
+  ('grace', 'grace@gracingventures.com', 'Grace Sambali', 'business_owner', 'e8f2a914-6b3d-4c71-9a85-2d5e7f1b3c90')
+  on conflict (username) do nothing;
