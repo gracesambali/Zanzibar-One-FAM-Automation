@@ -1591,3 +1591,23 @@ alter table users add column if not exists organization_id uuid references organ
 insert into users (username, email, display_name, role, organization_id) values
   ('grace', 'grace@gracingventures.com', 'Grace Sambali', 'business_owner', 'e8f2a914-6b3d-4c71-9a85-2d5e7f1b3c90')
   on conflict (username) do nothing;
+
+-- ============================================================
+-- Real per-client uniqueness, not global — confirmed directly. A real,
+-- serious gap found during multi-tenancy testing: units.unit_name,
+-- floor_plans.floor, and sensors.sensor_id were each a plain, global
+-- unique constraint - meaning two different clients could never both
+-- have a unit called "Suite 101" or a floor called "Ground Floor",
+-- even though every query filtering by organization was already
+-- correct. Facility/building codes are unaffected - those are
+-- already system-generated with real per-client prefixes, not
+-- user-typed names, so they were never actually at risk of this.
+-- ============================================================
+alter table units drop constraint if exists units_unit_name_key;
+alter table units add constraint units_org_unit_name_unique unique (organization_id, unit_name);
+
+alter table floor_plans drop constraint if exists floor_plans_floor_key;
+alter table floor_plans add constraint floor_plans_org_floor_unique unique (organization_id, floor);
+
+alter table sensors drop constraint if exists sensors_sensor_id_key;
+alter table sensors add constraint sensors_org_sensor_id_unique unique (organization_id, sensor_id);
