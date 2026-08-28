@@ -1550,3 +1550,13 @@ create index if not exists idx_bms_notif_roles_category on bms_category_notifica
 -- ============================================================
 alter table sensors add column if not exists is_demo boolean not null default false;
 alter table readings add column if not exists is_demo boolean not null default false;
+
+-- ============================================================
+-- Sensor decommissioning — confirmed directly: matches the exact same
+-- soft-delete pattern already used for assets (components.active),
+-- not a new concept. A decommissioned sensor's history stays intact
+-- but it no longer appears in the active BMS list, letting real
+-- duplicates be cleaned up without losing their reading history.
+-- ============================================================
+alter table sensors add column if not exists active boolean not null default true;
+alter table sensors add column if not exists decommissioned_by text;

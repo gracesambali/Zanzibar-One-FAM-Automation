@@ -2445,7 +2445,6 @@ async function renderSensorMonitor(isRefresh) {
           <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, and water — extracted from your smart equipment or BMS. FAM bridges it to notifications and maintenance.</p>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
-          <button onclick="openBmsDemoDataModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🎬 Sample Sensors</button>
           <button onclick="openBmsNotificationSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔔 Notification Settings</button>
           <button onclick="openAddSensorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Sensor</button>
         </div>
@@ -2579,7 +2578,10 @@ function showSensorDetail(recordId) {
         </select>
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
         <textarea id="sensorEditNotes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-height:70px;margin-bottom:10px">${s.notes || ''}</textarea>
-        <button onclick="saveSensorEdit('${recordId}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Save Changes</button>
+        <div style="display:flex;gap:8px">
+          <button onclick="saveSensorEdit('${recordId}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Save Changes</button>
+          <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>
+        </div>
       </div>
 
       <div style="padding:20px 24px">
@@ -2694,47 +2696,6 @@ const BMS_SENSOR_TYPES = [
   { value: 'water', label: 'Water (Liters)' },
 ];
 
-// --- Demo Data ---
-
-function openBmsDemoDataModal() {
-  showBmsModal('Sample Sensors', `
-    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Adds three example sensors — one each for Runtime, Electrical, and Water — with realistic recent readings including a real spike, so you can see what full BMS coverage looks like even before real sensors are connected. This data never triggers real alerts on its own.</div>
-    <button onclick="submitSeedDemoData()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;margin-bottom:10px">Add Sample Sensors</button>
-    <button onclick="submitClearDemoData()" style="width:100%;padding:10px;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);font-weight:600;cursor:pointer">Remove All Sample Sensors</button>
-    <div id="dd_status" style="font-size:12px;margin-top:10px"></div>
-  `);
-}
-
-async function submitSeedDemoData() {
-  const statusEl = document.getElementById('dd_status');
-  statusEl.style.color = 'var(--muted)';
-  statusEl.textContent = 'Adding…';
-  const resp = await fetch('/api/sensors', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'seedDemoData' }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) { statusEl.style.color = 'var(--red)'; statusEl.textContent = data.error || 'Could not add sample sensors'; return; }
-  statusEl.style.color = 'var(--green)';
-  statusEl.textContent = data.created?.length ? `✓ Added: ${data.created.join(', ')}` : '✓ Sample sensors already exist.';
-  renderSensorMonitor();
-}
-
-async function submitClearDemoData() {
-  if (!confirm('Remove all sample sensors and their readings? This cannot be undone.')) return;
-  const statusEl = document.getElementById('dd_status');
-  statusEl.style.color = 'var(--muted)';
-  statusEl.textContent = 'Removing…';
-  const resp = await fetch('/api/sensors', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clearDemoData' }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) { statusEl.style.color = 'var(--red)'; statusEl.textContent = data.error || 'Could not remove sample sensors'; return; }
-  statusEl.style.color = 'var(--green)';
-  statusEl.textContent = data.removed?.length ? `✓ Removed: ${data.removed.join(', ')}` : 'No sample sensors to remove.';
-  renderSensorMonitor();
-}
 
 function openAddSensorModal() {
   const assetOptions = assets.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${a.id})</option>`).join('');
@@ -2850,6 +2811,24 @@ function showBmsModal(title, bodyHtml) {
 function closeBmsModal() {
   const overlay = document.getElementById('bms-modal-overlay');
   if (overlay) overlay.remove();
+}
+
+async function decommissionSensor(sensorId, assetName) {
+  const reason = prompt(`Decommissioning "${sensorId}" (${assetName}). Optional reason (e.g. "duplicate of another sensor"):`);
+  if (reason === null) return; // cancelled
+
+  try {
+    const resp = await fetch('/api/sensors', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'decommissionSensor', sensorId, reason: reason || undefined }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to decommission sensor');
+    alert('Sensor decommissioned. Its reading history stays intact, but it no longer appears in the active BMS list.');
+    renderSensorMonitor();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
 }
 
 async function saveSensorEdit(recordId) {
