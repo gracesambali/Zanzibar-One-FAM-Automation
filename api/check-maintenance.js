@@ -200,6 +200,7 @@ async function logAlert(f, urgency, message, alertType) {
       urgency: `${alertType}: ${urgency}`,
       channel: "Email + SMS",
       message,
+      organization_id: f.organization_id,
     });
     return true;
   } catch (err) {
@@ -231,6 +232,7 @@ async function createWorkOrder(f, urgency) {
       assigned_role: getAssignedRole(f.system, f.name) || null,
       maintenance_type: "Preventive",
       activity_log: "[]",
+      organization_id: f.organization_id,
     });
   } catch (e) {
     console.error("Work order creation failed:", e.message);
