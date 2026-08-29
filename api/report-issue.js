@@ -12,8 +12,7 @@
 // hear about it exactly the same way they would a system-generated
 // alert, with the reporter's name and exact location attached.
 
-import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
-import { getAllStaffDirectory } from "../lib/staffDirectory.js";
+import { getContactsForRole } from "../lib/staffDirectory.js";
 
 async function handleSatisfactionResponse(req, res) {
   const { recordId, satisfaction, reason } = req.query;
@@ -80,7 +79,7 @@ async function handleSatisfactionResponse(req, res) {
       return res.status(200).send(simplePage("Thank you!", "Glad it's sorted. Thanks for confirming."));
     }
 
-    await sendUnsatisfactionAlert(existing?.asset_name || "a reported issue", reason);
+    await sendUnsatisfactionAlert(existing?.asset_name || "a reported issue", reason, existing?.organization_id);
 
     return res.status(200).send(simplePage("We've reopened this", "Thanks for letting us know — the team has been notified and will follow up."));
   } catch (err) {
@@ -113,11 +112,13 @@ function reasonFormPage(recordId) {
 // Fires when a reporter says they're NOT satisfied — Engineer, Admin,
 // and Property Manager all get a direct email, not just a quietly
 // reopened work order nobody notices.
-async function sendUnsatisfactionAlert(assetName, reason) {
-  const directory = getAllStaffDirectory();
-  const toList = directory
-    .filter(e => ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(e.role) && e.email)
-    .map(e => e.email);
+async function sendUnsatisfactionAlert(assetName, reason, organizationId) {
+  const [engineers, admins, pms] = await Promise.all([
+    Promise.all([getContactsForRole("electrical_engineer", organizationId), getContactsForRole("mechanical_engineer", organizationId)]),
+    getContactsForRole("admin", organizationId),
+    getContactsForRole("property_manager", organizationId),
+  ]);
+  const toList = [...engineers.flat(), ...admins, ...pms].map(e => e.email).filter(Boolean);
   if (toList.length === 0) return;
 
   const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
@@ -148,40 +149,6 @@ async function sendUnsatisfactionAlert(assetName, reason) {
   } catch (err) {
     console.error("sendUnsatisfactionAlert error:", err);
   }
-}
-
-// Exactly four options now, confirmed with the client — no "Not sure"
-// escape hatch, since every report has to land on one of the four
-// people who actually work these buildings. Fire is deliberately kept
-// split rather than folded into one bucket: fire DETECTION (alarms,
-// smoke detectors) is electrical work, fire PROTECTION (sprinklers,
-// suppression) is mechanical work — same split routing.js already
-// uses for System-based routing elsewhere, kept consistent here.
-// Same relabeling logic dashboard.html uses for display — duplicated
-// here rather than shared, since this is a separate serverless
-// function with no access to the frontend's JS. Keeping the exact same
-// transformation on both sides is the whole point: it's what makes a
-// reporter's dropdown selection match an asset's stored floor/room
-// later, without any fuzzy text matching required.
-function displayFloor(floor) {
-  if (!floor) return "";
-  const m = floor.match(/^L(\d+)$/i);
-  if (!m) return floor;
-  const n = parseInt(m[1], 10);
-  return n === 1 ? "GF" : `F${n - 1}`;
-}
-function displayRoom(room) {
-  if (!room) return "";
-  let out = room;
-  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
-    const n = parseInt(numStr, 10);
-    return n === 1 ? "Ground Floor" : `Floor ${n - 1}`;
-  });
-  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
-    const n = parseInt(numStr, 10);
-    return n === 1 ? "GF" : `F${n - 1}`;
-  });
-  return out;
 }
 
 // Strips formatting so "+255 712 345 678", "0712345678", and
@@ -422,7 +389,6 @@ async function handleUnitPortalReportIssue(req, res) {
 
     await appendUnitActivityLog(unitId, `🛠️ Issue reported by ${senderName.trim()} — ${category} — opened ${woId}`, senderName.trim(), "system");
 
-    const directory = getAllStaffDirectory();
     const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
     // PM sees every tenant-reported issue regardless of category — they
     // manage the tenant relationship and need awareness across all of
@@ -430,10 +396,15 @@ async function handleUnitPortalReportIssue(req, res) {
     // who's notified, not who's responsible — Assigned Role above still
     // correctly stays EE/ME for technical issues; PM doesn't do the
     // electrical or mechanical work, just needs to know it's happening.
-    const recipients = directory.filter(e => e.role === loginRole || e.role === "property_manager" || e.role === "business_owner" || e.role === "system_admin");
+    const recipients = [
+      ...await getContactsForRole(loginRole, f.organization_id),
+      ...await getContactsForRole("property_manager", f.organization_id),
+      ...await getContactsForRole("business_owner", f.organization_id),
+      ...await getContactsForRole("system_admin", f.organization_id),
+    ];
     const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
 
-    const toList = recipients.map(e => e.email).filter(Boolean);
+    const toList = [...new Set(recipients.map(e => e.email).filter(Boolean))];
     if (toList.length > 0) {
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
@@ -591,41 +562,6 @@ async function handleUnitPortalMessage(req, res) {
   }
 }
 
-async function handleGetLocations(req, res) {
-  try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
-    const result = await pgQuery("select floor_level, room_zone from components");
-
-    // Floor -> Set of rooms, using the same friendly labels the Asset
-    // Register itself displays, deduplicated.
-    const floorMap = {};
-    result.rows.forEach(r => {
-      const floorLabel = displayFloor(r.floor_level || "");
-      const roomLabel = displayRoom(r.room_zone || "");
-      if (!floorLabel) return;
-      if (!floorMap[floorLabel]) floorMap[floorLabel] = new Set();
-      if (roomLabel) floorMap[floorLabel].add(roomLabel);
-    });
-
-    const floors = Object.keys(floorMap).sort().map(floor => ({
-      floor,
-      rooms: Array.from(floorMap[floor]).sort(),
-    }));
-
-    return res.status(200).json({ floors });
-  } catch (err) {
-    console.error("handleGetLocations error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-}
-
-const CATEGORY_TO_ROLE = {
-  "Electrical": "Electrical",
-  "Mechanical": "Mechanical",
-  "NonTechnical": "Admin",
-  "TenantRelated": "Property Manager",
-};
-
 export default async function handler(req, res) {
   // Payment provider webhook confirmations — merged in here from what
   // was a standalone api/payment-webhook.js, specifically to stay
@@ -722,15 +658,6 @@ export default async function handler(req, res) {
     return handleSatisfactionResponse(req, res);
   }
 
-  // Real floor/room list, public — no login, matching the report form
-  // itself. Confirmed with Grace: the report form's Floor and Room/Zone
-  // fields need to be dropdowns sourced from the actual Asset Register,
-  // not free text, so whatever a reporter picks EXACTLY matches what's
-  // in the register later — no fuzzy text matching needed downstream.
-  if (req.method === "GET" && req.query.locations) {
-    return handleGetLocations(req, res);
-  }
-
   // Unit portal — a real password gate now, not just possessing the
   // link. POST rather than GET specifically because a password is
   // involved — it shouldn't sit in a URL query string where it could
@@ -756,49 +683,12 @@ export default async function handler(req, res) {
     return handleUnitPortalInitiatePayment(req, res);
   }
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  const { reporterName, reporterRole, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
-
-  if (!reporterName || !floor || !description || !category) {
-    return res.status(400).json({ error: "Your name, the floor, a category, and a description are required" });
-  }
-
-  const assignedRole = CATEGORY_TO_ROLE[category] || "Admin";
-
-  try {
-    const location = roomZone ? `${floor} — ${roomZone}` : floor;
-    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""}: "${description}"`;
-
-    const { woId, recordId } = await createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole);
-
-    // Photo — same store-path-sign-at-read pattern as every other file
-    // in this cutover. Non-fatal if it fails: the report itself has
-    // already gone through, and a failed photo shouldn't undo that.
-    let photoFailed = false;
-    if (photoBase64 && photoFilename) {
-      photoFailed = !(await uploadReporterPhoto(recordId, photoFilename, photoContentType, photoBase64));
-    }
-
-    await Promise.all([
-      sendEmail(message, description, location),
-      sendSms(message),
-    ]);
-
-    await logAlert(description, location, recordId);
-
-    return res.status(200).json({
-      success: true,
-      message: "Report submitted. The technical team has been notified.",
-      woId,
-      ...(photoFailed ? { warning: "Your report was submitted, but the photo failed to upload." } : {}),
-    });
-  } catch (err) {
-    console.error("report-issue error:", err);
-    return res.status(500).json({ error: err.message });
-  }
+  // Confirmed directly: staff-reported breakdowns are no longer a
+  // public, no-login form living outside the system - moved inside
+  // the logged-in app itself (work-orders.js, reportBreakdown action),
+  // so every report is genuinely tied to a real, specific client
+  // rather than having no way to know which one it belonged to.
+  return res.status(410).json({ error: "This form has moved. Report a breakdown from inside FAM instead." });
 }
 
 async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit) {
@@ -845,114 +735,3 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   return { woId, recordId: created.id };
 }
 
-// Uploads the reporter's photo of the actual problem — the physical
-// evidence a non-technical reporter can capture even when they can't
-// describe the issue precisely. Returns true on success, false on
-// failure (never throws) — a failed photo shouldn't undo an
-// already-created work order, so the caller just needs a yes/no to
-// decide whether to warn the reporter, not an exception to catch.
-async function uploadReporterPhoto(recordId, filename, contentType, fileBase64) {
-  try {
-    const { uploadFile } = await import("../lib/storageClient.js");
-    const photoPath = `work-orders/${recordId}/reporter-${filename}`;
-    await uploadFile(photoPath, fileBase64, contentType || "image/jpeg");
-
-    const { update } = await import("../lib/postgresClient.js");
-    await update("work_orders", recordId, { reporter_photo_url: photoPath });
-    return true;
-  } catch (err) {
-    // Non-fatal — the work order itself was already created successfully.
-    console.error("Reporter photo upload error:", err);
-    return false;
-  }
-}
-
-async function sendEmail(message, description, location) {
-  const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
-  if (toList.length === 0) return;
-
-  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-      <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Staff-Reported Issue</div>
-        <div style="font-size:18px;font-weight:700;margin-top:4px">${location}</div>
-      </div>
-      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
-        <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
-        <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
-        <p style="margin:0;color:#6B7280;font-size:12.5px">${message.match(/Reported by [^:]+/)?.[0] || ""}</p>
-      </div>
-      <p style="color:#9CA3AF;font-size:11px;margin-top:16px">Reported directly by staff through ${fromName}.</p>
-    </div>`;
-
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
-      to: toList,
-      subject: `${fromName} — Staff-Reported Issue: ${location}`,
-      html,
-      text: `${message}\n\nReported directly by staff through ${fromName}.`,
-    }),
-  });
-  if (!resp.ok) console.error("Resend error:", await resp.text());
-}
-
-// Beem's default SMS encoding (GSM-7 plain text) rejects "smart" Unicode
-// punctuation — the exact same sanitizer used everywhere else in this
-// system. This file was the one place missing it, which is the likely
-// reason staff-reported SMS were silently failing to send at all.
-function sanitizeForSms(text) {
-  return text
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/\u2026/g, "...")
-    .replace(/[^\x00-\x7F]/g, "");
-}
-
-async function sendSms(message) {
-  const phoneList = parsePhoneList(process.env.ALERT_TO_PHONE);
-  if (phoneList.length === 0) return;
-
-  const cleanMessage = sanitizeForSms(message);
-  const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
-  const resp = await fetch("https://apisms.beem.africa/v1/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      source_addr: process.env.BEEM_SENDER_ID || "INFO",
-      schedule_time: "",
-      encoding: 0,
-      message: cleanMessage.slice(0, 160),
-      recipients: buildBeemRecipients(phoneList),
-    }),
-  });
-  if (!resp.ok) console.error("Beem error:", await resp.text());
-}
-
-// Missing until now — every other alert-triggering file writes to
-// Alert Log, which is what the Weekly/Monthly reports actually read
-// from. Without this, staff-reported issues were invisible in those
-// reports even though the notification and Work Order both worked.
-async function logAlert(description, location, recordId) {
-  const { insert } = await import("../lib/postgresClient.js");
-  await insert("alert_log", {
-    timestamp: new Date().toISOString(),
-    asset_id: null,
-    asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
-    system: null,
-    location,
-    urgency: "REPORTED",
-    channel: "Email + SMS (staff report)",
-    message: `Staff-reported issue: ${description}`,
-  }).catch(e => console.error("Alert log write failed:", e.message));
-}
