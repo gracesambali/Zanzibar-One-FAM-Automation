@@ -1084,7 +1084,7 @@ export default async function handler(req, res) {
   // Staff performance — restricted to decision-makers, checked here
   // server-side, not just hidden in the UI.
   if (req.query.staffperformance === "true") {
-    return handleStaffPerformance(req, res);
+    return handleStaffPerformance(req, res, session.org);
   }
 
   // "For You Today" — what actually needs THIS person's action right
@@ -1099,7 +1099,7 @@ export default async function handler(req, res) {
   // real list instead of typed freely). No passwords, just enough to
   // display and identify each person.
   if (req.query.stafflist === "true") {
-    const directory = getAllStaffDirectory();
+    const directory = await getAllStaffDirectory(session.org);
     return res.status(200).json({
       staff: directory.map(e => ({ username: e.username, displayName: e.displayName, role: e.role })),
     });
@@ -1131,7 +1131,7 @@ export default async function handler(req, res) {
       assets = assets.map(({ acquisitionCost, residualValue, currentValue, annualDepreciation, fullyDepreciated, traClassId, traValue, traClassName, ...rest }) => rest);
     }
 
-    const staffEntry = getContactForUsername(session.u);
+    const staffEntry = await getContactForUsername(session.u);
 
     // Confirmed directly: the Finance tab's real visibility depends on
     // a genuine per-organization toggle, not an env var - fetched once
@@ -1875,7 +1875,7 @@ async function handleGetPlannedMaintenance(req, res, organizationId) {
 // never structured for this purpose.
 // ---------------------------------------------------------------------
 
-async function handleStaffPerformance(req, res) {
+async function handleStaffPerformance(req, res, organizationId) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in" });
   if (!can(session.r, "viewStaffPerformance")) {
@@ -1924,7 +1924,7 @@ async function handleStaffPerformance(req, res) {
     // now — the same real filter used in "For You Today," just run for
     // every real person in the staff directory at once, not just the
     // one currently logged in.
-    const directory = getAllStaffDirectory();
+    const directory = await getAllStaffDirectory(organizationId);
     const pending = directory.map(entry => ({
       person: entry.username,
       pendingTasks: computePendingItems(workOrders, entry.role).length,

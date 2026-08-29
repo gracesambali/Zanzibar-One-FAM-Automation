@@ -244,7 +244,7 @@ export default async function handler(req, res) {
           procurement_rejection_reason: null,
         }).catch(() => { throw new Error("Could not save procurement request"); });
         await appendActivityLog(recordId, `🛒 Procurement requested — ${spec.description} (${spec.quantity}${spec.unit ? " " + spec.unit : ""})`, session.u, "procurement_request");
-        await notifyProcurementOfRequest(current.wo_id || "", current.asset_name || "Unnamed", session.u, spec);
+        await notifyProcurementOfRequest(current.wo_id || "", current.asset_name || "Unnamed", session.u, spec, session.org);
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("requestProcurement error:", err);
@@ -274,7 +274,7 @@ export default async function handler(req, res) {
         await update("work_orders", recordId, { procurement_status: "Fulfilled", cost_tzs: total, cost_edited_by: session.u, cost_edited_date: new Date().toISOString() })
           .catch(() => { throw new Error("Could not mark procurement fulfilled"); });
         await appendActivityLog(recordId, `📦 Payment processed by ${session.u} — TZS ${total.toLocaleString()} recorded, delivery note sent to routed role`, session.u, "system");
-        await notifyRoutedRoleOfDeliveryArrival(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", total);
+        await notifyRoutedRoleOfDeliveryArrival(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", total, current.organization_id);
 
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -597,7 +597,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "recordId and technicianUsername required" });
       }
 
-      const technicianContact = getContactForUsername(technicianUsername);
+      const technicianContact = await getContactForUsername(technicianUsername);
       if (!technicianContact || technicianContact.role !== "technician") {
         return res.status(400).json({ error: `"${technicianUsername}" is not a configured technician.` });
       }
@@ -685,7 +685,7 @@ export default async function handler(req, res) {
         const woId = woData.wo_id || "";
         const assetName = woData.asset_name || "";
         if (assignedBy) {
-          const assignerContact = getContactForUsername(assignedBy);
+          const assignerContact = await getContactForUsername(assignedBy);
           if (assignerContact && (assignerContact.email || assignerContact.phone)) {
             await notifyAssignerOfDecline(assignerContact, session.u, reason.trim(), woId, assetName);
           }
@@ -1456,7 +1456,7 @@ export default async function handler(req, res) {
         const current = await getById("work_orders", recordId).catch(() => ({}));
 
         await appendActivityLog(recordId, `⏳ Procurement delay: ${message.trim()} — ${session.u}`, session.u, "procurement_request");
-        await notifyOfProcurementDelay(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", message.trim(), current.assigned_technician);
+        await notifyOfProcurementDelay(current.assigned_role, current.asset_name || "Unnamed", current.wo_id || "", message.trim(), current.assigned_technician, current.organization_id);
 
         return res.status(200).json({ success: true });
       } catch (err) {
@@ -1825,7 +1825,7 @@ async function notifyTechnicianOfAssignment(technicianContact, woId, assetName) 
 // A short confirmation email back to whoever did the assigning — "yes,
 // this went through." Not urgent enough for SMS.
 async function notifyAssignerConfirmation(assignerUsername, technicianUsername, woId, assetName) {
-  const assignerContact = getContactForUsername(assignerUsername);
+  const assignerContact = await getContactForUsername(assignerUsername);
   if (!assignerContact || !assignerContact.email) return;
   const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const html = `
@@ -1908,12 +1908,12 @@ async function notifyAssignerOfDecline(assignerContact, technicianUsername, reas
 // Reaches the routed role AND the specifically assigned technician (if
 // one exists) — a delay affects both "who's waiting on this to plan
 // around it" and "who's literally standing there unable to proceed."
-async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, assignedTechnicianUsername) {
+async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, assignedTechnicianUsername, organizationId) {
   const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-  const directory = getAllStaffDirectory();
+  const directory = await getAllStaffDirectory(organizationId);
   const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
   if (assignedTechnicianUsername) {
-    const tech = getContactForUsername(assignedTechnicianUsername);
+    const tech = await getContactForUsername(assignedTechnicianUsername);
     if (tech && !recipients.some(r => r.username === tech.username)) recipients.push(tech);
   }
 
@@ -1965,8 +1965,8 @@ async function notifyOfProcurementDelay(assignedRole, assetName, woId, message, 
   }
 }
 
-async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
-  const directory = getAllStaffDirectory();
+async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec, organizationId) {
+  const directory = await getAllStaffDirectory(organizationId);
   const toList = directory.filter(e => e.role === "procurement").map(e => e.email).filter(Boolean);
   if (toList.length === 0) return;
 
@@ -2000,9 +2000,9 @@ async function notifyProcurementOfRequest(woId, assetName, requestedBy, spec) {
 // asking them to confirm the delivery arrived correctly. This is the
 // new replacement for the old approval-of-spend step — it confirms
 // receipt, it doesn't authorize the purchase (that already happened).
-async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, total) {
+async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, total, organizationId) {
   const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
-  const directory = getAllStaffDirectory();
+  const directory = await getAllStaffDirectory(organizationId);
   const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
   const toList = recipients.map(e => e.email).filter(Boolean);
 
@@ -2057,7 +2057,7 @@ async function notifyRoutedRoleOfDeliveryArrival(assignedRole, assetName, woId, 
 // A real, single, identifiable recipient — the person who originally
 // asked for this — gets a proper personal greeting, not "Dear Team".
 async function notifyRequesterOfRejection(requesterUsername, woId, assetName, reason) {
-  const contact = getContactForUsername(requesterUsername);
+  const contact = await getContactForUsername(requesterUsername);
   if (!contact || !contact.email) return;
 
   const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";

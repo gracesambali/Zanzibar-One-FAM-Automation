@@ -19,7 +19,7 @@ import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/reci
 import { buildFriendlyEmailHtml } from "../lib/emailTemplate.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getAssignedRole } from "../lib/routing.js";
-import { getContactsForRole, getAllStaffDirectory } from "../lib/staffDirectory.js";
+import { getContactsForRole, getContactForUsername } from "../lib/staffDirectory.js";
 
 const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Mechanical": "mechanical_engineer",
@@ -440,8 +440,7 @@ async function checkPlanDeadlines() {
       const planTitle = r.name || "Planned Maintenance";
       const daysLeft = Math.ceil((new Date(r.target_end_date).getTime() - now) / (24 * 60 * 60 * 1000));
 
-      const directory = getAllStaffDirectory();
-      const creatorEntry = directory.find(e => e.username === createdBy);
+      const creatorEntry = await getContactForUsername(createdBy);
       if (creatorEntry && creatorEntry.email) {
         await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -633,15 +632,21 @@ async function checkRentNoticesDue() {
     const units = await pgListAllRecords("units").catch(() => null);
     if (!units) { console.error("Rent notice check: could not fetch units"); return 0; }
 
-    const pmContacts = getContactsForRole("property_manager");
-    const pmEmails = pmContacts.map(c => c.email).filter(Boolean);
-    const pmPhones = pmContacts.map(c => c.phone).filter(Boolean);
-
     const today = new Date();
     let notifiedCount = 0;
 
     for (const u of units) {
       if (!u.next_rent_notice_due || !u.tenant_name) continue;
+
+      // Confirmed directly: a real, serious gap fixed here - this used
+      // to be looked up once, outside the loop, and reused for every
+      // unit regardless of which client it actually belonged to. Now
+      // scoped to this specific unit's own organization, so a rent
+      // notice for one client's tenant can never reach a different
+      // client's property manager.
+      const pmContacts = await getContactsForRole("property_manager", u.organization_id);
+      const pmEmails = pmContacts.map(c => c.email).filter(Boolean);
+      const pmPhones = pmContacts.map(c => c.phone).filter(Boolean);
 
       const dueDate = new Date(u.next_rent_notice_due);
       const daysUntilDue = Math.round((dueDate.getTime() - today.getTime()) / 86400000);
@@ -710,7 +715,7 @@ async function checkFinanceReminders() {
     const today = new Date();
 
     const dueBills = await pgQuery(
-      `select id, name, amount, currency, next_due_date, reminder_sent_for
+      `select id, name, amount, currency, next_due_date, reminder_sent_for, organization_id
        from bills
        where status = 'active'
          and next_due_date <= current_date + interval '7 days'
@@ -719,7 +724,7 @@ async function checkFinanceReminders() {
     );
 
     const dueLiabilities = await pgQuery(
-      `select id, lender, next_payment_amount, currency, next_payment_date, reminder_sent_for
+      `select id, lender, next_payment_amount, currency, next_payment_date, reminder_sent_for, organization_id
        from liabilities
        where status = 'active'
          and next_payment_date is not null
@@ -729,7 +734,7 @@ async function checkFinanceReminders() {
     );
 
     const duePayroll = await pgQuery(
-      `select p.id, p.salary_amount, p.currency, p.next_pay_date, p.reminder_sent_for,
+      `select p.id, p.salary_amount, p.currency, p.next_pay_date, p.reminder_sent_for, p.organization_id,
               u.display_name, u.username
        from payroll_entries p
        join users u on u.id = p.user_id
@@ -741,62 +746,83 @@ async function checkFinanceReminders() {
 
     if (dueBills.rows.length === 0 && dueLiabilities.rows.length === 0 && duePayroll.rows.length === 0) return 0;
 
-    const contacts = [...getContactsForRole("business_owner"), ...getContactsForRole("system_admin")];
-    const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
-    const phones = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
+    // Confirmed directly: a real, serious gap fixed here - this used
+    // to combine every client's due bills, loans, and payroll into
+    // one shared message, sent to every business owner and system
+    // admin system-wide. Grouped by organization instead, so each
+    // client gets a real, separate digest of only its own real due
+    // payments, sent only to its own real contacts.
+    const orgIds = new Set([
+      ...dueBills.rows.map(r => r.organization_id),
+      ...dueLiabilities.rows.map(r => r.organization_id),
+      ...duePayroll.rows.map(r => r.organization_id),
+    ]);
 
-    const billLines = dueBills.rows.map(b => {
-      const daysLeft = Math.round((new Date(b.next_due_date).getTime() - today.getTime()) / 86400000);
-      return `${b.name}: ${Number(b.amount).toLocaleString()} ${b.currency} due ${b.next_due_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
-    });
-    const liabilityLines = dueLiabilities.rows.map(l => {
-      const daysLeft = Math.round((new Date(l.next_payment_date).getTime() - today.getTime()) / 86400000);
-      const amt = l.next_payment_amount != null ? `${Number(l.next_payment_amount).toLocaleString()} ${l.currency}` : "amount not set";
-      return `${l.lender} repayment: ${amt} due ${l.next_payment_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
-    });
-    const payrollLines = duePayroll.rows.map(p => {
-      const daysLeft = Math.round((new Date(p.next_pay_date).getTime() - today.getTime()) / 86400000);
-      const name = p.display_name || p.username;
-      return `Salary — ${name}: ${Number(p.salary_amount).toLocaleString()} ${p.currency} due ${p.next_pay_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
-    });
+    let notifiedOrgCount = 0;
+    for (const orgId of orgIds) {
+      const orgBills = dueBills.rows.filter(r => r.organization_id === orgId);
+      const orgLiabilities = dueLiabilities.rows.filter(r => r.organization_id === orgId);
+      const orgPayroll = duePayroll.rows.filter(r => r.organization_id === orgId);
 
-    const allLines = [...billLines, ...liabilityLines, ...payrollLines];
-    const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 7 days.\n${allLines.join("\n")}`.slice(0, 320);
+      const contacts = [...await getContactsForRole("business_owner", orgId), ...await getContactsForRole("system_admin", orgId)];
+      const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+      const phones = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
 
-    if (emails.length > 0) {
-      try {
-        await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
-            to: emails,
-            subject: `💰 ${allLines.length} Payment${allLines.length === 1 ? "" : "s"} Due Within 7 Days`,
-            html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1A1A2E">
-              <p>The following payment${allLines.length === 1 ? " is" : "s are"} due within the next 7 days:</p>
-              <ul>${allLines.map(l => `<li>${l}</li>`).join("")}</ul>
-            </div>`,
-          }),
-        });
-      } catch (err) { console.error("Finance reminder email failed:", err.message); }
-    }
+      const billLines = orgBills.map(b => {
+        const daysLeft = Math.round((new Date(b.next_due_date).getTime() - today.getTime()) / 86400000);
+        return `${b.name}: ${Number(b.amount).toLocaleString()} ${b.currency} due ${b.next_due_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+      });
+      const liabilityLines = orgLiabilities.map(l => {
+        const daysLeft = Math.round((new Date(l.next_payment_date).getTime() - today.getTime()) / 86400000);
+        const amt = l.next_payment_amount != null ? `${Number(l.next_payment_amount).toLocaleString()} ${l.currency}` : "amount not set";
+        return `${l.lender} repayment: ${amt} due ${l.next_payment_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+      });
+      const payrollLines = orgPayroll.map(p => {
+        const daysLeft = Math.round((new Date(p.next_pay_date).getTime() - today.getTime()) / 86400000);
+        const name = p.display_name || p.username;
+        return `Salary — ${name}: ${Number(p.salary_amount).toLocaleString()} ${p.currency} due ${p.next_pay_date} (${daysLeft} day${daysLeft === 1 ? "" : "s"})`;
+      });
 
-    if (phones.length > 0) {
-      try {
-        await fetch("https://apisms.beem.africa/v1/send", {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            source_addr: process.env.BEEM_SENDER_ID || "INFO",
-            schedule_time: "", encoding: 0,
-            message: smsMessage,
-            recipients: buildBeemRecipients(phones),
-          }),
-        });
-      } catch (err) { console.error("Finance reminder SMS failed:", err.message); }
+      const allLines = [...billLines, ...liabilityLines, ...payrollLines];
+      if (allLines.length === 0) continue;
+      const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 7 days.\n${allLines.join("\n")}`.slice(0, 320);
+
+      if (emails.length > 0) {
+        try {
+          await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
+              to: emails,
+              subject: `💰 ${allLines.length} Payment${allLines.length === 1 ? "" : "s"} Due Within 7 Days`,
+              html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1A1A2E">
+                <p>The following payment${allLines.length === 1 ? " is" : "s are"} due within the next 7 days:</p>
+                <ul>${allLines.map(l => `<li>${l}</li>`).join("")}</ul>
+              </div>`,
+            }),
+          });
+        } catch (err) { console.error("Finance reminder email failed:", err.message); }
+      }
+
+      if (phones.length > 0) {
+        try {
+          await fetch("https://apisms.beem.africa/v1/send", {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              source_addr: process.env.BEEM_SENDER_ID || "INFO",
+              schedule_time: "", encoding: 0,
+              message: smsMessage,
+              recipients: buildBeemRecipients(phones),
+            }),
+          });
+        } catch (err) { console.error("Finance reminder SMS failed:", err.message); }
+      }
+      notifiedOrgCount++;
     }
 
     for (const b of dueBills.rows) {
@@ -809,7 +835,7 @@ async function checkFinanceReminders() {
       await update("payroll_entries", p.id, { reminder_sent_for: p.next_pay_date }).catch(() => {});
     }
 
-    return allLines.length;
+    return dueBills.rows.length + dueLiabilities.rows.length + duePayroll.rows.length;
   } catch (err) {
     console.error("checkFinanceReminders error:", err);
     return 0;

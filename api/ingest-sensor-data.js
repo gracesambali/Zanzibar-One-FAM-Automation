@@ -126,7 +126,7 @@ export default async function handler(req, res) {
       // the global ALERT_TO_EMAIL/ALERT_TO_PHONE recipients if this
       // category has no roles configured yet, so a real alert never
       // silently reaches nobody just because setup isn't finished.
-      const { toList, phoneList } = await getRecipientsForType(type);
+      const { toList, phoneList } = await getRecipientsForType(type, sensor.organization_id);
 
       await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType: sensorTypeLabel, value: reading, unit, targetRange: targetRangeDisplay, woId, toList }),
@@ -274,7 +274,7 @@ async function logAlert({ assetId, assetName, location, urgency, message }) {
 // ALERT_TO_EMAIL/ALERT_TO_PHONE recipients if no roles are configured
 // for this category yet, so a real alert never silently reaches
 // nobody during setup.
-async function getRecipientsForType(sensorType) {
+async function getRecipientsForType(sensorType, organizationId) {
   const { categoryForSensorType } = await import("../lib/bmsCategories.js");
   const { getContactsForRole } = await import("../lib/staffDirectory.js");
   const { query } = await import("../lib/postgresClient.js");
@@ -288,7 +288,8 @@ async function getRecipientsForType(sensorType) {
       "select role from bms_category_notification_roles where category = $1",
       [category]
     );
-    const contacts = rolesResult.rows.flatMap(r => getContactsForRole(r.role));
+    const contactLists = await Promise.all(rolesResult.rows.map(r => getContactsForRole(r.role, organizationId)));
+    const contacts = contactLists.flat();
     toList = [...new Set(contacts.map(c => c.email).filter(Boolean))];
     phoneList = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
   }
