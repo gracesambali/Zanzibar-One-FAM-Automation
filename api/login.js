@@ -53,6 +53,15 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "createStaffAccount") {
     return handleCreateStaffAccount(req, res);
   }
+  if (req.body && req.body.action === "deactivateStaffAccount") {
+    return handleDeactivateStaffAccount(req, res);
+  }
+  if (req.body && req.body.action === "createClient") {
+    return handleCreateClient(req, res);
+  }
+  if (req.body && req.body.action === "listClients") {
+    return handleListClients(req, res);
+  }
 
   const { username, password } = req.body || {};
 
@@ -151,7 +160,7 @@ async function handleCreateStaffAccount(req, res) {
     const { hash, salt } = hashPassword(password);
     await insert("users", {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),
-      role, password_hash: hash, password_salt: salt,
+      role, password_hash: hash, password_salt: salt, organization_id: session.org,
     });
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -171,16 +180,132 @@ async function handleListStaffAccounts(req, res) {
   }
 
   try {
-    const { listAllRecords } = await import("../lib/postgresClient.js");
-    const users = await listAllRecords("users");
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      "select username, email, display_name, role, password_hash, active from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
+      [session.org]
+    );
     return res.status(200).json({
-      accounts: users.map(u => ({
+      accounts: result.rows.map(u => ({
         username: u.username, email: u.email, displayName: u.display_name,
-        role: u.role, hasPassword: !!u.password_hash,
+        role: u.role, hasPassword: !!u.password_hash, active: u.active,
       })),
     });
   } catch (err) {
     console.error("listStaffAccounts error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// A real soft-delete, matching the same pattern already proven for
+// assets and sensors - past activity (edit_log entries, work orders
+// they created) stays attributable, and this can be undone if it was
+// a mistake. Genuinely rejected at login, not just hidden from this
+// list - see the active check in the main login flow above.
+async function handleDeactivateStaffAccount(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can remove a staff account." });
+  }
+
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: "username required" });
+  if (username === session.u) {
+    return res.status(400).json({ error: "You can't remove your own account." });
+  }
+
+  try {
+    const target = await findUserByUsername(username);
+    // Confirmed directly: scoped to the caller's own organization
+    // only - a client's System Admin or Business Owner can remove
+    // their own client's staff, never another client's.
+    if (!target || target.organization_id !== session.org) {
+      return res.status(404).json({ error: "Account not found." });
+    }
+
+    const { update } = await import("../lib/postgresClient.js");
+    await update("users", target.id, { active: false, deactivated_by: session.u });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("deactivateStaffAccount error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Master System-only - genuinely gated to a session that itself
+// belongs to the Master System's own org, not something any
+// individual client can do. A brand new client starts with zero
+// users, so its own staff couldn't possibly log in to add anyone -
+// the first user is created in the very same step as the client
+// itself. Matches the same "set a real password directly, no email
+// step" pattern already established for createStaffAccount above -
+// confirmed as the right approach, not the separate reset-flow
+// pattern used for Gracing Ventures' own bootstrap.
+const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+
+async function handleCreateClient(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can create a new client." });
+  }
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can create a new client." });
+  }
+
+  const { clientName, username, email, displayName, role, password } = req.body || {};
+  if (!clientName || !clientName.trim()) return res.status(400).json({ error: "A real client name is required." });
+  if (!username || !username.trim()) return res.status(400).json({ error: "The first user needs a real username." });
+  if (!["business_owner", "system_admin"].includes(role)) {
+    return res.status(400).json({ error: "The first user must be Business Owner or System Admin, so they can add everyone else." });
+  }
+  if (!password || password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const newOrg = await insert("organizations", { name: clientName.trim() });
+    const { hash, salt } = hashPassword(password);
+    const newUser = await insert("users", {
+      username: username.trim(), email: email || null, display_name: displayName || username.trim(),
+      role, password_hash: hash, password_salt: salt, organization_id: newOrg.id,
+    });
+    return res.status(200).json({
+      success: true,
+      client: { id: newOrg.id, name: newOrg.name },
+      firstUser: { username: newUser.username, role: newUser.role },
+    });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? `Username "${username.trim()}" already exists.` : err.message;
+    console.error("createClient error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+async function handleListClients(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can view the client list." });
+  }
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can view the client list." });
+  }
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `select o.id, o.name, o.created_at, count(u.id) filter (where u.active) as active_user_count
+       from organizations o
+       left join users u on u.organization_id = o.id
+       group by o.id, o.name, o.created_at
+       order by o.created_at desc`
+    );
+    return res.status(200).json({
+      clients: result.rows.map(r => ({ id: r.id, name: r.name, createdAt: r.created_at, activeUserCount: Number(r.active_user_count) })),
+    });
+  } catch (err) {
+    console.error("listClients error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
