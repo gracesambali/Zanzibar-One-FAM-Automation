@@ -65,6 +65,9 @@ export default async function handler(req, res) {
   try {
     const user = await findUserByUsername(username);
     if (user) {
+      if (user.active === false) {
+        return res.status(401).json({ error: "This account has been deactivated." });
+      }
       if (!user.password_hash) {
         return res.status(401).json({ error: "No password set yet for this account. Use \u201cSet / change password\u201d on the login page." });
       }
