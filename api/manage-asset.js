@@ -13,7 +13,7 @@
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
-import { getAllStaffDirectory } from "../lib/staffDirectory.js";
+import { getContactForUsername } from "../lib/staffDirectory.js";
 
 export default async function handler(req, res) {
   const session = getSession(req);
@@ -2751,8 +2751,7 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
     const planTitle = planData.name || "Planned Maintenance";
     if (!createdBy || createdBy === editedBy) return; // don't notify people of their own edit
 
-    const directory = getAllStaffDirectory();
-    const creatorEntry = directory.find(e => e.username === createdBy);
+    const creatorEntry = await getContactForUsername(createdBy);
     if (!creatorEntry || !creatorEntry.email) return;
 
     const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";

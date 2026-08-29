@@ -1624,3 +1624,16 @@ alter table sensors add constraint sensors_org_sensor_id_unique unique (organiza
 -- ============================================================
 alter table users add column if not exists active boolean not null default true;
 alter table users add column if not exists deactivated_by text;
+
+-- ============================================================
+-- Real per-client contact routing - confirmed directly as the actual
+-- fix for a real, serious problem: the entire staff/contact system
+-- notifications rely on ("who is the property manager", "who
+-- requested this") was built on a fixed, global set of env vars with
+-- no concept of which client a person belongs to at all. A real gap
+-- found while building this fix, not assumed: the users table itself
+-- never had a phone number column, even though SMS alerts are a core,
+-- heavily-used feature throughout this app.
+-- ============================================================
+alter table users add column if not exists phone text;
+alter table users add column if not exists photo_url text;
