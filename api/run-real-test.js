@@ -34,7 +34,15 @@ export default async function handler(req, res) {
 
   try {
     const record = await fetchRecordByAssetId(assetId);
-    if (!record) return res.status(404).json({ error: `Asset "${assetId}" not found` });
+    // Confirmed directly: this tool actually modifies a real asset's
+    // real due date and triggers real alerts - asset_id itself is
+    // globally unique so the lookup can't match the wrong asset, but
+    // without this check any logged-in user could still run this
+    // against any asset in the entire system, including a different
+    // client's real equipment.
+    if (!record || record.organization_id !== session.org) {
+      return res.status(404).json({ error: `Asset "${assetId}" not found` });
+    }
 
     // Step 1: set the REAL due date to match the requested urgency
     const targetDate = new Date();
@@ -49,8 +57,8 @@ export default async function handler(req, res) {
     const message = `${f.name} (${f.asset_id}) at ${f.room_zone} - service due ${dueDateStr}. ${timing}.`;
 
     const [emailResp, smsResp] = await Promise.all([sendEmail(f, urgency, daysUntil, message), sendSms(message)]);
-    const logResult = await logAlert(f, urgency, message);
-    const woResult = await createWorkOrder(f, urgency);
+    const logResult = await logAlert(f, urgency, message, session.org);
+    const woResult = await createWorkOrder(f, urgency, session.org);
     await markAlerted(record.id);
 
     return res.status(200).json({
@@ -87,7 +95,7 @@ async function markAlerted(recordId) {
   await update("components", recordId, { last_alert_sent: new Date().toISOString().split("T")[0] });
 }
 
-async function logAlert(f, urgency, message) {
+async function logAlert(f, urgency, message, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     await insert("alert_log", {
@@ -99,6 +107,7 @@ async function logAlert(f, urgency, message) {
       urgency,
       channel: "Email + SMS (real-path test)",
       message,
+      organization_id: organizationId,
     });
     return true;
   } catch (e) {
@@ -106,7 +115,7 @@ async function logAlert(f, urgency, message) {
   }
 }
 
-async function createWorkOrder(f, urgency) {
+async function createWorkOrder(f, urgency, organizationId) {
   const assetId = f.asset_id || "";
   const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
   const existingResult = await pgQuery(
@@ -129,6 +138,7 @@ async function createWorkOrder(f, urgency) {
       created: new Date().toISOString(),
       last_reminder_sent: new Date().toISOString().split("T")[0],
       notes: null,
+      organization_id: organizationId,
     });
     return woId;
   } catch (e) {
