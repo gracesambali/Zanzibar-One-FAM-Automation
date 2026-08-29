@@ -5062,6 +5062,9 @@ async function deleteAnnualPlanItemNow(itemId, description) {
   }
 }
 
+let isMasterSystemCache = false;
+let clientsCache = [];
+
 async function renderStaffManagement() {
   const container = document.getElementById('view-staffmanagement');
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
@@ -5081,6 +5084,23 @@ async function renderStaffManagement() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Could not load staff accounts');
     staffAccountsCache = data.accounts || [];
+
+    // A 403 here just means this login isn't a Master System session -
+    // handled silently, not as an error, since most logins correctly
+    // aren't. Only the Master System gets the "onboard a new client"
+    // section at all.
+    const clientResp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'listClients' }),
+    });
+    if (clientResp.ok) {
+      const clientData = await clientResp.json();
+      clientsCache = clientData.clients || [];
+      isMasterSystemCache = true;
+    } else {
+      isMasterSystemCache = false;
+    }
+
     renderStaffManagementTable();
   } catch (err) {
     container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
@@ -5875,6 +5895,23 @@ function closeFinanceModal() {
 function renderStaffManagementTable() {
   const container = document.getElementById('view-staffmanagement');
   container.innerHTML = `<div style="padding:24px">
+    ${isMasterSystemCache ? `
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--navy)">Clients</div>
+          <div style="font-size:12px;color:var(--muted)">Every real client running on FAM Master System.</div>
+        </div>
+        <button onclick="openAddClientModal()" style="padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Onboard New Client</button>
+      </div>
+      ${clientsCache.length === 0 ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No clients yet.</div>` :
+        clientsCache.map(c => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">${escapeHtml(c.name)}</div>
+          <div style="font-size:11.5px;color:var(--muted)">${c.activeUserCount} active user${c.activeUserCount === 1 ? '' : 's'}</div>
+        </div>`).join('')}
+    </div>` : ''}
+
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div>
         <div style="font-size:18px;font-weight:700;color:var(--navy)">Manage Staff</div>
@@ -5892,11 +5929,12 @@ function renderStaffManagementTable() {
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Email</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Role</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600"></th>
           </tr>
         </thead>
         <tbody>
           ${staffAccountsCache.length === 0
-            ? `<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted)">No accounts yet.</td></tr>`
+            ? `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No accounts yet.</td></tr>`
             : staffAccountsCache.map(a => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.username)}</td>
@@ -5904,15 +5942,101 @@ function renderStaffManagementTable() {
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.email || '—')}</td>
                 <td style="padding:9px 12px">${escapeHtml(STAFF_ROLE_LABELS[a.role] || a.role)}</td>
                 <td style="padding:9px 12px">
-                  ${a.hasPassword
+                  ${a.active === false
+                    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--red-bg);color:var(--red)">Removed</span>`
+                    : a.hasPassword
                     ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green)">Active</span>`
                     : `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--red-bg);color:var(--red)">No password set</span>`}
+                </td>
+                <td style="padding:9px 12px">
+                  ${a.active === false ? '' : `<button onclick="submitDeactivateStaff('${a.username.replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Remove</button>`}
                 </td>
               </tr>`).join('')}
         </tbody>
       </table>
     </div>
   </div>`;
+}
+
+async function submitDeactivateStaff(username) {
+  if (!confirm(`Remove ${username}'s access? Their past activity stays on record, and this can be undone.`)) return;
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'deactivateStaffAccount', username }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove');
+    renderStaffManagement();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
+function openAddClientModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addClientOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Onboard New Client</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Creates a genuinely new, blank client account, with its first real user in the same step.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Client Name *</label>
+      <input id="client_name" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">First User</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username *</label>
+      <input id="client_username" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Display Name</label>
+      <input id="client_displayName" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Email</label>
+      <input id="client_email" type="email" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Role *</label>
+      <select id="client_role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="business_owner">Business Owner</option>
+        <option value="system_admin">System Admin</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Password * (at least 8 characters)</label>
+      <input id="client_password" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Set this directly and share it with them — they can change it once logged in.</div>
+      <div id="client_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addClientOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="client_submit" onclick="submitAddClient()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Create Client</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddClient() {
+  const clientName = document.getElementById('client_name').value.trim();
+  const username = document.getElementById('client_username').value.trim();
+  const displayName = document.getElementById('client_displayName').value.trim();
+  const email = document.getElementById('client_email').value.trim();
+  const role = document.getElementById('client_role').value;
+  const password = document.getElementById('client_password').value;
+  const errorBox = document.getElementById('client_error');
+  const btn = document.getElementById('client_submit');
+  errorBox.style.display = 'none';
+
+  if (!clientName) { errorBox.textContent = 'Enter a client name.'; errorBox.style.display = 'block'; return; }
+  if (!username) { errorBox.textContent = 'Enter a username for the first user.'; errorBox.style.display = 'block'; return; }
+  if (!password || password.length < 8) { errorBox.textContent = 'Password must be at least 8 characters.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'createClient', clientName, username, displayName, email, role, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create client');
+    document.getElementById('addClientOverlay')?.remove();
+    renderStaffManagement();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create Client';
+  }
 }
 
 function openAddStaffModal() {
