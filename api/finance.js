@@ -52,6 +52,7 @@ export default async function handler(req, res) {
     if (req.query.bills === "true") return handleListBills(req, res, session.org);
     if (req.query.liabilities === "true") return handleListLiabilities(req, res, session.org);
     if (req.query.summary === "true") return handleFinanceSummary(req, res, session.org);
+    if (req.query.periodReport) return handleFinancePeriodReport(req, res, session.org);
     if (req.query.vendorSpend === "true") return handleVendorSpend(req, res, session.org);
     if (req.query.payroll === "true") return handleListPayroll(req, res, session.org);
     if (req.query.staffForPayroll === "true") return handleListStaffForPayroll(req, res, session.org);
@@ -478,6 +479,158 @@ async function handleUploadDoc(req, res, parentTable, docTable, fkColumn, organi
 // ---------------------------------------------------------------
 // Summary — real, current totals for the Finance tab's overview
 // ---------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// Real, period-scoped summary reports - weekly, monthly, quarterly,
+// semi-annual, annual - confirmed directly as genuinely different from
+// handleFinanceSummary above, which is always all-time. Computed here
+// in JS rather than leaned on Postgres' own date_trunc, since there's
+// no built-in "half-year" period to trunc to, and keeping every period
+// type's math in one place, testable on its own, is safer than mixing
+// JS logic for some periods with SQL-native logic for others.
+// ---------------------------------------------------------------------
+
+function computePeriodRange(periodType, offset) {
+  const now = new Date();
+  const off = Number(offset) || 0;
+
+  if (periodType === "weekly") {
+    // Monday-start week, the standard business convention.
+    const day = now.getUTCDay(); // 0 = Sunday
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    const thisMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - diffToMonday));
+    const start = new Date(thisMonday); start.setUTCDate(start.getUTCDate() - 7 * off);
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 7);
+    const endDisplay = new Date(end); endDisplay.setUTCDate(endDisplay.getUTCDate() - 1);
+    const fmt = d => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+    return { start, end, label: `Week of ${fmt(start)} – ${fmt(endDisplay)}` };
+  }
+
+  if (periodType === "monthly") {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - off, 1));
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+    return { start, end, label: start.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }) };
+  }
+
+  if (periodType === "quarterly") {
+    const currentQuarterIndex = Math.floor(now.getUTCMonth() / 3);
+    const totalQuarterIndex = now.getUTCFullYear() * 4 + currentQuarterIndex - off;
+    const year = Math.floor(totalQuarterIndex / 4);
+    const quarterInYear = totalQuarterIndex % 4;
+    const start = new Date(Date.UTC(year, quarterInYear * 3, 1));
+    const end = new Date(Date.UTC(year, quarterInYear * 3 + 3, 1));
+    return { start, end, label: `Q${quarterInYear + 1} ${year}` };
+  }
+
+  if (periodType === "semiannual") {
+    const currentHalfIndex = Math.floor(now.getUTCMonth() / 6);
+    const totalHalfIndex = now.getUTCFullYear() * 2 + currentHalfIndex - off;
+    const year = Math.floor(totalHalfIndex / 2);
+    const halfInYear = totalHalfIndex % 2;
+    const start = new Date(Date.UTC(year, halfInYear * 6, 1));
+    const end = new Date(Date.UTC(year, halfInYear * 6 + 6, 1));
+    return { start, end, label: `H${halfInYear + 1} ${year}` };
+  }
+
+  if (periodType === "annual") {
+    const year = now.getUTCFullYear() - off;
+    const start = new Date(Date.UTC(year, 0, 1));
+    const end = new Date(Date.UTC(year + 1, 0, 1));
+    return { start, end, label: `${year}` };
+  }
+
+  return null;
+}
+
+async function handleFinancePeriodReport(req, res, organizationId) {
+  const periodType = req.query.periodReport;
+  const validTypes = ["weekly", "monthly", "quarterly", "semiannual", "annual"];
+  if (!validTypes.includes(periodType)) {
+    return res.status(400).json({ error: "period must be one of: weekly, monthly, quarterly, semiannual, annual" });
+  }
+
+  const range = computePeriodRange(periodType, req.query.offset);
+  const startStr = range.start.toISOString().split("T")[0];
+  const endStr = range.end.toISOString().split("T")[0];
+
+  try {
+    const { query } = await import("../lib/postgresClient.js");
+
+    const totals = await query(
+      `select type, coalesce(sum(amount), 0) as total from transactions
+       where organization_id = $1 and transaction_date >= $2 and transaction_date < $3
+       group by type`,
+      [organizationId, startStr, endStr]
+    );
+    const income = Number(totals.rows.find(r => r.type === "income")?.total || 0);
+    const expense = Number(totals.rows.find(r => r.type === "expense")?.total || 0);
+
+    const categoryBreakdown = await query(
+      `select coalesce(c.name, 'Uncategorized') as category, sum(t.amount) as total
+       from transactions t
+       left join transaction_categories c on c.id = t.category_id
+       where t.organization_id = $1 and t.type = 'expense'
+         and t.transaction_date >= $2 and t.transaction_date < $3
+       group by c.name
+       order by total desc`,
+      [organizationId, startStr, endStr]
+    );
+
+    const billsPaid = await query(
+      // Real bills actually paid during this window - inferred from
+      // the real transactions they generated (every bill payment
+      // writes a real expense transaction with this exact, reliable
+      // "(bill payment)" suffix, confirmed directly against the code
+      // that generates it), not the bill's own current
+      // next_due_date, which only ever reflects its NEXT due date,
+      // not history.
+      `select coalesce(sum(amount), 0) as total, count(*) as count
+       from transactions
+       where organization_id = $1 and type = 'expense' and description like '%(bill payment)'
+         and transaction_date >= $2 and transaction_date < $3`,
+      [organizationId, startStr, endStr]
+    );
+
+    const payrollPaid = await query(
+      `select coalesce(sum(amount), 0) as total, count(*) as count
+       from transactions
+       where organization_id = $1 and type = 'expense' and description like 'Salary —%'
+         and transaction_date >= $2 and transaction_date < $3`,
+      [organizationId, startStr, endStr]
+    );
+
+    const liabilityPayments = await query(
+      `select coalesce(sum(amount), 0) as total, count(*) as count
+       from transactions
+       where organization_id = $1 and type = 'expense' and description like 'Loan repayment%'
+         and transaction_date >= $2 and transaction_date < $3`,
+      [organizationId, startStr, endStr]
+    );
+
+    return res.status(200).json({
+      periodType,
+      label: range.label,
+      startDate: startStr,
+      endDate: range.end.toISOString().split("T")[0], // exclusive end, for the caller's own reference
+      totalIncome: income,
+      totalExpense: expense,
+      netPosition: income - expense,
+      categoryBreakdown: (() => {
+        const rows = categoryBreakdown.rows.map(r => ({ category: r.category, total: Number(r.total) }));
+        const top = rows.slice(0, 6);
+        const rest = rows.slice(6).reduce((sum, r) => sum + r.total, 0);
+        if (rest > 0) top.push({ category: "Other", total: rest });
+        return top;
+      })(),
+      billsPaid: { total: Number(billsPaid.rows[0].total), count: Number(billsPaid.rows[0].count) },
+      payrollPaid: { total: Number(payrollPaid.rows[0].total), count: Number(payrollPaid.rows[0].count) },
+      liabilityPayments: { total: Number(liabilityPayments.rows[0].total), count: Number(liabilityPayments.rows[0].count) },
+    });
+  } catch (err) {
+    console.error("finance period report error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
 
 async function handleFinanceSummary(req, res, organizationId) {
   try {
