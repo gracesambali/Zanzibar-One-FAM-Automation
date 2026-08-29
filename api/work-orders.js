@@ -17,6 +17,7 @@ import { getChecklistForWorkOrder } from "../lib/checklists.js";
 import { can } from "../lib/roles.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
+import { buildBeemRecipients } from "../lib/recipients.js";
 
 // "Assigned Role" on a work order is a display label (Mechanical,
 // Electrical, Admin, Property Manager). Login roles are
@@ -114,6 +115,10 @@ export default async function handler(req, res) {
     return handleGetProcurementResponses(req, res, req.query.procurementResponses);
   }
 
+  if (req.method === "GET" && req.query.locations === "true") {
+    return handleGetLocations(req, res, session.org);
+  }
+
   if (req.method === "GET") {
     try {
       const records = await fetchAllWorkOrders(session.org);
@@ -187,6 +192,10 @@ export default async function handler(req, res) {
 
   if (req.method === "POST" && req.body && req.body.orderSparePart) {
     return handleOrderSparePart(req, res, session.u, session.org);
+  }
+
+  if (req.method === "POST" && req.body && req.body.reportBreakdown) {
+    return handleReportBreakdown(req, res, session.u, session.r, session.org);
   }
 
   if (req.method === "POST") {
@@ -2383,6 +2392,212 @@ async function handleOrderSparePart(req, res, orderedBy, organizationId) {
     return res.status(200).json({ success: true, woId, recordId: created.id });
   } catch (err) {
     console.error("handleOrderSparePart error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------
+// Report a breakdown - moved inside the logged-in app from what was a
+// standalone, public, no-login form at api/report-issue.js. Confirmed
+// directly: the report should be client-specific, not something
+// living outside the system with no way to know which client it
+// belongs to. Session-based now means the reporter's real identity
+// (session.u/session.r) and organization (session.org) are already
+// known - no free-text name/role/contact fields needed, and every
+// notification this fires now correctly reaches only this specific
+// client's own staff via the real, org-aware staff directory, not a
+// global fallback list.
+// ---------------------------------------------------------------------
+
+const REPORT_CATEGORY_TO_ROLE = {
+  "Electrical": "Electrical",
+  "Mechanical": "Mechanical",
+  "NonTechnical": "Admin",
+  "TenantRelated": "Property Manager",
+};
+
+// Same friendly-label transformation the Asset Register itself
+// displays, duplicated here (not shared) since this stays a fully
+// separate function from the frontend's own copy - the whole point is
+// that whatever a reporter picks from this dropdown exactly matches
+// what's already stored on an asset, with no fuzzy text matching
+// needed downstream.
+function displayFloor(floor) {
+  if (!floor) return "";
+  const m = floor.match(/^L(\d+)$/i);
+  if (!m) return floor;
+  const n = parseInt(m[1], 10);
+  return n === 1 ? "GF" : `F${n - 1}`;
+}
+function displayRoom(room) {
+  if (!room) return "";
+  let out = room;
+  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "Ground Floor" : `Floor ${n - 1}`;
+  });
+  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "GF" : `F${n - 1}`;
+  });
+  return out;
+}
+
+async function handleGetLocations(req, res, organizationId) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery("select floor_level, room_zone from components where organization_id = $1", [organizationId]);
+
+    const floorMap = {};
+    result.rows.forEach(r => {
+      const floorLabel = displayFloor(r.floor_level || "");
+      const roomLabel = displayRoom(r.room_zone || "");
+      if (!floorLabel) return;
+      if (!floorMap[floorLabel]) floorMap[floorLabel] = new Set();
+      if (roomLabel) floorMap[floorLabel].add(roomLabel);
+    });
+
+    const floors = Object.keys(floorMap).sort().map(floor => ({
+      floor,
+      rooms: Array.from(floorMap[floor]).sort(),
+    }));
+
+    return res.status(200).json({ floors });
+  } catch (err) {
+    console.error("handleGetLocations error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleReportBreakdown(req, res, reporterUsername, reporterRole, organizationId) {
+  const { floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  if (!floor || !description || !category) {
+    return res.status(400).json({ error: "The floor, a category, and a description are required" });
+  }
+
+  const assignedRole = REPORT_CATEGORY_TO_ROLE[category] || "Admin";
+
+  try {
+    const location = roomZone ? `${floor} — ${roomZone}` : floor;
+    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterUsername}: "${description}"`;
+
+    const { insert, update } = await import("../lib/postgresClient.js");
+    const woId = `WO-${Date.now()}`;
+    const created = await insert("work_orders", {
+      wo_id: woId,
+      asset_id: null,
+      asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+      system: null,
+      assigned_role: assignedRole,
+      location,
+      status: "Open",
+      urgency: "REPORTED",
+      created: new Date().toISOString(),
+      last_reminder_sent: new Date().toISOString().split("T")[0],
+      notes: `Reported by ${reporterUsername} at ${location}: ${description}`,
+      reporter_contact: reporterUsername,
+      satisfaction_status: "Pending",
+      maintenance_type: "Corrective",
+      activity_log: JSON.stringify([{ text: `🆕 Work order opened — reported by ${reporterUsername}`, by: reporterUsername, at: new Date().toISOString() }]),
+      organization_id: organizationId,
+    }).catch(e => { throw new Error("Could not create the work order: " + e.message); });
+
+    let photoFailed = false;
+    if (photoBase64 && photoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const photoPath = `work-orders/${created.id}/reporter-${photoFilename}`;
+        await uploadFile(photoPath, photoBase64, photoContentType || "image/jpeg");
+        await update("work_orders", created.id, { reporter_photo_url: photoPath }, organizationId);
+      } catch (err) {
+        console.error("Reporter photo upload error:", err);
+        photoFailed = true;
+      }
+    }
+
+    // Confirmed directly: a real, meaningful upgrade over the old
+    // standalone form, not just a move - notifies whoever actually
+    // holds the routed role for THIS client specifically, via the
+    // real staff directory, rather than a single global fallback list
+    // shared by every client.
+    const { getContactsForRole } = await import("../lib/staffDirectory.js");
+    const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+    const recipients = [
+      ...await getContactsForRole(loginRole, organizationId),
+      ...await getContactsForRole("business_owner", organizationId),
+      ...await getContactsForRole("system_admin", organizationId),
+    ];
+    const uniqueEmails = [...new Set(recipients.map(r => r.email).filter(Boolean))];
+    const uniquePhones = [...new Set(recipients.map(r => r.phone).filter(Boolean))];
+
+    const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
+    if (uniqueEmails.length > 0) {
+      try {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+            to: uniqueEmails,
+            subject: `${fromName} — Staff-Reported Issue: ${location}`,
+            html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+              <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+                <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Staff-Reported Issue</div>
+                <div style="font-size:18px;font-weight:700;margin-top:4px">${location}</div>
+              </div>
+              <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+                <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
+                <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
+                <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${reporterUsername}</p>
+              </div>
+            </div>`,
+            text: `${message}\n\nReported by ${reporterUsername} through ${fromName}.`,
+          }),
+        });
+      } catch (err) { console.error("Report breakdown email error:", err.message); }
+    }
+    if (uniquePhones.length > 0) {
+      try {
+        const cleanMessage = message
+          .replace(/[\u2014\u2013]/g, "-").replace(/[\u2018\u2019]/g, "'")
+          .replace(/[\u201C\u201D]/g, '"').replace(/\u2026/g, "...")
+          .replace(/[^\x00-\x7F]/g, "");
+        await fetch("https://apisms.beem.africa/v1/send", {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source_addr: process.env.BEEM_SENDER_ID || "INFO",
+            schedule_time: "", encoding: 0,
+            message: cleanMessage.slice(0, 160),
+            recipients: buildBeemRecipients(uniquePhones),
+          }),
+        });
+      } catch (err) { console.error("Report breakdown SMS error:", err.message); }
+    }
+
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: null,
+      asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+      system: null,
+      location,
+      urgency: "REPORTED",
+      channel: "Email + SMS (staff report)",
+      message: `Staff-reported issue: ${description}`,
+      organization_id: organizationId,
+    }).catch(e => console.error("Alert log write failed:", e.message));
+
+    return res.status(200).json({
+      success: true,
+      message: "Report submitted. The technical team has been notified.",
+      woId,
+      ...(photoFailed ? { warning: "Your report was submitted, but the photo failed to upload." } : {}),
+    });
+  } catch (err) {
+    console.error("handleReportBreakdown error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

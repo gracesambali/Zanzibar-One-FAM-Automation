@@ -392,6 +392,7 @@ button { font-family: inherit; cursor: pointer; }
         <div id="userRoleLabel" style="font-size:10px;color:rgba(255,255,255,0.7)"></div>
       </div>
     </div>
+    <button onclick="openReportBreakdownModal()" style="background:#B0431E;border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">🚨 Report Breakdown</button>
     <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
   </div>
 </div>
@@ -5970,6 +5971,120 @@ async function submitDeactivateStaff(username) {
     renderStaffManagement();
   } catch (err) {
     alert('Could not remove: ' + err.message);
+  }
+}
+
+// --- Report a Breakdown (moved in-app, confirmed directly: client-specific, not outside the system) ---
+
+let reportBreakdownLocations = [];
+
+async function openReportBreakdownModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'reportBreakdownOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">🚨 Report a Breakdown</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Something wrong somewhere? Report it directly — no asset ID needed, just where and what.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor *</label>
+      <select id="rb_floor" onchange="onReportBreakdownFloorChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">Loading…</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room / Zone</label>
+      <select id="rb_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="">Pick a floor first</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category *</label>
+      <select id="rb_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="Electrical">Electrical</option>
+        <option value="Mechanical">Mechanical</option>
+        <option value="NonTechnical">Non-Technical / General</option>
+        <option value="TenantRelated">Tenant-Related</option>
+      </select>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What's wrong? *</label>
+      <textarea id="rb_description" rows="4" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box"></textarea>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Photo (optional)</label>
+      <input id="rb_photo" type="file" accept="image/*" style="width:100%;margin-bottom:14px">
+      <div id="rb_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('reportBreakdownOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="rb_submit" onclick="submitReportBreakdown()" style="flex:1;padding:9px;border:none;border-radius:8px;background:#B0431E;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Submit Report</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/work-orders?locations=true');
+    const data = await resp.json();
+    reportBreakdownLocations = data.floors || [];
+    const floorSelect = document.getElementById('rb_floor');
+    floorSelect.innerHTML = reportBreakdownLocations.length === 0
+      ? '<option value="">No floors on record yet</option>'
+      : '<option value="">Select a floor…</option>' + reportBreakdownLocations.map(f => `<option value="${escapeHtml(f.floor)}">${escapeHtml(f.floor)}</option>`).join('');
+  } catch (err) {
+    const floorSelect = document.getElementById('rb_floor');
+    if (floorSelect) floorSelect.innerHTML = '<option value="">Could not load floors</option>';
+  }
+}
+
+function onReportBreakdownFloorChange() {
+  const floor = document.getElementById('rb_floor').value;
+  const roomSelect = document.getElementById('rb_room');
+  const match = reportBreakdownLocations.find(f => f.floor === floor);
+  const rooms = match ? match.rooms : [];
+  roomSelect.innerHTML = rooms.length === 0
+    ? '<option value="">No specific rooms listed</option>'
+    : '<option value="">Select a room/zone…</option>' + rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('');
+}
+
+async function submitReportBreakdown() {
+  const floor = document.getElementById('rb_floor').value;
+  const roomZone = document.getElementById('rb_room').value;
+  const category = document.getElementById('rb_category').value;
+  const description = document.getElementById('rb_description').value.trim();
+  const photoInput = document.getElementById('rb_photo');
+  const errorBox = document.getElementById('rb_error');
+  const btn = document.getElementById('rb_submit');
+  errorBox.style.display = 'none';
+
+  if (!floor) { errorBox.textContent = 'Pick a floor.'; errorBox.style.display = 'block'; return; }
+  if (!description) { errorBox.textContent = "Describe what's wrong."; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+
+  const body = { reportBreakdown: true, floor, roomZone, category, description };
+
+  const photoFile = photoInput.files && photoInput.files[0];
+  if (photoFile) {
+    try {
+      const photoBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(photoFile);
+      });
+      body.photoBase64 = photoBase64;
+      body.photoFilename = photoFile.name;
+      body.photoContentType = photoFile.type;
+    } catch (err) {
+      // Non-fatal — submit without the photo rather than block the report entirely
+    }
+  }
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit report');
+    document.getElementById('reportBreakdownOverlay')?.remove();
+    alert(data.warning ? `Report submitted (${data.woId}) — but the photo failed to upload.` : `Report submitted — ${data.woId}. The technical team has been notified.`);
+    if (typeof renderWorkOrders === 'function' && document.querySelector('[data-tab="workorders"].active')) renderWorkOrders();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Submit Report';
   }
 }
 

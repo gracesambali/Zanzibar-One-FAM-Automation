@@ -1,8 +1,8 @@
 // api/sensors.js
 //
 // Merged endpoint (GET + POST in one file) to stay under Vercel's
-// Hobby-plan 12-function limit - same pattern work-orders.js and
-// demo-trigger.js already use elsewhere in this codebase.
+// Hobby-plan 12-function limit - same pattern work-orders.js already
+// uses elsewhere in this codebase.
 //
 // GET  -> live sensor readings, powers the Sensors tab (was
 //         get-sensor-readings.js)
