@@ -24,15 +24,15 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     if (req.body && req.body.entityType === "plannedMaintenance") {
-      return handleCreatePlan(req, res, session.u);
+      return handleCreatePlan(req, res, session.u, session.org);
     }
     if (req.body && req.body.entityType === "inventoryItem") {
       return handleAddInventoryItem(req, res, session.u, session.r);
     }
     if (req.body && req.body.entityType === "bulkAssets") {
-      return handleBulkImportAssets(req, res, session.u, session.r);
+      return handleBulkImportAssets(req, res, session.u, session.r, session.org);
     }
-    return handleAddAsset(req, res, session.u, session.r);
+    return handleAddAsset(req, res, session.u, session.r, session.org);
   }
   if (req.method === "PATCH") {
     const action = (req.body && req.body.action) || "decommission";
@@ -85,8 +85,8 @@ export default async function handler(req, res) {
     if (REQUISITION_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
       return res.status(403).json({ error: "You don't have permission to manage requisitions." });
     }
-    if (action === "edit") return handleEditAsset(req, res, session.u, session.r);
-    if (action === "updatePlan") return handleUpdatePlan(req, res, session.u);
+    if (action === "edit") return handleEditAsset(req, res, session.u, session.r, session.org);
+    if (action === "updatePlan") return handleUpdatePlan(req, res, session.u, session.org);
     if (action === "bulkImportTraClasses") return handleBulkImportTraClasses(req, res, session.u);
     if (action === "addTraClass") return handleAddTraClass(req, res, session.u);
     if (action === "editTraClass") return handleEditTraClass(req, res, session.u);
@@ -122,19 +122,19 @@ export default async function handler(req, res) {
     if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r);
     if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r);
     if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u);
-    if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r);
-    return handleDecommission(req, res, session.u);
+    if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r, session.org);
+    return handleDecommission(req, res, session.u, session.org);
   }
   if (req.method === "PUT") {
     const action = (req.body && req.body.action) || "relocate";
-    if (action === "savePosition") return handleSaveMarkerPosition(req, res, session.u);
-    if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u);
-    if (action === "uploadDocument") return handleUploadDocument(req, res, session.u);
-    if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u);
-    if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u);
-    if (action === "setBuildingDigitalTwin") return handleSetBuildingDigitalTwin(req, res, session.u, session.r);
-    if (action === "setFacilityExteriorTwin") return handleSetFacilityExteriorTwin(req, res, session.u, session.r);
-    return handleRelocate(req, res, session.u);
+    if (action === "savePosition") return handleSaveMarkerPosition(req, res, session.u, session.org);
+    if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u, session.org);
+    if (action === "uploadDocument") return handleUploadDocument(req, res, session.u, session.org);
+    if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u, session.org);
+    if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u, session.org);
+    if (action === "setBuildingDigitalTwin") return handleSetBuildingDigitalTwin(req, res, session.u, session.r, session.org);
+    if (action === "setFacilityExteriorTwin") return handleSetFacilityExteriorTwin(req, res, session.u, session.r, session.org);
+    return handleRelocate(req, res, session.u, session.org);
   }
   return res.status(405).json({ error: "Method not allowed" });
 }
@@ -1229,7 +1229,7 @@ async function handleDeleteRequisition(req, res, deletedBy, deletedByRole) {
 // capture, and a human should be the one confirming this specific
 // purchase really is a distinct, trackable asset before it becomes
 // one, not have that decided for them.
-async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole) {
+async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole, organizationId) {
   const { requisitionId, nature, category, serialNumber, manufacturer, model } = req.body || {};
   if (!requisitionId) return res.status(400).json({ error: "requisitionId is required" });
   if (!nature || !category) return res.status(400).json({ error: "Asset Nature and Asset Category are required to register this as a real asset." });
@@ -1260,7 +1260,7 @@ async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole) 
       model: model || null,
       installDate: requisition.grn_received_at ? requisition.grn_received_at.toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
       acquisitionCost: requisition.payment_amount_tzs != null ? Number(requisition.payment_amount_tzs) : undefined,
-    }, addedBy, addedByRole);
+    }, addedBy, addedByRole, organizationId);
 
     await update("components", created.id, {
       vendor_id: requisition.chosen_vendor_id || null,
@@ -1806,7 +1806,7 @@ async function handleMergeInventoryItems(req, res, performedBy) {
 // and the asset ID itself is derived from the real Facility +
 // Building codes looked up fresh from the database, guaranteeing no
 // collisions across campuses that happen to share a building name.
-async function createOneAsset(a, addedBy, addedByRole) {
+async function createOneAsset(a, addedBy, addedByRole, organizationId) {
   if (!a.name || !a.nature || !a.category) {
     throw new Error("Name, Asset Nature, and Asset Category are required");
   }
@@ -1819,7 +1819,7 @@ async function createOneAsset(a, addedBy, addedByRole) {
   let buildingCode = null;
   if (a.facility) {
     const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
-    const facilityRecord = await getByColumn("facilities", "name", a.facility).catch(() => null);
+    const facilityRecord = await getByColumn("facilities", "name", a.facility, organizationId).catch(() => null);
     facilityCode = facilityRecord ? facilityRecord.facility_code : null;
     if (facilityRecord && a.building) {
       const buildingResult = await pgQuery(
@@ -1864,6 +1864,7 @@ async function createOneAsset(a, addedBy, addedByRole) {
       active: true,
       added_by: addedBy,
       needs_technical_review: needsReview,
+      organization_id: organizationId,
     });
   } catch (e) {
     throw new Error(`Asset create failed: ${e.message}`);
@@ -1872,11 +1873,11 @@ async function createOneAsset(a, addedBy, addedByRole) {
   return { created, assetId, needsReview };
 }
 
-async function handleAddAsset(req, res, addedBy, addedByRole) {
+async function handleAddAsset(req, res, addedBy, addedByRole, organizationId) {
   const a = req.body || {};
 
   try {
-    const { created, assetId, needsReview } = await createOneAsset(a, addedBy, addedByRole);
+    const { created, assetId, needsReview } = await createOneAsset(a, addedBy, addedByRole, organizationId);
 
     // Nameplate photo — a non-technical person can photograph the
     // physical label instead of needing to correctly transcribe
@@ -1922,7 +1923,7 @@ async function handleAddAsset(req, res, addedBy, addedByRole) {
 // accepted, without hard-blocking the row (matching single-add's own
 // "fails safe" philosophy rather than diverging into a stricter rule
 // bulk import alone would enforce).
-async function handleBulkImportAssets(req, res, addedBy, addedByRole) {
+async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizationId) {
   const { rows } = req.body || {};
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array is required" });
@@ -1932,7 +1933,9 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole) {
     const knownResult = await pgQuery(
       `select f.name as facility_name, fb.building_name
        from facility_buildings fb
-       join facilities f on f.id = fb.facility_id`
+       join facilities f on f.id = fb.facility_id
+       where f.organization_id = $1`,
+      [organizationId]
     );
     const knownPairs = new Set(knownResult.rows.map(r => `${r.facility_name}|||${r.building_name}`));
 
@@ -1953,7 +1956,7 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole) {
           lifespan: row.lifespan, maintenanceIntervalDays: row.maintenanceIntervalDays,
           acquisitionCost: row.acquisitionCost, residualValue: row.residualValue,
           status: row.status, criticality: row.criticality,
-        }, addedBy, addedByRole);
+        }, addedBy, addedByRole, organizationId);
         created++;
       } catch (err) {
         skipped.push({ row: name, reason: err.message });
@@ -2001,7 +2004,7 @@ async function generateNextAssetId(prefix) {
 // Shared helper — every asset action logs through this one function, to
 // the same Edit Log table, so the asset detail page has one consistent
 // place to pull a complete activity history from.
-async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedBy) {
+async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedBy, organizationId) {
   const { insert } = await import("../lib/postgresClient.js");
   await insert("edit_log", {
     asset_id: assetId,
@@ -2010,10 +2013,11 @@ async function logAssetActivity(assetId, fieldLabel, oldValue, newValue, editedB
     new_value: String(newValue ?? ""),
     edited_by: editedBy,
     timestamp: new Date().toISOString(),
+    organization_id: organizationId,
   }).catch(e => console.error("logAssetActivity write failed (non-fatal):", e.message));
 }
 
-async function handleDecommission(req, res, decommissionedBy) {
+async function handleDecommission(req, res, decommissionedBy, organizationId) {
   const { recordId, reason } = req.body || {};
   if (!recordId) {
     return res.status(400).json({ error: "recordId required" });
@@ -2025,16 +2029,23 @@ async function handleDecommission(req, res, decommissionedBy) {
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
 
-    await update("components", recordId, {
+    const result = await update("components", recordId, {
       active: false,
       decommissioned_by: decommissionedBy,
       note: reason ? `Decommissioned by ${decommissionedBy}: ${reason}` : `Decommissioned by ${decommissionedBy}`,
-    }).catch(e => { throw new Error(`Update failed: ${e.message}`); });
+    }, organizationId).catch(e => { throw new Error(`Update failed: ${e.message}`); });
+    // Confirmed directly: a real ownership check, not just a filter -
+    // without organizationId reaching this update, a logged-in user
+    // could have decommissioned any asset in the entire system by
+    // knowing or guessing its recordId, regardless of which client it
+    // actually belonged to. A mismatched id/org now genuinely updates
+    // zero rows rather than someone else's real asset.
+    if (!result) return res.status(404).json({ error: "Asset not found." });
 
     const current = await getById("components", recordId).catch(() => null);
     if (current) {
       const assetId = current.asset_id || "";
-      await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy);
+      await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy, organizationId);
     }
 
     return res.status(200).json({ success: true });
@@ -2049,7 +2060,7 @@ async function findByAssetId(assetId) {
   return getByColumn("components", "asset_id", assetId);
 }
 
-async function handleRelocate(req, res, relocatedBy) {
+async function handleRelocate(req, res, relocatedBy, organizationId) {
   const { recordId, newFloor, newZone, newRoom, newBuilding, reason } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (!newFloor && !newZone && !newRoom && !newBuilding) return res.status(400).json({ error: "At least a new building, floor, zone, or room is required" });
@@ -2058,6 +2069,13 @@ async function handleRelocate(req, res, relocatedBy) {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
 
     const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
+    // Confirmed directly: same reasoning as handleDecommission - a
+    // logged-in user could otherwise relocate any asset in the entire
+    // system by knowing or guessing its recordId, regardless of which
+    // client it actually belonged to.
+    if (!current || current.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Asset not found." });
+    }
     const oldFloor = current.floor_level || "";
     const oldZone = current.zone || "";
     const oldRoom = current.room_zone || "";
@@ -2071,7 +2089,7 @@ async function handleRelocate(req, res, relocatedBy) {
     if (newRoom) updateFields.room_zone = newRoom;
     if (newBuilding) updateFields.building = newBuilding;
 
-    await update("components", recordId, updateFields)
+    await update("components", recordId, updateFields, organizationId)
       .catch(e => { throw new Error("Failed to update asset location: " + e.message); });
 
     await insert("relocation_log", {
@@ -2079,11 +2097,12 @@ async function handleRelocate(req, res, relocatedBy) {
       old_floor: oldFloor, old_zone: oldZone, old_room_zone: oldRoom, old_building: oldBuilding,
       new_floor: newFloor || oldFloor, new_zone: newZone || oldZone, new_room_zone: newRoom || oldRoom, new_building: newBuilding || oldBuilding,
       relocated_by: relocatedBy, date: new Date().toISOString(), reason: reason || null,
+      organization_id: organizationId,
     }).catch(e => console.error("Relocation log write failed (non-fatal):", e.message));
 
     const oldLocation = [oldFloor, oldZone, oldRoom, oldBuilding].filter(Boolean).join(" / ") || "—";
     const newLocation = [newFloor || oldFloor, newZone || oldZone, newRoom || oldRoom, newBuilding || oldBuilding].filter(Boolean).join(" / ");
-    await logAssetActivity(assetId, "Location", oldLocation, newLocation, relocatedBy);
+    await logAssetActivity(assetId, "Location", oldLocation, newLocation, relocatedBy, organizationId);
 
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -2263,7 +2282,7 @@ async function handleDeleteTraClass(req, res, deletedBy) {
   }
 }
 
-async function handleEditAsset(req, res, editedBy, editorRole) {
+async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
   const { recordId, changes } = req.body || {};
   if (!recordId || !changes || typeof changes !== "object") {
     return res.status(400).json({ error: "recordId and changes object required" });
@@ -2286,6 +2305,9 @@ async function handleEditAsset(req, res, editedBy, editorRole) {
 
     // Read current values first (for the audit log)
     const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
+    if (!current || current.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Asset not found." });
+    }
     const assetId = current.asset_id || "";
 
     // Filter to only allowed fields and build the update + audit entries
@@ -2322,7 +2344,7 @@ async function handleEditAsset(req, res, editedBy, editorRole) {
     }
 
     // Update the asset
-    await update("components", recordId, updateFields)
+    await update("components", recordId, updateFields, organizationId)
       .catch(e => { throw new Error("Failed to update: " + e.message); });
 
     // Write audit log entries
@@ -2335,6 +2357,7 @@ async function handleEditAsset(req, res, editedBy, editorRole) {
         new_value: String(entry.newValue),
         edited_by: editedBy,
         timestamp,
+        organization_id: organizationId,
       }).catch(e => console.error("Edit log write failed (non-fatal):", e.message));
     }
 
@@ -2362,7 +2385,7 @@ async function handleEditAsset(req, res, editedBy, editorRole) {
 // Saves (or updates) where an asset's marker sits on its floor's plan image,
 // as a percentage position (0-100) so it stays correctly placed regardless
 // of the image's actual pixel dimensions or how it's displayed on screen.
-async function handleSaveMarkerPosition(req, res, movedBy) {
+async function handleSaveMarkerPosition(req, res, movedBy, organizationId) {
   const { assetId, floor, x, y } = req.body || {};
   if (!assetId || !floor || x === undefined || y === undefined) {
     return res.status(400).json({ error: "assetId, floor, x, and y are required" });
@@ -2373,10 +2396,15 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
 
     // Check if a position already exists for this asset — update it if so,
     // otherwise create a new one. Keeps one row per asset, not a growing log.
+    // Note: assetId itself is genuinely globally unique (system-generated,
+    // prefixed by an already-globally-unique facility/building code), so
+    // this specific lookup doesn't carry the same cross-org collision risk
+    // floor names do below - organizationId is still set on writes for
+    // data-model completeness.
     const existing = await getByColumn("asset_positions", "asset_id", assetId).catch(() => null);
     const isNewPlacement = !existing;
 
-    const fields = { asset_id: assetId, floor, x_pct: Number(x), y_pct: Number(y) };
+    const fields = { asset_id: assetId, floor, x_pct: Number(x), y_pct: Number(y), organization_id: organizationId };
 
     if (existing) {
       await update("asset_positions", existing.id, fields);
@@ -2384,7 +2412,7 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
       await insert("asset_positions", fields);
     }
 
-    const floorPlanRecordId = await findOrCreateFloorPlanRecord(floor);
+    const floorPlanRecordId = await findOrCreateFloorPlanRecord(floor, organizationId);
     await appendFloorPlanActivity(floorPlanRecordId, `📍 ${isNewPlacement ? "Placed" : "Moved"} marker for ${assetId}`, movedBy);
 
     return res.status(200).json({ success: true });
@@ -2397,13 +2425,13 @@ async function handleSaveMarkerPosition(req, res, movedBy) {
 // Shared by marker placement and floor plan uploads — finds the Floor
 // Plans record for a given floor, or creates a blank one if this is the
 // very first activity recorded for that floor.
-async function findOrCreateFloorPlanRecord(floor) {
+async function findOrCreateFloorPlanRecord(floor, organizationId) {
   const { getByColumn, insert } = await import("../lib/postgresClient.js");
 
-  const existing = await getByColumn("floor_plans", "floor", floor).catch(() => null);
+  const existing = await getByColumn("floor_plans", "floor", floor, organizationId).catch(() => null);
   if (existing) return existing.id;
 
-  const created = await insert("floor_plans", { floor });
+  const created = await insert("floor_plans", { floor, organization_id: organizationId });
   return created.id;
 }
 
@@ -2440,7 +2468,7 @@ function isPlausibleMatterportUrl(url) {
   return typeof url === "string" && /^https:\/\//.test(url.trim());
 }
 
-async function handleSetBuildingDigitalTwin(req, res, updatedBy, updatedByRole) {
+async function handleSetBuildingDigitalTwin(req, res, updatedBy, updatedByRole, organizationId) {
   if (!DIGITAL_TWIN_MANAGE_ROLES.includes(updatedByRole)) {
     return res.status(403).json({ error: "Only Admin, Property Manager, System Admin, or Business Owner can manage Digital Twin captures." });
   }
@@ -2453,7 +2481,7 @@ async function handleSetBuildingDigitalTwin(req, res, updatedBy, updatedByRole) 
 
   try {
     const { getByColumn, insert, query: pgQuery } = await import("../lib/postgresClient.js");
-    const facility = await getByColumn("facilities", "name", facilityName).catch(() => null);
+    const facility = await getByColumn("facilities", "name", facilityName, organizationId).catch(() => null);
     if (!facility) return res.status(404).json({ error: `Facility "${facilityName}" not found.` });
 
     // Real upsert on the composite key - one real row per building,
@@ -2472,7 +2500,7 @@ async function handleSetBuildingDigitalTwin(req, res, updatedBy, updatedByRole) 
   }
 }
 
-async function handleSetFacilityExteriorTwin(req, res, updatedBy, updatedByRole) {
+async function handleSetFacilityExteriorTwin(req, res, updatedBy, updatedByRole, organizationId) {
   if (!DIGITAL_TWIN_MANAGE_ROLES.includes(updatedByRole)) {
     return res.status(403).json({ error: "Only Admin, Property Manager, System Admin, or Business Owner can manage Digital Twin captures." });
   }
@@ -2485,13 +2513,13 @@ async function handleSetFacilityExteriorTwin(req, res, updatedBy, updatedByRole)
 
   try {
     const { getByColumn, update } = await import("../lib/postgresClient.js");
-    const facility = await getByColumn("facilities", "name", facilityName).catch(() => null);
+    const facility = await getByColumn("facilities", "name", facilityName, organizationId).catch(() => null);
     if (!facility) return res.status(404).json({ error: `Facility "${facilityName}" not found.` });
     await update("facilities", facility.id, {
       matterport_exterior_url: trimmedUrl || null,
       matterport_exterior_updated_by: updatedBy,
       matterport_exterior_updated_at: new Date().toISOString(),
-    });
+    }, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("setFacilityExteriorTwin error:", err);
@@ -2499,7 +2527,7 @@ async function handleSetFacilityExteriorTwin(req, res, updatedBy, updatedByRole)
   }
 }
 
-async function handleUploadFloorPlan(req, res, uploadedBy) {
+async function handleUploadFloorPlan(req, res, uploadedBy, organizationId) {
   const { floor, filename, contentType, fileBase64 } = req.body || {};
   if (!floor || !filename || !contentType || !fileBase64) {
     return res.status(400).json({ error: "floor, filename, contentType, and fileBase64 are all required" });
@@ -2511,14 +2539,14 @@ async function handleUploadFloorPlan(req, res, uploadedBy) {
   }
 
   try {
-    const recordId = await findOrCreateFloorPlanRecord(floor);
+    const recordId = await findOrCreateFloorPlanRecord(floor, organizationId);
 
     const { uploadFile } = await import("../lib/storageClient.js");
     const imagePath = `floor-plans/${recordId}/${filename}`;
     await uploadFile(imagePath, fileBase64, contentType);
 
     const { update } = await import("../lib/postgresClient.js");
-    await update("floor_plans", recordId, { image_url: imagePath, uploaded_by: uploadedBy, uploaded_date: new Date().toISOString() });
+    await update("floor_plans", recordId, { image_url: imagePath, uploaded_by: uploadedBy, uploaded_date: new Date().toISOString() }, organizationId);
 
     await appendFloorPlanActivity(recordId, `📎 Floor plan image uploaded: ${filename}`, uploadedBy);
 
@@ -2534,7 +2562,7 @@ async function handleUploadFloorPlan(req, res, uploadedBy) {
 // not a system-generated report. Multiple documents per asset, unlike
 // the single nameplate photo, so each upload adds a new row to
 // component_documents rather than overwriting a single column.
-async function handleUploadDocument(req, res, uploadedBy) {
+async function handleUploadDocument(req, res, uploadedBy, organizationId) {
   const { recordId, filename, contentType, fileBase64 } = req.body || {};
   if (!recordId || !filename || !contentType || !fileBase64) {
     return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
@@ -2546,21 +2574,30 @@ async function handleUploadDocument(req, res, uploadedBy) {
   }
 
   try {
+    const { insert, update, getById } = await import("../lib/postgresClient.js");
+    // Confirmed directly: same reasoning as decommission/relocate/edit
+    // - without this, any logged-in user could attach a document to
+    // any asset in the entire system by knowing or guessing its
+    // recordId, regardless of which client it actually belonged to.
+    const owner = await getById("components", recordId).catch(() => null);
+    if (!owner || owner.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Asset not found." });
+    }
+
     const { uploadFile } = await import("../lib/storageClient.js");
     // Timestamped so the same filename can be uploaded twice without colliding.
     const docPath = `components/${recordId}/documents/${Date.now()}-${filename}`;
     await uploadFile(docPath, fileBase64, contentType);
 
-    const { insert, update, getById } = await import("../lib/postgresClient.js");
     await insert("component_documents", { component_id: recordId, url: docPath, filename });
 
     // Stamp who uploaded it and when — same accountability pattern as
     // floor plan uploads, relocations, and edits elsewhere in the system.
-    await update("components", recordId, { documents_uploaded_by: uploadedBy, documents_uploaded_date: new Date().toISOString() });
+    await update("components", recordId, { documents_uploaded_by: uploadedBy, documents_uploaded_date: new Date().toISOString() }, organizationId);
 
     const current = await getById("components", recordId).catch(() => null);
     if (current) {
-      await logAssetActivity(current.asset_id || "", "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy);
+      await logAssetActivity(current.asset_id || "", "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy, organizationId);
     }
 
     return res.status(200).json({ success: true, filename, uploadedBy });
@@ -2573,19 +2610,20 @@ async function handleUploadDocument(req, res, uploadedBy) {
 // Clears the "Needs Technical Review" flag once an Engineer has actually
 // looked at what a non-technical person entered and confirmed it's
 // correct (or fixed it via the normal Edit form first).
-async function handleClearTechnicalReview(req, res, clearedBy) {
+async function handleClearTechnicalReview(req, res, clearedBy, organizationId) {
   const { recordId } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
-    await update("components", recordId, { needs_technical_review: false })
+    const result = await update("components", recordId, { needs_technical_review: false }, organizationId)
       .catch(() => { throw new Error("Could not clear review flag"); });
+    if (!result) return res.status(404).json({ error: "Asset not found." });
 
     const current = await getById("components", recordId).catch(() => null);
     if (current) {
       const assetId = current.asset_id || "";
-      await logAssetActivity(assetId, "Needs Technical Review", "Yes", "Cleared — reviewed", clearedBy);
+      await logAssetActivity(assetId, "Needs Technical Review", "Yes", "Cleared — reviewed", clearedBy, organizationId);
     }
 
     return res.status(200).json({ success: true });
@@ -2599,7 +2637,7 @@ async function handleClearTechnicalReview(req, res, clearedBy) {
 // Planned Maintenance handlers
 // ---------------------------------------------------------------------
 
-async function handleCreatePlan(req, res, createdBy) {
+async function handleCreatePlan(req, res, createdBy, organizationId) {
   const { title, description, targetStartDate, targetEndDate, budgetItems } = req.body || {};
   if (!title) return res.status(400).json({ error: "Title is required" });
 
@@ -2620,6 +2658,7 @@ async function handleCreatePlan(req, res, createdBy) {
       milestones: "[]",
       meeting_log: "[]",
       action_points: "[]",
+      organization_id: organizationId,
     });
     return res.status(200).json({ success: true, planId, recordId: created.id });
   } catch (err) {
@@ -2653,7 +2692,7 @@ const PLAN_FIELD_COLUMNS = {
   "Meeting Log": "meeting_log", "Action Points": "action_points",
 };
 
-async function handleUpdatePlan(req, res, editedBy) {
+async function handleUpdatePlan(req, res, editedBy, organizationId) {
   const { recordId, field, value } = req.body || {};
   const allowedFields = Object.keys(PLAN_FIELD_LABELS);
   if (!recordId || !field || !allowedFields.includes(field)) {
@@ -2667,10 +2706,15 @@ async function handleUpdatePlan(req, res, editedBy) {
     // columns — the frontend sends them as an already-JSON-encoded
     // string, same shape Airtable expected, so it passes straight
     // through into the column unchanged.
-    await update("planned_maintenance", recordId, { [column]: value }).catch(e => { throw new Error(e.message); });
+    const result = await update("planned_maintenance", recordId, { [column]: value }, organizationId).catch(e => { throw new Error(e.message); });
+    // Confirmed directly: same reasoning as every other edit path
+    // fixed this session - without this, any logged-in user could
+    // update any plan in the entire system by knowing or guessing its
+    // recordId, regardless of which client it actually belonged to.
+    if (!result) return res.status(404).json({ error: "Plan not found." });
 
     const label = PLAN_FIELD_LABELS[field] || field;
-    await appendPlanActivityLog(recordId, `✎ ${label} updated by ${editedBy}`, editedBy);
+    await appendPlanActivityLog(recordId, `✎ ${label} updated by ${editedBy}`, editedBy, organizationId);
     await notifyPlanCreator(recordId, editedBy, `${label} was updated`);
 
     return res.status(200).json({ success: true });
@@ -2682,7 +2726,7 @@ async function handleUpdatePlan(req, res, editedBy) {
 
 // Shared helper — appends one entry to a plan's Activity Log, same
 // read-modify-write pattern already used for Work Orders.
-async function appendPlanActivityLog(recordId, text, by) {
+async function appendPlanActivityLog(recordId, text, by, organizationId) {
   const { getById, update } = await import("../lib/postgresClient.js");
 
   const planData = await getById("planned_maintenance", recordId).catch(() => null);
@@ -2691,7 +2735,7 @@ async function appendPlanActivityLog(recordId, text, by) {
   const log = Array.isArray(planData.activity_log) ? planData.activity_log : [];
   log.push({ text, by, at: new Date().toISOString() });
 
-  await update("planned_maintenance", recordId, { activity_log: JSON.stringify(log) })
+  await update("planned_maintenance", recordId, { activity_log: JSON.stringify(log) }, organizationId)
     .catch(() => console.error("appendPlanActivityLog: could not save entry"));
 }
 
@@ -2745,20 +2789,30 @@ async function notifyPlanCreator(recordId, editedBy, whatChanged) {
 // plan, so each upload adds a row to planned_maintenance_documents
 // rather than overwriting a single column, same shape as compliance
 // documents on an asset.
-async function handleUploadPlanDocument(req, res, uploadedBy) {
+async function handleUploadPlanDocument(req, res, uploadedBy, organizationId) {
   const { recordId, filename, contentType, fileBase64 } = req.body || {};
   if (!recordId || !filename || !fileBase64) {
     return res.status(400).json({ error: "recordId, filename, and fileBase64 are required" });
   }
   try {
+    const { getById, insert } = await import("../lib/postgresClient.js");
+    // Confirmed directly: same reasoning as every other upload path
+    // fixed this session - without this, any logged-in user could
+    // attach a document to any plan in the entire system by knowing
+    // or guessing its recordId, regardless of which client it
+    // actually belonged to.
+    const plan = await getById("planned_maintenance", recordId).catch(() => null);
+    if (!plan || plan.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Plan not found." });
+    }
+
     const { uploadFile } = await import("../lib/storageClient.js");
     const docPath = `planned-maintenance/${recordId}/${Date.now()}-${filename}`;
     await uploadFile(docPath, fileBase64, contentType || "application/pdf");
 
-    const { insert } = await import("../lib/postgresClient.js");
     await insert("planned_maintenance_documents", { plan_id: recordId, url: docPath, filename });
 
-    await appendPlanActivityLog(recordId, `📎 Document uploaded: ${filename} (by ${uploadedBy})`, uploadedBy);
+    await appendPlanActivityLog(recordId, `📎 Document uploaded: ${filename} (by ${uploadedBy})`, uploadedBy, organizationId);
     await notifyPlanCreator(recordId, uploadedBy, `A document was uploaded (${filename})`);
 
     return res.status(200).json({ success: true });
