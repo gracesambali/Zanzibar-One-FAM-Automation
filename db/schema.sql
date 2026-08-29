@@ -1611,3 +1611,16 @@ alter table floor_plans add constraint floor_plans_org_floor_unique unique (orga
 
 alter table sensors drop constraint if exists sensors_sensor_id_key;
 alter table sensors add constraint sensors_org_sensor_id_unique unique (organization_id, sensor_id);
+
+-- ============================================================
+-- User onboarding/offboarding per client - confirmed directly: a
+-- brand new client account needs to be creatable without days of
+-- manual coding, and each client's own System Admin or Business
+-- Owner needs a real way to add and remove their own staff, choosing
+-- their role at the moment they're added. Removing a user is a real
+-- soft-delete (matching the same pattern already used for assets and
+-- sensors), not a hard delete - their past activity (edit_log
+-- entries, work orders they created, and so on) stays attributable.
+-- ============================================================
+alter table users add column if not exists active boolean not null default true;
+alter table users add column if not exists deactivated_by text;

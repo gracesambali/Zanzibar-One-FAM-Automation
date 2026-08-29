@@ -603,7 +603,7 @@ async function handleListStaffForPayroll(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      `select id, username, display_name, role from users where organization_id = $1 order by coalesce(display_name, username) asc`,
+      `select id, username, display_name, role from users where organization_id = $1 and active = true order by coalesce(display_name, username) asc`,
       [organizationId]
     );
     return res.status(200).json({
@@ -658,8 +658,8 @@ async function handleAddPayrollEntry(req, res, organizationId) {
   try {
     const { insert, getById } = await import("../lib/postgresClient.js");
     const staffMember = await getById("users", userId).catch(() => null);
-    if (!staffMember || staffMember.organization_id !== organizationId) {
-      return res.status(400).json({ error: "Choose a real staff member from this organization." });
+    if (!staffMember || staffMember.organization_id !== organizationId || staffMember.active === false) {
+      return res.status(400).json({ error: "Choose a real, active staff member from this organization." });
     }
     const entry = await insert("payroll_entries", {
       organization_id: organizationId, user_id: userId, salary_amount: salary,
