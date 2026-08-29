@@ -34,21 +34,21 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleGetCategories(req, res);
-    if (req.query.readingsHistory === "true") return handleGetReadingsHistory(req, res);
-    if (req.query.decommissioned === "true") return handleGetDecommissionedSensors(req, res);
+    if (req.query.readingsHistory === "true") return handleGetReadingsHistory(req, res, session.org);
+    if (req.query.decommissioned === "true") return handleGetDecommissionedSensors(req, res, session.org);
     if (req.query.notificationRoles === "true") return handleGetNotificationRoles(req, res);
-    return handleGetReadings(req, res);
+    return handleGetReadings(req, res, session.org);
   }
   if (req.method === "POST") {
     const action = req.body && req.body.action;
-    if (action === "addSensor") return handleAddSensor(req, res, session.u);
-    if (action === "seedDemoData") return handleSeedDemoData(req, res, session.u);
-    if (action === "clearDemoData") return handleClearDemoData(req, res);
-    if (action === "decommissionSensor") return handleDecommissionSensor(req, res, session.u);
+    if (action === "addSensor") return handleAddSensor(req, res, session.u, session.org);
+    if (action === "seedDemoData") return handleSeedDemoData(req, res, session.u, session.org);
+    if (action === "clearDemoData") return handleClearDemoData(req, res, session.org);
+    if (action === "decommissionSensor") return handleDecommissionSensor(req, res, session.u, session.org);
     if (action === "setNotificationRoles") return handleSetNotificationRoles(req, res);
-    return handleRunTest(req, res, session.u); // no action field - the existing test tool's plain body
+    return handleRunTest(req, res, session.u, session.org); // no action field - the existing test tool's plain body
   }
-  if (req.method === "PATCH") return handleEditSensor(req, res, session.u);
+  if (req.method === "PATCH") return handleEditSensor(req, res, session.u, session.org);
   return res.status(405).json({ error: "Method not allowed" });
 }
 
@@ -58,13 +58,21 @@ export default async function handler(req, res) {
 // visible on the sensor's own detail view.
 // ---------------------------------------------------------------------
 
-async function handleEditSensor(req, res, editedBy) {
+async function handleEditSensor(req, res, editedBy, organizationId) {
   const { recordId, notes, status, assignee } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const current = await getById("sensors", recordId).catch(() => { throw new Error("Could not read sensor"); });
+    // Confirmed directly: the lookup itself is unambiguous (recordId
+    // is a real, genuinely unique primary key), but that's not the
+    // same as authorization - without this check, a logged-in user
+    // could edit another client's sensor by knowing or guessing its
+    // recordId, even though they'd never see it in their own list.
+    if (!current || current.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Sensor not found." });
+    }
 
     const fields = {};
     const changes = [];
@@ -106,11 +114,11 @@ async function appendSensorActivity(recordId, text, by) {
 // GET - live sensor readings (was get-sensor-readings.js)
 // ---------------------------------------------------------------------
 
-async function handleGetReadings(req, res) {
+async function handleGetReadings(req, res, organizationId) {
   try {
-    const sensors = await fetchAllSensors();
-    const readings = await fetchRecentReadings();
-    const components = await fetchAllComponents();
+    const sensors = await fetchAllSensors(organizationId);
+    const readings = await fetchRecentReadings(organizationId);
+    const components = await fetchAllComponents(organizationId);
 
     const componentByAssetId = {};
     for (const c of components) {
@@ -186,31 +194,31 @@ async function handleGetReadings(req, res) {
   }
 }
 
-async function fetchAllSensors() {
+async function fetchAllSensors(organizationId) {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  const sensors = await pgListAllRecords("sensors");
+  const sensors = await pgListAllRecords("sensors", organizationId);
   // Confirmed directly: a decommissioned sensor's history stays
   // intact, but it no longer appears in the active BMS list - same
   // soft-delete pattern already used for assets.
   return sensors.filter(s => s.active !== false);
 }
 
-async function fetchRecentReadings() {
+async function fetchRecentReadings(organizationId) {
   const { query: pgQuery } = await import("../lib/postgresClient.js");
-  const result = await pgQuery("select * from readings order by timestamp desc limit 100");
+  const result = await pgQuery("select * from readings where organization_id = $1 order by timestamp desc limit 100", [organizationId]);
   return result.rows;
 }
 
-async function fetchAllComponents() {
+async function fetchAllComponents(organizationId) {
   const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-  return pgListAllRecords("components");
+  return pgListAllRecords("components", organizationId);
 }
 
 // ---------------------------------------------------------------------
 // POST - force a test breach (was run-sensor-test.js)
 // ---------------------------------------------------------------------
 
-async function handleRunTest(req, res, triggeredBy) {
+async function handleRunTest(req, res, triggeredBy, organizationId) {
   const { sensorId, value } = req.body || {};
   if (!sensorId) return res.status(400).json({ error: "sensorId is required" });
   if (value === undefined || value === null || value === "") {
@@ -220,12 +228,12 @@ async function handleRunTest(req, res, triggeredBy) {
   if (Number.isNaN(numericValue)) return res.status(400).json({ error: "value must be a number" });
 
   try {
-    const sensor = await fetchSensorBySensorId(sensorId);
+    const sensor = await fetchSensorBySensorId(sensorId, organizationId);
     if (!sensor) return res.status(404).json({ error: `Sensor "${sensorId}" not found` });
 
     const assetId = sensor.asset_id || "";
     const sensorType = sensor.sensor_type || "";
-    const component = assetId ? await fetchComponentByAssetId(assetId) : null;
+    const component = assetId ? await fetchComponentByAssetId(assetId, organizationId) : null;
     const assetName = component?.name || assetId;
     const location = component?.room_zone || "";
 
@@ -245,17 +253,17 @@ async function handleRunTest(req, res, triggeredBy) {
     }
 
     const timestamp = new Date().toISOString();
-    await createReading({ timestamp, sensorId, assetId, value: numericValue, unit, withinRange: withinRange === true });
+    await createReading({ timestamp, sensorId, assetId, value: numericValue, unit, withinRange: withinRange === true, organizationId });
     await appendSensorActivity(sensor.id, `Test reading: ${numericValue}${unit} (${withinRange ? "within range" : "OUT OF RANGE"})`, triggeredBy);
 
     if (withinRange === false) {
-      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.system });
+      const woId = await createWorkOrder({ assetId, assetName, location, sensorTypeLabel: sensorType, reading: numericValue, unit, targetRangeDisplay, realSystem: component?.system, organizationId });
 
       const [emailResp, smsResp] = await Promise.all([
         sendSensorAlertEmail({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
         sendSensorAlertSms({ assetName, location, sensorType, value: numericValue, unit, targetRange: targetRangeDisplay, woId }),
       ]);
-      const logResult = await logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorType} reading ${numericValue}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}. [Manual test trigger]` });
+      const logResult = await logAlert({ assetId, assetName, location, urgency: "SENSOR ALERT", message: `${assetName} at ${location}: ${sensorType} reading ${numericValue}${unit} outside expected range (${targetRangeDisplay}). Work Order ${woId}. [Manual test trigger]`, organizationId });
 
       return res.status(200).json({
         success: true,
@@ -303,17 +311,17 @@ function checkWithinRange(value, rangeStr) {
   return value >= min && value <= max;
 }
 
-async function fetchSensorBySensorId(sensorId) {
+async function fetchSensorBySensorId(sensorId, organizationId) {
   const { getByColumn } = await import("../lib/postgresClient.js");
-  return getByColumn("sensors", "sensor_id", sensorId).catch(() => null);
+  return getByColumn("sensors", "sensor_id", sensorId, organizationId).catch(() => null);
 }
 
-async function fetchComponentByAssetId(assetId) {
+async function fetchComponentByAssetId(assetId, organizationId) {
   const { getByColumn } = await import("../lib/postgresClient.js");
-  return getByColumn("components", "asset_id", assetId).catch(() => null);
+  return getByColumn("components", "asset_id", assetId, organizationId).catch(() => null);
 }
 
-async function createReading({ timestamp, sensorId, assetId, value, unit, withinRange }) {
+async function createReading({ timestamp, sensorId, assetId, value, unit, withinRange, organizationId }) {
   const { insert } = await import("../lib/postgresClient.js");
   await insert("readings", {
     timestamp,
@@ -322,10 +330,11 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
     value,
     unit,
     within_range: withinRange === true,
+    organization_id: organizationId,
   }).catch(e => console.error("Reading write failed:", e.message));
 }
 
-async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem }) {
+async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, reading, unit, targetRangeDisplay, realSystem, organizationId }) {
   const woId = `WO-${Date.now()}`;
 
   try {
@@ -342,6 +351,7 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
       last_reminder_sent: new Date().toISOString().split("T")[0],
       notes: `Auto-generated from manual sensor test: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,
       assigned_role: getAssignedRole(realSystem, assetName) || null,
+      organization_id: organizationId,
     });
     return woId;
   } catch (e) {
@@ -350,7 +360,7 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
   }
 }
 
-async function logAlert({ assetId, assetName, location, urgency, message }) {
+async function logAlert({ assetId, assetName, location, urgency, message, organizationId }) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     await insert("alert_log", {
@@ -361,6 +371,7 @@ async function logAlert({ assetId, assetName, location, urgency, message }) {
       urgency,
       channel: "Email + SMS (manual sensor test)",
       message,
+      organization_id: organizationId,
     });
     return true;
   } catch (e) {
@@ -505,7 +516,7 @@ async function handleSetNotificationRoles(req, res) {
 // configured to send - not something FAM can invent on its behalf.
 // ---------------------------------------------------------------------
 
-async function handleAddSensor(req, res, addedBy) {
+async function handleAddSensor(req, res, addedBy, organizationId) {
   const { sensorId, assetId, sensorType } = req.body || {};
   if (!sensorId || !sensorId.trim()) return res.status(400).json({ error: "A real sensor/device ID is required." });
   if (!assetId) return res.status(400).json({ error: "Choose a real asset to link this sensor to." });
@@ -519,10 +530,17 @@ async function handleAddSensor(req, res, addedBy) {
       sensor_type: sensorType,
       status: "Active",
       activity_log: JSON.stringify([{ text: `Registered by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
+      organization_id: organizationId,
     });
     return res.status(200).json({ success: true, sensorId: sensor.sensor_id });
   } catch (err) {
-    if (err.message && err.message.includes("sensors_sensor_id_key")) {
+    // Confirmed directly: a real, separate regression fixed here too -
+    // this check still referenced the old, now-nonexistent global
+    // constraint name from before Session 190 renamed it to a real,
+    // per-organization one. A genuine duplicate sensor_id within the
+    // same org would have silently fallen through to the generic 500
+    // below instead of this friendly message.
+    if (err.message && err.message.includes("sensors_org_sensor_id_unique")) {
       return res.status(400).json({ error: "A sensor with this ID already exists." });
     }
     console.error("handleAddSensor error:", err);
@@ -539,7 +557,7 @@ async function handleAddSensor(req, res, addedBy) {
 // sensor accumulates months of data.
 // ---------------------------------------------------------------------
 
-async function handleGetReadingsHistory(req, res) {
+async function handleGetReadingsHistory(req, res, organizationId) {
   const { sensorId } = req.query;
   if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
 
@@ -548,10 +566,10 @@ async function handleGetReadingsHistory(req, res) {
     const result = await pgQuery(
       `select timestamp, value, unit, within_range
        from readings
-       where sensor_id = $1
+       where sensor_id = $1 and organization_id = $2
        order by timestamp desc
        limit 100`,
-      [sensorId]
+      [sensorId, organizationId]
     );
     // Oldest first for charting, even though the query itself fetches
     // newest-first (so the LIMIT keeps the real, most recent readings,
@@ -596,7 +614,7 @@ const DEMO_SEED_DEFINITIONS = [
   },
 ];
 
-async function handleSeedDemoData(req, res, addedBy) {
+async function handleSeedDemoData(req, res, addedBy, organizationId) {
   try {
     const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
     const { categoryForSensorType } = await import("../lib/bmsCategories.js");
@@ -604,7 +622,7 @@ async function handleSeedDemoData(req, res, addedBy) {
     // Real, existing assets to link the demo sensors to, so the
     // demonstration reflects this facility's actual equipment rather
     // than a generic, unlinked placeholder.
-    const assetsResult = await pgQuery("select asset_id, name from components where active = true limit 3");
+    const assetsResult = await pgQuery("select asset_id, name from components where active = true and organization_id = $1 limit 3", [organizationId]);
     if (assetsResult.rows.length === 0) {
       return res.status(400).json({ error: "No real assets exist yet to link sample sensors to. Add at least one asset first." });
     }
@@ -615,14 +633,19 @@ async function handleSeedDemoData(req, res, addedBy) {
       const asset = assetsResult.rows[i % assetsResult.rows.length];
 
       // Real, per-org uniqueness - re-seeding after a partial clear
-      // shouldn't fail on a duplicate sensor_id.
-      const existing = await pgQuery("select id from sensors where sensor_id = $1", [def.sensorId]);
+      // shouldn't fail on a duplicate sensor_id. Confirmed directly:
+      // scoped to this org specifically, since sensor_id is now
+      // unique per client, not globally - without this, seeding for
+      // Gracing Ventures could have silently skipped a sensor just
+      // because a DIFFERENT client already used the same sample ID.
+      const existing = await pgQuery("select id from sensors where sensor_id = $1 and organization_id = $2", [def.sensorId, organizationId]);
       if (existing.rows.length > 0) continue;
 
       await insert("sensors", {
         sensor_id: def.sensorId, asset_id: asset.asset_id, sensor_type: def.sensorType,
         status: "Active", is_demo: true,
         activity_log: JSON.stringify([{ text: `Sample sensor added by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
+        organization_id: organizationId,
       });
 
       const now = new Date();
@@ -639,6 +662,7 @@ async function handleSeedDemoData(req, res, addedBy) {
         await insert("readings", {
           timestamp: ts.toISOString(), sensor_id: def.sensorId, asset_id: asset.asset_id,
           value: def.values[d], unit: def.unit, within_range: withinRange, is_demo: true,
+          organization_id: organizationId,
         });
       }
       created.push(def.sensorId);
@@ -651,11 +675,15 @@ async function handleSeedDemoData(req, res, addedBy) {
   }
 }
 
-async function handleClearDemoData(req, res) {
+async function handleClearDemoData(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
-    await pgQuery("delete from readings where is_demo = true");
-    const result = await pgQuery("delete from sensors where is_demo = true returning sensor_id");
+    // Confirmed directly: a real, serious gap fixed here - previously
+    // unscoped, this would have deleted every demo sensor/reading
+    // across every client at once, not just the one asking to clear
+    // their own.
+    await pgQuery("delete from readings where is_demo = true and organization_id = $1", [organizationId]);
+    const result = await pgQuery("delete from sensors where is_demo = true and organization_id = $1 returning sensor_id", [organizationId]);
     return res.status(200).json({ success: true, removed: result.rows.map(r => r.sensor_id) });
   } catch (err) {
     console.error("handleClearDemoData error:", err);
@@ -670,7 +698,7 @@ async function handleClearDemoData(req, res) {
 // it just stops appearing in the active BMS list.
 // ---------------------------------------------------------------------
 
-async function handleDecommissionSensor(req, res, decommissionedBy) {
+async function handleDecommissionSensor(req, res, decommissionedBy, organizationId) {
   const { sensorId, reason } = req.body || {};
   if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
   if (!reason || !reason.trim()) {
@@ -680,8 +708,8 @@ async function handleDecommissionSensor(req, res, decommissionedBy) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      `update sensors set active = false, decommissioned_by = $1 where sensor_id = $2 returning id, activity_log`,
-      [decommissionedBy, sensorId]
+      `update sensors set active = false, decommissioned_by = $1 where sensor_id = $2 and organization_id = $3 returning id, activity_log`,
+      [decommissionedBy, sensorId, organizationId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Sensor not found." });
 
@@ -690,7 +718,7 @@ async function handleDecommissionSensor(req, res, decommissionedBy) {
       text: `Decommissioned by ${decommissionedBy}${reason ? `: ${reason}` : ""}`,
       by: decommissionedBy, at: new Date().toISOString(),
     }];
-    await pgQuery(`update sensors set activity_log = $1 where sensor_id = $2`, [JSON.stringify(newLog), sensorId]);
+    await pgQuery(`update sensors set activity_log = $1 where sensor_id = $2 and organization_id = $3`, [JSON.stringify(newLog), sensorId, organizationId]);
 
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -708,15 +736,16 @@ async function handleDecommissionSensor(req, res, decommissionedBy) {
 // not something anyone needs mixed into day-to-day monitoring.
 // ---------------------------------------------------------------------
 
-async function handleGetDecommissionedSensors(req, res) {
+async function handleGetDecommissionedSensors(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
       `select s.sensor_id, s.sensor_type, s.asset_id, s.decommissioned_by, s.activity_log, c.name as asset_name
        from sensors s
        left join components c on c.asset_id = s.asset_id
-       where s.active = false
-       order by s.sensor_id`
+       where s.active = false and s.organization_id = $1
+       order by s.sensor_id`,
+      [organizationId]
     );
     const sensors = result.rows.map(r => {
       const log = r.activity_log || [];
