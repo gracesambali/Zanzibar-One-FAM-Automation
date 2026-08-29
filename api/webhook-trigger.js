@@ -59,7 +59,7 @@ export default async function handler(req, res) {
       const message = `[${urgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
-      const [, woId] = await Promise.all([logAlert(f, urgency, message), createWorkOrder(f, urgency)]);
+      const [, woId] = await Promise.all([logAlert(f, urgency, message, f.organization_id), createWorkOrder(f, urgency, f.organization_id)]);
 
       return res.status(200).json({ triggered: true, type: "initial", urgency, asset: f.asset_id, message, workOrder: woId });
     } else {
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
       const message = `[REMINDER — ${existingWO.wo_id} still open] ${f.name} (${f.asset_id}) at ${f.room_zone} — service due ${dueDateRaw}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
-      await Promise.all([logAlert(f, urgency, message), updateReminderTimestamp(existingWO.id)]);
+      await Promise.all([logAlert(f, urgency, message, f.organization_id), updateReminderTimestamp(existingWO.id)]);
 
       return res.status(200).json({ triggered: true, type: "reminder", urgency, asset: f.asset_id, message, workOrder: existingWO.wo_id });
     }
@@ -98,7 +98,7 @@ async function fetchRecordByAssetId(assetId) {
   return getByColumn("components", "asset_id", assetId).catch(() => null);
 }
 
-async function logAlert(f, urgency, message) {
+async function logAlert(f, urgency, message, organizationId) {
   const { insert } = await import("../lib/postgresClient.js");
   await insert("alert_log", {
     timestamp: new Date().toISOString(),
@@ -109,10 +109,11 @@ async function logAlert(f, urgency, message) {
     urgency,
     channel: "Email + SMS (instant webhook)",
     message,
+    organization_id: organizationId,
   }).catch(e => console.error("Alert log write failed:", e.message));
 }
 
-async function createWorkOrder(f, urgency) {
+async function createWorkOrder(f, urgency, organizationId) {
   const woId = `WO-${Date.now()}`;
 
   let created;
@@ -130,6 +131,7 @@ async function createWorkOrder(f, urgency) {
       last_reminder_sent: todayString(),
       notes: null,
       activity_log: "[]",
+      organization_id: organizationId,
     });
   } catch (e) {
     console.error("Work order creation failed:", e.message);
