@@ -24,7 +24,6 @@ import { getSession, setSessionCookie } from "../lib/auth.js";
 // list is confirmed directly against ROLE_PERMISSIONS in
 // dashboard.html rather than assumed.
 const FINANCE_EXCLUDED_ROLES = ["technician"];
-const ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063"; // the one real org that exists today
 
 function requireFinanceRole(session, res) {
   if (FINANCE_EXCLUDED_ROLES.includes(session.r)) {
@@ -48,46 +47,46 @@ export default async function handler(req, res) {
   if (!requireFinanceRole(session, res)) return;
 
   if (req.method === "GET") {
-    if (req.query.categories === "true") return handleListCategories(req, res);
-    if (req.query.transactions === "true") return handleListTransactions(req, res);
-    if (req.query.bills === "true") return handleListBills(req, res);
-    if (req.query.liabilities === "true") return handleListLiabilities(req, res);
-    if (req.query.summary === "true") return handleFinanceSummary(req, res);
-    if (req.query.vendorSpend === "true") return handleVendorSpend(req, res);
-    if (req.query.payroll === "true") return handleListPayroll(req, res);
-    if (req.query.staffForPayroll === "true") return handleListStaffForPayroll(req, res);
-    if (req.query.documents === "true") return handleListDocuments(req, res);
+    if (req.query.categories === "true") return handleListCategories(req, res, session.org);
+    if (req.query.transactions === "true") return handleListTransactions(req, res, session.org);
+    if (req.query.bills === "true") return handleListBills(req, res, session.org);
+    if (req.query.liabilities === "true") return handleListLiabilities(req, res, session.org);
+    if (req.query.summary === "true") return handleFinanceSummary(req, res, session.org);
+    if (req.query.vendorSpend === "true") return handleVendorSpend(req, res, session.org);
+    if (req.query.payroll === "true") return handleListPayroll(req, res, session.org);
+    if (req.query.staffForPayroll === "true") return handleListStaffForPayroll(req, res, session.org);
+    if (req.query.documents === "true") return handleListDocuments(req, res, session.org);
     return res.status(400).json({ error: "Unknown GET request" });
   }
 
   if (req.method === "POST") {
     const action = req.body && req.body.action;
-    if (action === "addCategory") return handleAddCategory(req, res);
-    if (action === "addTransaction") return handleAddTransaction(req, res, session.u);
-    if (action === "uploadTransactionDocument") return handleUploadDoc(req, res, "transactions", "transaction_documents", "transaction_id");
-    if (action === "addBill") return handleAddBill(req, res);
-    if (action === "uploadBillDocument") return handleUploadDoc(req, res, "bills", "bill_documents", "bill_id");
-    if (action === "markBillPaid") return handleMarkBillPaid(req, res, session.u);
-    if (action === "addLiability") return handleAddLiability(req, res);
-    if (action === "uploadLiabilityDocument") return handleUploadDoc(req, res, "liabilities", "liability_documents", "liability_id");
-    if (action === "recordLiabilityPayment") return handleRecordLiabilityPayment(req, res, session.u);
-    if (action === "addPayrollEntry") return handleAddPayrollEntry(req, res);
-    if (action === "uploadPayrollDocument") return handleUploadDoc(req, res, "payroll_entries", "payroll_documents", "payroll_entry_id");
-    if (action === "markPayrollPaid") return handleMarkPayrollPaid(req, res, session.u);
+    if (action === "addCategory") return handleAddCategory(req, res, session.org);
+    if (action === "addTransaction") return handleAddTransaction(req, res, session.u, session.org);
+    if (action === "uploadTransactionDocument") return handleUploadDoc(req, res, "transactions", "transaction_documents", "transaction_id", session.org);
+    if (action === "addBill") return handleAddBill(req, res, session.org);
+    if (action === "uploadBillDocument") return handleUploadDoc(req, res, "bills", "bill_documents", "bill_id", session.org);
+    if (action === "markBillPaid") return handleMarkBillPaid(req, res, session.u, session.org);
+    if (action === "addLiability") return handleAddLiability(req, res, session.org);
+    if (action === "uploadLiabilityDocument") return handleUploadDoc(req, res, "liabilities", "liability_documents", "liability_id", session.org);
+    if (action === "recordLiabilityPayment") return handleRecordLiabilityPayment(req, res, session.u, session.org);
+    if (action === "addPayrollEntry") return handleAddPayrollEntry(req, res, session.org);
+    if (action === "uploadPayrollDocument") return handleUploadDoc(req, res, "payroll_entries", "payroll_documents", "payroll_entry_id", session.org);
+    if (action === "markPayrollPaid") return handleMarkPayrollPaid(req, res, session.u, session.org);
     return res.status(400).json({ error: "Unknown action" });
   }
 
   if (req.method === "PATCH") {
     const action = req.body && req.body.action;
-    if (action === "editBill") return handleEditBill(req, res);
-    if (action === "pauseBill") return handlePauseBill(req, res);
-    if (action === "editLiability") return handleEditLiability(req, res);
-    if (action === "pausePayrollEntry") return handlePausePayrollEntry(req, res);
+    if (action === "editBill") return handleEditBill(req, res, session.org);
+    if (action === "pauseBill") return handlePauseBill(req, res, session.org);
+    if (action === "editLiability") return handleEditLiability(req, res, session.org);
+    if (action === "pausePayrollEntry") return handlePausePayrollEntry(req, res, session.org);
     return res.status(400).json({ error: "Unknown action" });
   }
 
   if (req.method === "DELETE") {
-    if (req.body && req.body.action === "deleteTransaction") return handleDeleteTransaction(req, res);
+    if (req.body && req.body.action === "deleteTransaction") return handleDeleteTransaction(req, res, session.org);
     return res.status(400).json({ error: "Unknown action" });
   }
 
@@ -98,12 +97,12 @@ export default async function handler(req, res) {
 // Categories
 // ---------------------------------------------------------------
 
-async function handleListCategories(req, res) {
+async function handleListCategories(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
     const result = await query(
       "select id, name, type, is_default from transaction_categories where organization_id = $1 order by type, name",
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       categories: result.rows.map(r => ({ id: r.id, name: r.name, type: r.type, isDefault: r.is_default })),
@@ -114,7 +113,7 @@ async function handleListCategories(req, res) {
   }
 }
 
-async function handleAddCategory(req, res) {
+async function handleAddCategory(req, res, organizationId) {
   const { name, type } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: "A category name is required." });
   if (!["income", "expense"].includes(type)) return res.status(400).json({ error: "Type must be income or expense." });
@@ -122,7 +121,7 @@ async function handleAddCategory(req, res) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const category = await insert("transaction_categories", {
-      organization_id: ORG_ID, name: name.trim(), type, is_default: false,
+      organization_id: organizationId, name: name.trim(), type, is_default: false,
     });
     return res.status(200).json({ success: true, category: { id: category.id, name: category.name, type: category.type, isDefault: false } });
   } catch (err) {
@@ -135,7 +134,7 @@ async function handleAddCategory(req, res) {
 // Transactions — the real income/expense ledger
 // ---------------------------------------------------------------
 
-async function handleListTransactions(req, res) {
+async function handleListTransactions(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
     const result = await query(
@@ -147,7 +146,7 @@ async function handleListTransactions(req, res) {
        where t.organization_id = $1
        order by t.transaction_date desc, t.created_at desc
        limit 500`,
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       transactions: result.rows.map(r => ({
@@ -162,7 +161,7 @@ async function handleListTransactions(req, res) {
   }
 }
 
-async function handleAddTransaction(req, res, recordedBy) {
+async function handleAddTransaction(req, res, recordedBy, organizationId) {
   const { type, categoryId, amount, date, description, vendorId } = req.body || {};
   if (!["income", "expense"].includes(type)) return res.status(400).json({ error: "Type must be income or expense." });
   const amt = Number(amount);
@@ -171,7 +170,7 @@ async function handleAddTransaction(req, res, recordedBy) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const txn = await insert("transactions", {
-      organization_id: ORG_ID, type, category_id: categoryId || null,
+      organization_id: organizationId, type, category_id: categoryId || null,
       amount: amt, transaction_date: date || new Date().toISOString().split("T")[0],
       description: description || null, recorded_by: recordedBy, vendor_id: vendorId || null,
     });
@@ -182,12 +181,12 @@ async function handleAddTransaction(req, res, recordedBy) {
   }
 }
 
-async function handleDeleteTransaction(req, res) {
+async function handleDeleteTransaction(req, res, organizationId) {
   const { transactionId } = req.body || {};
   if (!transactionId) return res.status(400).json({ error: "transactionId required" });
   try {
     const { query } = await import("../lib/postgresClient.js");
-    await query("delete from transactions where id = $1", [transactionId]);
+    await query("delete from transactions where id = $1 and organization_id = $2", [transactionId, organizationId]);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteTransaction error:", err);
@@ -199,7 +198,7 @@ async function handleDeleteTransaction(req, res) {
 // Bills — recurring monthly/annual payments
 // ---------------------------------------------------------------
 
-async function handleListBills(req, res) {
+async function handleListBills(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
     const result = await query(
@@ -210,7 +209,7 @@ async function handleListBills(req, res) {
        left join transaction_categories c on c.id = b.category_id
        where b.organization_id = $1
        order by b.next_due_date asc`,
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       bills: result.rows.map(r => ({
@@ -225,7 +224,7 @@ async function handleListBills(req, res) {
   }
 }
 
-async function handleAddBill(req, res) {
+async function handleAddBill(req, res, organizationId) {
   const { name, amount, frequency, nextDueDate, categoryId, vendorId } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: "A bill name is required." });
   const amt = Number(amount);
@@ -236,7 +235,7 @@ async function handleAddBill(req, res) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const bill = await insert("bills", {
-      organization_id: ORG_ID, name: name.trim(), amount: amt, frequency,
+      organization_id: organizationId, name: name.trim(), amount: amt, frequency,
       next_due_date: nextDueDate, category_id: categoryId || null, vendor_id: vendorId || null,
     });
     return res.status(200).json({ success: true, billId: bill.id });
@@ -246,7 +245,7 @@ async function handleAddBill(req, res) {
   }
 }
 
-async function handleEditBill(req, res) {
+async function handleEditBill(req, res, organizationId) {
   const { billId, name, amount, frequency, nextDueDate, categoryId } = req.body || {};
   if (!billId) return res.status(400).json({ error: "billId required" });
 
@@ -259,7 +258,8 @@ async function handleEditBill(req, res) {
 
   try {
     const { update } = await import("../lib/postgresClient.js");
-    await update("bills", billId, updateFields);
+    const result = await update("bills", billId, updateFields, organizationId);
+    if (!result) return res.status(404).json({ error: "Bill not found." });
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editBill error:", err);
@@ -267,12 +267,13 @@ async function handleEditBill(req, res) {
   }
 }
 
-async function handlePauseBill(req, res) {
+async function handlePauseBill(req, res, organizationId) {
   const { billId, status } = req.body || {};
   if (!billId || !["active", "paused"].includes(status)) return res.status(400).json({ error: "billId and a real status (active/paused) required" });
   try {
     const { update } = await import("../lib/postgresClient.js");
-    await update("bills", billId, { status, updated_at: new Date().toISOString() });
+    const result = await update("bills", billId, { status, updated_at: new Date().toISOString() }, organizationId);
+    if (!result) return res.status(404).json({ error: "Bill not found." });
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("pauseBill error:", err);
@@ -286,17 +287,17 @@ async function handlePauseBill(req, res) {
 // next real due date based on frequency - confirmed directly as the
 // simplest, honest way to handle recurrence without guessing whether
 // a bill was genuinely paid from bank data FAM doesn't have access to.
-async function handleMarkBillPaid(req, res, recordedBy) {
+async function handleMarkBillPaid(req, res, recordedBy, organizationId) {
   const { billId } = req.body || {};
   if (!billId) return res.status(400).json({ error: "billId required" });
 
   try {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
     const bill = await getById("bills", billId).catch(() => null);
-    if (!bill) return res.status(404).json({ error: "Bill not found." });
+    if (!bill || bill.organization_id !== organizationId) return res.status(404).json({ error: "Bill not found." });
 
     await insert("transactions", {
-      organization_id: ORG_ID, type: "expense", category_id: bill.category_id,
+      organization_id: organizationId, type: "expense", category_id: bill.category_id,
       amount: bill.amount, transaction_date: bill.next_due_date,
       description: `${bill.name} (bill payment)`, recorded_by: recordedBy,
       vendor_id: bill.vendor_id,
@@ -311,7 +312,7 @@ async function handleMarkBillPaid(req, res, recordedBy) {
       next_due_date: nextDue.toISOString().split("T")[0],
       reminder_sent_for: null,
       updated_at: new Date().toISOString(),
-    });
+    }, organizationId);
 
     return res.status(200).json({ success: true, nextDueDate: nextDue.toISOString().split("T")[0] });
   } catch (err) {
@@ -324,7 +325,7 @@ async function handleMarkBillPaid(req, res, recordedBy) {
 // Liabilities — loans and debts
 // ---------------------------------------------------------------
 
-async function handleListLiabilities(req, res) {
+async function handleListLiabilities(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
     const result = await query(
@@ -335,7 +336,7 @@ async function handleListLiabilities(req, res) {
        from liabilities l
        where l.organization_id = $1
        order by l.status asc, l.next_payment_date asc nulls last`,
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       liabilities: result.rows.map(r => ({
@@ -354,7 +355,7 @@ async function handleListLiabilities(req, res) {
   }
 }
 
-async function handleAddLiability(req, res) {
+async function handleAddLiability(req, res, organizationId) {
   const { lender, principal, interestRate, startDate, repaymentFrequency, nextPaymentDate, nextPaymentAmount, notes, vendorId } = req.body || {};
   if (!lender || !lender.trim()) return res.status(400).json({ error: "A lender name is required." });
   const principalAmt = Number(principal);
@@ -364,7 +365,7 @@ async function handleAddLiability(req, res) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const liability = await insert("liabilities", {
-      organization_id: ORG_ID, lender: lender.trim(), principal: principalAmt,
+      organization_id: organizationId, lender: lender.trim(), principal: principalAmt,
       interest_rate: interestRate != null && interestRate !== "" ? Number(interestRate) : null,
       start_date: startDate || new Date().toISOString().split("T")[0],
       repayment_frequency: repaymentFrequency,
@@ -379,7 +380,7 @@ async function handleAddLiability(req, res) {
   }
 }
 
-async function handleEditLiability(req, res) {
+async function handleEditLiability(req, res, organizationId) {
   const { liabilityId, nextPaymentDate, nextPaymentAmount, notes, status } = req.body || {};
   if (!liabilityId) return res.status(400).json({ error: "liabilityId required" });
 
@@ -391,7 +392,8 @@ async function handleEditLiability(req, res) {
 
   try {
     const { update } = await import("../lib/postgresClient.js");
-    await update("liabilities", liabilityId, updateFields);
+    const result = await update("liabilities", liabilityId, updateFields, organizationId);
+    if (!result) return res.status(404).json({ error: "Liability not found." });
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editLiability error:", err);
@@ -404,7 +406,7 @@ async function handleEditLiability(req, res) {
 // and correctly marks the liability paid off once the balance
 // genuinely reaches zero - rather than requiring a separate manual
 // step to notice that.
-async function handleRecordLiabilityPayment(req, res, recordedBy) {
+async function handleRecordLiabilityPayment(req, res, recordedBy, organizationId) {
   const { liabilityId, amount, date } = req.body || {};
   if (!liabilityId) return res.status(400).json({ error: "liabilityId required" });
   const paymentAmt = Number(amount);
@@ -413,12 +415,12 @@ async function handleRecordLiabilityPayment(req, res, recordedBy) {
   try {
     const { getById, update, insert } = await import("../lib/postgresClient.js");
     const liability = await getById("liabilities", liabilityId).catch(() => null);
-    if (!liability) return res.status(404).json({ error: "Liability not found." });
+    if (!liability || liability.organization_id !== organizationId) return res.status(404).json({ error: "Liability not found." });
 
     const newBalance = Math.max(0, Number(liability.remaining_balance) - paymentAmt);
 
     await insert("transactions", {
-      organization_id: ORG_ID, type: "expense", category_id: null,
+      organization_id: organizationId, type: "expense", category_id: null,
       amount: paymentAmt, transaction_date: date || new Date().toISOString().split("T")[0],
       description: `Loan repayment — ${liability.lender}`, recorded_by: recordedBy,
       vendor_id: liability.vendor_id,
@@ -428,7 +430,7 @@ async function handleRecordLiabilityPayment(req, res, recordedBy) {
       remaining_balance: newBalance,
       status: newBalance === 0 ? "paid_off" : liability.status,
       updated_at: new Date().toISOString(),
-    });
+    }, organizationId);
 
     return res.status(200).json({ success: true, remainingBalance: newBalance, paidOff: newBalance === 0 });
   } catch (err) {
@@ -443,7 +445,7 @@ async function handleRecordLiabilityPayment(req, res, recordedBy) {
 // Supabase storage), not a new upload mechanism.
 // ---------------------------------------------------------------
 
-async function handleUploadDoc(req, res, parentTable, docTable, fkColumn) {
+async function handleUploadDoc(req, res, parentTable, docTable, fkColumn, organizationId) {
   const { recordId, filename, contentType, fileBase64 } = req.body || {};
   if (!recordId || !filename || !contentType || !fileBase64) {
     return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
@@ -454,11 +456,16 @@ async function handleUploadDoc(req, res, parentTable, docTable, fkColumn) {
   }
 
   try {
+    const { getById, insert } = await import("../lib/postgresClient.js");
+    const parent = await getById(parentTable, recordId).catch(() => null);
+    if (!parent || parent.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Record not found." });
+    }
+
     const { uploadFile } = await import("../lib/storageClient.js");
     const docPath = `${parentTable}/${recordId}/documents/${Date.now()}-${filename}`;
     await uploadFile(docPath, fileBase64, contentType);
 
-    const { insert } = await import("../lib/postgresClient.js");
     await insert(docTable, { [fkColumn]: recordId, url: docPath, filename });
 
     return res.status(200).json({ success: true });
@@ -472,24 +479,24 @@ async function handleUploadDoc(req, res, parentTable, docTable, fkColumn) {
 // Summary — real, current totals for the Finance tab's overview
 // ---------------------------------------------------------------
 
-async function handleFinanceSummary(req, res) {
+async function handleFinanceSummary(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
     const totals = await query(
       `select type, coalesce(sum(amount), 0) as total from transactions where organization_id = $1 group by type`,
-      [ORG_ID]
+      [organizationId]
     );
     const income = Number(totals.rows.find(r => r.type === "income")?.total || 0);
     const expense = Number(totals.rows.find(r => r.type === "expense")?.total || 0);
 
     const liabilityTotal = await query(
       `select coalesce(sum(remaining_balance), 0) as total from liabilities where organization_id = $1 and status = 'active'`,
-      [ORG_ID]
+      [organizationId]
     );
 
     const upcomingBills = await query(
       `select coalesce(sum(amount), 0) as total from bills where organization_id = $1 and status = 'active' and next_due_date <= current_date + interval '30 days'`,
-      [ORG_ID]
+      [organizationId]
     );
 
     // Real, 6-month income/expense trend for the Overview chart -
@@ -504,7 +511,7 @@ async function handleFinanceSummary(req, res) {
        left join transactions t on date_trunc('month', t.transaction_date) = month_start and t.organization_id = $1
        group by month_start
        order by month_start asc`,
-      [ORG_ID]
+      [organizationId]
     );
 
     // Real expense-by-category breakdown for the Overview chart -
@@ -522,7 +529,7 @@ async function handleFinanceSummary(req, res) {
          and t.transaction_date >= date_trunc('month', current_date - interval '5 months')
        group by c.name
        order by total desc`,
-      [ORG_ID]
+      [organizationId]
     );
 
     return res.status(200).json({
@@ -555,7 +562,7 @@ async function handleFinanceSummary(req, res) {
 // vendor, not three separate aggregations across different shapes.
 // ---------------------------------------------------------------
 
-async function handleVendorSpend(req, res) {
+async function handleVendorSpend(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
@@ -565,10 +572,10 @@ async function handleVendorSpend(req, res) {
               max(t.transaction_date) filter (where t.type = 'expense') as last_transaction_date
        from vendors v
        left join transactions t on t.vendor_id = v.id and t.organization_id = $1
-       where v.active = true
+       where v.active = true and v.organization_id = $1
        group by v.id, v.vendor_name, v.email, v.phone
        order by total_spend desc, v.vendor_name asc`,
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       vendors: result.rows.map(r => ({
@@ -592,11 +599,12 @@ async function handleVendorSpend(req, res) {
 // restriction added.
 // ---------------------------------------------------------------
 
-async function handleListStaffForPayroll(req, res) {
+async function handleListStaffForPayroll(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      `select id, username, display_name, role from users order by coalesce(display_name, username) asc`
+      `select id, username, display_name, role from users where organization_id = $1 order by coalesce(display_name, username) asc`,
+      [organizationId]
     );
     return res.status(200).json({
       staff: result.rows.map(r => ({ id: r.id, name: r.display_name || r.username, role: r.role })),
@@ -607,7 +615,7 @@ async function handleListStaffForPayroll(req, res) {
   }
 }
 
-async function handleListPayroll(req, res) {
+async function handleListPayroll(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
@@ -619,7 +627,7 @@ async function handleListPayroll(req, res) {
        join users u on u.id = p.user_id
        where p.organization_id = $1
        order by p.status asc, p.next_pay_date asc`,
-      [ORG_ID]
+      [organizationId]
     );
     return res.status(200).json({
       payroll: result.rows.map(r => ({
@@ -637,7 +645,7 @@ async function handleListPayroll(req, res) {
   }
 }
 
-async function handleAddPayrollEntry(req, res) {
+async function handleAddPayrollEntry(req, res, organizationId) {
   const { userId, salaryAmount, paymentMethod, accountHolderName, accountNumber, bankName, frequency, nextPayDate } = req.body || {};
   if (!userId) return res.status(400).json({ error: "Choose a real staff member." });
   const salary = Number(salaryAmount);
@@ -648,9 +656,13 @@ async function handleAddPayrollEntry(req, res) {
   if (!nextPayDate) return res.status(400).json({ error: "A next pay date is required." });
 
   try {
-    const { insert } = await import("../lib/postgresClient.js");
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    const staffMember = await getById("users", userId).catch(() => null);
+    if (!staffMember || staffMember.organization_id !== organizationId) {
+      return res.status(400).json({ error: "Choose a real staff member from this organization." });
+    }
     const entry = await insert("payroll_entries", {
-      organization_id: ORG_ID, user_id: userId, salary_amount: salary,
+      organization_id: organizationId, user_id: userId, salary_amount: salary,
       payment_method: paymentMethod, account_holder_name: accountHolderName.trim(),
       account_number: accountNumber.trim(), bank_name: bankName || null,
       frequency: frequency === "annual" ? "annual" : "monthly",
@@ -670,12 +682,13 @@ async function handleAddPayrollEntry(req, res) {
   }
 }
 
-async function handlePausePayrollEntry(req, res) {
+async function handlePausePayrollEntry(req, res, organizationId) {
   const { payrollEntryId, status } = req.body || {};
   if (!payrollEntryId || !["active", "paused"].includes(status)) return res.status(400).json({ error: "payrollEntryId and a real status (active/paused) required" });
   try {
     const { update } = await import("../lib/postgresClient.js");
-    await update("payroll_entries", payrollEntryId, { status, updated_at: new Date().toISOString() });
+    const result = await update("payroll_entries", payrollEntryId, { status, updated_at: new Date().toISOString() }, organizationId);
+    if (!result) return res.status(404).json({ error: "Payroll entry not found." });
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("pausePayrollEntry error:", err);
@@ -688,20 +701,20 @@ async function handlePausePayrollEntry(req, res) {
 // real pay date based on frequency - confirmed directly as the
 // simplest honest approach given FAM has no real bank-data access to
 // verify a payment actually landed otherwise.
-async function handleMarkPayrollPaid(req, res, recordedBy) {
+async function handleMarkPayrollPaid(req, res, recordedBy, organizationId) {
   const { payrollEntryId } = req.body || {};
   if (!payrollEntryId) return res.status(400).json({ error: "payrollEntryId required" });
 
   try {
     const { getById, update, insert, query: pgQuery } = await import("../lib/postgresClient.js");
     const entry = await getById("payroll_entries", payrollEntryId).catch(() => null);
-    if (!entry) return res.status(404).json({ error: "Payroll entry not found." });
+    if (!entry || entry.organization_id !== organizationId) return res.status(404).json({ error: "Payroll entry not found." });
 
     const userResult = await pgQuery("select display_name, username from users where id = $1", [entry.user_id]);
     const employeeName = userResult.rows[0]?.display_name || userResult.rows[0]?.username || "Employee";
 
     await insert("transactions", {
-      organization_id: ORG_ID, type: "expense", category_id: null,
+      organization_id: organizationId, type: "expense", category_id: null,
       amount: entry.salary_amount, transaction_date: entry.next_pay_date,
       description: `Salary — ${employeeName}`, recorded_by: recordedBy,
     });
@@ -715,7 +728,7 @@ async function handleMarkPayrollPaid(req, res, recordedBy) {
       next_pay_date: nextDue.toISOString().split("T")[0],
       reminder_sent_for: null,
       updated_at: new Date().toISOString(),
-    });
+    }, organizationId);
 
     return res.status(200).json({ success: true, nextPayDate: nextDue.toISOString().split("T")[0] });
   } catch (err) {
@@ -734,18 +747,23 @@ async function handleMarkPayrollPaid(req, res, recordedBy) {
 // ---------------------------------------------------------------
 
 const DOCUMENT_TABLES = {
-  transaction: { table: "transaction_documents", fk: "transaction_id" },
-  bill: { table: "bill_documents", fk: "bill_id" },
-  liability: { table: "liability_documents", fk: "liability_id" },
+  transaction: { table: "transaction_documents", fk: "transaction_id", parentTable: "transactions" },
+  bill: { table: "bill_documents", fk: "bill_id", parentTable: "bills" },
+  liability: { table: "liability_documents", fk: "liability_id", parentTable: "liabilities" },
 };
 
-async function handleListDocuments(req, res) {
+async function handleListDocuments(req, res, organizationId) {
   const { recordType, recordId } = req.query;
   const config = DOCUMENT_TABLES[recordType];
   if (!config || !recordId) return res.status(400).json({ error: "A real recordType (transaction/bill/liability) and recordId are required." });
 
   try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, getById } = await import("../lib/postgresClient.js");
+    const parent = await getById(config.parentTable, recordId).catch(() => null);
+    if (!parent || parent.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Record not found." });
+    }
+
     const { getSignedUrlSafe } = await import("../lib/storageClient.js");
     const result = await pgQuery(
       `select id, url, filename, uploaded_at from ${config.table} where ${config.fk} = $1 order by uploaded_at desc`,
