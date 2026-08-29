@@ -6055,41 +6055,75 @@ async function submitDeactivateStaff(username) {
 }
 
 // --- Report a Breakdown (moved in-app, confirmed directly: client-specific, not outside the system) ---
+// Confirmed directly: rebuilt to genuinely match the original public
+// form's full richness, not a stripped-down version - the Other
+// fallback on floor/room, the full category descriptions, separate
+// camera/file photo capture, and the real, downloadable QR code for
+// printed signage all carried over. The QR code now links back into
+// the app itself (auto-opening this same modal once logged in),
+// rather than to a public page with no login at all.
 
 let reportBreakdownLocations = [];
+let reportBreakdownPhotoFile = null;
+
+const REPORT_CATEGORY_OPTIONS = [
+  { value: 'Electrical', label: 'Electrical — lights, power, sockets, breakers, generator/UPS, fire alarm & smoke detectors' },
+  { value: 'Mechanical', label: 'Mechanical — AC/cooling, water/plumbing, leaks, lifts, fire sprinklers' },
+  { value: 'NonTechnical', label: 'Non-technical — furniture, fixtures, general building upkeep' },
+  { value: 'TenantRelated', label: 'Tenant-related — tenant complaints, retail unit issues' },
+];
 
 async function openReportBreakdownModal() {
+  reportBreakdownPhotoFile = null;
   const overlay = document.createElement('div');
   overlay.id = 'reportBreakdownOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const qrTargetUrl = `${window.location.origin}${window.location.pathname}?openReportBreakdown=true`;
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(qrTargetUrl)}`;
   overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">🚨 Report a Breakdown</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Something wrong somewhere? Report it directly — no asset ID needed, just where and what.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Something wrong somewhere? Report it directly — the technical team is notified the moment you submit.</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor *</label>
-      <select id="rb_floor" onchange="onReportBreakdownFloorChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="rb_floor" onchange="onReportBreakdownFloorChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">Loading…</option>
       </select>
+      <input id="rb_floor_other" type="text" placeholder="Type the floor" style="display:none;width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room / Zone</label>
-      <select id="rb_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="rb_room" onchange="onReportBreakdownRoomChange()" disabled style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">Pick a floor first</option>
       </select>
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category *</label>
+      <input id="rb_room_other" type="text" placeholder="Type the room/zone" style="display:none;width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What kind of issue is it? *</label>
       <select id="rb_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-        <option value="Electrical">Electrical</option>
-        <option value="Mechanical">Mechanical</option>
-        <option value="NonTechnical">Non-Technical / General</option>
-        <option value="TenantRelated">Tenant-Related</option>
+        ${REPORT_CATEGORY_OPTIONS.map(c => `<option value="${c.value}">${escapeHtml(c.label)}</option>`).join('')}
       </select>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What's wrong? *</label>
-      <textarea id="rb_description" rows="4" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box"></textarea>
+      <textarea id="rb_description" rows="4" placeholder="Describe what you're seeing — noise, leak, not working, etc." style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box"></textarea>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Photo (optional)</label>
-      <input id="rb_photo" type="file" accept="image/*" style="width:100%;margin-bottom:14px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">A quick picture helps the team understand the issue faster</div>
+      <div style="display:flex;gap:10px;margin-bottom:6px">
+        <button type="button" onclick="document.getElementById('rb_photo_camera').click()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-size:12.5px;font-weight:600;cursor:pointer">📷 Take Photo</button>
+        <button type="button" onclick="document.getElementById('rb_photo_file').click()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-size:12.5px;font-weight:600;cursor:pointer">🖼️ Choose File</button>
+      </div>
+      <input id="rb_photo_camera" type="file" accept="image/*" capture="environment" style="display:none" onchange="onReportBreakdownPhotoSelected(this)">
+      <input id="rb_photo_file" type="file" accept="image/*" style="display:none" onchange="onReportBreakdownPhotoSelected(this)">
+      <div id="rb_photo_name" style="font-size:11px;color:var(--muted);margin-bottom:14px"></div>
       <div id="rb_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;margin-bottom:16px">
         <button onclick="document.getElementById('reportBreakdownOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
         <button id="rb_submit" onclick="submitReportBreakdown()" style="flex:1;padding:9px;border:none;border-radius:8px;background:#B0431E;color:#fff;font-weight:600;font-size:13px;cursor:pointer">Submit Report</button>
       </div>
+      <details style="text-align:center;border-top:1px solid var(--border);padding-top:12px">
+        <summary style="font-size:11px;color:var(--muted);cursor:pointer">Printing signage for this location?</summary>
+        <div style="margin-top:10px">
+          <img src="${qrImageUrl}" alt="QR code to open this Report a Breakdown form" style="width:130px;height:130px;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px">Scanning this opens FAM to this same form — a real login is still required to submit.</div>
+          <div style="margin-top:6px">
+            <button type="button" onclick="downloadReportBreakdownQr('${qrImageUrl}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download QR Code</button>
+          </div>
+        </div>
+      </details>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -6098,54 +6132,103 @@ async function openReportBreakdownModal() {
     const data = await resp.json();
     reportBreakdownLocations = data.floors || [];
     const floorSelect = document.getElementById('rb_floor');
-    floorSelect.innerHTML = reportBreakdownLocations.length === 0
-      ? '<option value="">No floors on record yet</option>'
-      : '<option value="">Select a floor…</option>' + reportBreakdownLocations.map(f => `<option value="${escapeHtml(f.floor)}">${escapeHtml(f.floor)}</option>`).join('');
+    floorSelect.innerHTML = '<option value="" disabled selected>Choose one…</option>' +
+      reportBreakdownLocations.map(f => `<option value="${escapeHtml(f.floor)}">${escapeHtml(f.floor)}</option>`).join('') +
+      '<option value="__other__">Other (not listed)</option>';
   } catch (err) {
     const floorSelect = document.getElementById('rb_floor');
-    if (floorSelect) floorSelect.innerHTML = '<option value="">Could not load floors</option>';
+    if (floorSelect) floorSelect.innerHTML = '<option value="">Could not load floors</option><option value="__other__">Other (not listed)</option>';
+  }
+}
+
+async function downloadReportBreakdownQr(qrImageUrl) {
+  try {
+    const resp = await fetch(qrImageUrl);
+    if (!resp.ok) throw new Error('QR service returned ' + resp.status);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = 'report-a-breakdown-qr.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } catch (err) {
+    alert('Could not download QR code: ' + err.message);
   }
 }
 
 function onReportBreakdownFloorChange() {
-  const floor = document.getElementById('rb_floor').value;
+  const floorVal = document.getElementById('rb_floor').value;
+  const floorOther = document.getElementById('rb_floor_other');
   const roomSelect = document.getElementById('rb_room');
-  const match = reportBreakdownLocations.find(f => f.floor === floor);
+  const roomOther = document.getElementById('rb_room_other');
+
+  floorOther.style.display = floorVal === '__other__' ? 'block' : 'none';
+  roomOther.style.display = 'none';
+  roomOther.value = '';
+
+  if (floorVal === '__other__') {
+    roomSelect.innerHTML = '<option value="" selected>—</option><option value="__other__">Other (not listed)</option>';
+    roomSelect.disabled = false;
+    return;
+  }
+
+  const match = reportBreakdownLocations.find(f => f.floor === floorVal);
   const rooms = match ? match.rooms : [];
-  roomSelect.innerHTML = rooms.length === 0
-    ? '<option value="">No specific rooms listed</option>'
-    : '<option value="">Select a room/zone…</option>' + rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('');
+  roomSelect.innerHTML = '<option value="" selected>Choose one… (optional)</option>' +
+    rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('') +
+    '<option value="__other__">Other (not listed)</option>';
+  roomSelect.disabled = false;
+}
+
+function onReportBreakdownRoomChange() {
+  const roomVal = document.getElementById('rb_room').value;
+  document.getElementById('rb_room_other').style.display = roomVal === '__other__' ? 'block' : 'none';
+}
+
+function onReportBreakdownPhotoSelected(input) {
+  reportBreakdownPhotoFile = (input.files && input.files[0]) || null;
+  document.getElementById('rb_photo_name').textContent = reportBreakdownPhotoFile ? `✓ ${reportBreakdownPhotoFile.name}` : '';
+}
+
+function getReportBreakdownFloor() {
+  const sel = document.getElementById('rb_floor').value;
+  return sel === '__other__' ? document.getElementById('rb_floor_other').value.trim() : sel;
+}
+function getReportBreakdownRoom() {
+  const sel = document.getElementById('rb_room').value;
+  return sel === '__other__' ? document.getElementById('rb_room_other').value.trim() : sel;
 }
 
 async function submitReportBreakdown() {
-  const floor = document.getElementById('rb_floor').value;
-  const roomZone = document.getElementById('rb_room').value;
+  const floor = getReportBreakdownFloor();
+  const roomZone = getReportBreakdownRoom();
   const category = document.getElementById('rb_category').value;
   const description = document.getElementById('rb_description').value.trim();
-  const photoInput = document.getElementById('rb_photo');
   const errorBox = document.getElementById('rb_error');
   const btn = document.getElementById('rb_submit');
   errorBox.style.display = 'none';
 
-  if (!floor) { errorBox.textContent = 'Pick a floor.'; errorBox.style.display = 'block'; return; }
+  if (!floor) { errorBox.textContent = 'Choose a floor (or select "Other" and type it in).'; errorBox.style.display = 'block'; return; }
   if (!description) { errorBox.textContent = "Describe what's wrong."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Submitting…';
 
   const body = { reportBreakdown: true, floor, roomZone, category, description };
 
-  const photoFile = photoInput.files && photoInput.files[0];
-  if (photoFile) {
+  if (reportBreakdownPhotoFile) {
     try {
       const photoBase64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(',')[1]);
         reader.onerror = reject;
-        reader.readAsDataURL(photoFile);
+        reader.readAsDataURL(reportBreakdownPhotoFile);
       });
       body.photoBase64 = photoBase64;
-      body.photoFilename = photoFile.name;
-      body.photoContentType = photoFile.type;
+      body.photoFilename = reportBreakdownPhotoFile.name;
+      body.photoContentType = reportBreakdownPhotoFile.type;
     } catch (err) {
       // Non-fatal — submit without the photo rather than block the report entirely
     }
@@ -6167,6 +6250,7 @@ async function submitReportBreakdown() {
     btn.disabled = false; btn.textContent = 'Submit Report';
   }
 }
+
 
 function openAddClientModal() {
   const overlay = document.createElement('div');
@@ -13676,7 +13760,7 @@ async function loadAssetsAndInit() {
       fetch('/api/get-assets?exchangeRates=true'),
     ]);
     if (assetsResp.status === 401) {
-      window.location.href = '/login';
+      window.location.href = '/login' + window.location.search;
       return;
     }
     if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
@@ -13756,6 +13840,19 @@ async function loadAssetsAndInit() {
       switchTab('workorders');
     } else {
       renderDashboard();
+    }
+
+    // Confirmed directly: scanning a printed QR code for a specific
+    // location should open this same form directly, not just land on
+    // the dashboard - a real login is still required first, which is
+    // exactly why this only fires here, after loadAssetsAndInit has
+    // already confirmed a valid session.
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('openReportBreakdown') === 'true') {
+      openReportBreakdownModal();
+      urlParams.delete('openReportBreakdown');
+      const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+      window.history.replaceState({}, '', cleanUrl);
     }
   } catch (err) {
     if (loadingEl) {
