@@ -1138,10 +1138,11 @@ export default async function handler(req, res) {
     // here at the same time as everything else needed at login, not a
     // separate round trip the frontend has to remember to make.
     const { query: pgQuery } = await import("../lib/postgresClient.js");
-    const orgResult = await pgQuery("select finance_enabled from organizations limit 1").catch(() => null);
+    const orgResult = await pgQuery("select name, finance_enabled from organizations where id = $1", [session.org]).catch(() => null);
     const financeEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].finance_enabled : true;
+    const organizationName = orgResult && orgResult.rows[0] ? orgResult.rows[0].name : "";
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org });
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org, organizationName });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });

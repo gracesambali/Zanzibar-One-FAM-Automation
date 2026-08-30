@@ -1654,3 +1654,32 @@ create table if not exists staff_activity_log (
   created_at      timestamptz not null default now()
 );
 create index if not exists idx_staff_activity_log_org_created on staff_activity_log (organization_id, created_at desc);
+
+-- ============================================================
+-- Finance - Invoices. Confirmed directly: every invoice generated
+-- carries real payment terms - 40% advance, 60% on completion, and
+-- 30 days validity - as its real default, editable per invoice.
+-- Line items stored as real, structured jsonb so each row's
+-- description/quantity/unit price/amount survives exactly, not
+-- flattened into free text.
+-- ============================================================
+create table if not exists invoices (
+  id                    uuid primary key default gen_random_uuid(),
+  organization_id       uuid not null references organizations(id),
+  invoice_number        text not null,
+  client_name           text not null,
+  client_details        text,
+  issue_date            date not null default current_date,
+  due_date              date not null,
+  advance_percent       numeric not null default 40,
+  completion_percent    numeric not null default 60,
+  line_items            jsonb not null default '[]',
+  subtotal              numeric not null default 0,
+  total                 numeric not null default 0,
+  currency              text not null default 'TZS',
+  notes                 text,
+  created_by            text,
+  created_at            timestamptz not null default now(),
+  unique (organization_id, invoice_number)
+);
+create index if not exists idx_invoices_org_created on invoices (organization_id, created_at desc);
