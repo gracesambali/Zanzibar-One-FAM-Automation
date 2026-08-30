@@ -30,6 +30,20 @@ import {
 
 const RESET_TOKEN_TTL_MINUTES = 30;
 
+// Shared by every real action on Client Management - a real,
+// attributed entry for every client onboarded, staff account added,
+// edited, or removed. Failure here is deliberately non-fatal - the
+// real action (creating the account, etc.) has already succeeded by
+// the time this is called, and a missing log entry shouldn't undo it.
+async function logStaffActivity(organizationId, action, details, performedBy) {
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("staff_activity_log", { organization_id: organizationId, action, details, performed_by: performedBy });
+  } catch (err) {
+    console.error("logStaffActivity failed (non-fatal):", err.message);
+  }
+}
+
 export default async function handler(req, res) {
   // DELETE (or any non-POST) from /api/login = logout
   if (req.method === "DELETE" || (req.method === "POST" && req.body && req.body.action === "logout")) {
@@ -53,8 +67,14 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "createStaffAccount") {
     return handleCreateStaffAccount(req, res);
   }
+  if (req.body && req.body.action === "editStaffAccount") {
+    return handleEditStaffAccount(req, res);
+  }
   if (req.body && req.body.action === "deactivateStaffAccount") {
     return handleDeactivateStaffAccount(req, res);
+  }
+  if (req.body && req.body.action === "listStaffActivityLog") {
+    return handleListStaffActivityLog(req, res);
   }
   if (req.body && req.body.action === "createClient") {
     return handleCreateClient(req, res);
@@ -162,6 +182,7 @@ async function handleCreateStaffAccount(req, res) {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),
       role, password_hash: hash, password_salt: salt, organization_id: session.org,
     });
+    await logStaffActivity(session.org, "Staff Added", `${username.trim()} (${ROLES[role]?.label || role})`, session.u);
     return res.status(200).json({ success: true });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `Username "${username.trim()}" already exists.` : err.message;
@@ -182,12 +203,12 @@ async function handleListStaffAccounts(req, res) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      "select username, email, display_name, role, password_hash, active from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
+      "select username, email, phone, display_name, role, password_hash, active from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
       [session.org]
     );
     return res.status(200).json({
       accounts: result.rows.map(u => ({
-        username: u.username, email: u.email, displayName: u.display_name,
+        username: u.username, email: u.email, phone: u.phone, displayName: u.display_name,
         role: u.role, hasPassword: !!u.password_hash, active: u.active,
       })),
     });
@@ -226,9 +247,89 @@ async function handleDeactivateStaffAccount(req, res) {
 
     const { update } = await import("../lib/postgresClient.js");
     await update("users", target.id, { active: false, deactivated_by: session.u });
+    await logStaffActivity(session.org, "Staff Removed", `${target.username} (${ROLES[target.role]?.label || target.role})`, session.u);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deactivateStaffAccount error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Real edit, not just create-or-remove - display name, email, phone,
+// and role can all change after the account exists. Username stays
+// fixed, since it's the login identifier; password changes still go
+// through the existing reset flow, not this one.
+async function handleEditStaffAccount(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can edit a staff account." });
+  }
+
+  const { username, displayName, email, phone, role } = req.body || {};
+  if (!username) return res.status(400).json({ error: "username required" });
+  if (role && !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
+
+  try {
+    const target = await findUserByUsername(username);
+    // Confirmed directly: same real ownership check as removing a
+    // staff account - a client's own admin can only edit their own
+    // client's staff, never another client's.
+    if (!target || target.organization_id !== session.org) {
+      return res.status(404).json({ error: "Account not found." });
+    }
+
+    const fields = {};
+    const changes = [];
+    if (displayName !== undefined && displayName.trim() !== (target.display_name || "")) {
+      fields.display_name = displayName.trim(); changes.push(`name: "${target.display_name || ""}" → "${displayName.trim()}"`);
+    }
+    if (email !== undefined && (email || null) !== (target.email || null)) {
+      fields.email = email || null; changes.push(`email: "${target.email || "—"}" → "${email || "—"}"`);
+    }
+    if (phone !== undefined && (phone || null) !== (target.phone || null)) {
+      fields.phone = phone || null; changes.push(`phone: "${target.phone || "—"}" → "${phone || "—"}"`);
+    }
+    if (role !== undefined && role !== target.role) {
+      fields.role = role; changes.push(`role: "${ROLES[target.role]?.label || target.role}" → "${ROLES[role]?.label || role}"`);
+    }
+
+    if (Object.keys(fields).length === 0) {
+      return res.status(200).json({ success: true, message: "No changes to save." });
+    }
+
+    const { update } = await import("../lib/postgresClient.js");
+    const result = await update("users", target.id, fields, session.org);
+    if (!result) return res.status(404).json({ error: "Account not found." });
+
+    await logStaffActivity(session.org, "Staff Edited", `${target.username} — ${changes.join(", ")}`, session.u);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("editStaffAccount error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// A real, attributed record of every client-management action taken
+// for this organization - shown beneath the staff table itself.
+async function handleListStaffActivityLog(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can view this activity log." });
+  }
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      "select action, details, performed_by, created_at from staff_activity_log where organization_id = $1 order by created_at desc limit 50",
+      [session.org]
+    );
+    return res.status(200).json({
+      entries: result.rows.map(r => ({ action: r.action, details: r.details || "", performedBy: r.performed_by || "", createdAt: r.created_at })),
+    });
+  } catch (err) {
+    console.error("listStaffActivityLog error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
@@ -270,6 +371,8 @@ async function handleCreateClient(req, res) {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),
       role, password_hash: hash, password_salt: salt, organization_id: newOrg.id,
     });
+    await logStaffActivity(MASTER_ORG_ID, "Client Onboarded", `${newOrg.name} — first user: ${username.trim()} (${ROLES[role]?.label || role})`, session.u);
+    await logStaffActivity(newOrg.id, "Client Onboarded", `Account created by the Master System`, session.u);
     return res.status(200).json({
       success: true,
       client: { id: newOrg.id, name: newOrg.name },
