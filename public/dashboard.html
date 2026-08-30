@@ -5720,6 +5720,7 @@ async function renderFinancePayroll() {
 
 let currentReportPeriod = 'monthly';
 let currentReportOffset = 0;
+let currentFinanceReportData = null;
 
 const REPORT_PERIOD_LABELS = {
   weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly',
@@ -5733,13 +5734,15 @@ async function renderFinanceReports() {
     const resp = await fetch(`/api/finance?periodReport=${currentReportPeriod}&offset=${currentReportOffset}`);
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Could not load report');
+    currentFinanceReportData = data; // cached so the Download button doesn't need a second fetch
 
     const catColors = ['var(--navy)', 'var(--green)', 'var(--red)', 'var(--amber, #B45309)', '#7C3AED', '#0891B2', 'var(--muted)'];
     const categoryBreakdown = data.categoryBreakdown || [];
     const catTotal = categoryBreakdown.reduce((s, c) => s + c.total, 0);
 
     el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <select onchange="currentReportPeriod=this.value;currentReportOffset=0;renderFinanceReports()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600">
           ${Object.entries(REPORT_PERIOD_LABELS).map(([k, label]) => `<option value="${k}"${currentReportPeriod===k?' selected':''}>${label}</option>`).join('')}
         </select>
@@ -5748,6 +5751,8 @@ async function renderFinanceReports() {
           <div style="font-size:13px;font-weight:700;color:var(--navy);min-width:170px;text-align:center">${escapeHtml(data.label)}</div>
           <button onclick="currentReportOffset=Math.max(0,currentReportOffset-1);renderFinanceReports()" ${currentReportOffset===0?'disabled style="opacity:0.3"':''} style="padding:6px 10px;border:none;background:none;cursor:${currentReportOffset===0?'default':'pointer'};font-size:13px;color:var(--navy);font-weight:600">▶</button>
         </div>
+        </div>
+        <button onclick="downloadFinanceReport()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download</button>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
@@ -5793,6 +5798,77 @@ async function renderFinanceReports() {
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
+}
+
+// Matches the exact same print-to-PDF pattern already established for
+// generateWeeklyReport/generateMonthlyReport above - a real, styled
+// print window with a "Download as PDF" button that calls the
+// browser's own print dialog, not a separate PDF library.
+function buildFinanceReportHtml(data) {
+  const categoryBreakdown = data.categoryBreakdown || [];
+  const breakdownRows = categoryBreakdown.length === 0
+    ? `<tr><td colspan="2" class="empty">No expenses recorded in this period.</td></tr>`
+    : categoryBreakdown.map(c => `<tr><td>${escapeHtml(c.category)}</td><td>${formatCurrency(c.total)}</td></tr>`).join('');
+
+  return `
+    <html><head><title>Finance Report — ${data.label} — ${CLIENT_CONFIG.clientName}</title>
+    <style>
+      @page { size: A4; margin: 16mm; }
+      body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 14px; max-width: 720px; margin: 0 auto; }
+      .report-header { display:flex; align-items:center; gap:14px; margin-bottom:12px; }
+      .report-header img { width:46px; height:46px; object-fit:contain; }
+      h1 { color:#1A3566; font-size:22px; margin-bottom:2px; }
+      .sub { color:#6B7280; font-size:13px; margin-bottom:16px; }
+      .kpi-row { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+      .kpi { flex:1; min-width:120px; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 12px; }
+      .kpi-val { font-size:19px; font-weight:700; color:#1A3566; }
+      .kpi-label { font-size:11px; color:#6B7280; }
+      h2 { color:#1A3566; font-size:15px; margin:20px 0 8px; }
+      .report-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; margin-bottom:10px; }
+      .report-table th { background:#1A3566; color:#fff; text-align:left; padding:7px 10px; }
+      .report-table td { padding:6px 10px; border-bottom:1px solid #E2E6ED; }
+      .report-table tr:nth-child(even) { background:#F8FAFC; }
+      .empty { color:#6B7280; font-style:italic; padding:8px 0; font-size:13px; }
+      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      @media print { .download-btn { display:none; } }
+    </style></head>
+    <body>
+      <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
+      <div class="report-header">
+        <img src="/logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
+        <div>
+          <h1>Finance Report</h1>
+          <div class="sub" style="margin-bottom:0">Prepared for ${CLIENT_CONFIG.clientName} · ${escapeHtml(data.label)}</div>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.totalIncome)}</div><div class="kpi-label">Income</div></div>
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.totalExpense)}</div><div class="kpi-label">Expense</div></div>
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.netPosition)}</div><div class="kpi-label">Net Position</div></div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.billsPaid.total)}</div><div class="kpi-label">Bills Paid (${data.billsPaid.count})</div></div>
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.payrollPaid.total)}</div><div class="kpi-label">Payroll Paid (${data.payrollPaid.count})</div></div>
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.liabilityPayments.total)}</div><div class="kpi-label">Loan Payments (${data.liabilityPayments.count})</div></div>
+      </div>
+
+      <h2>Expense by Category</h2>
+      <table class="report-table">
+        <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
+        <thead><tr><th>Category</th><th>Total</th></tr></thead>
+        <tbody>${breakdownRows}</tbody>
+      </table>
+    </body></html>
+  `;
+}
+
+function downloadFinanceReport() {
+  if (!currentFinanceReportData) { alert('Report data is still loading — try again in a moment.'); return; }
+  const win = window.open('', '_blank', 'width=800,height=1200');
+  win.document.write(buildFinanceReportHtml(currentFinanceReportData));
+  win.document.close();
+  win.focus();
 }
 
 async function openAddPayrollModal() {
