@@ -57,6 +57,7 @@ export default async function handler(req, res) {
     if (req.query.payroll === "true") return handleListPayroll(req, res, session.org);
     if (req.query.staffForPayroll === "true") return handleListStaffForPayroll(req, res, session.org);
     if (req.query.documents === "true") return handleListDocuments(req, res, session.org);
+    if (req.query.invoices === "true") return handleListInvoices(req, res, session.org);
     return res.status(400).json({ error: "Unknown GET request" });
   }
 
@@ -66,6 +67,7 @@ export default async function handler(req, res) {
     if (action === "addTransaction") return handleAddTransaction(req, res, session.u, session.org);
     if (action === "uploadTransactionDocument") return handleUploadDoc(req, res, "transactions", "transaction_documents", "transaction_id", session.org);
     if (action === "addBill") return handleAddBill(req, res, session.org);
+    if (action === "createInvoice") return handleCreateInvoice(req, res, session.u, session.org);
     if (action === "uploadBillDocument") return handleUploadDoc(req, res, "bills", "bill_documents", "bill_id", session.org);
     if (action === "markBillPaid") return handleMarkBillPaid(req, res, session.u, session.org);
     if (action === "addLiability") return handleAddLiability(req, res, session.org);
@@ -221,6 +223,106 @@ async function handleListBills(req, res, organizationId) {
     });
   } catch (err) {
     console.error("finance bills read error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly: every invoice generated carries real payment
+// terms as its default - 40% advance, 60% on completion, 30 days
+// validity - editable per invoice rather than hardcoded, since a
+// future invoice might need different terms.
+async function handleCreateInvoice(req, res, createdBy, organizationId) {
+  const {
+    clientName, clientDetails, lineItems, issueDate,
+    validityDays, advancePercent, completionPercent, currency, notes,
+  } = req.body || {};
+
+  if (!clientName || !clientName.trim()) return res.status(400).json({ error: "A client name is required." });
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return res.status(400).json({ error: "At least one line item is required." });
+
+  const cleanItems = lineItems.map(li => ({
+    description: String(li.description || "").trim(),
+    quantity: Number(li.quantity) || 0,
+    unitPrice: Number(li.unitPrice) || 0,
+  })).filter(li => li.description);
+  if (cleanItems.length === 0) return res.status(400).json({ error: "At least one line item with a real description is required." });
+
+  const subtotal = cleanItems.reduce((sum, li) => sum + li.quantity * li.unitPrice, 0);
+  const total = subtotal;
+
+  const realIssueDate = issueDate || new Date().toISOString().split("T")[0];
+  const realValidityDays = Number(validityDays) > 0 ? Number(validityDays) : 30;
+  const dueDateObj = new Date(realIssueDate);
+  dueDateObj.setDate(dueDateObj.getDate() + realValidityDays);
+  const realDueDate = dueDateObj.toISOString().split("T")[0];
+
+  const realAdvancePercent = advancePercent !== undefined && advancePercent !== null ? Number(advancePercent) : 40;
+  const realCompletionPercent = completionPercent !== undefined && completionPercent !== null ? Number(completionPercent) : 60;
+
+  try {
+    const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
+
+    // Real, sequential per-organization numbering - INV-0001, -0002...
+    // A collision here (two invoices created at the exact same
+    // instant) fails loudly against the table's own unique
+    // constraint rather than silently duplicating a number, which is
+    // an acceptable trade-off at this scale for a manually-triggered
+    // action.
+    const countResult = await pgQuery("select count(*) from invoices where organization_id = $1", [organizationId]);
+    const nextNumber = Number(countResult.rows[0].count) + 1;
+    const invoiceNumber = `INV-${String(nextNumber).padStart(4, "0")}`;
+
+    const created = await insert("invoices", {
+      organization_id: organizationId,
+      invoice_number: invoiceNumber,
+      client_name: clientName.trim(),
+      client_details: clientDetails ? clientDetails.trim() : null,
+      issue_date: realIssueDate,
+      due_date: realDueDate,
+      advance_percent: realAdvancePercent,
+      completion_percent: realCompletionPercent,
+      line_items: JSON.stringify(cleanItems),
+      subtotal, total,
+      currency: currency || "TZS",
+      notes: notes ? notes.trim() : null,
+      created_by: createdBy,
+    });
+
+    return res.status(200).json({
+      success: true,
+      invoice: {
+        id: created.id, invoiceNumber, clientName: clientName.trim(), clientDetails: clientDetails || "",
+        issueDate: realIssueDate, dueDate: realDueDate,
+        advancePercent: realAdvancePercent, completionPercent: realCompletionPercent,
+        lineItems: cleanItems, subtotal, total, currency: currency || "TZS", notes: notes || "",
+      },
+    });
+  } catch (err) {
+    console.error("createInvoice error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleListInvoices(req, res, organizationId) {
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `select id, invoice_number, client_name, client_details, issue_date, due_date,
+              advance_percent, completion_percent, line_items, subtotal, total, currency, notes
+       from invoices where organization_id = $1 order by created_at desc`,
+      [organizationId]
+    );
+    return res.status(200).json({
+      invoices: result.rows.map(r => ({
+        id: r.id, invoiceNumber: r.invoice_number, clientName: r.client_name, clientDetails: r.client_details || "",
+        issueDate: r.issue_date, dueDate: r.due_date,
+        advancePercent: Number(r.advance_percent), completionPercent: Number(r.completion_percent),
+        lineItems: r.line_items || [], subtotal: Number(r.subtotal), total: Number(r.total),
+        currency: r.currency, notes: r.notes || "",
+      })),
+    });
+  } catch (err) {
+    console.error("listInvoices error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
