@@ -51,6 +51,13 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   }
 
+  // Confirmed directly: genuinely public, no session at all - the
+  // login page itself needs this before anyone has logged in, to show
+  // the real organization's name rather than a raw slug or nothing.
+  if (req.method === "GET" && req.query.resolveOrgSlug === "true") {
+    return handleResolveOrgSlug(req, res);
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -345,6 +352,24 @@ async function handleListStaffActivityLog(req, res) {
 // pattern used for Gracing Ventures' own bootstrap.
 const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
 
+async function handleResolveOrgSlug(req, res) {
+  const slug = req.query.slug;
+  try {
+    const { getByColumn, getById } = await import("../lib/postgresClient.js");
+    // No slug at all resolves to the Master System itself - the
+    // real, existing default for a bare login with no client
+    // identified in the URL.
+    const org = slug && slug !== "master"
+      ? await getByColumn("organizations", "slug", slug).catch(() => null)
+      : await getById("organizations", MASTER_ORG_ID).catch(() => null);
+    if (!org) return res.status(404).json({ error: "Unknown organization." });
+    return res.status(200).json({ name: org.name });
+  } catch (err) {
+    console.error("resolveOrgSlug error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleCreateClient(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in." });
@@ -364,8 +389,22 @@ async function handleCreateClient(req, res) {
   if (!password || password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
 
   try {
-    const { insert } = await import("../lib/postgresClient.js");
-    const newOrg = await insert("organizations", { name: clientName.trim() });
+    const { insert, getByColumn } = await import("../lib/postgresClient.js");
+
+    // A real, readable slug derived from the client name, not the raw
+    // uuid - confirmed directly as the point of this, so the login
+    // link itself is something worth handing to a real person. Falls
+    // back to appending a number on a genuine collision (two clients
+    // with the same or very similar name).
+    let baseSlug = clientName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "") || "client";
+    let slug = baseSlug;
+    let suffix = 2;
+    while (await getByColumn("organizations", "slug", slug).catch(() => null)) {
+      slug = `${baseSlug}${suffix}`;
+      suffix++;
+    }
+
+    const newOrg = await insert("organizations", { name: clientName.trim(), slug });
     const { hash, salt } = hashPassword(password);
     const newUser = await insert("users", {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),
@@ -375,7 +414,7 @@ async function handleCreateClient(req, res) {
     await logStaffActivity(newOrg.id, "Client Onboarded", `Account created by the Master System`, session.u);
     return res.status(200).json({
       success: true,
-      client: { id: newOrg.id, name: newOrg.name },
+      client: { id: newOrg.id, name: newOrg.name, slug: newOrg.slug },
       firstUser: { username: newUser.username, role: newUser.role },
     });
   } catch (err) {
@@ -398,14 +437,14 @@ async function handleListClients(req, res) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      `select o.id, o.name, o.created_at, count(u.id) filter (where u.active) as active_user_count
+      `select o.id, o.name, o.slug, o.created_at, count(u.id) filter (where u.active) as active_user_count
        from organizations o
        left join users u on u.organization_id = o.id
-       group by o.id, o.name, o.created_at
+       group by o.id, o.name, o.slug, o.created_at
        order by o.created_at desc`
     );
     return res.status(200).json({
-      clients: result.rows.map(r => ({ id: r.id, name: r.name, createdAt: r.created_at, activeUserCount: Number(r.active_user_count) })),
+      clients: result.rows.map(r => ({ id: r.id, name: r.name, slug: r.slug, createdAt: r.created_at, activeUserCount: Number(r.active_user_count) })),
     });
   } catch (err) {
     console.error("listClients error:", err);

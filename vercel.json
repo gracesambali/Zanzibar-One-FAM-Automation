@@ -16,6 +16,7 @@
     { "source": "/pharmacy-portal.html", "destination": "/pharmacy-portal", "permanent": true }
   ],
   "rewrites": [
+    { "source": "/", "destination": "/login.html" },
     { "source": "/login", "destination": "/login.html" },
     { "source": "/dashboard", "destination": "/dashboard.html" },
     { "source": "/asset", "destination": "/asset.html" },

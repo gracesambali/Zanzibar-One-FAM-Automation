@@ -6384,9 +6384,15 @@ function renderStaffManagementTable() {
       </div>
       ${clientsCache.length === 0 ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No clients yet.</div>` :
         clientsCache.map(c => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border)">
-          <div style="font-size:13px;font-weight:600;color:var(--navy)">${escapeHtml(c.name)}</div>
-          <div style="font-size:11.5px;color:var(--muted)">${c.activeUserCount} active user${c.activeUserCount === 1 ? '' : 's'}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);gap:10px">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--navy)">${escapeHtml(c.name)}</div>
+            <div style="font-size:10.5px;color:var(--muted)">${escapeHtml(window.location.origin)}/login?org=${escapeHtml(c.slug || '')}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <div style="font-size:11.5px;color:var(--muted)">${c.activeUserCount} active user${c.activeUserCount === 1 ? '' : 's'}</div>
+            <button type="button" onclick="copyClientLoginLink('${(c.slug || '').replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Copy Link</button>
+          </div>
         </div>`).join('')}
     </div>` : ''}
 
@@ -6588,6 +6594,16 @@ function openAddClientModal() {
   document.body.appendChild(overlay);
 }
 
+async function copyClientLoginLink(slug) {
+  const url = `${window.location.origin}/login?org=${encodeURIComponent(slug)}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('Link copied.');
+  } catch (err) {
+    alert('Could not copy — here is the link:\n' + url);
+  }
+}
+
 async function submitAddClient() {
   const clientName = document.getElementById('client_name').value.trim();
   const username = document.getElementById('client_username').value.trim();
@@ -6612,6 +6628,8 @@ async function submitAddClient() {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create client');
     document.getElementById('addClientOverlay')?.remove();
+    const loginUrl = `${window.location.origin}/login?org=${encodeURIComponent(data.client.slug)}`;
+    alert(`Client created. Their real login link:\n\n${loginUrl}`);
     renderStaffManagement();
   } catch (err) {
     errorBox.textContent = err.message;

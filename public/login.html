@@ -37,7 +37,7 @@
       <div class="logo"><img src="/logo.png" alt="GVC"></div>
       <div>
         <h1>Facility Asset Manager</h1>
-        <div class="sub">Sign in to view your building's live data</div>
+        <div class="sub" id="orgSubtitle">Loading…</div>
       </div>
     </div>
 
@@ -69,6 +69,23 @@
   </div>
 
 <script>
+// Confirmed directly: the real organization's own name shows here
+// before anyone has logged in, resolved from a slug carried in the
+// URL itself (?org=<slug>) - no slug at all correctly means the
+// Master System, matching the real, existing default everywhere
+// else a session's own organization is determined.
+(async function resolveOrgSubtitle() {
+  const subtitleEl = document.getElementById('orgSubtitle');
+  const slug = new URLSearchParams(window.location.search).get('org') || '';
+  try {
+    const resp = await fetch(`/api/login?resolveOrgSlug=true&slug=${encodeURIComponent(slug)}`);
+    const data = await resp.json();
+    subtitleEl.textContent = resp.ok && data.name ? data.name : 'Sign in to view your building\'s live data';
+  } catch (err) {
+    subtitleEl.textContent = "Sign in to view your building's live data";
+  }
+})();
+
 // --- Password show/hide toggle ---
 const passwordInput = document.getElementById('password');
 const toggleBtn = document.getElementById('togglePassword');
