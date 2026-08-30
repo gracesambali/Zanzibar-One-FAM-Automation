@@ -1141,7 +1141,7 @@ export default async function handler(req, res) {
     const orgResult = await pgQuery("select finance_enabled from organizations limit 1").catch(() => null);
     const financeEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].finance_enabled : true;
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled });
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });
@@ -1590,6 +1590,7 @@ async function handlePublicQuickview(req, res) {
       nextService: row.next_service_due || "",
       checklist,
       history,
+      organizationId: row.organization_id || "",
       // No acquisitionCost, currentValue, or residualValue — never sent here.
     });
   } catch (err) {
