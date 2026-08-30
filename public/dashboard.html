@@ -6160,6 +6160,13 @@ async function openReportBreakdownModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">🚨 Report a Breakdown</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Something wrong somewhere? Report it directly — the technical team is notified the moment you submit.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Your Name *</label>
+      <input id="rb_reporter_name" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Your Role / Department</label>
+      <input id="rb_reporter_department" type="text" placeholder="e.g. Ward Nurse, Procurement" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Your Phone or Email</label>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">So the team can reach you, and so you'll get the "are you satisfied?" check once this is resolved</div>
+      <input id="rb_reporter_contact" type="text" placeholder="e.g. +255 7XX XXX XXX or you@email.com" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor *</label>
       <select id="rb_floor" onchange="onReportBreakdownFloorChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
         <option value="">Loading…</option>
@@ -6207,6 +6214,11 @@ async function openReportBreakdownModal() {
     const resp = await fetch('/api/work-orders?locations=true');
     const data = await resp.json();
     reportBreakdownLocations = data.floors || [];
+    if (data.reporter) {
+      document.getElementById('rb_reporter_name').value = data.reporter.name || '';
+      document.getElementById('rb_reporter_department').value = data.reporter.department || '';
+      document.getElementById('rb_reporter_contact').value = data.reporter.contact || '';
+    }
     const floorSelect = document.getElementById('rb_floor');
     floorSelect.innerHTML = '<option value="" disabled selected>Choose one…</option>' +
       reportBreakdownLocations.map(f => `<option value="${escapeHtml(f.floor)}">${escapeHtml(f.floor)}</option>`).join('') +
@@ -6279,6 +6291,9 @@ function getReportBreakdownRoom() {
 }
 
 async function submitReportBreakdown() {
+  const reporterName = document.getElementById('rb_reporter_name').value.trim();
+  const reporterDepartment = document.getElementById('rb_reporter_department').value.trim();
+  const reporterContact = document.getElementById('rb_reporter_contact').value.trim();
   const floor = getReportBreakdownFloor();
   const roomZone = getReportBreakdownRoom();
   const category = document.getElementById('rb_category').value;
@@ -6287,12 +6302,13 @@ async function submitReportBreakdown() {
   const btn = document.getElementById('rb_submit');
   errorBox.style.display = 'none';
 
+  if (!reporterName) { errorBox.textContent = 'Your name is required.'; errorBox.style.display = 'block'; return; }
   if (!floor) { errorBox.textContent = 'Choose a floor (or select "Other" and type it in).'; errorBox.style.display = 'block'; return; }
   if (!description) { errorBox.textContent = "Describe what's wrong."; errorBox.style.display = 'block'; return; }
 
   btn.disabled = true; btn.textContent = 'Submitting…';
 
-  const body = { reportBreakdown: true, floor, roomZone, category, description };
+  const body = { reportBreakdown: true, reporterName, reporterDepartment, reporterContact, floor, roomZone, category, description };
 
   if (reportBreakdownPhotoFile) {
     try {

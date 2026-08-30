@@ -14,7 +14,7 @@
 
 import { getSession, setSessionCookie } from "../lib/auth.js";
 import { getChecklistForWorkOrder } from "../lib/checklists.js";
-import { can } from "../lib/roles.js";
+import { can, ROLES } from "../lib/roles.js";
 import { getAssignedRole } from "../lib/routing.js";
 import { getAllStaffDirectory, getContactForUsername } from "../lib/staffDirectory.js";
 import { buildBeemRecipients } from "../lib/recipients.js";
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "GET" && req.query.locations === "true") {
-    return handleGetLocations(req, res, session.org);
+    return handleGetLocations(req, res, session.org, session.u);
   }
 
   if (req.method === "GET") {
@@ -2443,9 +2443,9 @@ function displayRoom(room) {
   return out;
 }
 
-async function handleGetLocations(req, res, organizationId) {
+async function handleGetLocations(req, res, organizationId, callerUsername) {
   try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, getByColumn } = await import("../lib/postgresClient.js");
     const result = await pgQuery("select floor_level, room_zone from components where organization_id = $1", [organizationId]);
 
     const floorMap = {};
@@ -2462,7 +2462,25 @@ async function handleGetLocations(req, res, organizationId) {
       rooms: Array.from(floorMap[floor]).sort(),
     }));
 
-    return res.status(200).json({ floors });
+    // Confirmed directly: the reporter's own real name, department
+    // (role), and phone/email pre-fill the report form from their
+    // actual profile - the same three fields the original public
+    // form asked for by hand, now sourced from data the system
+    // already has for a real, logged-in person rather than re-typed
+    // from scratch every time.
+    let reporter = null;
+    if (callerUsername) {
+      const user = await getByColumn("users", "username", callerUsername).catch(() => null);
+      if (user) {
+        reporter = {
+          name: user.display_name || user.username,
+          department: (ROLES[user.role] && ROLES[user.role].label) || user.role || "",
+          contact: user.phone || user.email || "",
+        };
+      }
+    }
+
+    return res.status(200).json({ floors, reporter });
   } catch (err) {
     console.error("handleGetLocations error:", err);
     return res.status(500).json({ error: err.message });
@@ -2470,16 +2488,26 @@ async function handleGetLocations(req, res, organizationId) {
 }
 
 async function handleReportBreakdown(req, res, reporterUsername, reporterRole, organizationId) {
-  const { floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  const { floor, roomZone, category, description, photoBase64, photoFilename, photoContentType, reporterName, reporterDepartment, reporterContact } = req.body || {};
   if (!floor || !description || !category) {
     return res.status(400).json({ error: "The floor, a category, and a description are required" });
   }
+
+  // Confirmed directly: falls back to the logged-in username/role if
+  // the pre-filled fields were somehow cleared, so a report can never
+  // be submitted with no attributable reporter at all - but the real,
+  // functional contact (phone/email) has no safe fallback, since a
+  // username isn't a real address the satisfaction-check email or SMS
+  // could actually reach.
+  const displayName = (reporterName && reporterName.trim()) || reporterUsername;
+  const department = (reporterDepartment && reporterDepartment.trim()) || reporterRole || "";
+  const contact = (reporterContact && reporterContact.trim()) || "";
 
   const assignedRole = REPORT_CATEGORY_TO_ROLE[category] || "Admin";
 
   try {
     const location = roomZone ? `${floor} — ${roomZone}` : floor;
-    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${reporterUsername}: "${description}"`;
+    const message = `STAFF-REPORTED ISSUE at ${location}. Reported by ${displayName}${department ? " (" + department + ")" : ""}: "${description}"`;
 
     const { insert, update } = await import("../lib/postgresClient.js");
     const woId = `WO-${Date.now()}`;
@@ -2494,11 +2522,11 @@ async function handleReportBreakdown(req, res, reporterUsername, reporterRole, o
       urgency: "REPORTED",
       created: new Date().toISOString(),
       last_reminder_sent: new Date().toISOString().split("T")[0],
-      notes: `Reported by ${reporterUsername} at ${location}: ${description}`,
-      reporter_contact: reporterUsername,
+      notes: `Reported by ${displayName}${department ? " (" + department + ")" : ""} at ${location}: ${description}`,
+      reporter_contact: contact || null,
       satisfaction_status: "Pending",
       maintenance_type: "Corrective",
-      activity_log: JSON.stringify([{ text: `🆕 Work order opened — reported by ${reporterUsername}`, by: reporterUsername, at: new Date().toISOString() }]),
+      activity_log: JSON.stringify([{ text: `🆕 Work order opened — reported by ${displayName}${department ? " (" + department + ")" : ""}`, by: reporterUsername, at: new Date().toISOString() }]),
       organization_id: organizationId,
     }).catch(e => { throw new Error("Could not create the work order: " + e.message); });
 
@@ -2548,10 +2576,10 @@ async function handleReportBreakdown(req, res, reporterUsername, reporterRole, o
               <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
                 <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
                 <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
-                <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${reporterUsername}</p>
+                <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${displayName}${department ? " (" + department + ")" : ""}${contact ? " — " + contact : ""}</p>
               </div>
             </div>`,
-            text: `${message}\n\nReported by ${reporterUsername} through ${fromName}.`,
+            text: `${message}\n\nReported by ${displayName} through ${fromName}.`,
           }),
         });
       } catch (err) { console.error("Report breakdown email error:", err.message); }
