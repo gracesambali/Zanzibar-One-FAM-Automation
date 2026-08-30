@@ -392,6 +392,7 @@ button { font-family: inherit; cursor: pointer; }
         <div id="userRoleLabel" style="font-size:10px;color:rgba(255,255,255,0.7)"></div>
       </div>
     </div>
+    <button onclick="openMyReportBreakdownPage()" style="background:#B0431E;border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">🚨 Report Breakdown</button>
     <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
   </div>
 </div>
@@ -6055,6 +6056,18 @@ function closeFinanceModal() {
 // account). This is the one place that legitimately needs a login,
 // since currentUserOrgId (from the verified session) is the only
 // safe, real source for which organization's link this actually is.
+// Confirmed directly: available to every logged-in user, not just
+// System Admin/Business Owner - opens the exact same real, public
+// report page (no duplicate form logic to maintain), pre-identified
+// with this user's own organization via currentUserOrgId.
+function openMyReportBreakdownPage() {
+  if (!currentUserOrgId) {
+    alert('Could not determine your organization — try refreshing the page.');
+    return;
+  }
+  window.open(reportBreakdownUrl(), '_blank');
+}
+
 function reportBreakdownUrl() {
   return `${window.location.origin}/report?org=${encodeURIComponent(currentUserOrgId)}`;
 }
