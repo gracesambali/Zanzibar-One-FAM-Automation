@@ -1683,3 +1683,17 @@ create table if not exists invoices (
   unique (organization_id, invoice_number)
 );
 create index if not exists idx_invoices_org_created on invoices (organization_id, created_at desc);
+
+-- ============================================================
+-- Real, per-client login identity - confirmed directly: the login
+-- page should show the actual organization's name before anyone even
+-- logs in, collapsing what used to be a separate landing-page click
+-- into one real front door. A slug (not the raw uuid) makes the URL
+-- itself real and readable, matching the same lightweight
+-- URL-identification approach already proven for the public report
+-- page's own org parameter.
+-- ============================================================
+alter table organizations add column if not exists slug text;
+update organizations set slug = 'master' where id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063' and slug is null;
+update organizations set slug = 'gracingventures' where id = 'e8f2a914-6b3d-4c71-9a85-2d5e7f1b3c90' and slug is null;
+create unique index if not exists idx_organizations_slug on organizations (slug) where slug is not null;
