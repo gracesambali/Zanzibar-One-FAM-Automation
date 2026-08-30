@@ -158,6 +158,43 @@ function normalizePhone(s) {
   return (s || "").replace(/[^\d]/g, "").replace(/^255/, "").replace(/^0/, "");
 }
 
+// Same relabeling logic dashboard.html uses for display — duplicated
+// here rather than shared, since this is a separate serverless
+// function with no access to the frontend's JS. Keeping the exact
+// same transformation on both sides is the whole point: it's what
+// makes a reporter's dropdown selection match an asset's stored
+// floor/room later, without any fuzzy text matching required.
+function displayFloor(floor) {
+  if (!floor) return "";
+  const m = floor.match(/^L(\d+)$/i);
+  if (!m) return floor;
+  const n = parseInt(m[1], 10);
+  return n === 1 ? "GF" : `F${n - 1}`;
+}
+function displayRoom(room) {
+  if (!room) return "";
+  let out = room;
+  out = out.replace(/\bLevel\s+(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "Ground Floor" : `Floor ${n - 1}`;
+  });
+  out = out.replace(/\bL(\d+)\b/gi, (full, numStr) => {
+    const n = parseInt(numStr, 10);
+    return n === 1 ? "GF" : `F${n - 1}`;
+  });
+  return out;
+}
+
+// Exactly four options, confirmed with the client — no "Not sure"
+// escape hatch, since every report has to land on one of the four
+// people who actually work these buildings.
+const REPORT_CATEGORY_TO_ROLE = {
+  "Electrical": "Electrical",
+  "Mechanical": "Mechanical",
+  "NonTechnical": "Admin",
+  "TenantRelated": "Property Manager",
+};
+
 // Public-safe unit info + chat history — no login in the account
 // sense, but a real gate: verified against the tenant's own phone
 // number already on file (Tenant Phone), not a separately-set
@@ -341,6 +378,7 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Electrical": "electrical_engineer",
   "Mechanical": "mechanical_engineer",
   "Property Manager": "property_manager",
+  "Admin": "admin",
 };
 
 // Same convention as the Work Orders activity log, scoped to Units —
@@ -384,7 +422,7 @@ async function handleUnitPortalReportIssue(req, res) {
 
     const { woId, recordId } = await createReportedWorkOrder(
       senderName.trim(), "Tenant", "", building || unitName, unitName,
-      description.trim(), assignedRole, building, unitName
+      description.trim(), assignedRole, building, unitName, f.organization_id
     );
 
     await appendUnitActivityLog(unitId, `🛠️ Issue reported by ${senderName.trim()} — ${category} — opened ${woId}`, senderName.trim(), "system");
@@ -683,15 +721,174 @@ export default async function handler(req, res) {
     return handleUnitPortalInitiatePayment(req, res);
   }
 
-  // Confirmed directly: staff-reported breakdowns are no longer a
-  // public, no-login form living outside the system - moved inside
-  // the logged-in app itself (work-orders.js, reportBreakdown action),
-  // so every report is genuinely tied to a real, specific client
-  // rather than having no way to know which one it belonged to.
-  return res.status(410).json({ error: "This form has moved. Report a breakdown from inside FAM instead." });
+  // Confirmed directly: genuinely public again, no login at all -
+  // this is meant for anyone (visitors, contractors, staff without a
+  // FAM account), not exclusively registered FAM users. "Client
+  // specific" is answered by the org parameter carried in the URL
+  // (baked into each client's own printed QR code) rather than by a
+  // session, since a session is exactly what this flow must not
+  // require.
+  if (req.method === "GET" && req.query.publicLocations === "true") {
+    return handlePublicGetLocations(req, res);
+  }
+
+  if (req.method === "POST" && req.body && req.body.publicReportBreakdown) {
+    return handlePublicReportBreakdown(req, res);
+  }
+
+  return res.status(405).json({ error: "Method not allowed" });
 }
 
-async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit) {
+async function handlePublicGetLocations(req, res) {
+  const organizationId = req.query.org;
+  if (!organizationId) return res.status(400).json({ error: "A real client link is required — this one is missing information." });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const orgCheck = await pgQuery("select id from organizations where id = $1", [organizationId]);
+    if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
+
+    const result = await pgQuery("select floor_level, room_zone from components where organization_id = $1", [organizationId]);
+    const floorMap = {};
+    result.rows.forEach(r => {
+      const floorLabel = displayFloor(r.floor_level || "");
+      const roomLabel = displayRoom(r.room_zone || "");
+      if (!floorLabel) return;
+      if (!floorMap[floorLabel]) floorMap[floorLabel] = new Set();
+      if (roomLabel) floorMap[floorLabel].add(roomLabel);
+    });
+
+    const floors = Object.keys(floorMap).sort().map(floor => ({
+      floor,
+      rooms: Array.from(floorMap[floor]).sort(),
+    }));
+
+    return res.status(200).json({ floors });
+  } catch (err) {
+    console.error("handlePublicGetLocations error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handlePublicReportBreakdown(req, res) {
+  const { org, reporterName, reporterDepartment, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  if (!org) return res.status(400).json({ error: "A real client link is required — this one is missing information." });
+  if (!reporterName || !reporterName.trim()) return res.status(400).json({ error: "Your name is required." });
+  if (!floor || !description || !category) {
+    return res.status(400).json({ error: "The floor, a category, and a description are required" });
+  }
+
+  const assignedRole = REPORT_CATEGORY_TO_ROLE[category] || "Admin";
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const orgCheck = await pgQuery("select id from organizations where id = $1", [org]);
+    if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
+
+    const { woId, recordId } = await createReportedWorkOrder(
+      reporterName.trim(), reporterDepartment ? reporterDepartment.trim() : "", reporterContact ? reporterContact.trim() : "",
+      floor, roomZone, description, assignedRole, null, null, org
+    );
+
+    let photoFailed = false;
+    if (photoBase64 && photoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const { update } = await import("../lib/postgresClient.js");
+        const photoPath = `work-orders/${recordId}/reporter-${photoFilename}`;
+        await uploadFile(photoPath, photoBase64, photoContentType || "image/jpeg");
+        await update("work_orders", recordId, { reporter_photo_url: photoPath }, org);
+      } catch (err) {
+        console.error("Reporter photo upload error:", err);
+        photoFailed = true;
+      }
+    }
+
+    const location = roomZone ? `${floor} — ${roomZone}` : floor;
+    const loginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+    const recipients = [
+      ...await getContactsForRole(loginRole, org),
+      ...await getContactsForRole("business_owner", org),
+      ...await getContactsForRole("system_admin", org),
+    ];
+    const uniqueEmails = [...new Set(recipients.map(r => r.email).filter(Boolean))];
+    const uniquePhones = [...new Set(recipients.map(r => r.phone).filter(Boolean))];
+    const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
+    const reporterLine = `${reporterName.trim()}${reporterDepartment ? " (" + reporterDepartment.trim() + ")" : ""}`;
+
+    if (uniqueEmails.length > 0) {
+      try {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+            to: uniqueEmails,
+            subject: `${fromName} — Reported Issue: ${location}`,
+            html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+              <div style="background:#B0431E;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+                <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Reported Issue</div>
+                <div style="font-size:18px;font-weight:700;margin-top:4px">${location}</div>
+              </div>
+              <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+                <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear Team,</p>
+                <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">${description}</p>
+                <p style="margin:0;color:#6B7280;font-size:12.5px">Reported by ${reporterLine}${reporterContact ? " — " + reporterContact.trim() : ""}</p>
+              </div>
+            </div>`,
+          }),
+        });
+      } catch (err) { console.error("Public report breakdown email error:", err.message); }
+    }
+    if (uniquePhones.length > 0) {
+      try {
+        const rawMessage = `${fromName}: Reported issue at ${location}. Reported by ${reporterLine}: "${description}"`;
+        const cleanMessage = rawMessage
+          .replace(/[\u2014\u2013]/g, "-").replace(/[\u2018\u2019]/g, "'")
+          .replace(/[\u201C\u201D]/g, '"').replace(/\u2026/g, "...")
+          .replace(/[^\x00-\x7F]/g, "");
+        await fetch("https://apisms.beem.africa/v1/send", {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source_addr: process.env.BEEM_SENDER_ID || "INFO",
+            schedule_time: "", encoding: 0,
+            message: cleanMessage.slice(0, 160),
+            recipients: uniquePhones.map((p, i) => ({ recipient_id: i + 1, dest_addr: p })),
+          }),
+        });
+      } catch (err) { console.error("Public report breakdown SMS error:", err.message); }
+    }
+
+    const { insert } = await import("../lib/postgresClient.js");
+    await insert("alert_log", {
+      timestamp: new Date().toISOString(),
+      asset_id: null,
+      asset_name: description.length > 45 ? description.slice(0, 45).trim() + "…" : description,
+      system: null,
+      location,
+      urgency: "REPORTED",
+      channel: "Email + SMS (public report)",
+      message: `Reported issue: ${description}`,
+      organization_id: org,
+    }).catch(e => console.error("Alert log write failed:", e.message));
+
+    return res.status(200).json({
+      success: true,
+      message: "Report submitted. The technical team has been notified.",
+      woId,
+      ...(photoFailed ? { warning: "Your report was submitted, but the photo failed to upload." } : {}),
+    });
+  } catch (err) {
+    console.error("handlePublicReportBreakdown error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function createReportedWorkOrder(reporterName, reporterRole, reporterContact, floor, roomZone, description, assignedRole, building, unit, organizationId) {
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
@@ -711,6 +908,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     satisfaction_status: "Pending",
     maintenance_type: "Corrective",
     activity_log: "[]",
+    organization_id: organizationId,
   };
   if (building) baseFields.building = building;
   if (unit) baseFields.unit = unit;

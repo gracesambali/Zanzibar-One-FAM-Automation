@@ -157,8 +157,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       // standalone portal, never the main dashboard at all - every
       // other role's behavior stays exactly as it was. The query
       // string is forwarded through so a real, useful parameter
-      // (like the QR-triggered openReportBreakdown flag) survives
-      // the login round-trip rather than being lost.
+      // survives the login round-trip rather than being lost.
       window.location.href = (data.role === 'pharmacy' ? '/pharmacy-portal' : '/dashboard') + window.location.search;
     } else {
       errorBox.textContent = data.error || 'Login failed. Please try again.';
