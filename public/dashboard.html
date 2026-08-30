@@ -796,8 +796,8 @@ const ROLE_PERMISSIONS = {
   // every other role in this object.
   pharmacy: { viewCostAndDepreciation: false, addOrDecommissionAssets: false, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
   stock_keeper: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false },
-  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true },
-  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true },
+  business_owner: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: true, manageUsers: true },
+  system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true, manageUsers: true },
 };
 
 const levelDefs = [
