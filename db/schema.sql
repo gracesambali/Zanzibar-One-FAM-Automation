@@ -1637,3 +1637,20 @@ alter table users add column if not exists deactivated_by text;
 -- ============================================================
 alter table users add column if not exists phone text;
 alter table users add column if not exists photo_url text;
+
+-- ============================================================
+-- Client Management activity log - confirmed directly: every real
+-- action taken here (a client onboarded, a staff account added,
+-- edited, or removed) gets a real, attributed entry, shown beneath
+-- the staff table itself. Same shape as edit_log, scoped by
+-- organization instead of asset_id.
+-- ============================================================
+create table if not exists staff_activity_log (
+  id              uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  action          text not null,
+  details         text,
+  performed_by    text,
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_staff_activity_log_org_created on staff_activity_log (organization_id, created_at desc);
