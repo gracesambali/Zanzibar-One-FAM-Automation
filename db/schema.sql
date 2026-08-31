@@ -1697,3 +1697,14 @@ alter table organizations add column if not exists slug text;
 update organizations set slug = 'master' where id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063' and slug is null;
 update organizations set slug = 'gracingventures' where id = 'e8f2a914-6b3d-4c71-9a85-2d5e7f1b3c90' and slug is null;
 create unique index if not exists idx_organizations_slug on organizations (slug) where slug is not null;
+
+-- ============================================================
+-- Real per-client branding, captured right at onboarding - confirmed
+-- directly: a brand-new client should start with its own real logo
+-- and accent color from day one, not the shared default. logo_path
+-- is a real storage path, not a URL - the upload bucket is private,
+-- so a fresh signed URL is generated on demand every time it's
+-- actually needed, matching every other uploaded file in this app.
+-- ============================================================
+alter table organizations add column if not exists logo_path text;
+alter table organizations add column if not exists brand_color text;

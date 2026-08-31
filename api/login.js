@@ -363,7 +363,18 @@ async function handleResolveOrgSlug(req, res) {
       ? await getByColumn("organizations", "slug", slug).catch(() => null)
       : await getById("organizations", MASTER_ORG_ID).catch(() => null);
     if (!org) return res.status(404).json({ error: "Unknown organization." });
-    return res.status(200).json({ name: org.name });
+
+    let logoUrl = null;
+    if (org.logo_path) {
+      try {
+        const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+        logoUrl = await getSignedUrlSafe(org.logo_path);
+      } catch (err) {
+        console.error("resolveOrgSlug logo signing error (non-fatal):", err.message);
+      }
+    }
+
+    return res.status(200).json({ name: org.name, logoUrl, brandColor: org.brand_color || null });
   } catch (err) {
     console.error("resolveOrgSlug error:", err);
     return res.status(500).json({ error: err.message });
@@ -380,7 +391,7 @@ async function handleCreateClient(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can create a new client." });
   }
 
-  const { clientName, username, email, displayName, role, password } = req.body || {};
+  const { clientName, username, email, displayName, role, password, logoBase64, logoFilename, logoContentType, brandColor } = req.body || {};
   if (!clientName || !clientName.trim()) return res.status(400).json({ error: "A real client name is required." });
   if (!username || !username.trim()) return res.status(400).json({ error: "The first user needs a real username." });
   if (!["business_owner", "system_admin"].includes(role)) {
@@ -405,6 +416,29 @@ async function handleCreateClient(req, res) {
     }
 
     const newOrg = await insert("organizations", { name: clientName.trim(), slug });
+
+    // Confirmed directly: a real logo upload right at onboarding, so
+    // the new client's own base starts with its own real branding
+    // from day one, not the shared default. Non-fatal if the upload
+    // itself fails - the client and its first user have already been
+    // created successfully by this point, and a missing logo
+    // shouldn't undo that; it can always be added later.
+    let logoPath = null;
+    if (logoBase64 && logoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        logoPath = `organizations/${newOrg.id}/logo-${logoFilename}`;
+        await uploadFile(logoPath, logoBase64, logoContentType || "image/png");
+      } catch (err) {
+        console.error("Client logo upload error (non-fatal):", err.message);
+        logoPath = null;
+      }
+    }
+    if (logoPath || brandColor) {
+      const { update } = await import("../lib/postgresClient.js");
+      await update("organizations", newOrg.id, { logo_path: logoPath, brand_color: brandColor || null }).catch(() => {});
+    }
+
     const { hash, salt } = hashPassword(password);
     const newUser = await insert("users", {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),

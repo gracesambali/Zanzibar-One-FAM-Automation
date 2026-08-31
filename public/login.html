@@ -34,7 +34,7 @@
 <body>
   <div class="card">
     <div class="logo-row">
-      <div class="logo"><img src="/logo.png" alt="GVC"></div>
+      <div class="logo"><img id="orgLogoImg" src="/logo.png" alt="GVC"></div>
       <div>
         <h1>Facility Asset Manager</h1>
         <div class="sub" id="orgSubtitle">Loading…</div>
@@ -81,6 +81,17 @@
     const resp = await fetch(`/api/login?resolveOrgSlug=true&slug=${encodeURIComponent(slug)}`);
     const data = await resp.json();
     subtitleEl.textContent = resp.ok && data.name ? data.name : 'Sign in to view your building\'s live data';
+
+    // Confirmed directly: falls back to the shared default logo/navy
+    // color whenever a client hasn't set their own - most clients,
+    // at least at first, genuinely won't have.
+    if (resp.ok && data.logoUrl) {
+      document.getElementById('orgLogoImg').src = data.logoUrl;
+    }
+    if (resp.ok && data.brandColor) {
+      document.querySelector('h1').style.color = data.brandColor;
+      document.getElementById('loginBtn').style.background = data.brandColor;
+    }
   } catch (err) {
     subtitleEl.textContent = "Sign in to view your building's live data";
   }
