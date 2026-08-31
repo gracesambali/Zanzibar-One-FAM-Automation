@@ -44,6 +44,18 @@ async function logStaffActivity(organizationId, action, details, performedBy) {
   }
 }
 
+// Confirmed directly: lets the Master System see and manage any real
+// client's own staff directly, without logging in as them - every
+// other caller's behavior stays completely unchanged, since this
+// only ever returns something other than the caller's own org when
+// they're genuinely logged into the Master System itself, checked
+// here server-side rather than trusted from whatever the request
+// claims.
+function resolveTargetOrg(session, requestedTargetOrgId) {
+  if (requestedTargetOrgId && session.org === MASTER_ORG_ID) return requestedTargetOrgId;
+  return session.org;
+}
+
 export default async function handler(req, res) {
   // DELETE (or any non-POST) from /api/login = logout
   if (req.method === "DELETE" || (req.method === "POST" && req.body && req.body.action === "logout")) {
@@ -76,6 +88,9 @@ export default async function handler(req, res) {
   }
   if (req.body && req.body.action === "editStaffAccount") {
     return handleEditStaffAccount(req, res);
+  }
+  if (req.body && req.body.action === "resetStaffPassword") {
+    return handleResetStaffPassword(req, res);
   }
   if (req.body && req.body.action === "deactivateStaffAccount") {
     return handleDeactivateStaffAccount(req, res);
@@ -177,19 +192,21 @@ async function handleCreateStaffAccount(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can create staff accounts." });
   }
 
-  const { username, email, displayName, role, password } = req.body || {};
+  const { username, email, displayName, role, password, targetOrgId } = req.body || {};
   if (!username || !username.trim()) return res.status(400).json({ error: "A username is required." });
   if (!role || !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
   if (!password || password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+
+  const effectiveOrg = resolveTargetOrg(session, targetOrgId);
 
   try {
     const { insert } = await import("../lib/postgresClient.js");
     const { hash, salt } = hashPassword(password);
     await insert("users", {
       username: username.trim(), email: email || null, display_name: displayName || username.trim(),
-      role, password_hash: hash, password_salt: salt, organization_id: session.org,
+      role, password_hash: hash, password_salt: salt, organization_id: effectiveOrg,
     });
-    await logStaffActivity(session.org, "Staff Added", `${username.trim()} (${ROLES[role]?.label || role})`, session.u);
+    await logStaffActivity(effectiveOrg, "Staff Added", `${username.trim()} (${ROLES[role]?.label || role})`, session.u);
     return res.status(200).json({ success: true });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `Username "${username.trim()}" already exists.` : err.message;
@@ -207,11 +224,13 @@ async function handleListStaffAccounts(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can view staff accounts." });
   }
 
+  const effectiveOrg = resolveTargetOrg(session, req.body?.targetOrgId);
+
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
       "select username, email, phone, display_name, role, password_hash, active from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
-      [session.org]
+      [effectiveOrg]
     );
     return res.status(200).json({
       accounts: result.rows.map(u => ({
@@ -237,24 +256,27 @@ async function handleDeactivateStaffAccount(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can remove a staff account." });
   }
 
-  const { username } = req.body || {};
+  const { username, targetOrgId } = req.body || {};
   if (!username) return res.status(400).json({ error: "username required" });
   if (username === session.u) {
     return res.status(400).json({ error: "You can't remove your own account." });
   }
 
+  const effectiveOrg = resolveTargetOrg(session, targetOrgId);
+
   try {
     const target = await findUserByUsername(username);
-    // Confirmed directly: scoped to the caller's own organization
-    // only - a client's System Admin or Business Owner can remove
-    // their own client's staff, never another client's.
-    if (!target || target.organization_id !== session.org) {
+    // Confirmed directly: scoped to the effective organization only -
+    // a client's System Admin or Business Owner can remove their own
+    // client's staff, never another client's, unless this is
+    // genuinely the Master System acting on a specific client.
+    if (!target || target.organization_id !== effectiveOrg) {
       return res.status(404).json({ error: "Account not found." });
     }
 
     const { update } = await import("../lib/postgresClient.js");
     await update("users", target.id, { active: false, deactivated_by: session.u });
-    await logStaffActivity(session.org, "Staff Removed", `${target.username} (${ROLES[target.role]?.label || target.role})`, session.u);
+    await logStaffActivity(effectiveOrg, "Staff Removed", `${target.username} (${ROLES[target.role]?.label || target.role})`, session.u);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deactivateStaffAccount error:", err);
@@ -273,16 +295,19 @@ async function handleEditStaffAccount(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can edit a staff account." });
   }
 
-  const { username, displayName, email, phone, role } = req.body || {};
+  const { username, displayName, email, phone, role, targetOrgId } = req.body || {};
   if (!username) return res.status(400).json({ error: "username required" });
   if (role && !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
+
+  const effectiveOrg = resolveTargetOrg(session, targetOrgId);
 
   try {
     const target = await findUserByUsername(username);
     // Confirmed directly: same real ownership check as removing a
     // staff account - a client's own admin can only edit their own
-    // client's staff, never another client's.
-    if (!target || target.organization_id !== session.org) {
+    // client's staff, never another client's, unless this is
+    // genuinely the Master System acting on a specific client.
+    if (!target || target.organization_id !== effectiveOrg) {
       return res.status(404).json({ error: "Account not found." });
     }
 
@@ -306,13 +331,57 @@ async function handleEditStaffAccount(req, res) {
     }
 
     const { update } = await import("../lib/postgresClient.js");
-    const result = await update("users", target.id, fields, session.org);
+    const result = await update("users", target.id, fields, effectiveOrg);
     if (!result) return res.status(404).json({ error: "Account not found." });
 
-    await logStaffActivity(session.org, "Staff Edited", `${target.username} — ${changes.join(", ")}`, session.u);
+    await logStaffActivity(effectiveOrg, "Staff Edited", `${target.username} — ${changes.join(", ")}`, session.u);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("editStaffAccount error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly: a real, direct way to set a working password
+// for an account that already exists, not just a new one - matching
+// the exact same "set it directly, no email step" pattern already
+// proven for createStaffAccount and createClient above. Genuinely
+// useful whenever the email-based reset flow can't be relied on, not
+// only from the Master System - any admin can do this for their own
+// client's staff, with the same targetOrgId override for the Master
+// System acting on a specific client.
+async function handleResetStaffPassword(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  if (!can(session.r, "manageUsers")) {
+    return res.status(403).json({ error: "Only System Admin or Business Owner can reset a password." });
+  }
+
+  const { username, newPassword, targetOrgId } = req.body || {};
+  if (!username) return res.status(400).json({ error: "username required" });
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+
+  const effectiveOrg = resolveTargetOrg(session, targetOrgId);
+
+  try {
+    const target = await findUserByUsername(username);
+    if (!target || target.organization_id !== effectiveOrg) {
+      return res.status(404).json({ error: "Account not found." });
+    }
+
+    const { hash, salt } = hashPassword(newPassword);
+    const { update } = await import("../lib/postgresClient.js");
+    // Clears any pending email-reset token too - a direct reset
+    // should genuinely supersede one already in flight, not leave a
+    // second, separate way in that's now for a password nobody knows.
+    await update("users", target.id, {
+      password_hash: hash, password_salt: salt, reset_token: null, reset_token_expires: null,
+    }, effectiveOrg);
+
+    await logStaffActivity(effectiveOrg, "Password Reset", `${target.username} — set directly by ${session.u}`, session.u);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("resetStaffPassword error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
@@ -326,11 +395,13 @@ async function handleListStaffActivityLog(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can view this activity log." });
   }
 
+  const effectiveOrg = resolveTargetOrg(session, req.body?.targetOrgId);
+
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
       "select action, details, performed_by, created_at from staff_activity_log where organization_id = $1 order by created_at desc limit 50",
-      [session.org]
+      [effectiveOrg]
     );
     return res.status(200).json({
       entries: result.rows.map(r => ({ action: r.action, details: r.details || "", performedBy: r.performed_by || "", createdAt: r.created_at })),
