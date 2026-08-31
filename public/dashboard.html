@@ -6560,7 +6560,68 @@ async function submitEditStaff(username) {
   }
 }
 
+let clientLogoBase64 = null;
+let clientLogoFilename = null;
+let clientLogoContentType = null;
+
+function onClientLogoSelected(input) {
+  const file = input.files && input.files[0];
+  clientLogoBase64 = null; clientLogoFilename = null; clientLogoContentType = null;
+  if (!file) return;
+  clientLogoFilename = file.name;
+  clientLogoContentType = file.type;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    clientLogoBase64 = reader.result.split(',')[1];
+    suggestBrandColorFromImage(reader.result);
+  };
+  reader.readAsDataURL(file);
+}
+
+// A real, reasonable dominant-color guess from the uploaded logo -
+// near-white, near-black, and transparent pixels are skipped, since
+// those are almost always background or outline rather than the
+// actual brand color. Confirmed directly as a suggestion the admin
+// can still see and adjust via the color picker, not a silent,
+// unreviewable choice.
+function suggestBrandColorFromImage(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    const size = 50;
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, size, size).data;
+    } catch (err) {
+      return; // canvas may be tainted for cross-origin images - keep the default color
+    }
+
+    const buckets = {};
+    for (let i = 0; i < pixels.length; i += 4) {
+      const [r, g, b, a] = [pixels[i], pixels[i+1], pixels[i+2], pixels[i+3]];
+      if (a < 128) continue; // transparent
+      if (r > 235 && g > 235 && b > 235) continue; // near-white background
+      if (r < 20 && g < 20 && b < 20) continue; // near-black outline
+      const key = `${Math.round(r/16)*16},${Math.round(g/16)*16},${Math.round(b/16)*16}`;
+      buckets[key] = (buckets[key] || 0) + 1;
+    }
+
+    const best = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0];
+    if (!best) return; // nothing usable found - keep the default color
+    const [r, g, b] = best[0].split(',').map(Number);
+    const hex = '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
+    document.getElementById('client_brandColor').value = hex;
+    document.getElementById('client_colorHint').textContent = 'Suggested from the logo — adjust if needed';
+  };
+  img.src = dataUrl;
+}
+
 function openAddClientModal() {
+  clientLogoBase64 = null; clientLogoFilename = null; clientLogoContentType = null;
   const overlay = document.createElement('div');
   overlay.id = 'addClientOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
@@ -6570,6 +6631,17 @@ function openAddClientModal() {
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Creates a genuinely new, blank client account, with its first real user in the same step.</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Client Name *</label>
       <input id="client_name" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+
+      <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">Branding</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Logo (optional)</label>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Their real base starts with its own brand from day one — this can also be added later.</div>
+      <input id="client_logo" type="file" accept="image/*" onchange="onClientLogoSelected(this)" style="width:100%;margin-bottom:10px;font-size:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);margin:0">Brand Color</label>
+        <input id="client_brandColor" type="color" value="#003566" style="width:44px;height:30px;padding:2px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+        <span id="client_colorHint" style="font-size:10.5px;color:var(--muted)">Defaults to navy — auto-suggested once a logo is chosen</span>
+      </div>
+
       <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">First User</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username *</label>
       <input id="client_username" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -6611,6 +6683,7 @@ async function submitAddClient() {
   const email = document.getElementById('client_email').value.trim();
   const role = document.getElementById('client_role').value;
   const password = document.getElementById('client_password').value;
+  const brandColor = document.getElementById('client_brandColor').value;
   const errorBox = document.getElementById('client_error');
   const btn = document.getElementById('client_submit');
   errorBox.style.display = 'none';
@@ -6623,7 +6696,10 @@ async function submitAddClient() {
   try {
     const resp = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'createClient', clientName, username, displayName, email, role, password }),
+      body: JSON.stringify({
+        action: 'createClient', clientName, username, displayName, email, role, password, brandColor,
+        logoBase64: clientLogoBase64, logoFilename: clientLogoFilename, logoContentType: clientLogoContentType,
+      }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create client');
