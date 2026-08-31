@@ -103,7 +103,7 @@ export default async function handler(req, res) {
   // Vendor directory — the foundation the whole new procurement flow
   // sits on. Simple list, no pagination needed at this scale.
   if (req.method === "GET" && req.query.vendors === "true") {
-    return handleGetVendors(req, res);
+    return handleGetVendors(req, res, session.org);
   }
 
   // Vendor quotes for one work order — the actual "compare and choose
@@ -1256,6 +1256,33 @@ export default async function handler(req, res) {
       }
     }
 
+    if (req.body && req.body.deactivateVendor) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Business Owner, System Admin, or Procurement can remove a vendor." });
+      }
+      const { vendorId } = req.body;
+      if (!vendorId) return res.status(400).json({ error: "vendorId required" });
+
+      try {
+        // A real soft-delete, matching the same pattern already
+        // proven for assets, sensors, and staff throughout this app -
+        // past bills, transactions, and payments already tied to this
+        // vendor keep their real history, not silently orphaned or
+        // deleted alongside it.
+        const { getById, update } = await import("../lib/postgresClient.js");
+        const vendor = await getById("vendors", vendorId).catch(() => null);
+        if (!vendor || vendor.organization_id !== session.org) {
+          return res.status(404).json({ error: "Vendor not found." });
+        }
+        await update("vendors", vendorId, { active: false }, session.org);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("deactivateVendor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Editing an existing vendor — same permission gate as adding one.
     // Stamps last_edited_in_fam_at on every real change — not used by
     // anything yet, but this is exactly the timestamp a future sync
@@ -1303,7 +1330,7 @@ export default async function handler(req, res) {
         const { query: pgQuery } = await import("../lib/postgresClient.js");
         const { searchVendorsSemantic } = await import("../lib/vendorAI.js");
 
-        const result = await pgQuery("select id, vendor_name, supplies from vendors where active = true");
+        const result = await pgQuery("select id, vendor_name, supplies from vendors where active = true and organization_id = $1", [session.org]);
         const vendors = result.rows.map(r => ({ id: r.id, name: r.vendor_name, supplies: r.supplies }));
 
         const matchingIds = await searchVendorsSemantic(searchQuery, vendors);
@@ -2209,11 +2236,11 @@ async function handleGetProcurementResponses(req, res, woId) {
   }
 }
 
-async function handleGetVendors(req, res) {
+async function handleGetVendors(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
 
-    const result = await pgQuery("select * from vendors where active = true")
+    const result = await pgQuery("select * from vendors where active = true and organization_id = $1", [organizationId])
       .catch(() => { throw new Error("Could not load vendors"); });
 
     const vendors = result.rows.map(r => ({
