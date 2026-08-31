@@ -590,22 +590,23 @@ const CLIENT_CONFIG = {
   pageTitle: "GVC Facility Asset Manager"
 };
 
-// Confirmed directly: the app's own brand (Gracing Ventures FAM) is
-// now the prominent header text, not the specific client's name -
-// the core codebase is shared across every client, so its own header
-// should carry the product's identity, not one client's. The actual
-// client name moves to the subtitle instead of disappearing entirely
-// - still real, useful context once there's more than one client's
-// data to keep straight, just no longer the headline. clientName
-// itself is deliberately left untouched here - report and export
-// filenames still need to correctly identify which real client's
-// data they represent, not the software vendor's name.
+// Confirmed directly: the real, logged-in organization's own name is
+// now the prominent header text - "FAM Master System" for the Master
+// System itself, or the actual client's own name otherwise - with
+// "Facility Asset Manager" as the subtitle beneath it. Declared here,
+// before its first read below, so applyClientConfigToPage's initial
+// call (before loadAssetsAndInit's login data has actually arrived)
+// safely sees an empty string rather than a real error - re-applied
+// from within loadAssetsAndInit itself once the real name is known.
+let currentUserOrgName = "";
+
 const APP_BRAND_NAME = "Gracing Ventures FAM";
 
 function applyClientConfigToPage() {
-  document.title = APP_BRAND_NAME + " — " + CLIENT_CONFIG.clientName;
+  const orgDisplayName = currentUserOrgName || APP_BRAND_NAME;
+  document.title = orgDisplayName + " — " + CLIENT_CONFIG.clientName;
   const title = document.getElementById('header-title');
-  if (title) title.textContent = APP_BRAND_NAME;
+  if (title) title.textContent = orgDisplayName;
   const sub = document.getElementById('header-subtitle');
   if (sub) sub.textContent = CLIENT_CONFIG.clientName;
 }
@@ -631,7 +632,6 @@ let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let financeEnabled = true; // filled in after login by loadAssetsAndInit() from the real organization setting
 let currentUserOrgId = ""; // filled in after login by loadAssetsAndInit(), from the verified session
-let currentUserOrgName = ""; // filled in after login by loadAssetsAndInit(), from the verified session
 let currentUsername = ""; // the actual login identity chat participation is checked against — never the display name
 let currentWODetailId = null; // which work order's detail view is open right now, if any — lets polling refresh it in place instead of yanking someone back to the list
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
@@ -14189,6 +14189,7 @@ async function loadAssetsAndInit() {
     financeEnabled = data.financeEnabled !== false;
     currentUserOrgId = data.organizationId || "";
     currentUserOrgName = data.organizationName || "";
+    applyClientConfigToPage();
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
     // Full Facility -> Building structure for the switcher — fetched
