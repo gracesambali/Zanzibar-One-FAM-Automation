@@ -5705,16 +5705,19 @@ async function renderFinanceVendors() {
     const vendors = data.vendors || [];
     el.innerHTML = `
       <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12.5px;color:var(--navy)">
-        Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them. Vendors can be added from the Operations area, or directly here when adding a bill.
+        Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them.
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button onclick="openAddVendorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Vendor</button>
       </div>
       <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="background:#F8FAFC;text-align:left">
             <th style="padding:10px 12px">Vendor</th><th style="padding:10px 12px">Contact</th>
-            <th style="padding:10px 12px;text-align:right">Total Spend</th><th style="padding:10px 12px;text-align:right">Transactions</th><th style="padding:10px 12px">Last Activity</th>
+            <th style="padding:10px 12px;text-align:right">Total Spend</th><th style="padding:10px 12px;text-align:right">Transactions</th><th style="padding:10px 12px">Last Activity</th><th style="padding:10px 12px"></th>
           </tr></thead>
           <tbody>
-            ${vendors.length === 0 ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted)">No vendors set up yet.</td></tr>` :
+            ${vendors.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No vendors set up yet.</td></tr>` :
               vendors.map(v => `
                 <tr style="border-top:1px solid var(--border)">
                   <td style="padding:10px 12px;font-weight:600">${escapeHtml(v.name)}</td>
@@ -5722,12 +5725,71 @@ async function renderFinanceVendors() {
                   <td style="padding:10px 12px;text-align:right;font-weight:700;color:${v.totalSpend > 0 ? 'var(--navy)' : 'var(--muted)'}">${formatCurrency(v.totalSpend)}</td>
                   <td style="padding:10px 12px;text-align:right">${v.transactionCount}</td>
                   <td style="padding:10px 12px">${v.lastTransactionDate || '—'}</td>
+                  <td style="padding:10px 12px"><button onclick="submitRemoveVendorFromFinance('${v.id}','${(v.name || '').replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button></td>
                 </tr>`).join('')}
           </tbody>
         </table>
       </div>`;
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+function openAddVendorModal() {
+  showFinanceModal('Add Vendor', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor Name *</label>
+    <input id="fv_name" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Phone</label>
+    <input id="fv_phone" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Email</label>
+    <input id="fv_email" type="email" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What do they supply?</label>
+    <input id="fv_supplies" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    <div id="fv_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+    <button id="fv_submit" onclick="submitAddVendorFromFinance()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Vendor</button>
+  `);
+}
+
+async function submitAddVendorFromFinance() {
+  const name = document.getElementById('fv_name').value.trim();
+  const phone = document.getElementById('fv_phone').value.trim();
+  const email = document.getElementById('fv_email').value.trim();
+  const supplies = document.getElementById('fv_supplies').value.trim();
+  const errEl = document.getElementById('fv_error');
+  const btn = document.getElementById('fv_submit');
+  errEl.textContent = '';
+  if (!name) { errEl.textContent = 'Vendor name is required.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    // Same, real, single vendor-creation endpoint used everywhere else
+    // in the app - not a second, separate way of creating one.
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addVendor: true, name, phone, email, supplies }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save vendor');
+    closeFinanceModal();
+    renderFinanceVendors();
+  } catch (err) {
+    errEl.textContent = err.message;
+    btn.disabled = false; btn.textContent = 'Save Vendor';
+  }
+}
+
+async function submitRemoveVendorFromFinance(vendorId, vendorName) {
+  if (!confirm(`Remove ${vendorName}? Past bills, transactions, and payments tied to them keep their real history.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deactivateVendor: true, vendorId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove vendor');
+    renderFinanceVendors();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
   }
 }
 
@@ -11500,13 +11562,52 @@ function renderVendorList(highlightIds) {
     area.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic">No matches — try Smart Search for a broader match.</div>`;
     return;
   }
-  area.innerHTML = vendors.map(v => `
-    <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(v.name)}</div>
-      <div style="font-size:11px;color:var(--muted)">${[v.email, v.phone].filter(Boolean).map(escapeHtml).join(' · ') || 'No contact on file'}</div>
-      ${v.supplies ? `<div style="font-size:11.5px;color:var(--text);margin-top:3px">${escapeHtml(v.supplies)}</div>` : ''}
-      ${v.categories && v.categories.length ? `<div style="margin-top:4px">${v.categories.map(c => `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3;margin-right:4px">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+  const canRemove = currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+  area.innerHTML = vendors.map((v, i) => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(v.name)}</div>
+          <div style="font-size:11px;color:var(--muted)">${[v.email, v.phone].filter(Boolean).map(escapeHtml).join(' · ') || 'No contact on file'}</div>
+          ${v.supplies ? `<div style="font-size:11.5px;color:var(--text);margin-top:3px">${escapeHtml(v.supplies)}</div>` : ''}
+          ${v.categories && v.categories.length ? `<div style="margin-top:4px">${v.categories.map(c => `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3;margin-right:4px">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
+        </div>
+        ${canRemove ? `
+          <button onclick="toggleVendorRowMenu(event, ${i})" style="padding:4px 8px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;line-height:1;flex-shrink:0">⋮</button>
+          <div id="vendorRowMenu-${i}" style="display:none;position:absolute;right:0;top:32px;z-index:20;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:100px;overflow:hidden">
+            <button onclick="closeAllVendorRowMenus();submitRemoveVendor('${v.id}','${(v.name || '').replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 14px;font-size:12px;font-weight:600;border:none;background:#fff;color:var(--red);cursor:pointer">Remove</button>
+          </div>` : ''}
+      </div>
     </div>`).join('');
+}
+
+function toggleVendorRowMenu(evt, i) {
+  evt.stopPropagation();
+  const wasOpen = document.getElementById(`vendorRowMenu-${i}`)?.style.display === 'block';
+  closeAllVendorRowMenus();
+  if (!wasOpen) {
+    const menu = document.getElementById(`vendorRowMenu-${i}`);
+    if (menu) menu.style.display = 'block';
+  }
+}
+function closeAllVendorRowMenus() {
+  document.querySelectorAll('[id^="vendorRowMenu-"]').forEach(m => m.style.display = 'none');
+}
+document.addEventListener('click', closeAllVendorRowMenus);
+
+async function submitRemoveVendor(vendorId, vendorName) {
+  if (!confirm(`Remove ${vendorName}? Past bills, transactions, and payments tied to them keep their real history.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deactivateVendor: true, vendorId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove vendor');
+    loadVendorList();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
 }
 
 // Explicit, deliberate step — never runs automatically. Sends the
