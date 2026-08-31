@@ -6585,6 +6585,93 @@ function onClientLogoSelected(input) {
 // actual brand color. Confirmed directly as a suggestion the admin
 // can still see and adjust via the color picker, not a silent,
 // unreviewable choice.
+// Real, objective color math - not a subjective "looks too light"
+// guess. WCAG's own relative luminance and contrast ratio formulas,
+// confirmed directly as the right standard to check against, since
+// this exact color ends up as a background behind white text on
+// buttons and the header ribbon.
+function hexToRgb(hex) {
+  const clean = hex.replace('#', '');
+  return { r: parseInt(clean.slice(0,2), 16), g: parseInt(clean.slice(2,4), 16), b: parseInt(clean.slice(4,6), 16) };
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+function relativeLuminance({ r, g, b }) {
+  const [rs, gs, bs] = [r, g, b].map(c => {
+    const cs = c / 255;
+    return cs <= 0.03928 ? cs / 12.92 : Math.pow((cs + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+}
+function contrastRatioAgainstWhite(hex) {
+  const l = relativeLuminance(hexToRgb(hex));
+  return (1.0 + 0.05) / (l + 0.05);
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s; const l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  return { h, s, l };
+}
+function hslToRgb(h, s, l) {
+  if (s === 0) { const v = l * 255; return { r: v, g: v, b: v }; }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return { r: hue2rgb(p, q, h + 1/3) * 255, g: hue2rgb(p, q, h) * 255, b: hue2rgb(p, q, h - 1/3) * 255 };
+}
+// Same hue and saturation, just darker - a real, calculated "on-brand"
+// variant rather than an arbitrary fallback, stepping lightness down
+// in small increments until the contrast ratio against white
+// genuinely clears the WCAG AA threshold for UI components (3:1).
+function darkenForContrast(hex, targetRatio) {
+  const rgb = hexToRgb(hex);
+  const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  let newL = l;
+  let candidateHex = hex;
+  while (newL > 0.12 && contrastRatioAgainstWhite(candidateHex) < targetRatio) {
+    newL -= 0.04;
+    const newRgb = hslToRgb(h, s, newL);
+    candidateHex = rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+  }
+  return candidateHex;
+}
+
+const BRAND_COLOR_CONTRAST_TARGET = 3; // WCAG AA for UI components/large text, matching this color's actual use on buttons
+
+function checkBrandColorContrast(hex) {
+  const warningBox = document.getElementById('client_colorWarning');
+  if (!warningBox) return;
+  const ratio = contrastRatioAgainstWhite(hex);
+  if (ratio >= BRAND_COLOR_CONTRAST_TARGET) {
+    warningBox.style.display = 'none';
+    return;
+  }
+  const darker = darkenForContrast(hex, BRAND_COLOR_CONTRAST_TARGET);
+  warningBox.style.display = 'flex';
+  warningBox.innerHTML = `
+    <span style="font-size:11px;color:#B45309">This color is too light for buttons and the header ribbon.</span>
+    <button type="button" onclick="document.getElementById('client_brandColor').value='${darker}';checkBrandColorContrast('${darker}');document.getElementById('client_colorHint').textContent='Adjusted for readability';" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:11px;font-weight:600;color:var(--navy)">
+      <span style="width:14px;height:14px;border-radius:3px;background:${darker};display:inline-block"></span> Use darker version
+    </button>`;
+}
+
 function suggestBrandColorFromImage(dataUrl) {
   const img = new Image();
   img.onload = () => {
@@ -6616,6 +6703,7 @@ function suggestBrandColorFromImage(dataUrl) {
     const hex = '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
     document.getElementById('client_brandColor').value = hex;
     document.getElementById('client_colorHint').textContent = 'Suggested from the logo — adjust if needed';
+    checkBrandColorContrast(hex);
   };
   img.src = dataUrl;
 }
@@ -6636,11 +6724,12 @@ function openAddClientModal() {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Logo (optional)</label>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Their real base starts with its own brand from day one — this can also be added later.</div>
       <input id="client_logo" type="file" accept="image/*" onchange="onClientLogoSelected(this)" style="width:100%;margin-bottom:10px;font-size:12px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <label style="font-size:11px;font-weight:600;color:var(--navy);margin:0">Brand Color</label>
-        <input id="client_brandColor" type="color" value="#003566" style="width:44px;height:30px;padding:2px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+        <input id="client_brandColor" type="color" value="#003566" onchange="checkBrandColorContrast(this.value);document.getElementById('client_colorHint').textContent='';" style="width:44px;height:30px;padding:2px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
         <span id="client_colorHint" style="font-size:10.5px;color:var(--muted)">Defaults to navy — auto-suggested once a logo is chosen</span>
       </div>
+      <div id="client_colorWarning" style="display:none;align-items:center;gap:10px;background:#FEF6E7;border:1px solid #F5D89A;border-radius:8px;padding:8px 10px;margin-bottom:14px"></div>
 
       <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">First User</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username *</label>
