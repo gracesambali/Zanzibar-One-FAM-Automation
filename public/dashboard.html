@@ -5481,10 +5481,71 @@ function openAddBillModal() {
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Next Due Date</label>
     <input id="fb_due" type="date" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor (optional)</label>
-    <select id="fb_vendor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${financeVendorDropdownOptions()}</select>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+      <select id="fb_vendor" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">${financeVendorDropdownOptions()}</select>
+      <button type="button" onclick="showAddVendorInline()" style="padding:9px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;white-space:nowrap">+ New Vendor</button>
+    </div>
+    <div id="fb_newVendorArea" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor Name *</label>
+      <input id="fb_newVendor_name" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Phone</label>
+      <input id="fb_newVendor_phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Email</label>
+      <input id="fb_newVendor_email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What do they supply?</label>
+      <input id="fb_newVendor_supplies" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <div id="fb_newVendor_error" style="color:var(--red);font-size:11.5px;margin-bottom:6px"></div>
+      <div style="display:flex;gap:8px">
+        <button type="button" onclick="document.getElementById('fb_newVendorArea').style.display='none'" style="flex:1;padding:7px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer">Cancel</button>
+        <button type="button" id="fb_newVendor_submit" onclick="submitInlineNewVendor()" style="flex:1;padding:7px;border:none;border-radius:6px;background:var(--navy);color:#fff;font-size:12px;font-weight:600;cursor:pointer">Save Vendor</button>
+      </div>
+    </div>
     <div id="fb_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
     <button onclick="submitAddBill()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Bill</button>
   `);
+}
+
+function showAddVendorInline() {
+  document.getElementById('fb_newVendorArea').style.display = 'block';
+  document.getElementById('fb_newVendor_name').focus();
+}
+
+async function submitInlineNewVendor() {
+  const name = document.getElementById('fb_newVendor_name').value.trim();
+  const phone = document.getElementById('fb_newVendor_phone').value.trim();
+  const email = document.getElementById('fb_newVendor_email').value.trim();
+  const supplies = document.getElementById('fb_newVendor_supplies').value.trim();
+  const errEl = document.getElementById('fb_newVendor_error');
+  const btn = document.getElementById('fb_newVendor_submit');
+  errEl.textContent = '';
+
+  if (!name) { errEl.textContent = 'Vendor name is required.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    // Reuses the same, real vendor-creation endpoint already used
+    // elsewhere in the app - one real source of vendor data, not a
+    // second, separate way of creating one just because this entry
+    // point is inside Finance.
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addVendor: true, name, phone, email, supplies }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save vendor');
+
+    financeVendorsCache.push(data.vendor);
+    document.getElementById('fb_vendor').innerHTML = financeVendorDropdownOptions(data.vendor.id);
+    document.getElementById('fb_newVendorArea').style.display = 'none';
+    document.getElementById('fb_newVendor_name').value = '';
+    document.getElementById('fb_newVendor_phone').value = '';
+    document.getElementById('fb_newVendor_email').value = '';
+    document.getElementById('fb_newVendor_supplies').value = '';
+  } catch (err) {
+    errEl.textContent = err.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Vendor';
+  }
 }
 
 async function submitAddBill() {
@@ -5644,7 +5705,7 @@ async function renderFinanceVendors() {
     const vendors = data.vendors || [];
     el.innerHTML = `
       <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12.5px;color:var(--navy)">
-        Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them. Vendors themselves are managed from the Operations area — new ones added there show up here automatically.
+        Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them. Vendors can be added from the Operations area, or directly here when adding a bill.
       </div>
       <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
