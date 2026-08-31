@@ -14190,6 +14190,14 @@ async function loadAssetsAndInit() {
     currentUserOrgId = data.organizationId || "";
     currentUserOrgName = data.organizationName || "";
     applyClientConfigToPage();
+    if (data.organizationLogoUrl) {
+      const logoImg = document.querySelector('.header-logo img');
+      if (logoImg) logoImg.src = data.organizationLogoUrl;
+    }
+    if (data.organizationBrandColor) {
+      const headerEl = document.querySelector('.header');
+      if (headerEl) headerEl.style.background = data.organizationBrandColor;
+    }
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
     // Full Facility -> Building structure for the switcher — fetched
