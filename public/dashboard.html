@@ -3652,6 +3652,14 @@ async function submitAddBuildingStandalone(facilityId) {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add building');
     await refreshFacilitiesData();
     document.getElementById('addBuildingStandaloneOverlay')?.remove();
+    // Confirmed directly: land straight on the new building, ready to
+    // add its first floor immediately - not dependent on whatever the
+    // global switcher happened to already be set to. The dropdown
+    // itself is explicitly re-synced too, not just the underlying
+    // filter variable, since refreshFacilitiesData() alone doesn't
+    // touch it.
+    currentBuildingFilter = buildingName;
+    refreshBuildingSwitcherOptions();
     renderLevelView();
   } catch (err) {
     errorBox.textContent = err.message;
