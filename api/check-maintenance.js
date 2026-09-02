@@ -26,6 +26,7 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Electrical": "electrical_engineer",
   "Admin": "admin",
   "Property Manager": "property_manager",
+  "Biomedical": "biomedical_technician",
 };
 
 const ALERT_WINDOW_DAYS = 7;   // first alert fires within this many days of due date

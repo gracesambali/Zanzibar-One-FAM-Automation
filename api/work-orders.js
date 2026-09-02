@@ -53,6 +53,7 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Electrical": "electrical_engineer",
   "Admin": "admin",
   "Property Manager": "property_manager",
+  "Biomedical": "biomedical_technician",
 };
 
 // Signs a work order's four possible file paths (before/after/
@@ -549,15 +550,15 @@ export default async function handler(req, res) {
     // current holder specifically to be the one who fixes it.
     if (req.body && req.body.reassignWorkOrder) {
       const { recordId, assignedRole } = req.body;
-      const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager"];
+      const VALID_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager", "Biomedical"];
       if (!recordId || !assignedRole || !VALID_ROLES.includes(assignedRole)) {
         return res.status(400).json({ error: "recordId and a valid assignedRole are required" });
       }
 
-      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"];
+      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "biomedical_technician", "admin", "property_manager"];
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && !CORE_ROLES.includes(session.r)) {
-        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Admin, or Property Manager can reassign a work order." });
+        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Biomedical Technician, Admin, or Property Manager can reassign a work order." });
       }
 
       try {
@@ -588,10 +589,10 @@ export default async function handler(req, res) {
     // it's real, see confirmAssignment/declineAssignment below.
     if (req.body && req.body.assignTechnician) {
       const { recordId, technicianUsername } = req.body;
-      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "admin", "property_manager"];
+      const CORE_ROLES = ["electrical_engineer", "mechanical_engineer", "biomedical_technician", "admin", "property_manager"];
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && !CORE_ROLES.includes(session.r)) {
-        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Admin, or Property Manager can assign a technician." });
+        return res.status(403).json({ error: "Only Electrical Engineer, Mechanical Engineer, Biomedical Technician, Admin, or Property Manager can assign a technician." });
       }
       if (!recordId || !technicianUsername) {
         return res.status(400).json({ error: "recordId and technicianUsername required" });
