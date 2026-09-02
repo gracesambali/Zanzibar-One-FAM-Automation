@@ -718,7 +718,7 @@ async function checkFinanceReminders() {
       `select id, name, amount, currency, next_due_date, reminder_sent_for, organization_id
        from bills
        where status = 'active'
-         and next_due_date <= current_date + interval '7 days'
+         and next_due_date <= current_date + interval '9 days'
          and next_due_date >= current_date
          and (reminder_sent_for is null or reminder_sent_for != next_due_date)`
     );
@@ -728,7 +728,7 @@ async function checkFinanceReminders() {
        from liabilities
        where status = 'active'
          and next_payment_date is not null
-         and next_payment_date <= current_date + interval '7 days'
+         and next_payment_date <= current_date + interval '9 days'
          and next_payment_date >= current_date
          and (reminder_sent_for is null or reminder_sent_for != next_payment_date)`
     );
@@ -739,7 +739,7 @@ async function checkFinanceReminders() {
        from payroll_entries p
        join users u on u.id = p.user_id
        where p.status = 'active'
-         and p.next_pay_date <= current_date + interval '7 days'
+         and p.next_pay_date <= current_date + interval '9 days'
          and p.next_pay_date >= current_date
          and (p.reminder_sent_for is null or p.reminder_sent_for != p.next_pay_date)`
     );
@@ -785,7 +785,7 @@ async function checkFinanceReminders() {
 
       const allLines = [...billLines, ...liabilityLines, ...payrollLines];
       if (allLines.length === 0) continue;
-      const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 7 days.\n${allLines.join("\n")}`.slice(0, 320);
+      const smsMessage = `FAM Finance: ${allLines.length} payment(s) due within 9 days.\n${allLines.join("\n")}`.slice(0, 320);
 
       if (emails.length > 0) {
         try {
@@ -795,9 +795,9 @@ async function checkFinanceReminders() {
             body: JSON.stringify({
               from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
               to: emails,
-              subject: `💰 ${allLines.length} Payment${allLines.length === 1 ? "" : "s"} Due Within 7 Days`,
+              subject: `💰 ${allLines.length} Payment${allLines.length === 1 ? "" : "s"} Due Within 9 Days`,
               html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1A1A2E">
-                <p>The following payment${allLines.length === 1 ? " is" : "s are"} due within the next 7 days:</p>
+                <p>The following payment${allLines.length === 1 ? " is" : "s are"} due within the next 9 days:</p>
                 <ul>${allLines.map(l => `<li>${l}</li>`).join("")}</ul>
               </div>`,
             }),
