@@ -375,6 +375,26 @@ export default async function handler(req, res) {
     }
   }
 
+  // Real, explicitly-defined rooms - the deepest real level. Scoped
+  // by floor since a room always belongs to one; zone_id may be null
+  // for a room that sits directly on the floor rather than inside a
+  // specific zone.
+  if (req.query.floorRooms === "true" && req.query.facilityId && req.query.building && req.query.floorId) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        "select id, zone_id, room_name, sort_order from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 order by sort_order asc, room_name asc",
+        [session.org, req.query.facilityId, req.query.building, req.query.floorId]
+      );
+      return res.status(200).json({
+        rooms: result.rows.map(r => ({ id: r.id, zoneId: r.zone_id, roomName: r.room_name, sortOrder: r.sort_order })),
+      });
+    } catch (err) {
+      console.error("floorRooms read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Real building interior capture, confirmed directly - one per
   // building. Returns null cleanly when none exists yet, so the
   // frontend can just show the plain 2D Floor Plan with no toggle,

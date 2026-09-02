@@ -1116,9 +1116,11 @@ export default async function handler(req, res) {
         // Real cascade - keeps any asset already tagged with the old
         // zone name genuinely in sync with the rename, rather than
         // silently pointing at a zone name that no longer exists
-        // anywhere in the real, defined structure.
+        // anywhere in the real, defined structure. Confirmed directly:
+        // components.zone (not room_zone, which actually maps to a
+        // room instead) is the real zone field on an asset.
         await pgQuery(
-          "update components set room_zone = $1 where organization_id = $2 and building = $3 and room_zone = $4",
+          "update components set zone = $1 where organization_id = $2 and building = $3 and zone = $4",
           [newName, session.org, zone.building_name, zone.zone_name]
         );
         return res.status(200).json({ success: true });
@@ -1140,10 +1142,104 @@ export default async function handler(req, res) {
         if (!zone || zone.organization_id !== session.org) {
           return res.status(404).json({ error: "Zone not found." });
         }
+        // Rooms that belonged to this zone fall back to sitting
+        // directly on the floor (zone_id set null) via the real
+        // database foreign key itself, not deleted alongside it.
         await deleteById("building_zones", zoneRecordId);
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("removeZone error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Real, explicitly-defined rooms - the deepest real level of the
+    // hierarchy. Always belongs to a real floor; zoneId is genuinely
+    // optional, matching how zones themselves are optional - a room
+    // can sit directly on a floor with no zone at all.
+    if (req.body && req.body.addRoom) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to add a room." });
+      }
+      const { facilityId, buildingName, floorId, zoneId, roomName, sortOrder } = req.body;
+      if (!facilityId || !buildingName || !floorId || !roomName || !roomName.trim()) {
+        return res.status(400).json({ error: "facilityId, buildingName, floorId, and roomName are required" });
+      }
+      try {
+        const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
+        // A real, explicit duplicate check rather than relying only
+        // on a database constraint - two rooms with no zone at all
+        // would otherwise both have a null zone_id, and Postgres
+        // treats separate nulls as never conflicting under a unique
+        // constraint.
+        const dupeCheck = await pgQuery(
+          zoneId
+            ? "select 1 from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 and zone_id = $5 and room_name = $6"
+            : "select 1 from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 and zone_id is null and room_name = $5",
+          zoneId
+            ? [session.org, facilityId, buildingName, floorId, zoneId, roomName.trim()]
+            : [session.org, facilityId, buildingName, floorId, roomName.trim()]
+        );
+        if (dupeCheck.rows.length > 0) return res.status(400).json({ error: "This room is already defined here." });
+
+        const created = await insert("building_rooms", {
+          organization_id: session.org, facility_id: facilityId, building_name: buildingName,
+          floor_id: floorId, zone_id: zoneId || null, room_name: roomName.trim(),
+          sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+        });
+        return res.status(200).json({ success: true, room: { id: created.id, roomName: created.room_name } });
+      } catch (err) {
+        console.error("addRoom error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.editRoom) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a room." });
+      }
+      const { roomRecordId, roomName } = req.body;
+      if (!roomRecordId || !roomName || !roomName.trim()) return res.status(400).json({ error: "roomRecordId and roomName required" });
+      try {
+        const { getById, update, query: pgQuery } = await import("../lib/postgresClient.js");
+        const room = await getById("building_rooms", roomRecordId).catch(() => null);
+        if (!room || room.organization_id !== session.org) {
+          return res.status(404).json({ error: "Room not found." });
+        }
+        const newName = roomName.trim();
+        await update("building_rooms", roomRecordId, { room_name: newName }, session.org);
+        // Real cascade - keeps any asset already tagged with the old
+        // room name genuinely in sync with the rename. Confirmed
+        // directly: components.room_zone (not a plain room column,
+        // which doesn't exist at all) is the real field that actually
+        // maps to a room on the frontend, despite its name.
+        await pgQuery(
+          "update components set room_zone = $1 where organization_id = $2 and building = $3 and room_zone = $4",
+          [newName, session.org, room.building_name, room.room_name]
+        );
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editRoom error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.removeRoom) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to remove a room." });
+      }
+      const { roomRecordId } = req.body;
+      if (!roomRecordId) return res.status(400).json({ error: "roomRecordId required" });
+      try {
+        const { getById, deleteById } = await import("../lib/postgresClient.js");
+        const room = await getById("building_rooms", roomRecordId).catch(() => null);
+        if (!room || room.organization_id !== session.org) {
+          return res.status(404).json({ error: "Room not found." });
+        }
+        await deleteById("building_rooms", roomRecordId);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeRoom error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
