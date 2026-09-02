@@ -3037,68 +3037,253 @@ function floorSortKey(floor) {
 // sample building. Respects the same facility/building filter already
 // used everywhere else in the app, so switching it re-renders this
 // too via rerenderActiveTab().
-function renderLevelView() {
+// Confirmed directly: Level View is where a facility's real scope
+// gets set up, not just a passive reflection of whatever assets
+// happen to be tagged already - a floor shows here if it's been
+// explicitly defined, if real assets are tagged to it, or both. Real,
+// defined floors are fetched per building since a brand-new client's
+// building genuinely has zero assets on it yet but still has a real
+// structure worth setting up.
+async function renderLevelView() {
   const relevantBuildings = currentBuildingFilter !== "__all__"
     ? [currentBuildingFilter]
     : currentFacilityFilter !== "__all__"
       ? (facilitiesData.find(f => f.name === currentFacilityFilter)?.buildings || [])
       : facilitiesData.flatMap(f => f.buildings);
 
-  let html = `<div class="dash-grid">`;
+  const container = document.getElementById('view-levelview');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
 
-  relevantBuildings.forEach(buildingName => {
+  const canManageStructure = typeof currentUserPermissions !== 'undefined' && currentUserPermissions && currentUserPermissions.manageUsers;
+
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:12px;color:var(--muted)">The real facility, building, and floor structure - set it up here as it actually exists, even before any assets are added.</div>
+      ${canManageStructure ? `<div style="display:flex;gap:8px;flex-shrink:0">
+        <a href="#" onclick="openAddFacilityModal(); return false;" style="font-size:11.5px;color:var(--navy);text-decoration:underline;white-space:nowrap">+ Add facility</a>
+        <a href="#" onclick="openAddBuildingModalStandalone(); return false;" style="font-size:11.5px;color:var(--navy);text-decoration:underline;white-space:nowrap">+ Add building</a>
+      </div>` : ''}
+    </div>
+    <div class="dash-grid">`;
+
+  for (const buildingName of relevantBuildings) {
+    const facility = facilitiesData.find(f => f.buildings.includes(buildingName));
     const buildingAssets = assets.filter(a => a.building === buildingName);
-    const realFloors = [...new Set(buildingAssets.map(a => a.floor).filter(Boolean))]
+    const assetFloors = new Set(buildingAssets.map(a => a.floor).filter(Boolean));
+
+    let definedFloors = [];
+    if (facility) {
+      try {
+        const resp = await fetch(`/api/get-assets?buildingFloors=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}`);
+        if (resp.ok) definedFloors = (await resp.json()).floors || [];
+      } catch (err) {
+        console.error('Could not load defined floors for', buildingName, err);
+      }
+    }
+    const definedByFloorId = {};
+    definedFloors.forEach(f => { definedByFloorId[f.floorId] = f; });
+
+    // Union of both real sources - a floor that's been explicitly
+    // defined but has no assets yet is still real and still shows.
+    const allFloorIds = [...new Set([...assetFloors, ...Object.keys(definedByFloorId)])]
       .sort((a, b) => floorSortKey(b) - floorSortKey(a));
 
-    html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</div>`;
-    if (realFloors.length === 0) {
-      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No assets tagged to a floor in this building yet.</div>`;
+    html += `<div class="dash-panel"><div class="dash-panel-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</span>
+      ${canManageStructure && facility ? `<a href="#" onclick="openAddFloorModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;font-weight:600;color:var(--navy);text-decoration:underline">+ Add floor</a>` : ''}
+    </div>`;
+    if (allFloorIds.length === 0) {
+      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
     } else {
-      realFloors.forEach(floorId => {
+      allFloorIds.forEach(floorId => {
         const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
         const bySys = {};
         lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
-        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
-        html += `<div class="level-row"><div><div class="level-name">${escapeHtml(displayFloor(floorId))}</div><div class="level-detail">${escapeHtml(breakdown)}</div></div><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div></div>`;
+        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || (definedByFloorId[floorId] ? 'No assets tagged yet' : '—');
+        const label = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
+        const removable = canManageStructure && definedByFloorId[floorId] && lvlAssets.length === 0;
+        html += `<div class="level-row"><div><div class="level-name">${escapeHtml(label)}</div><div class="level-detail">${escapeHtml(breakdown)}</div></div><div style="display:flex;align-items:center;gap:8px"><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div>${removable ? `<button onclick="submitRemoveFloor('${definedByFloorId[floorId].id}')" style="padding:3px 8px;font-size:10.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button>` : ''}</div></div>`;
       });
     }
     html += `</div>`;
 
-    // Real, dynamically-sized vertical section - one row per real
-    // floor, sized to however many floors this specific building
-    // actually has, not a fixed illustration.
     const rowHeight = 32;
     const topPad = 16;
-    const svgHeight = realFloors.length * rowHeight + topPad * 2;
+    const svgHeight = allFloorIds.length * rowHeight + topPad * 2;
     html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Vertical Level View</div>`;
-    if (realFloors.length === 0) {
-      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No assets tagged to a floor in this building yet.</div>`;
+    if (allFloorIds.length === 0) {
+      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
     } else {
       html += `<svg viewBox="0 0 380 ${svgHeight}" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">`;
-      realFloors.forEach((floorId, i) => {
+      allFloorIds.forEach((floorId, i) => {
         const y = topPad + i * rowHeight;
         const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
         const bySys = {};
         lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
-        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || 'No assets tagged';
+        const rawBreakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || 'No assets tagged yet';
+        const breakdown = rawBreakdown.length > 32 ? rawBreakdown.slice(0, 31) + '…' : rawBreakdown;
+        const rawLabel = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
+        const label = rawLabel.length > 18 ? rawLabel.slice(0, 17) + '…' : rawLabel;
         const rowFill = i % 2 === 0 ? '#F7F9FC' : '#EDF1F7';
         html += `
           <rect x="4" y="${y}" width="372" height="${rowHeight - 2}" fill="${rowFill}" stroke="#E2E6ED" stroke-width="0.5"/>
-          <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(displayFloor(floorId))}</text>
-          <text x="90" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
+          <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(label)}</text>
+          <text x="130" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
       });
       html += `</svg>`;
     }
     html += `</div>`;
-  });
+  }
 
   if (relevantBuildings.length === 0) {
     html += `<div class="dash-panel"><div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No buildings set up yet.</div></div>`;
   }
 
   html += `</div>`;
-  document.getElementById('view-levelview').innerHTML = html;
+  container.innerHTML = html;
+}
+
+// Level View's own building-add entry point - same real backend
+// action as the one already available from Add Asset, just without
+// depending on that form already being open with a facility chosen.
+// Uses whichever facility the global switcher currently has selected.
+function openAddBuildingModalStandalone() {
+  const facility = currentFacilityFilter !== "__all__"
+    ? facilitiesData.find(f => f.name === currentFacilityFilter)
+    : facilitiesData[0];
+  if (!facility) { alert('Add a facility first.'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'addBuildingStandaloneOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Add Building</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Adding to <strong>${escapeHtml(facility.name)}</strong>.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building Name *</label>
+      <input id="abs_name" type="text" placeholder="e.g. Main Building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="abs_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addBuildingStandaloneOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="abs_submit" onclick="submitAddBuildingStandalone('${facility.id}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Building</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('abs_name').focus();
+}
+
+async function submitAddBuildingStandalone(facilityId) {
+  const buildingName = document.getElementById('abs_name').value.trim();
+  const errorBox = document.getElementById('abs_error');
+  const btn = document.getElementById('abs_submit');
+  errorBox.style.display = 'none';
+  if (!buildingName) { errorBox.textContent = 'Enter a building name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addBuilding: true, facilityId, buildingName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add building');
+    await refreshFacilitiesData();
+    document.getElementById('addBuildingStandaloneOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Building';
+  }
+}
+
+// Confirmed directly: a real floor type (Ground Floor / Floor N /
+// Basement N) generates the exact same L<n>/B<n> code already used on
+// real asset records, so a defined floor and an asset actually
+// tagged to it are always the same floor, never two things that only
+// look similar.
+function openAddFloorModal(facilityId, buildingName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'addFloorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Add Floor</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Adding to <strong>${escapeHtml(buildingName)}</strong>.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor Type *</label>
+      <select id="af_type" onchange="onFloorTypeChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="ground">Ground Floor</option>
+        <option value="floor">Floor Above Ground</option>
+        <option value="basement">Basement</option>
+      </select>
+      <div id="af_numberRow" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Number *</label>
+        <input id="af_number" type="number" min="1" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+      </div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Label (optional)</label>
+      <input id="af_label" type="text" placeholder="e.g. Reception & Lobby" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="af_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addFloorOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="af_submit" onclick="submitAddFloor('${facilityId}','${buildingName.replace(/'/g,"\\'")}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Floor</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function onFloorTypeChange() {
+  const type = document.getElementById('af_type').value;
+  document.getElementById('af_numberRow').style.display = type === 'ground' ? 'none' : 'block';
+}
+
+async function submitAddFloor(facilityId, buildingName) {
+  const type = document.getElementById('af_type').value;
+  const number = document.getElementById('af_number').value;
+  const label = document.getElementById('af_label').value.trim();
+  const errorBox = document.getElementById('af_error');
+  const btn = document.getElementById('af_submit');
+  errorBox.style.display = 'none';
+
+  let floorId;
+  if (type === 'ground') floorId = 'L1';
+  else if (type === 'floor') {
+    if (!number || Number(number) < 1) { errorBox.textContent = 'Enter a real floor number.'; errorBox.style.display = 'block'; return; }
+    floorId = `L${Number(number) + 1}`;
+  } else {
+    if (!number || Number(number) < 1) { errorBox.textContent = 'Enter a real basement number.'; errorBox.style.display = 'block'; return; }
+    floorId = `B${Number(number)}`;
+  }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addFloor: true, facilityId, buildingName, floorId, floorLabel: label }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add floor');
+    document.getElementById('addFloorOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Floor';
+  }
+}
+
+async function submitRemoveFloor(floorRecordId) {
+  if (!confirm('Remove this floor? It can be re-added later.')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeFloor: true, floorRecordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove floor');
+    renderLevelView();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
 }
 
 let lastPlans = [];

@@ -1708,3 +1708,27 @@ create unique index if not exists idx_organizations_slug on organizations (slug)
 -- ============================================================
 alter table organizations add column if not exists logo_path text;
 alter table organizations add column if not exists brand_color text;
+
+-- ============================================================
+-- Real, explicitly-defined floors per building - confirmed directly:
+-- Level View should be where a facility's real scope (buildings,
+-- floors) gets set up, not just a passive reflection of whatever
+-- assets happen to be tagged already. Solves the real chicken-and-egg
+-- problem a brand-new client hits - a facility can have a real,
+-- defined floor with zero assets on it yet. floor_id follows the
+-- same L<n>/B<n> convention already used on real asset records, so a
+-- defined floor and an asset actually tagged to it are always the
+-- same floor, never two different things that happen to look similar.
+-- ============================================================
+create table if not exists building_floors (
+  id              uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  facility_id     uuid not null references facilities(id) on delete cascade,
+  building_name   text not null,
+  floor_id        text not null,
+  floor_label     text,
+  sort_order      integer not null default 0,
+  created_at      timestamptz not null default now(),
+  unique (facility_id, building_name, floor_id)
+);
+create index if not exists idx_building_floors_org on building_floors (organization_id, facility_id, building_name);

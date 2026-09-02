@@ -823,10 +823,60 @@ export default async function handler(req, res) {
       }
     }
 
-    // Adding a vendor — Procurement only, confirmed. This is the
-    // foundation the new procurement workflow sits on: vendors have to
-    // actually exist in the system before quotes/invoices can be
-    // attached against them.
+    // Real, explicitly-defined floors for a building - confirmed
+    // directly: Level View should be where a facility's real scope
+    // gets set up, not just derived from whatever assets happen to
+    // exist already. floor_id follows the same L<n>/B<n> convention
+    // already used on real asset records, so a defined floor and an
+    // asset actually tagged to it are always the same floor.
+    if (req.body && req.body.addFloor) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to add a floor." });
+      }
+      const { facilityId, buildingName, floorId, floorLabel, sortOrder } = req.body;
+      if (!facilityId || !buildingName || !floorId || !floorId.trim()) {
+        return res.status(400).json({ error: "facilityId, buildingName, and floorId are required" });
+      }
+      try {
+        const { insert } = await import("../lib/postgresClient.js");
+        const created = await insert("building_floors", {
+          organization_id: session.org, facility_id: facilityId, building_name: buildingName,
+          floor_id: floorId.trim(), floor_label: floorLabel ? floorLabel.trim() : null,
+          sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+        });
+        return res.status(200).json({ success: true, floor: { id: created.id, floorId: created.floor_id, floorLabel: created.floor_label } });
+      } catch (err) {
+        const message = /unique/i.test(err.message) ? "This floor is already defined for this building." : err.message;
+        console.error("addFloor error:", err);
+        return res.status(500).json({ error: message });
+      }
+    }
+
+    if (req.body && req.body.removeFloor) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to remove a floor." });
+      }
+      const { floorRecordId } = req.body;
+      if (!floorRecordId) return res.status(400).json({ error: "floorRecordId required" });
+      try {
+        const { getById, deleteById } = await import("../lib/postgresClient.js");
+        const floor = await getById("building_floors", floorRecordId).catch(() => null);
+        if (!floor || floor.organization_id !== session.org) {
+          return res.status(404).json({ error: "Floor not found." });
+        }
+        // A hard delete of the definition only - real assets already
+        // tagged to this floor keep showing up in Level View regardless,
+        // since it merges defined floors with whatever's actually
+        // tagged on real assets. Removing the definition just means it
+        // no longer shows with zero assets once nothing's really there.
+        await deleteById("building_floors", floorRecordId);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeFloor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Creating a tenant unit — anyone except Technician, confirmed, to
     // keep this simple rather than defining a precise allowed list.
     if (req.body && req.body.addUnit) {
