@@ -114,7 +114,7 @@ function reasonFormPage(recordId) {
 // reopened work order nobody notices.
 async function sendUnsatisfactionAlert(assetName, reason, organizationId) {
   const [engineers, admins, pms] = await Promise.all([
-    Promise.all([getContactsForRole("electrical_engineer", organizationId), getContactsForRole("mechanical_engineer", organizationId)]),
+    Promise.all([getContactsForRole("electrical_engineer", organizationId), getContactsForRole("mechanical_engineer", organizationId), getContactsForRole("biomedical_technician", organizationId)]),
     getContactsForRole("admin", organizationId),
     getContactsForRole("property_manager", organizationId),
   ]);
@@ -375,10 +375,11 @@ const UNIT_PORTAL_CATEGORY_TO_ROLE = {
   "NonTechnical": "Property Manager",
 };
 const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
-  "Electrical": "electrical_engineer",
   "Mechanical": "mechanical_engineer",
-  "Property Manager": "property_manager",
+  "Electrical": "electrical_engineer",
   "Admin": "admin",
+  "Property Manager": "property_manager",
+  "Biomedical": "biomedical_technician",
 };
 
 // Same convention as the Work Orders activity log, scoped to Units —

@@ -82,7 +82,7 @@ export default async function handler(req, res) {
     // stage. Flagged directly as a real decision worth revisiting,
     // not silently assumed permanent.
     const REQUISITION_ACTIONS = ["createRequisition", "editRequisition", "deleteRequisition", "requestProcurementForWorkOrder", "registerRequisitionAsAsset"];
-    if (REQUISITION_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
+    if (REQUISITION_ACTIONS.includes(action) && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "biomedical_technician", "stock_keeper"].includes(session.r)) {
       return res.status(403).json({ error: "You don't have permission to manage requisitions." });
     }
     if (action === "edit") return handleEditAsset(req, res, session.u, session.r, session.org);
@@ -2462,7 +2462,7 @@ async function appendFloorPlanActivity(recordId, text, by) {
 // Matterport link per building, no 3D rendering work here at all.
 // Confirmed directly: opened to every real role, including
 // Technician - not restricted to admin-tier roles.
-const DIGITAL_TWIN_MANAGE_ROLES = ["technician", "electrical_engineer", "mechanical_engineer", "admin", "property_manager", "procurement", "pharmacy", "stock_keeper", "business_owner", "system_admin"];
+const DIGITAL_TWIN_MANAGE_ROLES = ["technician", "electrical_engineer", "mechanical_engineer", "biomedical_technician", "admin", "property_manager", "procurement", "pharmacy", "stock_keeper", "business_owner", "system_admin"];
 
 function isPlausibleMatterportUrl(url) {
   return typeof url === "string" && /^https:\/\//.test(url.trim());

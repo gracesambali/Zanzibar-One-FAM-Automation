@@ -751,6 +751,7 @@ const ROLE_LABELS = {
   technician: "Technician",
   electrical_engineer: "Electrical Engineer",
   mechanical_engineer: "Mechanical Engineer",
+  biomedical_technician: "Biomedical Technician",
   admin: "Admin",
   property_manager: "Property Manager",
   procurement: "Procurement",
@@ -788,6 +789,7 @@ const ROLE_PERMISSIONS = {
   technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: false, viewStaffPerformance: false, simplifiedNav: true },
   electrical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   mechanical_engineer: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
+  biomedical_technician: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   admin: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   property_manager: { viewCostAndDepreciation: false, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: true, fulfillProcurement: false, reviewWorkOrderClosure: true, viewStaffPerformance: false },
   procurement: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: false, requestProcurement: false, fulfillProcurement: true, reviewWorkOrderClosure: false, viewStaffPerformance: false },
@@ -812,6 +814,16 @@ const systemDefs = [
   { name:"Parking System", desc:"Barrier gates and payment kiosks managing vehicle access across both basement parking levels.", color:"var(--pink)" },
   { name:"Retail Tenant Interface", desc:"Tenant-facing kiosks and portals supporting retail zone operations and tenant communication.", color:"var(--gold)" },
   { name:"Fire Detection", desc:"Smoke and heat detection loops with central control panel providing early warning coverage across every floor.", color:"#F97316" },
+  { name:"Diagnostic Biomedical", desc:"ECG, ultrasound, endoscopy and other diagnostic equipment used to identify and evaluate patient conditions.", color:"#0EA5E9" },
+  { name:"Patient Monitoring & Life Support Biomedical", desc:"Vital signs monitors, ventilators, defibrillators and infusion pumps supporting continuous patient care.", color:"#DC2626" },
+  { name:"Laboratory Biomedical", desc:"Analyzers, centrifuges, microscopes and other equipment supporting clinical and diagnostic lab testing.", color:"#7C3AED" },
+  { name:"Surgical & Operating Theatre Biomedical", desc:"Surgical tables, lights, electrosurgical units and anaesthesia machines equipping the operating theatre.", color:"#059669" },
+  { name:"Sterilization & Infection Control Biomedical", desc:"Autoclaves, sterilizers and washer-disinfectors maintaining infection control across clinical areas.", color:"#0891B2" },
+  { name:"Imaging & Radiology Biomedical", desc:"X-ray, CT, MRI and other imaging equipment supporting radiological diagnosis.", color:"#4F46E5" },
+  { name:"Medical Gas Biomedical", desc:"Oxygen, nitrous oxide and medical air supply systems, including outlets, alarms and manifold rooms.", color:"#2563EB" },
+  { name:"Dental Biomedical", desc:"Dental chairs, handpieces and compressors equipping dental treatment rooms.", color:"#EA580C" },
+  { name:"Rehabilitation & Physiotherapy Biomedical", desc:"Therapy and mobility equipment supporting patient rehabilitation and physiotherapy.", color:"#65A30D" },
+  { name:"Emergency & Patient Care Biomedical", desc:"Crash carts, resuscitation equipment and other biomedical devices supporting emergency and general patient care.", color:"#DB2777" },
 ];
 
 let currentSystemFilter = "All";
@@ -2769,8 +2781,8 @@ async function openBmsNotificationSettingsModal() {
   const rolesData = await rolesResp.json();
   const categories = catData.categories || [];
   const rolesByCategory = rolesData.rolesByCategory || {};
-  const allRoles = ['technician', 'electrical_engineer', 'mechanical_engineer', 'property_manager', 'procurement', 'business_owner', 'system_admin'];
-  const roleLabels = { technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer', property_manager: 'Property Manager', procurement: 'Procurement', business_owner: 'Business Owner', system_admin: 'System Admin' };
+  const allRoles = ['technician', 'electrical_engineer', 'mechanical_engineer', 'biomedical_technician', 'property_manager', 'procurement', 'business_owner', 'system_admin'];
+  const roleLabels = { technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer', biomedical_technician: 'Biomedical Technician', property_manager: 'Property Manager', procurement: 'Procurement', business_owner: 'Business Owner', system_admin: 'System Admin' };
 
   document.getElementById('ns_body').innerHTML = `
     <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Choose which roles get notified when a sensor in each category triggers a real alert. Assigned once per category — every sensor in it inherits this automatically.</div>
@@ -4232,6 +4244,7 @@ let inventoryItemsCache = [];
 // for someone who genuinely forgets their password later.
 const STAFF_ROLE_LABELS = {
   technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer',
+  biomedical_technician: 'Biomedical Technician',
   admin: 'Admin', property_manager: 'Property Manager', procurement: 'Procurement', stock_keeper: 'Stock Keeper',
   pharmacy: 'Pharmacy', business_owner: 'Business Owner', system_admin: 'System Admin',
 };
@@ -11058,7 +11071,7 @@ let floorPlanFacilityTwinUrl = null;
 function DIGITAL_TWIN_CAN_MANAGE() {
   // Confirmed directly: opened to every real role, including
   // Technician - matches the exact same list enforced on the backend.
-  return ['technician', 'electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'procurement', 'pharmacy', 'stock_keeper', 'business_owner', 'system_admin'].includes(currentUserRole);
+  return ['technician', 'electrical_engineer', 'mechanical_engineer', 'biomedical_technician', 'admin', 'property_manager', 'procurement', 'pharmacy', 'stock_keeper', 'business_owner', 'system_admin'].includes(currentUserRole);
 }
 
 async function loadDigitalTwinToggle() {
@@ -11839,13 +11852,14 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE = {
   "Electrical": "electrical_engineer",
   "Admin": "admin",
   "Property Manager": "property_manager",
+  "Biomedical": "biomedical_technician",
 };
 
 // Any of the four core roles can reassign any work order's routing,
 // regardless of who currently holds it — same rule the backend
 // enforces, and the same rule technician assignment already uses.
 function canReassignWorkOrder(o) {
-  const CORE = ['electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'business_owner', 'system_admin'];
+  const CORE = ['electrical_engineer', 'mechanical_engineer', 'biomedical_technician', 'admin', 'property_manager', 'business_owner', 'system_admin'];
   return CORE.includes(currentUserRole);
 }
 
@@ -12008,7 +12022,7 @@ async function showWorkOrderDetail(recordId) {
 // a shared responsibility across the four core people, not scoped to
 // whoever the job happens to be routed to.
 function canAssignTechnician() {
-  const CORE = ['electrical_engineer', 'mechanical_engineer', 'admin', 'property_manager', 'business_owner', 'system_admin'];
+  const CORE = ['electrical_engineer', 'mechanical_engineer', 'biomedical_technician', 'admin', 'property_manager', 'business_owner', 'system_admin'];
   return CORE.includes(currentUserRole);
 }
 

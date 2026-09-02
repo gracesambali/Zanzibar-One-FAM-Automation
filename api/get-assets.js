@@ -545,7 +545,7 @@ export default async function handler(req, res) {
   // to request something.
   const REQUISITION_DATA_ROUTES = ["requisitions", "requisitionActivityLog"];
   const requestedRequisitionRoute = REQUISITION_DATA_ROUTES.find(r => req.query[r] === "true");
-  if (requestedRequisitionRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "stock_keeper"].includes(session.r)) {
+  if (requestedRequisitionRoute && !["admin", "property_manager", "procurement", "system_admin", "business_owner", "technician", "electrical_engineer", "mechanical_engineer", "biomedical_technician", "stock_keeper"].includes(session.r)) {
     return res.status(403).json({ error: "You don't have permission to view requisitions." });
   }
 
@@ -2024,6 +2024,7 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING = {
   "Electrical": "electrical_engineer",
   "Admin": "admin",
   "Property Manager": "property_manager",
+  "Biomedical": "biomedical_technician",
 };
 
 function computePendingItems(workOrders, role) {
@@ -2041,13 +2042,13 @@ function computePendingItems(workOrders, role) {
         items.push(describe(r, r.status === "Open" ? "Needs to be started" : "In progress"));
       }
     }
-  } else if (["electrical_engineer", "mechanical_engineer", "admin", "property_manager"].includes(role)) {
+  } else if (["electrical_engineer", "mechanical_engineer", "biomedical_technician", "admin", "property_manager"].includes(role)) {
     const myLabel = Object.entries(ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING).find(([, v]) => v === role)?.[0];
     for (const r of workOrders) {
       if (r.status === "Ready for Review" && r.assigned_role === myLabel) {
         items.push(describe(r, "Waiting on your review to close"));
       }
-      if ((role === "electrical_engineer" || role === "mechanical_engineer") && r.procurement_status === "Requested" && r.assigned_role === myLabel) {
+      if ((role === "electrical_engineer" || role === "mechanical_engineer" || role === "biomedical_technician") && r.procurement_status === "Requested" && r.assigned_role === myLabel) {
         items.push(describe(r, "Procurement request awaiting your approval"));
       }
     }
