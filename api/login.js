@@ -295,7 +295,7 @@ async function handleEditStaffAccount(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can edit a staff account." });
   }
 
-  const { username, displayName, email, phone, role, targetOrgId } = req.body || {};
+  const { username, newUsername, displayName, email, phone, role, targetOrgId } = req.body || {};
   if (!username) return res.status(400).json({ error: "username required" });
   if (role && !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
 
@@ -313,6 +313,17 @@ async function handleEditStaffAccount(req, res) {
 
     const fields = {};
     const changes = [];
+    if (newUsername !== undefined && newUsername.trim() && newUsername.trim() !== target.username) {
+      const desired = newUsername.trim();
+      // Confirmed directly: usernames are genuinely unique across the
+      // entire users table, not scoped to one client - checked
+      // directly against the real, live table rather than assumed
+      // safe, since two different clients could otherwise collide.
+      const existing = await findUserByUsername(desired);
+      if (existing) return res.status(400).json({ error: `"${desired}" is already taken by another account.` });
+      fields.username = desired;
+      changes.push(`username: "${target.username}" → "${desired}"`);
+    }
     if (displayName !== undefined && displayName.trim() !== (target.display_name || "")) {
       fields.display_name = displayName.trim(); changes.push(`name: "${target.display_name || ""}" → "${displayName.trim()}"`);
     }

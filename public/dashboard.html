@@ -6648,7 +6648,9 @@ function openEditStaffModal(username) {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Edit ${escapeHtml(account.username)}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Username can't be changed — it's this person's login.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Changing the username changes this person's login — let them know.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username</label>
+      <input id="es_username" type="text" value="${escapeHtml(account.username)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Display Name</label>
       <input id="es_displayName" type="text" value="${escapeHtml(account.displayName || '')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Email</label>
@@ -6702,6 +6704,7 @@ async function submitResetStaffPassword(username) {
 }
 
 async function submitEditStaff(username) {
+  const newUsername = document.getElementById('es_username').value.trim();
   const displayName = document.getElementById('es_displayName').value.trim();
   const email = document.getElementById('es_email').value.trim();
   const phone = document.getElementById('es_phone').value.trim();
@@ -6709,12 +6712,15 @@ async function submitEditStaff(username) {
   const errorBox = document.getElementById('es_error');
   const btn = document.getElementById('es_submit');
   errorBox.style.display = 'none';
+
+  if (!newUsername) { errorBox.textContent = 'Username cannot be blank.'; errorBox.style.display = 'block'; return; }
+
   btn.disabled = true; btn.textContent = 'Saving…';
 
   try {
     const resp = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'editStaffAccount', username, displayName, email, phone, role, targetOrgId: viewingClientOrgId }),
+      body: JSON.stringify({ action: 'editStaffAccount', username, newUsername, displayName, email, phone, role, targetOrgId: viewingClientOrgId }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
