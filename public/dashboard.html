@@ -3056,81 +3056,137 @@ async function renderLevelView() {
 
   const canManageStructure = typeof currentUserPermissions !== 'undefined' && currentUserPermissions && currentUserPermissions.manageUsers;
 
+  // Real facilities involved, in the order their buildings first
+  // appear - grouping headers shown once per facility, not once per
+  // building, since several buildings can share the same facility.
+  const facilitiesInvolved = [];
+  relevantBuildings.forEach(buildingName => {
+    const facility = facilitiesData.find(f => f.buildings.includes(buildingName));
+    if (facility && !facilitiesInvolved.some(f => f.id === facility.id)) facilitiesInvolved.push(facility);
+  });
+
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-size:12px;color:var(--muted)">The real facility, building, and floor structure - set it up here as it actually exists, even before any assets are added.</div>
+      <div style="font-size:12px;color:var(--muted)">The real facility, building, floor, and zone structure - set it up here as it actually exists, even before any assets are added. Zones are optional.</div>
       ${canManageStructure ? `<div style="display:flex;gap:8px;flex-shrink:0">
         <a href="#" onclick="openAddFacilityModal(); return false;" style="font-size:11.5px;color:var(--navy);text-decoration:underline;white-space:nowrap">+ Add facility</a>
         <a href="#" onclick="openAddBuildingModalStandalone(); return false;" style="font-size:11.5px;color:var(--navy);text-decoration:underline;white-space:nowrap">+ Add building</a>
       </div>` : ''}
-    </div>
-    <div class="dash-grid">`;
+    </div>`;
 
-  for (const buildingName of relevantBuildings) {
-    const facility = facilitiesData.find(f => f.buildings.includes(buildingName));
-    const buildingAssets = assets.filter(a => a.building === buildingName);
-    const assetFloors = new Set(buildingAssets.map(a => a.floor).filter(Boolean));
+  for (const facility of facilitiesInvolved) {
+    if (canManageStructure) {
+      html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">${escapeHtml(facility.name)}</div>
+        <a href="#" onclick="openEditFacilityModal('${facility.id}','${facility.name.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;color:var(--navy);text-decoration:underline">Edit</a>
+        <a href="#" onclick="submitRemoveFacility('${facility.id}','${facility.name.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;color:var(--red);text-decoration:underline">Remove</a>
+      </div>`;
+    }
 
-    let definedFloors = [];
-    if (facility) {
+    html += `<div class="dash-grid">`;
+    const buildingsHere = relevantBuildings.filter(b => facility.buildings.includes(b));
+
+    for (const buildingName of buildingsHere) {
+      const buildingAssets = assets.filter(a => a.building === buildingName);
+      const assetFloors = new Set(buildingAssets.map(a => a.floor).filter(Boolean));
+
+      let definedFloors = [];
       try {
         const resp = await fetch(`/api/get-assets?buildingFloors=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}`);
         if (resp.ok) definedFloors = (await resp.json()).floors || [];
       } catch (err) {
         console.error('Could not load defined floors for', buildingName, err);
       }
-    }
-    const definedByFloorId = {};
-    definedFloors.forEach(f => { definedByFloorId[f.floorId] = f; });
+      const definedByFloorId = {};
+      definedFloors.forEach(f => { definedByFloorId[f.floorId] = f; });
 
-    // Union of both real sources - a floor that's been explicitly
-    // defined but has no assets yet is still real and still shows.
-    const allFloorIds = [...new Set([...assetFloors, ...Object.keys(definedByFloorId)])]
-      .sort((a, b) => floorSortKey(b) - floorSortKey(a));
+      // Union of both real sources - a floor that's been explicitly
+      // defined but has no assets yet is still real and still shows.
+      const allFloorIds = [...new Set([...assetFloors, ...Object.keys(definedByFloorId)])]
+        .sort((a, b) => floorSortKey(b) - floorSortKey(a));
 
-    html += `<div class="dash-panel"><div class="dash-panel-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</span>
-      ${canManageStructure && facility ? `<a href="#" onclick="openAddFloorModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;font-weight:600;color:var(--navy);text-decoration:underline">+ Add floor</a>` : ''}
-    </div>`;
-    if (allFloorIds.length === 0) {
-      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
-    } else {
-      allFloorIds.forEach(floorId => {
-        const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
-        const bySys = {};
-        lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
-        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || (definedByFloorId[floorId] ? 'No assets tagged yet' : '—');
-        const label = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
-        const removable = canManageStructure && definedByFloorId[floorId] && lvlAssets.length === 0;
-        html += `<div class="level-row"><div><div class="level-name">${escapeHtml(label)}</div><div class="level-detail">${escapeHtml(breakdown)}</div></div><div style="display:flex;align-items:center;gap:8px"><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div>${removable ? `<button onclick="submitRemoveFloor('${definedByFloorId[floorId].id}')" style="padding:3px 8px;font-size:10.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button>` : ''}</div></div>`;
-      });
-    }
-    html += `</div>`;
+      // Real, defined zones per floor - fetched alongside floors,
+      // since Level View is where the whole real structure gets
+      // reviewed together, not just floors alone.
+      const zonesByFloorId = {};
+      for (const floorId of allFloorIds) {
+        try {
+          const zResp = await fetch(`/api/get-assets?floorZones=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`);
+          if (zResp.ok) zonesByFloorId[floorId] = (await zResp.json()).zones || [];
+        } catch (err) {
+          console.error('Could not load zones for', buildingName, floorId, err);
+        }
+      }
 
-    const rowHeight = 32;
-    const topPad = 16;
-    const svgHeight = allFloorIds.length * rowHeight + topPad * 2;
-    html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Vertical Level View</div>`;
-    if (allFloorIds.length === 0) {
-      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
-    } else {
-      html += `<svg viewBox="0 0 380 ${svgHeight}" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">`;
-      allFloorIds.forEach((floorId, i) => {
-        const y = topPad + i * rowHeight;
-        const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
-        const bySys = {};
-        lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
-        const rawBreakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || 'No assets tagged yet';
-        const breakdown = rawBreakdown.length > 32 ? rawBreakdown.slice(0, 31) + '…' : rawBreakdown;
-        const rawLabel = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
-        const label = rawLabel.length > 18 ? rawLabel.slice(0, 17) + '…' : rawLabel;
-        const rowFill = i % 2 === 0 ? '#F7F9FC' : '#EDF1F7';
-        html += `
-          <rect x="4" y="${y}" width="372" height="${rowHeight - 2}" fill="${rowFill}" stroke="#E2E6ED" stroke-width="0.5"/>
-          <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(label)}</text>
-          <text x="130" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
-      });
-      html += `</svg>`;
+      html += `<div class="dash-panel"><div class="dash-panel-title" style="display:block">
+        <div style="margin-bottom:6px">${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</div>
+        ${canManageStructure ? `<div style="display:flex;align-items:center;gap:14px;font-size:11px;font-weight:600">
+          <a href="#" onclick="openEditBuildingModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a>
+          <a href="#" onclick="submitRemoveBuilding('${facility.id}','${buildingName.replace(/'/g,"\\'")}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>
+          <a href="#" onclick="openAddFloorModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline;margin-left:auto">+ Add floor</a>
+        </div>` : ''}
+      </div>`;
+      if (allFloorIds.length === 0) {
+        html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
+      } else {
+        allFloorIds.forEach(floorId => {
+          const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
+          const bySys = {};
+          lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+          const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || (definedByFloorId[floorId] ? 'No assets tagged yet' : '—');
+          const label = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
+          const isDefined = !!definedByFloorId[floorId];
+          const removable = canManageStructure && isDefined && lvlAssets.length === 0;
+          const zones = zonesByFloorId[floorId] || [];
+
+          html += `<div class="level-row">
+            <div style="flex:1">
+              <div class="level-name">${escapeHtml(label)}</div>
+              <div class="level-detail">${escapeHtml(breakdown)}</div>
+              ${zones.length > 0 ? `<div style="margin-top:6px;padding-left:10px;border-left:2px solid var(--border)">
+                ${zones.map(z => `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);padding:2px 0">
+                  <span>${escapeHtml(z.zoneName)}</span>
+                  ${canManageStructure ? `<a href="#" onclick="openEditZoneModal('${z.id}','${z.zoneName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a><a href="#" onclick="submitRemoveZone('${z.id}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>` : ''}
+                </div>`).join('')}
+              </div>` : ''}
+              ${canManageStructure && isDefined ? `<a href="#" onclick="openAddZoneModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}','${floorId}'); return false;" style="font-size:10.5px;color:var(--navy);text-decoration:underline;margin-left:${zones.length > 0 ? '12px' : '0'}">+ Add zone</a>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+              <div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div>
+              ${canManageStructure && isDefined ? `<button onclick="openEditFloorModal('${definedByFloorId[floorId].id}','${(definedByFloorId[floorId].floorLabel||'').replace(/'/g,"\\'")}')" style="padding:3px 8px;font-size:10.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>` : ''}
+              ${removable ? `<button onclick="submitRemoveFloor('${definedByFloorId[floorId].id}')" style="padding:3px 8px;font-size:10.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button>` : ''}
+            </div>
+          </div>`;
+        });
+      }
+      html += `</div>`;
+
+      const rowHeight = 32;
+      const topPad = 16;
+      const svgHeight = allFloorIds.length * rowHeight + topPad * 2;
+      html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Vertical Level View</div>`;
+      if (allFloorIds.length === 0) {
+        html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No floors set up in this building yet.</div>`;
+      } else {
+        html += `<svg viewBox="0 0 380 ${svgHeight}" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">`;
+        allFloorIds.forEach((floorId, i) => {
+          const y = topPad + i * rowHeight;
+          const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
+          const bySys = {};
+          lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+          const rawBreakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || 'No assets tagged yet';
+          const breakdown = rawBreakdown.length > 32 ? rawBreakdown.slice(0, 31) + '…' : rawBreakdown;
+          const rawLabel = definedByFloorId[floorId]?.floorLabel || displayFloor(floorId);
+          const label = rawLabel.length > 18 ? rawLabel.slice(0, 17) + '…' : rawLabel;
+          const rowFill = i % 2 === 0 ? '#F7F9FC' : '#EDF1F7';
+          html += `
+            <rect x="4" y="${y}" width="372" height="${rowHeight - 2}" fill="${rowFill}" stroke="#E2E6ED" stroke-width="0.5"/>
+            <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(label)}</text>
+            <text x="130" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
+        });
+        html += `</svg>`;
+      }
+      html += `</div>`;
     }
     html += `</div>`;
   }
@@ -3139,7 +3195,6 @@ async function renderLevelView() {
     html += `<div class="dash-panel"><div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No buildings set up yet.</div></div>`;
   }
 
-  html += `</div>`;
   container.innerHTML = html;
 }
 
@@ -3147,6 +3202,278 @@ async function renderLevelView() {
 // action as the one already available from Add Asset, just without
 // depending on that form already being open with a facility chosen.
 // Uses whichever facility the global switcher currently has selected.
+// Confirmed directly: every level of the real structure - facility,
+// building, floor, zone - should be genuinely editable and
+// reviewable, not just addable. Small, consistent modal pattern
+// reused across all four levels.
+function openEditFacilityModal(facilityId, currentName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editFacilityOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Facility</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility Name *</label>
+      <input id="ef_name" type="text" value="${escapeHtml(currentName)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="ef_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editFacilityOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ef_submit" onclick="submitEditFacility('${facilityId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('ef_name').focus();
+}
+
+async function submitEditFacility(facilityId) {
+  const newName = document.getElementById('ef_name').value.trim();
+  const errorBox = document.getElementById('ef_error');
+  const btn = document.getElementById('ef_submit');
+  errorBox.style.display = 'none';
+  if (!newName) { errorBox.textContent = 'Enter a facility name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editFacility: true, facilityId, newName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    await refreshFacilitiesData();
+    document.getElementById('editFacilityOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function submitRemoveFacility(facilityId, facilityName) {
+  if (!confirm(`Remove ${facilityName}? This can't be undone, and only works while nothing real still references it.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeFacility: true, facilityId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove facility');
+    await refreshFacilitiesData();
+    renderLevelView();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
+function openEditBuildingModal(facilityId, oldBuildingName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editBuildingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Edit Building</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building Name *</label>
+      <input id="eb_name" type="text" value="${escapeHtml(oldBuildingName)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="eb_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editBuildingOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="eb_submit" onclick="submitEditBuilding('${facilityId}','${oldBuildingName.replace(/'/g,"\\'")}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('eb_name').focus();
+}
+
+async function submitEditBuilding(facilityId, oldBuildingName) {
+  const newBuildingName = document.getElementById('eb_name').value.trim();
+  const errorBox = document.getElementById('eb_error');
+  const btn = document.getElementById('eb_submit');
+  errorBox.style.display = 'none';
+  if (!newBuildingName) { errorBox.textContent = 'Enter a building name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editBuilding: true, facilityId, oldBuildingName, newBuildingName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    await refreshFacilitiesData();
+    document.getElementById('editBuildingOverlay')?.remove();
+    if (data.warning) alert(data.warning);
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function submitRemoveBuilding(facilityId, buildingName) {
+  if (!confirm(`Remove ${buildingName}? This can't be undone, and only works while nothing real still references it.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeBuilding: true, facilityId, buildingName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove building');
+    await refreshFacilitiesData();
+    renderLevelView();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
+function openEditFloorModal(floorRecordId, currentLabel) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editFloorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Edit Floor</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">The floor itself stays the same — this only changes its label.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Label</label>
+      <input id="elf_label" type="text" value="${escapeHtml(currentLabel)}" placeholder="e.g. Reception & Lobby" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="elf_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editFloorOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="elf_submit" onclick="submitEditFloor('${floorRecordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('elf_label').focus();
+}
+
+async function submitEditFloor(floorRecordId) {
+  const floorLabel = document.getElementById('elf_label').value.trim();
+  const errorBox = document.getElementById('elf_error');
+  const btn = document.getElementById('elf_submit');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editFloor: true, floorRecordId, floorLabel }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    document.getElementById('editFloorOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+// Confirmed directly: zones are genuinely optional, nested under a
+// specific floor - free text, not a coded convention, matching how
+// components.room_zone already works.
+function openAddZoneModal(facilityId, buildingName, floorId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'addZoneOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Zone</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Zone Name *</label>
+      <input id="az_name" type="text" placeholder="e.g. Zone A — Reception" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="az_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addZoneOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="az_submit" onclick="submitAddZone('${facilityId}','${buildingName.replace(/'/g,"\\'")}','${floorId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Zone</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('az_name').focus();
+}
+
+async function submitAddZone(facilityId, buildingName, floorId) {
+  const zoneName = document.getElementById('az_name').value.trim();
+  const errorBox = document.getElementById('az_error');
+  const btn = document.getElementById('az_submit');
+  errorBox.style.display = 'none';
+  if (!zoneName) { errorBox.textContent = 'Enter a zone name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addZone: true, facilityId, buildingName, floorId, zoneName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add zone');
+    document.getElementById('addZoneOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Zone';
+  }
+}
+
+function openEditZoneModal(zoneRecordId, currentName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editZoneOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Edit Zone</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Any real assets already tagged with this zone are updated to match.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Zone Name *</label>
+      <input id="ez_name" type="text" value="${escapeHtml(currentName)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="ez_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editZoneOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ez_submit" onclick="submitEditZone('${zoneRecordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('ez_name').focus();
+}
+
+async function submitEditZone(zoneRecordId) {
+  const zoneName = document.getElementById('ez_name').value.trim();
+  const errorBox = document.getElementById('ez_error');
+  const btn = document.getElementById('ez_submit');
+  errorBox.style.display = 'none';
+  if (!zoneName) { errorBox.textContent = 'Enter a zone name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editZone: true, zoneRecordId, zoneName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    document.getElementById('editZoneOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function submitRemoveZone(zoneRecordId) {
+  if (!confirm('Remove this zone? It can be re-added later.')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeZone: true, zoneRecordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove zone');
+    renderLevelView();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
 function openAddBuildingModalStandalone() {
   const facility = currentFacilityFilter !== "__all__"
     ? facilitiesData.find(f => f.name === currentFacilityFilter)

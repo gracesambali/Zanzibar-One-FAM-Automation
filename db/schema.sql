@@ -1732,3 +1732,23 @@ create table if not exists building_floors (
   unique (facility_id, building_name, floor_id)
 );
 create index if not exists idx_building_floors_org on building_floors (organization_id, facility_id, building_name);
+
+-- ============================================================
+-- Real, explicitly-defined zones - confirmed directly: the real
+-- hierarchy is Facility < Building < Floor < Zone < Room, with a
+-- zone nested under a specific floor, and genuinely optional - a
+-- floor doesn't need one at all. Free text, not a coded convention
+-- like floor_id, matching how components.room_zone already works.
+-- ============================================================
+create table if not exists building_zones (
+  id              uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  facility_id     uuid not null references facilities(id) on delete cascade,
+  building_name   text not null,
+  floor_id        text not null,
+  zone_name       text not null,
+  sort_order      integer not null default 0,
+  created_at      timestamptz not null default now(),
+  unique (facility_id, building_name, floor_id, zone_name)
+);
+create index if not exists idx_building_zones_org on building_zones (organization_id, facility_id, building_name, floor_id);
