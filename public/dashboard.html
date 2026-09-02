@@ -801,26 +801,6 @@ const ROLE_PERMISSIONS = {
   system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true, manageUsers: true },
 };
 
-const levelDefs = [
-  { id:"B2", label:"Basement 2 — Plant & Parking", count:5 },
-  { id:"B1", label:"Basement 1 — Plant, Substation & Parking", count:9 },
-  { id:"L1", label:"Ground Floor — Lobby & Retail", count:10 },
-  { id:"L2", label:"Floor 1 — Retail", count:4 },
-  { id:"L3", label:"Floor 2 — Retail", count:4 },
-  { id:"L4", label:"Floor 3 — Office", count:4 },
-  { id:"L5", label:"Floor 4 — Office", count:4 },
-  { id:"L6", label:"Floor 5 — Office", count:4 },
-  { id:"L7", label:"Floor 6 — Office", count:4 },
-  { id:"L8", label:"Floor 7 — Mechanical Floor", count:3 },
-  { id:"L9", label:"Floor 8 — Office", count:4 },
-  { id:"L10", label:"Floor 9 — Office", count:4 },
-  { id:"L11", label:"Floor 10 — Office", count:4 },
-  { id:"L12", label:"Floor 11 — Office", count:4 },
-  { id:"L13", label:"Floor 12 — Office", count:4 },
-  { id:"L14", label:"Floor 13 — Office", count:4 },
-  { id:"L15", label:"Floor 14 — Rooftop Plant", count:5 }
-];
-
 const systemDefs = [
   { name:"HVAC", desc:"Chillers, cooling towers, air handling units and fan coil units maintaining comfort conditions across all occupied floors.", color:"var(--navy)" },
   { name:"Fire Protection", desc:"Electric and diesel fire pumps, jockey pump, and wet-riser distribution ensuring code-compliant fire suppression capacity.", color:"var(--red)" },
@@ -3038,70 +3018,84 @@ function renderMaintenance() {
   document.getElementById('view-maintenance').innerHTML = html;
 }
 
+// A real floor's position in a building, for sorting - basements
+// sort below ground (B2 lower than B1), levels sort ascending.
+// Anything in an unrecognized format falls back to 0 so it still
+// renders, just without a confident position.
+function floorSortKey(floor) {
+  if (!floor) return 0;
+  const bMatch = floor.match(/^B(\d+)$/i);
+  if (bMatch) return -parseInt(bMatch[1], 10);
+  const lMatch = floor.match(/^L(\d+)$/i);
+  if (lMatch) return parseInt(lMatch[1], 10);
+  return 0;
+}
+
+// Confirmed directly: this portrays the real, actual layout of a
+// facility - real buildings, each with their own real floors, derived
+// from what's actually tagged on real assets, not a fixed, generic
+// sample building. Respects the same facility/building filter already
+// used everywhere else in the app, so switching it re-renders this
+// too via rerenderActiveTab().
 function renderLevelView() {
+  const relevantBuildings = currentBuildingFilter !== "__all__"
+    ? [currentBuildingFilter]
+    : currentFacilityFilter !== "__all__"
+      ? (facilitiesData.find(f => f.name === currentFacilityFilter)?.buildings || [])
+      : facilitiesData.flatMap(f => f.buildings);
+
   let html = `<div class="dash-grid">`;
 
-  html += `<div class="dash-panel"><div class="dash-panel-title">Floor-by-Floor Asset Summary</div>`;
-  [...levelDefs].reverse().forEach(l => {
-    const lvlAssets = assets.filter(a=>a.floor===l.id);
-    const bySys = {};
-    lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
-    const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
-    html += `<div class="level-row"><div><div class="level-name">${l.label}</div><div class="level-detail">${breakdown}</div></div><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div></div>`;
-  });
-  html += `</div>`;
+  relevantBuildings.forEach(buildingName => {
+    const buildingAssets = assets.filter(a => a.building === buildingName);
+    const realFloors = [...new Set(buildingAssets.map(a => a.floor).filter(Boolean))]
+      .sort((a, b) => floorSortKey(b) - floorSortKey(a));
 
-  html += `<div class="dash-panel"><div class="dash-panel-title">Building Section — Vertical System Distribution</div>
-    <svg viewBox="0 0 380 460" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">
-      <defs><linearGradient id="bldg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A4A7F"/><stop offset="1" stop-color="#1A3566"/></linearGradient></defs>
-      <rect x="60" y="15" width="270" height="430" rx="4" fill="url(#bldg2)" opacity=".07" stroke="#1A3566" stroke-width="1.2"/>
-      <!-- zone lines -->
-      <line x1="60" y1="15" x2="330" y2="15" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="75" x2="330" y2="75" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="180" x2="330" y2="180" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="225" x2="330" y2="225" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="330" x2="330" y2="330" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="375" x2="330" y2="375" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="410" x2="330" y2="410" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <line x1="60" y1="445" x2="330" y2="445" stroke="#1A3566" stroke-width="1" stroke-dasharray="3"/>
-      <!-- labels -->
-      <text x="50" y="48" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L15 Roof</text>
-      <text x="50" y="130" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L9–L14</text>
-      <text x="50" y="205" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L8 Mech</text>
-      <text x="50" y="280" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L4–L7</text>
-      <text x="50" y="355" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">L2–L3</text>
-      <text x="50" y="395" text-anchor="end" font-size="9" fill="#1A3566" font-weight="600">L1 GF</text>
-      <text x="50" y="430" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B1</text>
-      <text x="50" y="460" text-anchor="end" font-size="9" fill="#64748B" font-weight="500">B2</text>
-      <!-- risers -->
-      <rect x="80" y="18" width="7" height="425" rx="2" fill="#3B82F6" opacity=".3"/><text x="83.5" y="12" text-anchor="middle" font-size="7" fill="#3B82F6">CHW</text>
-      <rect x="100" y="18" width="7" height="425" rx="2" fill="#E74C3C" opacity=".3"/><text x="103.5" y="12" text-anchor="middle" font-size="7" fill="#E74C3C">FP</text>
-      <rect x="120" y="18" width="7" height="425" rx="2" fill="#14B8A6" opacity=".3"/><text x="123.5" y="12" text-anchor="middle" font-size="7" fill="#14B8A6">CCTV</text>
-      <rect x="140" y="18" width="7" height="425" rx="2" fill="#F97316" opacity=".3"/><text x="143.5" y="12" text-anchor="middle" font-size="7" fill="#F97316">FD</text>
-      <!-- Rooftop L15 -->
-      <rect x="175" y="22" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Cooling Twr</text>
-      <rect x="235" y="22" width="55" height="17" rx="3" fill="#3B82F6"/><text x="262" y="34" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 AHU</text>
-      <!-- L9-L14 -->
-      <rect x="175" y="120" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 FCU</text>
-      <rect x="235" y="120" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="132" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">6 CCTV</text>
-      <!-- L8 Mech -->
-      <rect x="175" y="195" width="115" height="17" rx="3" fill="#3B82F6"/><text x="232" y="207" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">AHU-002 · Serves L2–L7</text>
-      <!-- L4-L7 -->
-      <rect x="175" y="270" width="55" height="17" rx="3" fill="#1A3566"/><text x="202" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 FCU</text>
-      <rect x="235" y="270" width="55" height="17" rx="3" fill="#14B8A6"/><text x="262" y="282" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">4 Access</text>
-      <!-- L2-L3 Retail -->
-      <rect x="175" y="345" width="115" height="17" rx="3" fill="#D4A843"/><text x="232" y="357" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Retail Tenant Interface ×2</text>
-      <!-- L1 GF -->
-      <rect x="175" y="385" width="55" height="17" rx="3" fill="#3B82F6"/><text x="202" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Lifts</text>
-      <rect x="235" y="385" width="55" height="17" rx="3" fill="#EC4899"/><text x="262" y="397" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">Generator</text>
-      <!-- B1 -->
-      <rect x="175" y="418" width="55" height="17" rx="3" fill="#E74C3C"/><text x="202" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">3 Fire Pumps</text>
-      <rect x="235" y="418" width="55" height="17" rx="3" fill="#F39C12"/><text x="262" y="430" text-anchor="middle" font-size="6.5" fill="#fff" font-weight="600">2 Transformers</text>
-      <!-- B2 -->
-      <rect x="175" y="450" width="55" height="9" rx="2" fill="#8B5CF6"/><text x="202" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">2 Chillers</text>
-      <rect x="235" y="450" width="55" height="9" rx="2" fill="#EC4899"/><text x="262" y="457" text-anchor="middle" font-size="5.5" fill="#fff" font-weight="600">Parking</text>
-    </svg>
-  </div>`;
+    html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</div>`;
+    if (realFloors.length === 0) {
+      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No assets tagged to a floor in this building yet.</div>`;
+    } else {
+      realFloors.forEach(floorId => {
+        const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
+        const bySys = {};
+        lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || '—';
+        html += `<div class="level-row"><div><div class="level-name">${escapeHtml(displayFloor(floorId))}</div><div class="level-detail">${escapeHtml(breakdown)}</div></div><div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div></div>`;
+      });
+    }
+    html += `</div>`;
+
+    // Real, dynamically-sized vertical section - one row per real
+    // floor, sized to however many floors this specific building
+    // actually has, not a fixed illustration.
+    const rowHeight = 32;
+    const topPad = 16;
+    const svgHeight = realFloors.length * rowHeight + topPad * 2;
+    html += `<div class="dash-panel"><div class="dash-panel-title">${escapeHtml(buildingName)} — Vertical Level View</div>`;
+    if (realFloors.length === 0) {
+      html += `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No assets tagged to a floor in this building yet.</div>`;
+    } else {
+      html += `<svg viewBox="0 0 380 ${svgHeight}" style="width:100%;max-width:380px" xmlns="http://www.w3.org/2000/svg">`;
+      realFloors.forEach((floorId, i) => {
+        const y = topPad + i * rowHeight;
+        const lvlAssets = buildingAssets.filter(a => a.floor === floorId);
+        const bySys = {};
+        lvlAssets.forEach(a => { bySys[a.system] = (bySys[a.system]||0)+1; });
+        const breakdown = Object.entries(bySys).map(([k,v])=>`${k} ×${v}`).join(', ') || 'No assets tagged';
+        const rowFill = i % 2 === 0 ? '#F7F9FC' : '#EDF1F7';
+        html += `
+          <rect x="4" y="${y}" width="372" height="${rowHeight - 2}" fill="${rowFill}" stroke="#E2E6ED" stroke-width="0.5"/>
+          <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(displayFloor(floorId))}</text>
+          <text x="90" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
+      });
+      html += `</svg>`;
+    }
+    html += `</div>`;
+  });
+
+  if (relevantBuildings.length === 0) {
+    html += `<div class="dash-panel"><div style="font-size:12px;color:var(--muted);font-style:italic;padding:12px 0">No buildings set up yet.</div></div>`;
+  }
 
   html += `</div>`;
   document.getElementById('view-levelview').innerHTML = html;
