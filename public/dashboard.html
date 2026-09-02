@@ -3109,12 +3109,19 @@ async function renderLevelView() {
       // since Level View is where the whole real structure gets
       // reviewed together, not just floors alone.
       const zonesByFloorId = {};
+      const roomsByFloorId = {};
       for (const floorId of allFloorIds) {
         try {
           const zResp = await fetch(`/api/get-assets?floorZones=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`);
           if (zResp.ok) zonesByFloorId[floorId] = (await zResp.json()).zones || [];
         } catch (err) {
           console.error('Could not load zones for', buildingName, floorId, err);
+        }
+        try {
+          const rResp = await fetch(`/api/get-assets?floorRooms=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`);
+          if (rResp.ok) roomsByFloorId[floorId] = (await rResp.json()).rooms || [];
+        } catch (err) {
+          console.error('Could not load rooms for', buildingName, floorId, err);
         }
       }
 
@@ -3138,18 +3145,41 @@ async function renderLevelView() {
           const isDefined = !!definedByFloorId[floorId];
           const removable = canManageStructure && isDefined && lvlAssets.length === 0;
           const zones = zonesByFloorId[floorId] || [];
+          const rooms = roomsByFloorId[floorId] || [];
+          const floorDirectRooms = rooms.filter(r => !r.zoneId);
 
           html += `<div class="level-row">
             <div style="flex:1">
               <div class="level-name">${escapeHtml(label)}</div>
               <div class="level-detail">${escapeHtml(breakdown)}</div>
               ${zones.length > 0 ? `<div style="margin-top:6px;padding-left:10px;border-left:2px solid var(--border)">
-                ${zones.map(z => `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);padding:2px 0">
-                  <span>${escapeHtml(z.zoneName)}</span>
-                  ${canManageStructure ? `<a href="#" onclick="openEditZoneModal('${z.id}','${z.zoneName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a><a href="#" onclick="submitRemoveZone('${z.id}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>` : ''}
+                ${zones.map(z => {
+                  const zoneRooms = rooms.filter(r => r.zoneId === z.id);
+                  return `<div style="padding:2px 0">
+                    <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
+                      <span>${escapeHtml(z.zoneName)}</span>
+                      ${canManageStructure ? `<a href="#" onclick="openEditZoneModal('${z.id}','${z.zoneName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a><a href="#" onclick="submitRemoveZone('${z.id}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>` : ''}
+                    </div>
+                    ${zoneRooms.length > 0 ? `<div style="margin-top:2px;padding-left:10px;border-left:2px solid var(--bg)">
+                      ${zoneRooms.map(r => `<div style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);padding:1px 0">
+                        <span>${escapeHtml(r.roomName)}</span>
+                        ${canManageStructure ? `<a href="#" onclick="openEditRoomModal('${r.id}','${r.roomName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a><a href="#" onclick="submitRemoveRoom('${r.id}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>` : ''}
+                      </div>`).join('')}
+                    </div>` : ''}
+                    ${canManageStructure ? `<a href="#" onclick="openAddRoomModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}','${floorId}','${z.id}'); return false;" style="font-size:10px;color:var(--navy);text-decoration:underline;margin-left:10px">+ Add room</a>` : ''}
+                  </div>`;
+                }).join('')}
+              </div>` : ''}
+              ${floorDirectRooms.length > 0 ? `<div style="margin-top:4px;padding-left:10px;border-left:2px solid var(--border)">
+                ${floorDirectRooms.map(r => `<div style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);padding:1px 0">
+                  <span>${escapeHtml(r.roomName)}</span>
+                  ${canManageStructure ? `<a href="#" onclick="openEditRoomModal('${r.id}','${r.roomName.replace(/'/g,"\\'")}'); return false;" style="color:var(--navy);text-decoration:underline">Edit</a><a href="#" onclick="submitRemoveRoom('${r.id}'); return false;" style="color:var(--red);text-decoration:underline">Remove</a>` : ''}
                 </div>`).join('')}
               </div>` : ''}
-              ${canManageStructure && isDefined ? `<a href="#" onclick="openAddZoneModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}','${floorId}'); return false;" style="font-size:10.5px;color:var(--navy);text-decoration:underline;margin-left:${zones.length > 0 ? '12px' : '0'}">+ Add zone</a>` : ''}
+              ${canManageStructure && isDefined ? `<div style="margin-top:6px;display:flex;gap:12px">
+                <a href="#" onclick="openAddZoneModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}','${floorId}'); return false;" style="font-size:10.5px;color:var(--navy);text-decoration:underline">+ Add zone</a>
+                <a href="#" onclick="openAddRoomModal('${facility.id}','${buildingName.replace(/'/g,"\\'")}','${floorId}',null); return false;" style="font-size:10.5px;color:var(--navy);text-decoration:underline">+ Add room</a>
+              </div>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
               <div class="level-count">${lvlAssets.length} asset${lvlAssets.length!==1?'s':''}</div>
@@ -3468,6 +3498,112 @@ async function submitRemoveZone(zoneRecordId) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove zone');
+    renderLevelView();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
+// Confirmed directly: the deepest real level of the hierarchy - a
+// room always belongs to a real floor, but zoneId is genuinely
+// optional, matching a room that sits directly on the floor with no
+// zone at all.
+function openAddRoomModal(facilityId, buildingName, floorId, zoneId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'addRoomOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Room</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room Name *</label>
+      <input id="ar_name" type="text" placeholder="e.g. Room 101" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="ar_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addRoomOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ar_submit" onclick="submitAddRoom('${facilityId}','${buildingName.replace(/'/g,"\\'")}','${floorId}',${zoneId ? `'${zoneId}'` : 'null'})" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Room</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('ar_name').focus();
+}
+
+async function submitAddRoom(facilityId, buildingName, floorId, zoneId) {
+  const roomName = document.getElementById('ar_name').value.trim();
+  const errorBox = document.getElementById('ar_error');
+  const btn = document.getElementById('ar_submit');
+  errorBox.style.display = 'none';
+  if (!roomName) { errorBox.textContent = 'Enter a room name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addRoom: true, facilityId, buildingName, floorId, zoneId, roomName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add room');
+    document.getElementById('addRoomOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add Room';
+  }
+}
+
+function openEditRoomModal(roomRecordId, currentName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editRoomOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Edit Room</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Any real assets already tagged with this room are updated to match.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room Name *</label>
+      <input id="erm_name" type="text" value="${escapeHtml(currentName)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+      <div id="erm_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editRoomOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="erm_submit" onclick="submitEditRoom('${roomRecordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('erm_name').focus();
+}
+
+async function submitEditRoom(roomRecordId) {
+  const roomName = document.getElementById('erm_name').value.trim();
+  const errorBox = document.getElementById('erm_error');
+  const btn = document.getElementById('erm_submit');
+  errorBox.style.display = 'none';
+  if (!roomName) { errorBox.textContent = 'Enter a room name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editRoom: true, roomRecordId, roomName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    document.getElementById('editRoomOverlay')?.remove();
+    renderLevelView();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function submitRemoveRoom(roomRecordId) {
+  if (!confirm('Remove this room? It can be re-added later.')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeRoom: true, roomRecordId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove room');
     renderLevelView();
   } catch (err) {
     alert('Could not remove: ' + err.message);
