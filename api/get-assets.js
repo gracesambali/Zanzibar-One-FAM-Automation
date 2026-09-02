@@ -337,6 +337,25 @@ export default async function handler(req, res) {
     return handleGetFacilities(req, res, session.org);
   }
 
+  // Real, explicitly-defined floors for a specific building - the
+  // real, structural source Level View builds from, alongside
+  // whatever's actually tagged on real assets.
+  if (req.query.buildingFloors === "true" && req.query.facilityId && req.query.building) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        "select id, floor_id, floor_label, sort_order from building_floors where organization_id = $1 and facility_id = $2 and building_name = $3 order by sort_order asc, floor_id asc",
+        [session.org, req.query.facilityId, req.query.building]
+      );
+      return res.status(200).json({
+        floors: result.rows.map(r => ({ id: r.id, floorId: r.floor_id, floorLabel: r.floor_label || "", sortOrder: r.sort_order })),
+      });
+    } catch (err) {
+      console.error("buildingFloors read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Real building interior capture, confirmed directly - one per
   // building. Returns null cleanly when none exists yet, so the
   // frontend can just show the plain 2D Floor Plan with no toggle,
