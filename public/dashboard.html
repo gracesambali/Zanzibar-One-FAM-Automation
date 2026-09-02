@@ -827,6 +827,19 @@ const systemDefs = [
   { name:"IT Equipment", desc:"Servers, network switches, workstations, printers and other IT infrastructure supporting daily operations.", color:"#475569" },
 ];
 
+// Confirmed directly: the full systemDefs list stays available
+// everywhere a system is actually being chosen for an asset - the
+// very first asset of a kind a client has never had before still
+// needs to be selectable. Everywhere else - dashboards, filters, the
+// Systems tab itself - narrows to only the systems this specific
+// client genuinely has assets tagged to, since showing every
+// possible system regardless of real use is just clutter with
+// nothing behind it.
+function getSystemsInUse() {
+  const usedNames = new Set(assets.map(a => a.system).filter(Boolean));
+  return systemDefs.filter(s => usedNames.has(s.name));
+}
+
 let currentSystemFilter = "All";
 let currentNatureFilter = "All";
 let currentMobilityFilter = "All";
@@ -1481,9 +1494,10 @@ function renderDashboard() {
   // Assets by Category — count-based, replaces "Top Asset Categories by Value"
   html += `<div class="dash-panel"><div class="dash-panel-title">Assets by Category</div>`;
   const sysCounts = {};
-  systemDefs.forEach(s => sysCounts[s.name] = dashAssets.filter(a=>a.system===s.name).length);
+  const systemsInUse = getSystemsInUse();
+  systemsInUse.forEach(s => sysCounts[s.name] = dashAssets.filter(a=>a.system===s.name).length);
   const maxCount = Math.max(...Object.values(sysCounts));
-  systemDefs.slice().sort((a,b)=>sysCounts[b.name]-sysCounts[a.name]).forEach(s => {
+  systemsInUse.slice().sort((a,b)=>sysCounts[b.name]-sysCounts[a.name]).forEach(s => {
     const cnt = sysCounts[s.name];
     html += `<div class="cat-bar-row"><div class="cat-bar-label">${s.name}</div><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(cnt/maxCount)*100}%;background:${s.color}">${cnt}</div></div></div>`;
   });
@@ -1715,7 +1729,7 @@ async function renderMaintCostSection(a) {
 
 function renderAssets() {
   currentAssetDetailIdx = null;
-  const systems = ["All", ...systemDefs.map(s=>s.name)];
+  const systems = ["All", ...getSystemsInUse().map(s=>s.name)];
   const total = assets.length, crit = assets.filter(a=>a.criticality==="High").length;
   const good = assets.filter(a=>a.status==="Good").length;
   const sched = assets.filter(a=>a.status==="Poor").length;
@@ -2945,8 +2959,13 @@ async function runSensorTest() {
 }
 
 function renderSystems() {
-  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${systemDefs.length} systems tracked across the tower — asset counts update live from the register.</div>`;
-  systemDefs.forEach(s => {
+  const systemsInUse = getSystemsInUse();
+  if (systemsInUse.length === 0) {
+    document.getElementById('view-systems').innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px">No systems in use yet — they'll show up here as soon as an asset is tagged to one.</div>`;
+    return;
+  }
+  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${systemsInUse.length} system${systemsInUse.length!==1?'s':''} in use — asset counts update live from the register.</div>`;
+  systemsInUse.forEach(s => {
     const cnt = assets.filter(a=>a.system===s.name).length;
     const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="High").length;
     html += `<div class="sys-card"><div class="sys-card-head"><div class="sys-card-name">${s.name}</div><div class="sys-card-count">${cnt} asset${cnt!==1?'s':''}${critCnt>0?' · '+critCnt+' critical':''}</div></div><div class="sys-card-desc">${s.desc}</div></div>`;
@@ -12072,7 +12091,7 @@ async function openAssetLinkModal(recordId) {
   const locationParts = (o.location || '').split(' — ');
   const prefill = locationParts.join(' ').trim();
 
-  const systems = ['All', ...systemDefs.map(s => s.name)];
+  const systems = ['All', ...getSystemsInUse().map(s => s.name)];
 
   const overlay = document.createElement('div');
   overlay.id = 'assetLinkModalOverlay';
