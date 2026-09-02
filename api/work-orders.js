@@ -791,6 +791,76 @@ export default async function handler(req, res) {
       }
     }
 
+    // Confirmed directly: real facilities and buildings need to be
+    // genuinely editable and reviewable, not just addable. A rename
+    // cascades across every real table that references the old name
+    // directly - there's no stable facility_id/building_id foreign
+    // key on any of them, only the name itself, so keeping them all
+    // in sync is the real work here, not an afterthought.
+    if (req.body && req.body.editFacility) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a facility." });
+      }
+      const { facilityId, newName } = req.body;
+      if (!facilityId || !newName || !newName.trim()) return res.status(400).json({ error: "facilityId and newName required" });
+      try {
+        const { getById, update, query: pgQuery } = await import("../lib/postgresClient.js");
+        const facility = await getById("facilities", facilityId).catch(() => null);
+        if (!facility || facility.organization_id !== session.org) {
+          return res.status(404).json({ error: "Facility not found." });
+        }
+        const oldName = facility.name;
+        const trimmedNew = newName.trim();
+        await update("facilities", facilityId, { name: trimmedNew }, session.org);
+        if (oldName !== trimmedNew) {
+          await pgQuery("update components set facility = $1 where organization_id = $2 and facility = $3", [trimmedNew, session.org, oldName]);
+        }
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editFacility error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.removeFacility) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to remove a facility." });
+      }
+      const { facilityId } = req.body;
+      if (!facilityId) return res.status(400).json({ error: "facilityId required" });
+      try {
+        const { getById, deleteById, query: pgQuery } = await import("../lib/postgresClient.js");
+        const facility = await getById("facilities", facilityId).catch(() => null);
+        if (!facility || facility.organization_id !== session.org) {
+          return res.status(404).json({ error: "Facility not found." });
+        }
+        // A genuine safety check, not an assumption - real assets
+        // still pointing at this facility's real name would otherwise
+        // be silently orphaned, since nothing here holds a stable
+        // facility_id to catch this automatically. requisitions isn't
+        // checked here at all - confirmed directly, it has no
+        // organization_id column of its own, a known, pre-existing
+        // gap, so checking it here would risk a false block from a
+        // completely different organization's own data.
+        const usageCheck = await pgQuery(
+          `select (select count(*) from components where organization_id = $1 and facility = $2) as assets`,
+          [session.org, facility.name]
+        );
+        const usage = usageCheck.rows[0];
+        const totalUsage = Number(usage.assets);
+        if (totalUsage > 0) {
+          return res.status(400).json({ error: `Can't remove "${facility.name}" — ${usage.assets} asset(s) still reference it.` });
+        }
+        // Buildings, defined floors, and defined zones under this
+        // facility cascade away automatically at the database level.
+        await deleteById("facilities", facilityId);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeFacility error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Adding a new building to an existing facility. Same permission
     // gate as addFacility, same reasoning — this is structure, not
     // routine entry. The building code is what actually guarantees two
@@ -819,6 +889,104 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, building: { name: created.building_name, code: created.building_code } });
       } catch (err) {
         console.error("addBuilding error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Renaming a building - genuinely trickier than a facility rename,
+    // since building_name is part of facility_buildings' own primary
+    // key, with no separate stable id at all. Confirmed directly and
+    // handled carefully: units and inventory_items only carry a bare
+    // building name, with no facility column to disambiguate by - if
+    // the exact same building name genuinely exists under a different
+    // facility too, cascading those two tables blindly could rename
+    // the wrong one, so that specific cascade is skipped with a real,
+    // visible warning rather than risked silently.
+    if (req.body && req.body.editBuilding) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a building." });
+      }
+      const { facilityId, oldBuildingName, newBuildingName } = req.body;
+      if (!facilityId || !oldBuildingName || !newBuildingName || !newBuildingName.trim()) {
+        return res.status(400).json({ error: "facilityId, oldBuildingName, and newBuildingName are required" });
+      }
+      const trimmedNew = newBuildingName.trim();
+      try {
+        const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+        const facility = await getById("facilities", facilityId).catch(() => null);
+        if (!facility || facility.organization_id !== session.org) {
+          return res.status(404).json({ error: "Facility not found." });
+        }
+        const buildingCheck = await pgQuery(
+          "select 1 from facility_buildings where facility_id = $1 and building_name = $2 and organization_id = $3",
+          [facilityId, oldBuildingName, session.org]
+        );
+        if (buildingCheck.rows.length === 0) return res.status(404).json({ error: "Building not found." });
+
+        const collisionCheck = await pgQuery(
+          "select 1 from facility_buildings where building_name = $1 and facility_id != $2 and organization_id = $3",
+          [oldBuildingName, facilityId, session.org]
+        );
+        const ambiguous = collisionCheck.rows.length > 0;
+
+        if (oldBuildingName !== trimmedNew) {
+          await pgQuery(
+            "update facility_buildings set building_name = $1 where facility_id = $2 and building_name = $3 and organization_id = $4",
+            [trimmedNew, facilityId, oldBuildingName, session.org]
+          );
+          await pgQuery("update components set building = $1 where organization_id = $2 and building = $3 and facility = $4", [trimmedNew, session.org, oldBuildingName, facility.name]);
+          await pgQuery("update building_floors set building_name = $1 where organization_id = $2 and facility_id = $3 and building_name = $4", [trimmedNew, session.org, facilityId, oldBuildingName]);
+          await pgQuery("update building_zones set building_name = $1 where organization_id = $2 and facility_id = $3 and building_name = $4", [trimmedNew, session.org, facilityId, oldBuildingName]);
+          if (!ambiguous) {
+            // work_orders, units, and inventory_items all share the
+            // same real limitation - no facility column to
+            // disambiguate by, only a bare building name - so all
+            // three only cascade when the name is genuinely safe.
+            await pgQuery("update work_orders set building = $1 where organization_id = $2 and building = $3", [trimmedNew, session.org, oldBuildingName]);
+            await pgQuery("update units set building = $1 where building = $2", [trimmedNew, oldBuildingName]);
+            await pgQuery("update inventory_items set building = $1 where building = $2", [trimmedNew, oldBuildingName]);
+          }
+        }
+        return res.status(200).json({
+          success: true,
+          warning: ambiguous ? "Another facility also has a building with this same name — work orders, tenant units, and inventory items weren't renamed automatically, to avoid affecting the wrong one. Update those manually if needed." : null,
+        });
+      } catch (err) {
+        console.error("editBuilding error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.removeBuilding) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to remove a building." });
+      }
+      const { facilityId, buildingName } = req.body;
+      if (!facilityId || !buildingName) return res.status(400).json({ error: "facilityId and buildingName required" });
+      try {
+        const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+        const facility = await getById("facilities", facilityId).catch(() => null);
+        if (!facility || facility.organization_id !== session.org) {
+          return res.status(404).json({ error: "Facility not found." });
+        }
+        const usageCheck = await pgQuery(
+          `select
+             (select count(*) from components where organization_id = $1 and building = $2 and facility = $3) as assets,
+             (select count(*) from work_orders where organization_id = $1 and building = $2) as work_orders,
+             (select count(*) from units where building = $2) as units`,
+          [session.org, buildingName, facility.name]
+        );
+        const usage = usageCheck.rows[0];
+        const totalUsage = Number(usage.assets) + Number(usage.work_orders) + Number(usage.units);
+        if (totalUsage > 0) {
+          return res.status(400).json({ error: `Can't remove "${buildingName}" — ${usage.assets} asset(s), ${usage.work_orders} work order(s), and ${usage.units} unit(s) still reference it.` });
+        }
+        await pgQuery("delete from facility_buildings where facility_id = $1 and building_name = $2 and organization_id = $3", [facilityId, buildingName, session.org]);
+        await pgQuery("delete from building_floors where organization_id = $1 and facility_id = $2 and building_name = $3", [session.org, facilityId, buildingName]);
+        await pgQuery("delete from building_zones where organization_id = $1 and facility_id = $2 and building_name = $3", [session.org, facilityId, buildingName]);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeBuilding error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -873,6 +1041,109 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("removeFloor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Editing a floor's own label - confirmed directly: the floor_id
+    // itself (its L<n>/B<n> code) is deliberately left unchanged here,
+    // since real assets are already matched against it directly - a
+    // genuine floor_id change belongs with the same real,
+    // cross-table cascade already required for a building rename,
+    // not bundled into a simple label edit.
+    if (req.body && req.body.editFloor) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a floor." });
+      }
+      const { floorRecordId, floorLabel } = req.body;
+      if (!floorRecordId) return res.status(400).json({ error: "floorRecordId required" });
+      try {
+        const { getById, update } = await import("../lib/postgresClient.js");
+        const floor = await getById("building_floors", floorRecordId).catch(() => null);
+        if (!floor || floor.organization_id !== session.org) {
+          return res.status(404).json({ error: "Floor not found." });
+        }
+        await update("building_floors", floorRecordId, { floor_label: floorLabel ? floorLabel.trim() : null }, session.org);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editFloor error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Real, explicitly-defined zones, nested under a specific floor -
+    // confirmed directly as the real hierarchy: Facility < Building <
+    // Floor < Zone < Room, and genuinely optional - a floor never
+    // requires one. zone_name is free text, matching how
+    // components.room_zone already works, not a coded convention like
+    // a floor's own L<n>/B<n> id.
+    if (req.body && req.body.addZone) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to add a zone." });
+      }
+      const { facilityId, buildingName, floorId, zoneName, sortOrder } = req.body;
+      if (!facilityId || !buildingName || !floorId || !zoneName || !zoneName.trim()) {
+        return res.status(400).json({ error: "facilityId, buildingName, floorId, and zoneName are required" });
+      }
+      try {
+        const { insert } = await import("../lib/postgresClient.js");
+        const created = await insert("building_zones", {
+          organization_id: session.org, facility_id: facilityId, building_name: buildingName,
+          floor_id: floorId, zone_name: zoneName.trim(), sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+        });
+        return res.status(200).json({ success: true, zone: { id: created.id, zoneName: created.zone_name } });
+      } catch (err) {
+        const message = /unique/i.test(err.message) ? "This zone is already defined for this floor." : err.message;
+        console.error("addZone error:", err);
+        return res.status(500).json({ error: message });
+      }
+    }
+
+    if (req.body && req.body.editZone) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a zone." });
+      }
+      const { zoneRecordId, zoneName } = req.body;
+      if (!zoneRecordId || !zoneName || !zoneName.trim()) return res.status(400).json({ error: "zoneRecordId and zoneName required" });
+      try {
+        const { getById, update, query: pgQuery } = await import("../lib/postgresClient.js");
+        const zone = await getById("building_zones", zoneRecordId).catch(() => null);
+        if (!zone || zone.organization_id !== session.org) {
+          return res.status(404).json({ error: "Zone not found." });
+        }
+        const newName = zoneName.trim();
+        await update("building_zones", zoneRecordId, { zone_name: newName }, session.org);
+        // Real cascade - keeps any asset already tagged with the old
+        // zone name genuinely in sync with the rename, rather than
+        // silently pointing at a zone name that no longer exists
+        // anywhere in the real, defined structure.
+        await pgQuery(
+          "update components set room_zone = $1 where organization_id = $2 and building = $3 and room_zone = $4",
+          [newName, session.org, zone.building_name, zone.zone_name]
+        );
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("editZone error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    if (req.body && req.body.removeZone) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to remove a zone." });
+      }
+      const { zoneRecordId } = req.body;
+      if (!zoneRecordId) return res.status(400).json({ error: "zoneRecordId required" });
+      try {
+        const { getById, deleteById } = await import("../lib/postgresClient.js");
+        const zone = await getById("building_zones", zoneRecordId).catch(() => null);
+        if (!zone || zone.organization_id !== session.org) {
+          return res.status(404).json({ error: "Zone not found." });
+        }
+        await deleteById("building_zones", zoneRecordId);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeZone error:", err);
         return res.status(500).json({ error: err.message });
       }
     }

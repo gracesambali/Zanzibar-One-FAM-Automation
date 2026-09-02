@@ -356,6 +356,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // Real, explicitly-defined zones for a specific floor - one level
+  // deeper than buildingFloors, matching the real Facility < Building
+  // < Floor < Zone hierarchy.
+  if (req.query.floorZones === "true" && req.query.facilityId && req.query.building && req.query.floorId) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        "select id, zone_name, sort_order from building_zones where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 order by sort_order asc, zone_name asc",
+        [session.org, req.query.facilityId, req.query.building, req.query.floorId]
+      );
+      return res.status(200).json({
+        zones: result.rows.map(r => ({ id: r.id, zoneName: r.zone_name, sortOrder: r.sort_order })),
+      });
+    } catch (err) {
+      console.error("floorZones read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Real building interior capture, confirmed directly - one per
   // building. Returns null cleanly when none exists yet, so the
   // frontend can just show the plain 2D Floor Plan with no toggle,
