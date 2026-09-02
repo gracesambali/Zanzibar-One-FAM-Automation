@@ -2944,7 +2944,7 @@ async function runSensorTest() {
 }
 
 function renderSystems() {
-  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">10 systems tracked across the tower — asset counts update live from the register.</div>`;
+  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${systemDefs.length} systems tracked across the tower — asset counts update live from the register.</div>`;
   systemDefs.forEach(s => {
     const cnt = assets.filter(a=>a.system===s.name).length;
     const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="High").length;
