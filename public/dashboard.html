@@ -7867,7 +7867,12 @@ function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColo
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${currentLogoUrl ? 'Change Logo' : 'Add Logo'}</label>
       ${currentLogoUrl ? `<img src="${currentLogoUrl}" alt="Current logo" style="max-width:120px;max-height:60px;object-fit:contain;border-radius:6px;border:1px solid var(--border);display:block;margin-bottom:6px;padding:4px">` : ''}
-      <input id="ecb_logo" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:14px">
+      <input id="ecb_logo" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px" onchange="handleBrandingLogoSelected(this.files[0])">
+
+      <div id="ecb_swatches_wrap" style="display:none;margin-bottom:10px">
+        <div style="font-size:10.5px;color:var(--muted);margin-bottom:5px">Picked from this logo — tap one, or set a color manually below:</div>
+        <div id="ecb_swatches" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Brand Color</label>
       <input id="ecb_color" type="color" value="${currentColor || '#003566'}" style="width:100%;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
@@ -7879,6 +7884,68 @@ function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColo
       </div>
     </div>`;
   document.body.appendChild(overlay);
+}
+
+// Confirmed directly: real colors picked from the real, uploaded
+// logo, not a generic default - draws it to an offscreen canvas,
+// reads its own actual pixel data, and ranks colors by how much of
+// the image they genuinely cover. Near-white, near-black, and
+// near-transparent pixels are filtered out first, since those are
+// almost always background or outline, not the intended brand color -
+// automatic and immediate, the moment a logo file is chosen, no
+// separate step needed.
+function handleBrandingLogoSelected(file) {
+  const wrap = document.getElementById('ecb_swatches_wrap');
+  const swatchesEl = document.getElementById('ecb_swatches');
+  if (!file) { wrap.style.display = 'none'; return; }
+
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    const size = 60; // downscaled deliberately - exact resolution doesn't matter for a real, dominant-color read, only real relative frequency does
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, size, size).data;
+    } catch (err) {
+      wrap.style.display = 'none'; // a real, cross-origin-tainted canvas would throw here - fails quietly, manual color picker still works fine
+      return;
+    }
+
+    const buckets = {};
+    const bucketSize = 24; // groups genuinely similar shades together, so near-identical pixels count as the same real color rather than splitting their frequency apart
+    for (let i = 0; i < pixels.length; i += 4) {
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
+      if (a < 100) continue; // meaningfully transparent - not a real, visible color in the logo
+      if (r > 240 && g > 240 && b > 240) continue; // near-white background
+      if (r < 15 && g < 15 && b < 15) continue; // near-black outline/background
+      const key = `${Math.round(r / bucketSize)}-${Math.round(g / bucketSize)}-${Math.round(b / bucketSize)}`;
+      if (!buckets[key]) buckets[key] = { r: 0, g: 0, b: 0, count: 0 };
+      buckets[key].r += r; buckets[key].g += g; buckets[key].b += b; buckets[key].count++;
+    }
+
+    const ranked = Object.values(buckets)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+      .map(b => {
+        const r = Math.round(b.r / b.count), g = Math.round(b.g / b.count), bl = Math.round(b.b / b.count);
+        return '#' + [r, g, bl].map(v => v.toString(16).padStart(2, '0')).join('');
+      });
+
+    if (ranked.length === 0) { wrap.style.display = 'none'; return; }
+
+    swatchesEl.innerHTML = ranked.map(hex => `
+      <button type="button" onclick="document.getElementById('ecb_color').value='${hex}'" title="${hex}"
+        style="width:32px;height:32px;border-radius:6px;border:2px solid var(--border);background:${hex};cursor:pointer;padding:0"></button>
+    `).join('');
+    wrap.style.display = 'block';
+    document.getElementById('ecb_color').value = ranked[0]; // the single most common real color in the logo, picked automatically as the default
+  };
+  img.onerror = () => { wrap.style.display = 'none'; };
+  img.src = URL.createObjectURL(file);
 }
 
 async function submitEditClientBranding(orgId) {
