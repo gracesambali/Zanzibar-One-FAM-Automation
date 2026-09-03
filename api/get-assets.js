@@ -1212,7 +1212,15 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor });
+    let systemCatalog = null;
+    try {
+      const catalogResult = await pgQuery("select id, name, description, color, routes_to_role from system_catalog order by sort_order asc, name asc");
+      systemCatalog = catalogResult.rows.map(r => ({ id: r.id, name: r.name, desc: r.description || "", color: r.color || "var(--navy)", routesToRole: r.routes_to_role || null }));
+    } catch (err) {
+      console.error("system_catalog read error (non-fatal, frontend falls back to its own list):", err.message);
+    }
+
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor, systemCatalog });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });
