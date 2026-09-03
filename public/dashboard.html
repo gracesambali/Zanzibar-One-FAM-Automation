@@ -2250,6 +2250,10 @@ function openEditForm(idx) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note</label>
       <textarea id="ea_note" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;min-height:60px">${(a.note||'').replace(/</g,'&lt;')}</textarea>
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${a.nameplatePhoto ? 'Change the Nameplate Photo' : 'Photograph the Nameplate'} (optional)</label>
+      ${a.nameplatePhoto ? `<a href="${a.nameplatePhoto.url}" target="_blank"><img src="${a.nameplatePhoto.url}" alt="Current nameplate photo" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block;margin-bottom:6px" title="Current nameplate — click to view full size"></a>` : ''}
+      <input id="ea_nameplate" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px">
+
       <div style="display:flex;gap:8px;margin-top:6px">
         <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
         <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
@@ -2320,16 +2324,33 @@ async function submitAssetEdit(recordId) {
   }
 
   try {
+    const nameplateFile = document.getElementById('ea_nameplate').files[0];
+    let nameplateBase64 = null;
+    if (nameplateFile) {
+      nameplateBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(nameplateFile);
+      });
+    }
+
     const resp = await fetch('/api/manage-asset', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'edit', recordId, changes }),
+      body: JSON.stringify({
+        action: 'edit', recordId, changes,
+        nameplatePhotoBase64: nameplateBase64,
+        nameplatePhotoFilename: nameplateFile ? nameplateFile.name : undefined,
+        nameplatePhotoContentType: nameplateFile ? nameplateFile.type : undefined,
+      }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to save changes');
     closeEditForm();
     await loadAssetsAndInit();
-    alert(data.changesApplied ? `Saved ${data.changesApplied} change(s).` : 'No changes detected.');
+    const savedMsg = data.changesApplied ? `Saved ${data.changesApplied} change(s).` : (data.message || 'No changes detected.');
+    alert(data.warning ? `${savedMsg}\n\n${data.warning}` : savedMsg);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';

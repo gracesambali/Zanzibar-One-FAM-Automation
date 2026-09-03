@@ -780,7 +780,7 @@ export default async function handler(req, res) {
         const { listAllRecords: pgListAllRecords, insert } = await import("../lib/postgresClient.js");
         const { generateUniqueCode } = await import("../lib/uniqueCode.js");
 
-        const existing = await pgListAllRecords("facilities");
+        const existing = await pgListAllRecords("facilities", session.org);
         const existingCodes = new Set(existing.filter(f => f.facility_code).map(f => f.facility_code));
         const code = generateUniqueCode(name.trim(), existingCodes);
 
@@ -805,18 +805,36 @@ export default async function handler(req, res) {
       const { facilityId, newName } = req.body;
       if (!facilityId || !newName || !newName.trim()) return res.status(400).json({ error: "facilityId and newName required" });
       try {
-        const { getById, update, query: pgQuery } = await import("../lib/postgresClient.js");
+        const { getById, update, query: pgQuery, listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+        const { generateUniqueCode } = await import("../lib/uniqueCode.js");
         const facility = await getById("facilities", facilityId).catch(() => null);
         if (!facility || facility.organization_id !== session.org) {
           return res.status(404).json({ error: "Facility not found." });
         }
         const oldName = facility.name;
         const trimmedNew = newName.trim();
-        await update("facilities", facilityId, { name: trimmedNew }, session.org);
+
+        const fields = { name: trimmedNew };
+        if (oldName !== trimmedNew) {
+          // Confirmed directly as the real, missing piece behind a
+          // real reported bug: a facility's own short code never
+          // regenerated on rename, so a newly-created asset's own
+          // prefix stayed wrong forever afterward. Deliberately not
+          // retroactive - an asset already created keeps the id it
+          // was given, since that's the same real id already printed
+          // on a real, physical nameplate or QR code out there. Only
+          // a genuinely new asset, created after this rename, gets
+          // the real, updated prefix.
+          const ownFacilities = (await pgListAllRecords("facilities", session.org)).filter(f => f.id !== facilityId);
+          const existingCodes = new Set(ownFacilities.filter(f => f.facility_code).map(f => f.facility_code));
+          fields.facility_code = generateUniqueCode(trimmedNew, existingCodes);
+        }
+
+        await update("facilities", facilityId, fields, session.org);
         if (oldName !== trimmedNew) {
           await pgQuery("update components set facility = $1 where organization_id = $2 and facility = $3", [trimmedNew, session.org, oldName]);
         }
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ success: true, newFacilityCode: fields.facility_code || null });
       } catch (err) {
         console.error("editFacility error:", err);
         return res.status(500).json({ error: err.message });

@@ -210,12 +210,13 @@ export default async function handler(req, res) {
       const { listAllRecords: pgListAllRecords, update } = await import("../lib/postgresClient.js");
       const { generateUniqueCode } = await import("../lib/uniqueCode.js");
 
-      const facilities = await pgListAllRecords("facilities");
+      const facilities = await pgListAllRecords("facilities", session.org);
       const existingCodes = new Set(facilities.filter(f => f.facility_code).map(f => f.facility_code));
-      // facility_code is a real, globally unique constraint (not
-      // per-org) - existingCodes has to stay unfiltered for that
-      // reason, but only this org's own facilities get touched below.
-      const ownFacilities = facilities.filter(f => f.organization_id === session.org);
+      // Confirmed directly: facility_code is now genuinely per-org
+      // unique, not global - a different client's own code is no
+      // longer a real collision, so this only ever needs to check
+      // against this org's own facilities.
+      const ownFacilities = facilities;
 
       let assigned = 0, skipped = 0;
       const results = [];

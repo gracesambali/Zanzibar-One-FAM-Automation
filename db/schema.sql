@@ -1874,3 +1874,16 @@ create index if not exists idx_inventory_snapshots_org on inventory_snapshots (o
 -- code (INV-001) and genuinely collide at the database level.
 alter table inventory_items drop constraint if exists inventory_items_item_code_key;
 create unique index if not exists idx_inventory_items_org_code on inventory_items (organization_id, item_code);
+
+-- ============================================================
+-- facility_code, found genuinely globally unique while fixing a real
+-- reported bug (renaming a facility never regenerated its code, so
+-- an asset's own prefix stayed wrong forever after a rename) - the
+-- same class of gap already found and fixed repeatedly this session.
+-- A different client could never independently land on the same
+-- short code (e.g. two unrelated clients both naturally abbreviating
+-- to "GV"), even though nothing about it is actually shared between
+-- clients.
+-- ============================================================
+alter table facilities drop constraint if exists facilities_facility_code_key;
+create unique index if not exists idx_facilities_org_code on facilities (organization_id, facility_code);
