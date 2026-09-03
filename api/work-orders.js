@@ -897,7 +897,7 @@ export default async function handler(req, res) {
     // Renaming a building - genuinely trickier than a facility rename,
     // since building_name is part of facility_buildings' own primary
     // key, with no separate stable id at all. Confirmed directly and
-    // handled carefully: units and inventory_items only carry a bare
+    // handled carefully: units and work_orders only carry a bare
     // building name, with no facility column to disambiguate by - if
     // the exact same building name genuinely exists under a different
     // facility too, cascading those two tables blindly could rename
@@ -938,19 +938,25 @@ export default async function handler(req, res) {
           await pgQuery("update components set building = $1 where organization_id = $2 and building = $3 and facility = $4", [trimmedNew, session.org, oldBuildingName, facility.name]);
           await pgQuery("update building_floors set building_name = $1 where organization_id = $2 and facility_id = $3 and building_name = $4", [trimmedNew, session.org, facilityId, oldBuildingName]);
           await pgQuery("update building_zones set building_name = $1 where organization_id = $2 and facility_id = $3 and building_name = $4", [trimmedNew, session.org, facilityId, oldBuildingName]);
+          // Confirmed directly: inventory_items now has a real
+          // organization_id of its own, unlike work_orders and units
+          // which still don't - scoped directly and safely here,
+          // regardless of the cross-facility ambiguity check below,
+          // since that check only exists for tables with no real org
+          // column to fall back on.
+          await pgQuery("update inventory_items set building = $1 where organization_id = $2 and building = $3", [trimmedNew, session.org, oldBuildingName]);
           if (!ambiguous) {
-            // work_orders, units, and inventory_items all share the
-            // same real limitation - no facility column to
-            // disambiguate by, only a bare building name - so all
-            // three only cascade when the name is genuinely safe.
+            // work_orders and units still share the same real
+            // limitation - no facility column to disambiguate by,
+            // only a bare building name - so both only cascade when
+            // the name is genuinely safe.
             await pgQuery("update work_orders set building = $1 where organization_id = $2 and building = $3", [trimmedNew, session.org, oldBuildingName]);
             await pgQuery("update units set building = $1 where building = $2", [trimmedNew, oldBuildingName]);
-            await pgQuery("update inventory_items set building = $1 where building = $2", [trimmedNew, oldBuildingName]);
           }
         }
         return res.status(200).json({
           success: true,
-          warning: ambiguous ? "Another facility also has a building with this same name — work orders, tenant units, and inventory items weren't renamed automatically, to avoid affecting the wrong one. Update those manually if needed." : null,
+          warning: ambiguous ? "Another facility also has a building with this same name — work orders and tenant units weren't renamed automatically, to avoid affecting the wrong one. Update those manually if needed." : null,
         });
       } catch (err) {
         console.error("editBuilding error:", err);

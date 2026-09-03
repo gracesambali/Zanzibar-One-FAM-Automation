@@ -553,7 +553,7 @@ export default async function handler(req, res) {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
       const { isLowStock } = await import("../lib/inventory.js");
-      const rows = await pgListAllRecords("inventory_items");
+      const rows = await pgListAllRecords("inventory_items", session.org);
       const items = rows.filter(r => r.active !== false).map(r => ({
         id: r.id,
         itemCode: r.item_code,
@@ -580,7 +580,11 @@ export default async function handler(req, res) {
   // transaction record behind its current quantity.
   if (req.query.inventoryMovements === "true" && req.query.itemId) {
     try {
-      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { query: pgQuery, getById } = await import("../lib/postgresClient.js");
+      const item = await getById("inventory_items", req.query.itemId).catch(() => null);
+      if (!item || item.organization_id !== session.org) {
+        return res.status(404).json({ error: "Item not found." });
+      }
       const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 200);
       const result = await pgQuery("select * from inventory_movements where item_id = $1 order by performed_at desc limit $2", [req.query.itemId, limit]);
       return res.status(200).json({
@@ -605,10 +609,10 @@ export default async function handler(req, res) {
   if (req.query.resolveInventoryBarcode === "true" && req.query.gtin) {
     try {
       const { getByColumn, getById } = await import("../lib/postgresClient.js");
-      const link = await getByColumn("inventory_barcode_links", "gtin", req.query.gtin).catch(() => null);
+      const link = await getByColumn("inventory_barcode_links", "gtin", req.query.gtin, session.org).catch(() => null);
       if (!link) return res.status(200).json({ needsLink: true, gtin: req.query.gtin });
       const item = await getById("inventory_items", link.item_id).catch(() => null);
-      if (!item) return res.status(200).json({ needsLink: true, gtin: req.query.gtin });
+      if (!item || item.organization_id !== session.org) return res.status(200).json({ needsLink: true, gtin: req.query.gtin });
       return res.status(200).json({ needsLink: false, itemId: item.id, itemCode: item.item_code, itemName: item.name, isBatchTracked: item.is_batch_tracked === true });
     } catch (err) {
       console.error("resolveInventoryBarcode read error:", err);
@@ -645,9 +649,9 @@ export default async function handler(req, res) {
         `select m.*, i.item_code, i.name as item_name, i.unit_of_measure
          from inventory_movements m
          join inventory_items i on i.id = m.item_id
-         where m.performed_at >= $1
+         where m.performed_at >= $1 and i.organization_id = $2
          order by m.performed_at desc`,
-        [since.toISOString()]
+        [since.toISOString(), session.org]
       );
 
       const movements = result.rows.map(r => ({
@@ -736,7 +740,7 @@ export default async function handler(req, res) {
   if (req.query.fleetDrivers === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-      const rows = await pgListAllRecords("fleet_drivers");
+      const rows = await pgListAllRecords("fleet_drivers", session.org);
       return res.status(200).json({ drivers: rows.map(r => r.name).sort() });
     } catch (err) {
       console.error("fleetDrivers read error:", err);
@@ -754,7 +758,9 @@ export default async function handler(req, res) {
         `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
          from fleet_requests f
          left join components c on c.id = f.vehicle_id
-         order by f.trip_date desc nulls last, f.created_at desc`
+         where f.organization_id = $1
+         order by f.trip_date desc nulls last, f.created_at desc`,
+        [session.org]
       );
       const requests = result.rows.map(r => ({
         id: r.id, vehicleId: r.vehicle_id, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
@@ -775,7 +781,7 @@ export default async function handler(req, res) {
   if (req.query.fleetActivityLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from fleet_activity_log order by performed_at desc limit 200");
+      const result = await pgQuery("select * from fleet_activity_log where organization_id = $1 order by performed_at desc limit 200", [session.org]);
       return res.status(200).json({
         entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
       });
@@ -881,9 +887,9 @@ export default async function handler(req, res) {
         `select f.*, c.asset_id as vehicle_asset_id, c.name as vehicle_name
          from fleet_requests f
          left join components c on c.id = f.vehicle_id
-         where coalesce(f.trip_date::timestamptz, f.created_at) >= $1
+         where coalesce(f.trip_date::timestamptz, f.created_at) >= $1 and f.organization_id = $2
          order by coalesce(f.trip_date::timestamptz, f.created_at) desc`,
-        [since.toISOString()]
+        [since.toISOString(), session.org]
       );
       const requests = result.rows.map(r => ({
         driverName: r.driver_name, vehicleAssetId: r.vehicle_asset_id, vehicleName: r.vehicle_name,
@@ -1023,7 +1029,7 @@ export default async function handler(req, res) {
   if (req.query.inventoryCategories === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-      const rows = await pgListAllRecords("inventory_categories");
+      const rows = await pgListAllRecords("inventory_categories", session.org);
       return res.status(200).json({ categories: rows.map(r => r.label).sort() });
     } catch (err) {
       console.error("inventoryCategories read error:", err);
@@ -1034,7 +1040,7 @@ export default async function handler(req, res) {
   if (req.query.inventoryLocations === "true") {
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
-      const rows = await pgListAllRecords("inventory_locations");
+      const rows = await pgListAllRecords("inventory_locations", session.org);
       return res.status(200).json({ locations: rows.map(r => r.label).sort() });
     } catch (err) {
       console.error("inventoryLocations read error:", err);
