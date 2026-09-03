@@ -602,6 +602,36 @@ let currentUserOrgName = "";
 
 const APP_BRAND_NAME = "Gracing Ventures FAM";
 
+// Confirmed directly as a real, reported gap: only the header
+// background was ever actually getting a client's own brand color -
+// every other use of the app's main accent color throughout the rest
+// of the app (active tabs, primary buttons, selected rows) stayed on
+// the shared default navy regardless, since the underlying CSS
+// variable itself was never touched, just one single element's own
+// inline style. Overriding the real --navy variable (and its own
+// pale tint) at the root cascades correctly to every one of its 800+
+// existing uses across the whole app in one place. The pale tint is
+// derived with the same real, proportional mix-toward-white ratio the
+// original design's own navy/navy-pale relationship already used, so
+// it stays visually consistent with whatever real brand color is
+// applied, not just navy specifically. Deliberately leaves every
+// separate, semantic status color (red/green/amber for criticality
+// and health) completely alone - those carry real meaning of their
+// own that shouldn't shift just because branding changed.
+function applyBrandColorThroughoutApp(hexColor) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hexColor);
+  if (!match) return;
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  const toPale = (channel) => Math.round(channel + (255 - channel) * 0.87);
+  const paleHex = '#' + [toPale(r), toPale(g), toPale(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+
+  const root = document.documentElement.style;
+  root.setProperty('--navy', '#' + match[1]);
+  root.setProperty('--navy-pale', paleHex);
+}
+
 function applyClientConfigToPage() {
   const orgDisplayName = currentUserOrgName || APP_BRAND_NAME;
   document.title = orgDisplayName + " — " + CLIENT_CONFIG.clientName;
@@ -15735,8 +15765,7 @@ async function loadAssetsAndInit() {
       if (logoImg) logoImg.src = data.organizationLogoUrl;
     }
     if (data.organizationBrandColor) {
-      const headerEl = document.querySelector('.header');
-      if (headerEl) headerEl.style.background = data.organizationBrandColor;
+      applyBrandColorThroughoutApp(data.organizationBrandColor);
     }
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
