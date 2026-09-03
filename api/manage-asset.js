@@ -2335,6 +2335,27 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
     }
     const assetId = current.asset_id || "";
 
+    // Confirmed directly, matching a real reported gap: the same
+    // real nameplate photo already available when first adding an
+    // asset was never available again afterward - handled
+    // independently here, before the regular-fields check below,
+    // since a nameplate-only edit with no other field changed would
+    // otherwise be silently treated as "no changes detected" and
+    // never actually save the photo at all.
+    const { nameplatePhotoBase64, nameplatePhotoFilename, nameplatePhotoContentType } = req.body || {};
+    let nameplateWarning = null;
+    if (nameplatePhotoBase64 && nameplatePhotoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const photoPath = `components/${recordId}/nameplate-${nameplatePhotoFilename}`;
+        await uploadFile(photoPath, nameplatePhotoBase64, nameplatePhotoContentType || "image/jpeg");
+        await update("components", recordId, { nameplate_photo_url: photoPath, nameplate_photo_filename: nameplatePhotoFilename }, organizationId);
+      } catch (photoErr) {
+        console.error("Nameplate photo upload error (edit):", photoErr);
+        nameplateWarning = "The nameplate photo failed to upload. You can try again from the asset's edit page.";
+      }
+    }
+
     // Filter to only allowed fields and build the update + audit entries
     const updateFields = {};
     const auditEntries = [];
@@ -2349,7 +2370,11 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
     }
 
     if (Object.keys(updateFields).length === 0) {
-      return res.status(200).json({ success: true, message: "No changes detected" });
+      return res.status(200).json({
+        success: true,
+        message: nameplatePhotoBase64 ? "Nameplate photo saved." : "No changes detected",
+        ...(nameplateWarning ? { warning: nameplateWarning } : {}),
+      });
     }
 
     // If any field that affects depreciation just changed, recalculate
@@ -2400,7 +2425,7 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
       );
     }
 
-    return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId });
+    return res.status(200).json({ success: true, changesApplied: auditEntries.length, assetId, ...(nameplateWarning ? { warning: nameplateWarning } : {}) });
   } catch (err) {
     console.error("edit-asset error:", err);
     return res.status(500).json({ error: err.message });
