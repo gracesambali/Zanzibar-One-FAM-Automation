@@ -8871,7 +8871,7 @@ async function openUploadAssetSheetModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Columns, in order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date. Only the first five are required.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date. Only the first five are required — matched by what each header says, not by position.</div>
       <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
       ${knownPairsHtml}
       <div style="font-size:10.5px;color:var(--muted);margin:8px 0 14px">Don't see the building you need? Add it under Asset Tracking's facility settings first, then upload.</div>
@@ -8885,20 +8885,71 @@ async function openUploadAssetSheetModal() {
   document.body.appendChild(overlay);
 }
 
-function assetSheetRowFromColumns(c) {
+// Confirmed directly as the real, likely cause behind a reported
+// upload failure: the old version read columns purely by position -
+// column 1 was always "Name," column 2 always "Nature," and so on,
+// completely regardless of what the header text actually said. A
+// real spreadsheet with its own columns in a different, still
+// perfectly reasonable order would silently map every row to the
+// wrong fields, most often failing on Building specifically since
+// that's required for every asset - with nothing in the result
+// explaining why. Matches by each header's own real text instead,
+// case-insensitive and forgiving of the exact wording, so order
+// genuinely stops mattering.
+const ASSET_SHEET_HEADER_ALIASES = {
+  name: ['name', 'asset name', 'asset'],
+  nature: ['nature', 'asset nature'],
+  category: ['category', 'asset category'],
+  building: ['building', 'building name'],
+  facility: ['facility', 'facility name'],
+  system: ['system'],
+  manufacturer: ['manufacturer', 'maker', 'brand'],
+  model: ['model'],
+  acquisitionCost: ['acquisition cost', 'acquisition cost (tzs)', 'cost', 'acquisition cost tzs'],
+  installDate: ['install date', 'installation date', 'date installed'],
+};
+
+function normalizeAssetSheetHeader(raw) {
+  return String(raw || '').toLowerCase().replace(/\*/g, '').replace(/\(.*?\)/g, '').trim().replace(/\s+/g, ' ');
+}
+
+function buildAssetSheetHeaderMap(headerRow) {
+  const normalized = (headerRow || []).map(normalizeAssetSheetHeader);
+  const map = {};
+  for (const [field, aliases] of Object.entries(ASSET_SHEET_HEADER_ALIASES)) {
+    const idx = normalized.findIndex(h => aliases.includes(h));
+    if (idx !== -1) map[field] = idx;
+  }
+  return map;
+}
+
+function assetSheetRowFromColumns(c, headerMap) {
+  const get = (field) => (headerMap[field] !== undefined ? (c[headerMap[field]] || '') : '');
   return {
-    name: c[0] || '', nature: c[1] || '', category: c[2] || '', building: c[3] || '', facility: c[4] || '',
-    system: c[5] || '', manufacturer: c[6] || '', model: c[7] || '', acquisitionCost: c[8] || '', installDate: c[9] || '',
+    name: get('name'), nature: get('nature'), category: get('category'), building: get('building'), facility: get('facility'),
+    system: get('system'), manufacturer: get('manufacturer'), model: get('model'), acquisitionCost: get('acquisitionCost'), installDate: get('installDate'),
   };
+}
+
+const ASSET_SHEET_REQUIRED_FIELDS = ['name', 'nature', 'category', 'building', 'facility'];
+function checkAssetSheetHeaderMap(headerMap) {
+  const missing = ASSET_SHEET_REQUIRED_FIELDS.filter(f => headerMap[f] === undefined);
+  if (missing.length > 0) {
+    throw new Error(`Couldn't find a column for: ${missing.join(', ')}. Check the header row's own wording matches what's expected.`);
+  }
 }
 
 function parseAssetSheetCsv(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length === 0) return [];
+  const headerRow = lines[0].split(',').map(x => x.trim().replace(/^"|"$/g, ''));
+  const headerMap = buildAssetSheetHeaderMap(headerRow);
+  checkAssetSheetHeaderMap(headerMap);
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(',').map(x => x.trim().replace(/^"|"$/g, ''));
-    if (!c[0]) continue;
-    rows.push(assetSheetRowFromColumns(c));
+    if (!c[headerMap.name]) continue;
+    rows.push(assetSheetRowFromColumns(c, headerMap));
   }
   return rows;
 }
@@ -8908,11 +8959,16 @@ async function parseAssetSheetExcel(file) {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  if (data.length === 0) return [];
+  const headerMap = buildAssetSheetHeaderMap(data[0]);
+  checkAssetSheetHeaderMap(headerMap);
   const rows = [];
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
-    if (!r || !r[0]) continue;
-    rows.push(assetSheetRowFromColumns(r.map(v => v != null ? String(v).trim() : '')));
+    if (!r) continue;
+    const c = r.map(v => v != null ? String(v).trim() : '');
+    if (!c[headerMap.name]) continue;
+    rows.push(assetSheetRowFromColumns(c, headerMap));
   }
   return rows;
 }
