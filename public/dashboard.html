@@ -632,6 +632,7 @@ let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let financeEnabled = true; // filled in after login by loadAssetsAndInit() from the real organization setting
 let currentUserOrgId = ""; // filled in after login by loadAssetsAndInit(), from the verified session
+const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
 let currentUsername = ""; // the actual login identity chat participation is checked against — never the display name
 let currentWODetailId = null; // which work order's detail view is open right now, if any — lets polling refresh it in place instead of yanking someone back to the list
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
@@ -803,7 +804,13 @@ const ROLE_PERMISSIONS = {
   system_admin: { viewCostAndDepreciation: true, addOrDecommissionAssets: true, enterWorkOrderCost: true, requestProcurement: true, fulfillProcurement: true, reviewWorkOrderClosure: true, viewStaffPerformance: true, manageUsers: true },
 };
 
-const systemDefs = [
+// Confirmed directly: systemDefs itself stays the simple {name, desc,
+// color} shape everything else in this file already expects -
+// systemCatalogFull holds the real, raw catalog rows (including each
+// one's real id and its real routing role) specifically for the
+// Manage Systems UI's own add/edit/remove needs.
+let systemCatalogFull = [];
+let systemDefs = [
   { name:"HVAC", desc:"Chillers, cooling towers, air handling units and fan coil units maintaining comfort conditions across all occupied floors.", color:"var(--navy)" },
   { name:"Fire Protection", desc:"Electric and diesel fire pumps, jockey pump, and wet-riser distribution ensuring code-compliant fire suppression capacity.", color:"var(--red)" },
   { name:"Electrical", desc:"HV/LV transformers, main switchgear, standby generator and UPS supporting building power resilience.", color:"var(--amber)" },
@@ -2960,17 +2967,196 @@ async function runSensorTest() {
 
 function renderSystems() {
   const systemsInUse = getSystemsInUse();
+  const isMaster = currentUserOrgId === MASTER_ORG_ID;
+
+  let html = '';
+  if (isMaster) {
+    html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--navy)">Systems Catalog</div>
+          <div style="font-size:12px;color:var(--muted)">Shared across every client. Add, edit, or remove here — no code change needed.</div>
+        </div>
+        <button onclick="openAddSystemModal()" style="padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add System</button>
+      </div>
+      ${systemCatalogFull.map(s => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);gap:10px">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0"></span>
+            <div style="min-width:0">
+              <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(s.name)}</div>
+              <div style="font-size:10.5px;color:var(--muted)">${s.routesToRole ? `Routes to ${escapeHtml(s.routesToRole)}` : 'Not routed'}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button onclick="openEditSystemModal('${s.id}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Edit</button>
+            <button onclick="submitRemoveSystem('${s.id}','${s.name.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+  }
+
   if (systemsInUse.length === 0) {
-    document.getElementById('view-systems').innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px">No systems in use yet — they'll show up here as soon as an asset is tagged to one.</div>`;
+    html += `<div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px">No systems in use yet — they'll show up here as soon as an asset is tagged to one.</div>`;
+    document.getElementById('view-systems').innerHTML = html;
     return;
   }
-  let html = `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${systemsInUse.length} system${systemsInUse.length!==1?'s':''} in use — asset counts update live from the register.</div>`;
+  html += `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${systemsInUse.length} system${systemsInUse.length!==1?'s':''} in use — asset counts update live from the register.</div>`;
   systemsInUse.forEach(s => {
     const cnt = assets.filter(a=>a.system===s.name).length;
     const critCnt = assets.filter(a=>a.system===s.name && a.criticality==="High").length;
     html += `<div class="sys-card"><div class="sys-card-head"><div class="sys-card-name">${s.name}</div><div class="sys-card-count">${cnt} asset${cnt!==1?'s':''}${critCnt>0?' · '+critCnt+' critical':''}</div></div><div class="sys-card-desc">${s.desc}</div></div>`;
   });
   document.getElementById('view-systems').innerHTML = html;
+}
+
+const SYSTEM_ROUTABLE_ROLES = ["Mechanical", "Electrical", "Admin", "Property Manager", "Biomedical"];
+
+function openAddSystemModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'addSystemOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add System</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System Name *</label>
+      <input id="as_name" type="text" placeholder="e.g. Renewable Energy" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description</label>
+      <textarea id="as_desc" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;resize:vertical"></textarea>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Color</label>
+      <input id="as_color" type="color" value="#003566" style="width:100%;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Routes work orders to</label>
+      <select id="as_routes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+        ${SYSTEM_ROUTABLE_ROLES.map(r => `<option value="${r}">${r}</option>`).join('')}
+      </select>
+      <div id="as_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addSystemOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="as_submit" onclick="submitAddSystem()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add System</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('as_name').focus();
+}
+
+async function submitAddSystem() {
+  const name = document.getElementById('as_name').value.trim();
+  const description = document.getElementById('as_desc').value.trim();
+  const color = document.getElementById('as_color').value;
+  const routesToRole = document.getElementById('as_routes').value;
+  const errorBox = document.getElementById('as_error');
+  const btn = document.getElementById('as_submit');
+  errorBox.style.display = 'none';
+  if (!name) { errorBox.textContent = 'Enter a system name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addSystem: true, name, description, color, routesToRole }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add system');
+    await refreshSystemCatalog();
+    document.getElementById('addSystemOverlay')?.remove();
+    renderSystems();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Add System';
+  }
+}
+
+function openEditSystemModal(systemId) {
+  const system = systemCatalogFull.find(s => s.id === systemId);
+  if (!system) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'editSystemOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Edit System</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Renaming updates every real asset already using this system, across every client.</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System Name *</label>
+      <input id="es_sys_name" type="text" value="${escapeHtml(system.name)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description</label>
+      <textarea id="es_sys_desc" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;resize:vertical">${escapeHtml(system.desc || '')}</textarea>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Color</label>
+      <input id="es_sys_color" type="color" value="${/^#/.test(system.color) ? system.color : '#003566'}" style="width:100%;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Routes work orders to</label>
+      <select id="es_sys_routes" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+        ${SYSTEM_ROUTABLE_ROLES.map(r => `<option value="${r}"${system.routesToRole===r?' selected':''}>${r}</option>`).join('')}
+      </select>
+      <div id="es_sys_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editSystemOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="es_sys_submit" onclick="submitEditSystem('${systemId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditSystem(systemId) {
+  const name = document.getElementById('es_sys_name').value.trim();
+  const description = document.getElementById('es_sys_desc').value.trim();
+  const color = document.getElementById('es_sys_color').value;
+  const routesToRole = document.getElementById('es_sys_routes').value;
+  const errorBox = document.getElementById('es_sys_error');
+  const btn = document.getElementById('es_sys_submit');
+  errorBox.style.display = 'none';
+  if (!name) { errorBox.textContent = 'Enter a system name.'; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editSystem: true, systemId, name, description, color, routesToRole }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
+    await refreshSystemCatalog();
+    document.getElementById('editSystemOverlay')?.remove();
+    renderSystems();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function submitRemoveSystem(systemId, systemName) {
+  if (!confirm(`Remove ${systemName}? This can't be undone, and only works while no real asset anywhere still uses it.`)) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ removeSystem: true, systemId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove system');
+    await refreshSystemCatalog();
+    renderSystems();
+  } catch (err) {
+    alert('Could not remove: ' + err.message);
+  }
+}
+
+// Refetches the real catalog after any add/edit/remove - the same
+// real login payload every other screen already trusts, so every
+// other place systemDefs feeds into (Add Asset, filters, dashboards)
+// stays genuinely in sync too, not just this one screen.
+async function refreshSystemCatalog() {
+  try {
+    const resp = await fetch('/api/get-assets');
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data.systemCatalog) && data.systemCatalog.length > 0) {
+        systemCatalogFull = data.systemCatalog;
+        systemDefs = data.systemCatalog.map(s => ({ name: s.name, desc: s.desc, color: s.color }));
+      }
+    }
+  } catch (err) {
+    console.error('Could not refresh system catalog:', err);
+  }
 }
 
 function renderMaintenance() {
@@ -15174,6 +15360,10 @@ async function loadAssetsAndInit() {
     financeEnabled = data.financeEnabled !== false;
     currentUserOrgId = data.organizationId || "";
     currentUserOrgName = data.organizationName || "";
+    if (Array.isArray(data.systemCatalog) && data.systemCatalog.length > 0) {
+      systemCatalogFull = data.systemCatalog;
+      systemDefs = data.systemCatalog.map(s => ({ name: s.name, desc: s.desc, color: s.color }));
+    }
     applyClientConfigToPage();
     if (data.organizationLogoUrl) {
       const logoImg = document.querySelector('.header-logo img');

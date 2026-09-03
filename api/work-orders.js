@@ -1245,6 +1245,96 @@ export default async function handler(req, res) {
       }
     }
 
+    // Confirmed directly: the system catalog is genuinely shared
+    // across every client, the same reasoning already applied to
+    // roles - managed only from the Master System, so this can never
+    // be touched from any other organization's own session, even one
+    // with real manageUsers permission for its own data.
+    const SYSTEM_CATALOG_MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+
+    if (req.body && req.body.addSystem) {
+      if (session.org !== SYSTEM_CATALOG_MASTER_ORG_ID) {
+        return res.status(403).json({ error: "Only the Master System can manage the systems catalog." });
+      }
+      const { name, description, color, routesToRole } = req.body;
+      if (!name || !name.trim()) return res.status(400).json({ error: "A system name is required." });
+      try {
+        const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
+        const countResult = await pgQuery("select count(*) from system_catalog");
+        const created = await insert("system_catalog", {
+          name: name.trim(), description: description ? description.trim() : null,
+          color: color || null, routes_to_role: routesToRole || null,
+          sort_order: Number(countResult.rows[0].count),
+        });
+        return res.status(200).json({ success: true, system: { id: created.id, name: created.name } });
+      } catch (err) {
+        const message = /unique/i.test(err.message) ? `"${name.trim()}" is already in the systems catalog.` : err.message;
+        console.error("addSystem error:", err);
+        return res.status(500).json({ error: message });
+      }
+    }
+
+    if (req.body && req.body.editSystem) {
+      if (session.org !== SYSTEM_CATALOG_MASTER_ORG_ID) {
+        return res.status(403).json({ error: "Only the Master System can manage the systems catalog." });
+      }
+      const { systemId, name, description, color, routesToRole } = req.body;
+      if (!systemId || !name || !name.trim()) return res.status(400).json({ error: "systemId and name required" });
+      try {
+        const { getById, update, query: pgQuery } = await import("../lib/postgresClient.js");
+        const existing = await getById("system_catalog", systemId).catch(() => null);
+        if (!existing) return res.status(404).json({ error: "System not found." });
+        const newName = name.trim();
+
+        await update("system_catalog", systemId, {
+          name: newName, description: description ? description.trim() : null,
+          color: color || null, routes_to_role: routesToRole || null,
+        });
+
+        // A real cascade, deliberately not scoped to one organization
+        // this time - the system itself is genuinely shared across
+        // every client, so a rename has to keep every real asset
+        // anywhere that uses it in sync, not just one client's own.
+        if (existing.name !== newName) {
+          await pgQuery("update components set system = $1 where system = $2", [newName, existing.name]);
+        }
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        const message = /unique/i.test(err.message) ? `"${name.trim()}" is already in the systems catalog.` : err.message;
+        console.error("editSystem error:", err);
+        return res.status(500).json({ error: message });
+      }
+    }
+
+    if (req.body && req.body.removeSystem) {
+      if (session.org !== SYSTEM_CATALOG_MASTER_ORG_ID) {
+        return res.status(403).json({ error: "Only the Master System can manage the systems catalog." });
+      }
+      const { systemId } = req.body;
+      if (!systemId) return res.status(400).json({ error: "systemId required" });
+      try {
+        const { getById, deleteById, query: pgQuery } = await import("../lib/postgresClient.js");
+        const existing = await getById("system_catalog", systemId).catch(() => null);
+        if (!existing) return res.status(404).json({ error: "System not found." });
+
+        // A genuine safety check spanning every organization, not
+        // just one - this system is shared, so real usage by any
+        // client at all should block its removal, the same real
+        // reasoning already proven for facilities and buildings.
+        const usageCheck = await pgQuery("select count(*) from components where system = $1", [existing.name]);
+        const usage = Number(usageCheck.rows[0].count);
+        if (usage > 0) {
+          return res.status(400).json({ error: `Can't remove "${existing.name}" — ${usage} real asset(s) still use it, across one or more clients.` });
+        }
+
+        await deleteById("system_catalog", systemId);
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("removeSystem error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // Creating a tenant unit — anyone except Technician, confirmed, to
     // keep this simple rather than defining a precise allowed list.
     if (req.body && req.body.addUnit) {

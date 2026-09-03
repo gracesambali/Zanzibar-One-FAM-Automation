@@ -1774,3 +1774,46 @@ create table if not exists building_rooms (
 );
 create index if not exists idx_building_rooms_org on building_rooms (organization_id, facility_id, building_name, floor_id);
 create index if not exists idx_building_rooms_zone on building_rooms (zone_id);
+
+-- ============================================================
+-- Real, editable system catalog - confirmed directly: shared
+-- across every client (the same reasoning that already applies
+-- to roles), managed only from the Master System, replacing what
+-- used to require a real code change for every addition. Seeded
+-- with the exact 21 systems already in use, so nothing changes
+-- for any existing client on migration day. routes_to_role
+-- carries the exact same real routing label already used in
+-- lib/routing.js, so a newly-added system can genuinely reach
+-- someone from day one, not silently unassigned.
+-- ============================================================
+create table if not exists system_catalog (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null unique,
+  description     text,
+  color           text,
+  routes_to_role  text,
+  sort_order      integer not null default 0,
+  created_at      timestamptz not null default now()
+);
+
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('HVAC', 'Chillers, cooling towers, air handling units and fan coil units maintaining comfort conditions across all occupied floors.', 'var(--navy)', 'Mechanical', 0) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Fire Protection', 'Electric and diesel fire pumps, jockey pump, and wet-riser distribution ensuring code-compliant fire suppression capacity.', 'var(--red)', 'Mechanical', 1) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Electrical', 'HV/LV transformers, main switchgear, standby generator and UPS supporting building power resilience.', 'var(--amber)', 'Electrical', 2) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Vertical Transport', 'Passenger and freight lifts moving people and goods between all 15 levels and both basements.', 'var(--blue)', 'Mechanical', 3) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Plumbing', 'Domestic water boosting and basement drainage/sump systems.', 'var(--purple)', 'Mechanical', 4) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Controls', 'Building Management System (BMS) head-end monitoring and control across all connected systems.', '#D1D5DB', 'Electrical', 5) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('CCTV & Access Control', 'Camera coverage and access readers securing common areas, entrances, office floors and parking levels.', 'var(--teal)', 'Electrical', 6) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Parking System', 'Barrier gates and payment kiosks managing vehicle access across both basement parking levels.', 'var(--pink)', 'Mechanical', 7) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Retail Tenant Interface', 'Tenant-facing kiosks and portals supporting retail zone operations and tenant communication.', 'var(--gold)', 'Property Manager', 8) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Fire Detection', 'Smoke and heat detection loops with central control panel providing early warning coverage across every floor.', '#F97316', 'Electrical', 9) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Diagnostic Biomedical', 'ECG, ultrasound, endoscopy and other diagnostic equipment used to identify and evaluate patient conditions.', '#0EA5E9', 'Biomedical', 10) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Patient Monitoring & Life Support Biomedical', 'Vital signs monitors, ventilators, defibrillators and infusion pumps supporting continuous patient care.', '#DC2626', 'Biomedical', 11) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Laboratory Biomedical', 'Analyzers, centrifuges, microscopes and other equipment supporting clinical and diagnostic lab testing.', '#7C3AED', 'Biomedical', 12) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Surgical & Operating Theatre Biomedical', 'Surgical tables, lights, electrosurgical units and anaesthesia machines equipping the operating theatre.', '#059669', 'Biomedical', 13) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Sterilization & Infection Control Biomedical', 'Autoclaves, sterilizers and washer-disinfectors maintaining infection control across clinical areas.', '#0891B2', 'Biomedical', 14) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Imaging & Radiology Biomedical', 'X-ray, CT, MRI and other imaging equipment supporting radiological diagnosis.', '#4F46E5', 'Biomedical', 15) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Medical Gas Biomedical', 'Oxygen, nitrous oxide and medical air supply systems, including outlets, alarms and manifold rooms.', '#2563EB', 'Biomedical', 16) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Dental Biomedical', 'Dental chairs, handpieces and compressors equipping dental treatment rooms.', '#EA580C', 'Biomedical', 17) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Rehabilitation & Physiotherapy Biomedical', 'Therapy and mobility equipment supporting patient rehabilitation and physiotherapy.', '#65A30D', 'Biomedical', 18) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Emergency & Patient Care Biomedical', 'Crash carts, resuscitation equipment and other biomedical devices supporting emergency and general patient care.', '#DB2777', 'Biomedical', 19) on conflict (name) do nothing;
+insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('IT Equipment', 'Servers, network switches, workstations, printers and other IT infrastructure supporting daily operations.', '#475569', 'Admin', 20) on conflict (name) do nothing;
