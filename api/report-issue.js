@@ -465,7 +465,8 @@ async function handleUnitPortalReportIssue(req, res) {
       }).catch(err => console.error("unitPortalReportIssue email error:", err));
     }
 
-    const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+    const { parsePhoneList } = await import("../lib/recipients.js");
+    const phones = [...new Set([...recipients.map(e => e.phone).filter(Boolean), ...parsePhoneList(process.env.ALERT_TO_PHONE)])];
     if (phones.length > 0) {
       try {
         const smsMessage = sanitizeForSms(`Tenant issue - ${unitName} (${category}): ${description.trim()}`).slice(0, 300);
@@ -814,7 +815,14 @@ async function handlePublicReportBreakdown(req, res) {
       ...await getContactsForRole("system_admin", org),
     ];
     const uniqueEmails = [...new Set(recipients.map(r => r.email).filter(Boolean))];
-    const uniquePhones = [...new Set(recipients.map(r => r.phone).filter(Boolean))];
+    // Confirmed directly: sensor and maintenance alerts reliably reach
+    // a real phone via this same env-configured number, independent of
+    // whether any individual staff account has its own phone on file -
+    // a reported breakdown should reach it too, not only staff phones,
+    // since otherwise a report can go out with genuinely zero SMS sent
+    // if no assigned staff happens to have a phone number saved.
+    const { parsePhoneList } = await import("../lib/recipients.js");
+    const uniquePhones = [...new Set([...recipients.map(r => r.phone).filter(Boolean), ...parsePhoneList(process.env.ALERT_TO_PHONE)])];
     const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
     const reporterLine = `${reporterName.trim()}${reporterDepartment ? " (" + reporterDepartment.trim() + ")" : ""}`;
 
