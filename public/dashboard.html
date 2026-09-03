@@ -7508,6 +7508,7 @@ function renderStaffManagementTable() {
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Username</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Name</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Email</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Phone</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Role</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Status</th>
             <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600"></th>
@@ -7515,12 +7516,13 @@ function renderStaffManagementTable() {
         </thead>
         <tbody>
           ${staffAccountsCache.length === 0
-            ? `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No accounts yet.</td></tr>`
+            ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No accounts yet.</td></tr>`
             : staffAccountsCache.map((a, i) => `
               <tr style="border-bottom:1px solid var(--border)">
                 <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(a.username)}</td>
                 <td style="padding:9px 12px">${escapeHtml(a.displayName || '—')}</td>
                 <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.email || '—')}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${escapeHtml(a.phone || '—')}</td>
                 <td style="padding:9px 12px">${escapeHtml(STAFF_ROLE_LABELS[a.role] || a.role)}</td>
                 <td style="padding:9px 12px">
                   ${a.active === false
