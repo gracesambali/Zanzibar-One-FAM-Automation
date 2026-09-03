@@ -2252,7 +2252,10 @@ function openEditForm(idx) {
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${a.nameplatePhoto ? 'Change the Nameplate Photo' : 'Photograph the Nameplate'} (optional)</label>
       ${a.nameplatePhoto ? `<a href="${a.nameplatePhoto.url}" target="_blank"><img src="${a.nameplatePhoto.url}" alt="Current nameplate photo" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block;margin-bottom:6px" title="Current nameplate — click to view full size"></a>` : ''}
-      <input id="ea_nameplate" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input id="ea_nameplate" type="file" accept="image/*" style="flex:1;font-size:12px">
+        <button type="button" onclick="openCameraCapture('ea_nameplate')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;white-space:nowrap;flex-shrink:0">📷 Take Photo</button>
+      </div>
 
       <div style="display:flex;gap:8px;margin-top:6px">
         <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
@@ -9217,6 +9220,80 @@ function closeScanModal() {
   document.getElementById('scanModalOverlay')?.remove();
 }
 
+// Confirmed directly: a real, live camera capture, not just a file
+// picker - reuses the exact same real camera-access approach already
+// proven for barcode scanning, but genuinely simpler here, since
+// there's no decoding involved, just a still frame. The captured
+// photo becomes the target input's own real, selected file via the
+// DataTransfer API, so everything downstream (the existing "no file
+// chosen" label, the existing submit logic that already reads
+// input.files[0]) keeps working exactly as it already did for a
+// normal file pick - nothing else has to change to support this.
+let cameraCaptureStream = null;
+let cameraCaptureTargetInputId = null;
+
+async function openCameraCapture(targetInputId) {
+  cameraCaptureTargetInputId = targetInputId;
+  const overlay = document.createElement('div');
+  overlay.id = 'cameraCaptureOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;max-width:420px;width:100%;padding:20px;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:15px;font-weight:700;color:var(--navy)">📷 Take Photo</div>
+        <button onclick="closeCameraCapture()" style="border:none;background:none;font-size:20px;color:var(--muted);cursor:pointer;line-height:1">×</button>
+      </div>
+      <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:12px">
+        <video id="cameraCaptureVideo" style="width:100%;display:block" playsinline muted></video>
+      </div>
+      <div id="cameraCaptureStatus" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Loading camera…</div>
+      <button id="cameraCaptureBtn" onclick="captureCameraPhoto()" style="width:100%;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;display:none">Capture</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    cameraCaptureStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = document.getElementById('cameraCaptureVideo');
+    video.srcObject = cameraCaptureStream;
+    await video.play();
+    document.getElementById('cameraCaptureStatus').textContent = 'Line up the nameplate, then capture.';
+    document.getElementById('cameraCaptureBtn').style.display = 'block';
+  } catch (err) {
+    const status = document.getElementById('cameraCaptureStatus');
+    if (status) status.innerHTML = `<span style="color:var(--red)">Could not access the camera (${err.message}). Use "Choose File" instead.</span>`;
+  }
+}
+
+function stopCameraCapture() {
+  if (cameraCaptureStream) { cameraCaptureStream.getTracks().forEach(t => t.stop()); cameraCaptureStream = null; }
+}
+
+function closeCameraCapture() {
+  stopCameraCapture();
+  document.getElementById('cameraCaptureOverlay')?.remove();
+}
+
+async function captureCameraPhoto() {
+  const video = document.getElementById('cameraCaptureVideo');
+  if (!video || !video.videoWidth) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+
+  canvas.toBlob(blob => {
+    if (!blob) { closeCameraCapture(); return; }
+    const file = new File([blob], `nameplate-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const targetInput = document.getElementById(cameraCaptureTargetInputId);
+    if (targetInput) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      targetInput.files = dataTransfer.files;
+    }
+    closeCameraCapture();
+  }, 'image/jpeg', 0.9);
+}
+
 async function handleScanDecoded(rawText) {
   stopScanCamera();
   const parsed = parseGS1BarcodeClient(rawText);
@@ -15103,7 +15180,10 @@ function openAddAssetForm() {
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Photograph the Nameplate (optional)</label>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Not sure about the technical details? Just take a clear photo of the equipment's label — an engineer can read it properly later.</div>
-      <input id="na_nameplate" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input id="na_nameplate" type="file" accept="image/*" style="flex:1;font-size:12px">
+        <button type="button" onclick="openCameraCapture('na_nameplate')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;white-space:nowrap;flex-shrink:0">📷 Take Photo</button>
+      </div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
       <select id="na_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
