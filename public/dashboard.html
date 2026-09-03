@@ -3320,7 +3320,7 @@ async function renderLevelView() {
     if (canManageStructure) {
       html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div style="font-size:14px;font-weight:700;color:var(--navy)">${escapeHtml(facility.name)}</div>
-        <a href="#" onclick="openEditFacilityModal('${facility.id}','${facility.name.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;color:var(--navy);text-decoration:underline">Edit</a>
+        <a href="#" onclick="openEditFacilityModal('${facility.id}','${facility.name.replace(/'/g,"\\'")}','${(facility.code||'').replace(/'/g,"\\'")}'); return false;" style="font-size:11px;color:var(--navy);text-decoration:underline">Edit</a>
         <a href="#" onclick="submitRemoveFacility('${facility.id}','${facility.name.replace(/'/g,"\\'")}'); return false;" style="font-size:11px;color:var(--red);text-decoration:underline">Remove</a>
       </div>`;
     }
@@ -3478,7 +3478,7 @@ async function renderLevelView() {
 // building, floor, zone - should be genuinely editable and
 // reviewable, not just addable. Small, consistent modal pattern
 // reused across all four levels.
-function openEditFacilityModal(facilityId, currentName) {
+function openEditFacilityModal(facilityId, currentName, currentCode) {
   const overlay = document.createElement('div');
   overlay.id = 'editFacilityOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
@@ -3488,13 +3488,37 @@ function openEditFacilityModal(facilityId, currentName) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility Name *</label>
       <input id="ef_name" type="text" value="${escapeHtml(currentName)}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
       <div id="ef_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;margin-bottom:14px">
         <button onclick="document.getElementById('editFacilityOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
         <button id="ef_submit" onclick="submitEditFacility('${facilityId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:4px">Facility Code (for new asset ids)</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Current code: <strong id="ef_currentCode">${escapeHtml(currentCode || '(none)')}</strong>. Renaming above already refreshes this — only use this if the name was already changed before that was possible.</div>
+        <button id="ef_regen" onclick="submitRegenerateFacilityCode('${facilityId}')" style="width:100%;padding:8px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">Regenerate Code to Match Current Name</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById('ef_name').focus();
+}
+
+async function submitRegenerateFacilityCode(facilityId) {
+  const btn = document.getElementById('ef_regen');
+  btn.disabled = true; btn.textContent = 'Regenerating…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regenerateFacilityCode: true, facilityId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not regenerate the code');
+    document.getElementById('ef_currentCode').textContent = data.newFacilityCode;
+    btn.textContent = 'Done — now ' + data.newFacilityCode;
+    await refreshFacilitiesData();
+  } catch (err) {
+    alert('Could not regenerate: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Regenerate Code to Match Current Name';
+  }
 }
 
 async function submitEditFacility(facilityId) {

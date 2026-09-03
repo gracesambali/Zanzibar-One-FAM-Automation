@@ -841,6 +841,38 @@ export default async function handler(req, res) {
       }
     }
 
+    // Confirmed directly as the real, missing repair path: a facility
+    // already renamed before this whole feature existed has a real,
+    // stale code that a normal rename can never fix on its own,
+    // since re-saving an already-current name is correctly detected
+    // as no real change. Only ever affects assets created from this
+    // point forward - the same real, deliberate non-retroactive
+    // choice already made for a genuine rename.
+    if (req.body && req.body.regenerateFacilityCode) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to edit a facility." });
+      }
+      const { facilityId } = req.body;
+      if (!facilityId) return res.status(400).json({ error: "facilityId required" });
+      try {
+        const { getById, update, listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+        const { generateUniqueCode } = await import("../lib/uniqueCode.js");
+        const facility = await getById("facilities", facilityId).catch(() => null);
+        if (!facility || facility.organization_id !== session.org) {
+          return res.status(404).json({ error: "Facility not found." });
+        }
+        const ownFacilities = (await pgListAllRecords("facilities", session.org)).filter(f => f.id !== facilityId);
+        const existingCodes = new Set(ownFacilities.filter(f => f.facility_code).map(f => f.facility_code));
+        const newCode = generateUniqueCode(facility.name, existingCodes);
+        await update("facilities", facilityId, { facility_code: newCode }, session.org);
+        return res.status(200).json({ success: true, oldFacilityCode: facility.facility_code, newFacilityCode: newCode });
+      } catch (err) {
+        console.error("regenerateFacilityCode error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+
     if (req.body && req.body.removeFacility) {
       if (!can(session.r, "manageUsers")) {
         return res.status(403).json({ error: "Not permitted to remove a facility." });
