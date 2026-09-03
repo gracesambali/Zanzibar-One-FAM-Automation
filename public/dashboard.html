@@ -16034,11 +16034,24 @@ window.addEventListener('pageshow', (event) => {
 // potentially-broken state is discarded.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  document.querySelectorAll('input[type="file"]').forEach(input => {
-    if (input.files && input.files.length > 0) return; // a real, already-selected file must never be discarded — only a genuinely empty, stuck input gets reset
-    const fresh = input.cloneNode(true);
-    input.parentNode.replaceChild(fresh, input);
-  });
+  // Confirmed directly from a real, direct follow-up report: resetting
+  // the instant visibility changes was too eager - the OS can deliver
+  // a genuinely picked file to its input slightly AFTER the app is
+  // already back in the foreground, not at the same moment. Acting
+  // immediately could tear out the very input a real, in-flight
+  // selection was still headed for, leaving a genuinely-picked file
+  // with nowhere real to land. A short, deliberate wait first gives
+  // that in-flight result its real chance to actually arrive - only
+  // an input still genuinely empty after that wait is treated as
+  // truly stuck, re-checked fresh in the moment rather than trusting
+  // an earlier, premature read.
+  setTimeout(() => {
+    document.querySelectorAll('input[type="file"]').forEach(input => {
+      if (input.files && input.files.length > 0) return; // a real, already-selected file must never be discarded — only a genuinely empty, stuck input gets reset
+      const fresh = input.cloneNode(true);
+      input.parentNode.replaceChild(fresh, input);
+    });
+  }, 1500);
 });
 
 </script>
