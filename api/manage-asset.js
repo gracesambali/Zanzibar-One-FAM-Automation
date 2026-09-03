@@ -2081,7 +2081,7 @@ async function handleRelocate(req, res, relocatedBy, organizationId) {
   if (!newFloor && !newZone && !newRoom && !newBuilding) return res.status(400).json({ error: "At least a new building, floor, zone, or room is required" });
 
   try {
-    const { getById, update, insert } = await import("../lib/postgresClient.js");
+    const { getById, update, insert, query: pgQuery } = await import("../lib/postgresClient.js");
 
     const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
     // Confirmed directly: same reasoning as handleDecommission - a
@@ -2106,6 +2106,16 @@ async function handleRelocate(req, res, relocatedBy, organizationId) {
 
     await update("components", recordId, updateFields, organizationId)
       .catch(e => { throw new Error("Failed to update asset location: " + e.message); });
+
+    // Confirmed directly: a relocated asset's old floor plan position
+    // is genuinely meaningless once it's on a different floor - a
+    // different building layout entirely, not just a different label.
+    // Cleared rather than carried over, so it honestly shows as
+    // unplaced on its new floor rather than silently pointing at the
+    // wrong spot on the wrong drawing.
+    if (newFloor && newFloor !== oldFloor) {
+      await pgQuery("delete from asset_positions where asset_id = $1 and organization_id = $2", [assetId, organizationId]);
+    }
 
     await insert("relocation_log", {
       asset_id: assetId, asset_name: assetName,

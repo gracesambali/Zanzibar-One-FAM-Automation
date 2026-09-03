@@ -11540,8 +11540,9 @@ function renderFloorPlanImage(canManage) {
     if (!pos) return;
     const idx = assets.indexOf(a);
     const clickHandler = floorPlanPlacementMode ? '' : `showDetail(${idx});switchTab('assets')`;
-    dotsHtml += `<div class="floorplan-dot-group" onclick="${clickHandler}" title="${a.name} (${a.id}) — ${a.status}"
-      style="position:absolute;left:${pos.x}%;top:${pos.y}%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:${floorPlanPlacementMode?'default':'pointer'};z-index:2">
+    const dragHandlers = floorPlanPlacementMode ? `onmousedown="startDotDrag(event,'${a.id}')" ontouchstart="startDotDrag(event,'${a.id}')"` : '';
+    dotsHtml += `<div class="floorplan-dot-group" data-asset-id="${a.id}" onclick="${clickHandler}" ${dragHandlers} title="${a.name} (${a.id}) — ${a.status}${floorPlanPlacementMode ? ' — drag to reposition' : ''}"
+      style="position:absolute;left:${pos.x}%;top:${pos.y}%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:${floorPlanPlacementMode?'grab':'pointer'};z-index:2;touch-action:none">
       <div class="floorplan-dot" style="width:16px;height:16px;border-radius:50%;background:${statusDotColor(a.status)};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>
       <div style="font-size:9px;font-weight:700;color:#1A1A1A;background:rgba(255,255,255,0.85);padding:1px 4px;border-radius:3px;margin-top:2px;white-space:nowrap;line-height:1.3;box-shadow:0 1px 2px rgba(0,0,0,.15)">${a.id} ${a.name}</div>
     </div>`;
@@ -11559,7 +11560,7 @@ function renderFloorPlanImage(canManage) {
 
   if (canManage && floorPlanPlacementMode) {
     let sidebar = `<div style="margin-top:16px;text-align:left;max-width:480px;margin-left:auto;margin-right:auto">
-      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Unplaced assets on this floor — select one, then click the image where it belongs:</div>`;
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Drag an existing marker to reposition it. To place a new one — select an unplaced asset below, then click the image where it belongs:</div>`;
     if (unplaced.length === 0) {
       sidebar += `<div style="font-size:12px;color:var(--muted)">All assets on this floor have a marker placed.</div>`;
     } else {
@@ -13568,6 +13569,79 @@ async function handleFloorPlanClick(event) {
     renderFloorPlanImage(true);
   } catch (err) {
     alert('Could not save marker position: ' + err.message);
+  }
+}
+
+// Confirmed directly: dragging an already-placed dot only ever
+// activates inside the same explicit, deliberate Placement Mode
+// already used for adding a new marker - never active by default, so
+// browsing the floor plan normally still just opens the Asset
+// Register on a click, exactly as before. The dot's own DOM position
+// is updated directly during the drag for smooth, immediate visual
+// feedback, rather than re-rendering the whole floor plan on every
+// pixel of movement - the full, real save only happens once, on
+// release.
+let floorPlanDraggingAssetId = null;
+let floorPlanDragMoved = false;
+
+function startDotDrag(event, assetId) {
+  if (!floorPlanPlacementMode) return;
+  event.preventDefault();
+  event.stopPropagation();
+  floorPlanDraggingAssetId = assetId;
+  floorPlanDragMoved = false;
+  document.addEventListener('mousemove', onDotDragMove);
+  document.addEventListener('mouseup', onDotDragEnd);
+  document.addEventListener('touchmove', onDotDragMove, { passive: false });
+  document.addEventListener('touchend', onDotDragEnd);
+}
+
+function onDotDragMove(event) {
+  if (!floorPlanDraggingAssetId) return;
+  event.preventDefault();
+  floorPlanDragMoved = true;
+  const point = event.touches ? event.touches[0] : event;
+  const img = document.getElementById('floorPlanImg');
+  const dot = document.querySelector(`.floorplan-dot-group[data-asset-id="${floorPlanDraggingAssetId}"]`);
+  if (!img || !dot) return;
+  const rect = img.getBoundingClientRect();
+  let xPct = ((point.clientX - rect.left) / rect.width) * 100;
+  let yPct = ((point.clientY - rect.top) / rect.height) * 100;
+  xPct = Math.max(0, Math.min(100, xPct));
+  yPct = Math.max(0, Math.min(100, yPct));
+  dot.style.left = xPct + '%';
+  dot.style.top = yPct + '%';
+  dot.dataset.pendingX = xPct.toFixed(1);
+  dot.dataset.pendingY = yPct.toFixed(1);
+}
+
+async function onDotDragEnd(event) {
+  document.removeEventListener('mousemove', onDotDragMove);
+  document.removeEventListener('mouseup', onDotDragEnd);
+  document.removeEventListener('touchmove', onDotDragMove);
+  document.removeEventListener('touchend', onDotDragEnd);
+
+  const assetId = floorPlanDraggingAssetId;
+  floorPlanDraggingAssetId = null;
+  if (!assetId || !floorPlanDragMoved) return;
+
+  const dot = document.querySelector(`.floorplan-dot-group[data-asset-id="${assetId}"]`);
+  const newX = dot ? dot.dataset.pendingX : null;
+  const newY = dot ? dot.dataset.pendingY : null;
+  if (newX === null || newY === null) return;
+
+  try {
+    await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'savePosition', assetId, floor: floorPlanCurrentFloor, x: newX, y: newY }),
+    });
+    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
+    floorPlanData = await resp.json();
+    renderFloorPlanImage(true);
+  } catch (err) {
+    alert('Could not save the new position: ' + err.message);
+    renderFloorPlanImage(true);
   }
 }
 
