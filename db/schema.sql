@@ -1817,3 +1817,60 @@ insert into system_catalog (name, description, color, routes_to_role, sort_order
 insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Rehabilitation & Physiotherapy Biomedical', 'Therapy and mobility equipment supporting patient rehabilitation and physiotherapy.', '#65A30D', 'Biomedical', 18) on conflict (name) do nothing;
 insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('Emergency & Patient Care Biomedical', 'Crash carts, resuscitation equipment and other biomedical devices supporting emergency and general patient care.', '#DB2777', 'Biomedical', 19) on conflict (name) do nothing;
 insert into system_catalog (name, description, color, routes_to_role, sort_order) values ('IT Equipment', 'Servers, network switches, workstations, printers and other IT infrastructure supporting daily operations.', '#475569', 'Admin', 20) on conflict (name) do nothing;
+
+-- ============================================================
+-- Real multi-tenancy for inventory and fleet - confirmed directly as
+-- a genuine, serious gap: these tables never had an organization_id
+-- at all, so every client shared the exact same inventory and fleet
+-- data, including "Pharmacy" (a location within inventory, not its
+-- own table) and the Master System's own pre-existing rows. Defaults
+-- to the Master System's own org, matching the same pattern already
+-- used when organization_id was first introduced on every other
+-- pre-existing table in this app, so nothing is silently orphaned.
+-- Column-level unique constraints (driver name, category/location
+-- label) were global before this - now scoped per organization,
+-- since two different real clients can genuinely share a driver name
+-- or a category label without colliding.
+-- ============================================================
+alter table inventory_items add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table inventory_categories add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table inventory_locations add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table fleet_requests add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table fleet_activity_log add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table fleet_drivers add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+
+alter table inventory_categories drop constraint if exists inventory_categories_label_key;
+create unique index if not exists idx_inventory_categories_org_label on inventory_categories (organization_id, label);
+
+alter table inventory_locations drop constraint if exists inventory_locations_label_key;
+create unique index if not exists idx_inventory_locations_org_label on inventory_locations (organization_id, label);
+
+alter table fleet_drivers drop constraint if exists fleet_drivers_name_key;
+create unique index if not exists idx_fleet_drivers_org_name on fleet_drivers (organization_id, name);
+
+create index if not exists idx_inventory_items_org on inventory_items (organization_id);
+create index if not exists idx_fleet_requests_org on fleet_requests (organization_id);
+create index if not exists idx_fleet_activity_log_org on fleet_activity_log (organization_id);
+
+-- Found while checking the barcode-resolution code directly, not
+-- part of the original list - the same real gap. gtin was globally
+-- unique, meaning two different real clients could never each link
+-- the same physical product's barcode to their own, separate
+-- inventory record - worse, a scan could resolve to a different
+-- client's item entirely.
+alter table inventory_barcode_links add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+alter table inventory_barcode_links drop constraint if exists inventory_barcode_links_gtin_key;
+create unique index if not exists idx_inventory_barcode_links_org_gtin on inventory_barcode_links (organization_id, gtin);
+
+alter table inventory_activity_log add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+create index if not exists idx_inventory_activity_log_org on inventory_activity_log (organization_id, performed_at desc);
+
+alter table inventory_snapshots add column if not exists organization_id uuid references organizations(id) default '73ae9f3b-bbef-4f4a-b3df-3cca81c49063';
+create index if not exists idx_inventory_snapshots_org on inventory_snapshots (organization_id, snapshot_year);
+
+-- Found while running the actual real end-to-end test, not part of
+-- the original sweep - item_code was globally unique, meaning two
+-- different real clients' first item would both generate the same
+-- code (INV-001) and genuinely collide at the database level.
+alter table inventory_items drop constraint if exists inventory_items_item_code_key;
+create unique index if not exists idx_inventory_items_org_code on inventory_items (organization_id, item_code);

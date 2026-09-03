@@ -27,7 +27,7 @@ export default async function handler(req, res) {
       return handleCreatePlan(req, res, session.u, session.org);
     }
     if (req.body && req.body.entityType === "inventoryItem") {
-      return handleAddInventoryItem(req, res, session.u, session.r);
+      return handleAddInventoryItem(req, res, session.u, session.r, session.org);
     }
     if (req.body && req.body.entityType === "bulkAssets") {
       return handleBulkImportAssets(req, res, session.u, session.r, session.org);
@@ -91,28 +91,28 @@ export default async function handler(req, res) {
     if (action === "addTraClass") return handleAddTraClass(req, res, session.u);
     if (action === "editTraClass") return handleEditTraClass(req, res, session.u);
     if (action === "deleteTraClass") return handleDeleteTraClass(req, res, session.u);
-    if (action === "editInventoryItem") return handleEditInventoryItem(req, res, session.u);
-    if (action === "recordInventoryMovement") return handleRecordInventoryMovement(req, res, session.u);
-    if (action === "deactivateInventoryItem") return handleDeactivateInventoryItem(req, res, session.u);
-    if (action === "addInventoryCategory") return handleAddInventoryCategory(req, res, session.u);
-    if (action === "addInventoryLocation") return handleAddInventoryLocation(req, res, session.u);
-    if (action === "bulkImportInventoryItems") return handleBulkImportInventoryItems(req, res, session.u);
-    if (action === "takeInventorySnapshot") return handleTakeInventorySnapshot(req, res, session.u);
-    if (action === "seedInventoryTestData") return handleSeedInventoryTestData(req, res, session.u);
-    if (action === "deleteInventoryItem") return handleDeleteInventoryItem(req, res, session.u);
-    if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u);
-    if (action === "linkInventoryBarcode") return handleLinkInventoryBarcode(req, res, session.u);
-    if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u);
-    if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u);
-    if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u);
-    if (action === "mergeInventoryItems") return handleMergeInventoryItems(req, res, session.u);
+    if (action === "editInventoryItem") return handleEditInventoryItem(req, res, session.u, session.org);
+    if (action === "recordInventoryMovement") return handleRecordInventoryMovement(req, res, session.u, session.org);
+    if (action === "deactivateInventoryItem") return handleDeactivateInventoryItem(req, res, session.u, session.org);
+    if (action === "addInventoryCategory") return handleAddInventoryCategory(req, res, session.u, session.org);
+    if (action === "addInventoryLocation") return handleAddInventoryLocation(req, res, session.u, session.org);
+    if (action === "bulkImportInventoryItems") return handleBulkImportInventoryItems(req, res, session.u, session.org);
+    if (action === "takeInventorySnapshot") return handleTakeInventorySnapshot(req, res, session.u, session.org);
+    if (action === "seedInventoryTestData") return handleSeedInventoryTestData(req, res, session.u, session.org);
+    if (action === "deleteInventoryItem") return handleDeleteInventoryItem(req, res, session.u, session.org);
+    if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u, session.org);
+    if (action === "linkInventoryBarcode") return handleLinkInventoryBarcode(req, res, session.u, session.org);
+    if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u, session.org);
+    if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u, session.org);
+    if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u, session.org);
+    if (action === "mergeInventoryItems") return handleMergeInventoryItems(req, res, session.u, session.org);
     if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u);
     if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u);
     if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u);
-    if (action === "addFleetRequest") return handleAddFleetRequest(req, res, session.u);
-    if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u);
-    if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u);
-    if (action === "addFleetDriver") return handleAddFleetDriver(req, res, session.u);
+    if (action === "addFleetRequest") return handleAddFleetRequest(req, res, session.u, session.org);
+    if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u, session.org);
+    if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u, session.org);
+    if (action === "addFleetDriver") return handleAddFleetDriver(req, res, session.u, session.org);
     if (action === "addFuelRequest") return handleAddFuelRequest(req, res, session.u);
     if (action === "editFuelRequest") return handleEditFuelRequest(req, res, session.u);
     if (action === "deleteFuelRequest") return handleDeleteFuelRequest(req, res, session.u);
@@ -324,13 +324,13 @@ async function sendFleetApprovalAlert({ driverName, vehicleName, destination, tr
 // Real, growing lists — add-only for now (no edit/delete), matching
 // exactly what was actually asked for: a way to add a category or
 // location right from the item form when it isn't already there.
-async function handleAddInventoryCategory(req, res, addedBy) {
+async function handleAddInventoryCategory(req, res, addedBy, organizationId) {
   const { label } = req.body || {};
   if (!label || !label.trim()) return res.status(400).json({ error: "A category name is required." });
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    const created = await insert("inventory_categories", { label: label.trim(), created_by: addedBy });
-    await logInventoryActivity("Added Category", `"${created.label}"`, addedBy);
+    const created = await insert("inventory_categories", { label: label.trim(), created_by: addedBy, organization_id: organizationId });
+    await logInventoryActivity("Added Category", `"${created.label}"`, addedBy, organizationId);
     return res.status(200).json({ success: true, label: created.label });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
@@ -339,13 +339,13 @@ async function handleAddInventoryCategory(req, res, addedBy) {
   }
 }
 
-async function handleAddInventoryLocation(req, res, addedBy) {
+async function handleAddInventoryLocation(req, res, addedBy, organizationId) {
   const { label } = req.body || {};
   if (!label || !label.trim()) return res.status(400).json({ error: "A location name is required." });
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    const created = await insert("inventory_locations", { label: label.trim(), created_by: addedBy });
-    await logInventoryActivity("Added Location", `"${created.label}"`, addedBy);
+    const created = await insert("inventory_locations", { label: label.trim(), created_by: addedBy, organization_id: organizationId });
+    await logInventoryActivity("Added Location", `"${created.label}"`, addedBy, organizationId);
     return res.status(200).json({ success: true, label: created.label });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `"${label.trim()}" already exists.` : err.message;
@@ -367,16 +367,16 @@ async function handleAddInventoryLocation(req, res, addedBy) {
 // directly: all of it recorded, who did it, visible together at the
 // bottom of the page. Non-fatal on purpose - a logging failure should
 // never block the real action it's describing.
-async function logInventoryActivity(action, details, performedBy) {
+async function logInventoryActivity(action, details, performedBy, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    await insert("inventory_activity_log", { action, details, performed_by: performedBy });
+    await insert("inventory_activity_log", { action, details, performed_by: performedBy, organization_id: organizationId });
   } catch (err) {
     console.error("logInventoryActivity failed (non-fatal):", err.message);
   }
 }
 
-async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity }, addedBy, existingCodes) {
+async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity }, addedBy, existingCodes, organizationId) {
   const { insert, update } = await import("../lib/postgresClient.js");
   const { generateItemCode, isLowStock, categoryImpliesBatchTracking } = await import("../lib/inventory.js");
 
@@ -400,6 +400,7 @@ async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLe
     unit_cost_tzs: unitCost != null && unitCost !== "" ? Number(unitCost) : null,
     is_batch_tracked: categoryImpliesBatchTracking(category),
     added_by: addedBy,
+    organization_id: organizationId,
   });
 
   const startQty = Number(initialQuantity) || 0;
@@ -408,7 +409,17 @@ async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLe
       item_id: created.id, movement_type: "IN", quantity: startQty,
       reason: "Opening stock", performed_by: addedBy,
     });
-    await update("inventory_items", created.id, { current_quantity: startQty });
+    await update("inventory_items", created.id, { current_quantity: startQty }, organizationId);
+    // Confirmed directly as a real, genuine gap found while testing:
+    // a batch-tracked item's opening stock only ever updated the
+    // summary total, never created a real batch row behind it -
+    // FEFO deduction would later find nothing to actually draw from,
+    // even though the total said otherwise. A real, unlabeled batch,
+    // the same honest placeholder already used elsewhere for stock
+    // with no specific lot/expiry.
+    if (created.is_batch_tracked) {
+      await insert("inventory_batches", { item_id: created.id, lot_number: null, expiry_date: null, quantity: startQty, created_by: addedBy });
+    }
   }
 
   if (isLowStock({ current_quantity: startQty, reorder_level: created.reorder_level })) {
@@ -425,15 +436,15 @@ async function createOneInventoryItem({ name, category, unitOfMeasure, reorderLe
 // cascade to inventory_items already in the schema), so this is a
 // real, irreversible action — the frontend's own confirmation is
 // expected to make that unmistakably clear before ever reaching here.
-async function handleDeleteInventoryItem(req, res, deletedBy) {
+async function handleDeleteInventoryItem(req, res, deletedBy, organizationId) {
   const { itemId } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Item not found." });
-    await pgQuery("delete from inventory_items where id = $1", [itemId]);
-    await logInventoryActivity("Deleted Item", `${item.item_code} — "${item.name}" (permanently removed, including its movement history)`, deletedBy);
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
+    await pgQuery("delete from inventory_items where id = $1 and organization_id = $2", [itemId, organizationId]);
+    await logInventoryActivity("Deleted Item", `${item.item_code} — "${item.name}" (permanently removed, including its movement history)`, deletedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteInventoryItem error:", err);
@@ -449,14 +460,14 @@ async function handleDeleteInventoryItem(req, res, deletedBy) {
 // second upload for the same year replaces it rather than
 // duplicating every row), viewable on the same Inventory tab via the
 // year switcher rather than tucked away separately.
-async function handleUploadInventorySnapshot(req, res, uploadedBy) {
+async function handleUploadInventorySnapshot(req, res, uploadedBy, organizationId) {
   const { year, rows } = req.body || {};
   const yearNum = Number(year);
   if (!yearNum || yearNum < 2000 || yearNum > 2100) return res.status(400).json({ error: "A valid year is required." });
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "rows array is required" });
   try {
     const { insert, query: pgQuery } = await import("../lib/postgresClient.js");
-    await pgQuery("delete from inventory_snapshots where snapshot_year = $1", [yearNum]);
+    await pgQuery("delete from inventory_snapshots where snapshot_year = $1 and organization_id = $2", [yearNum, organizationId]);
 
     let created = 0;
     const skipped = [];
@@ -469,11 +480,11 @@ async function handleUploadInventorySnapshot(req, res, uploadedBy) {
         snapshot_year: yearNum, item_code: row.itemCode || `HIST-${created + 1}`, name,
         category: row.category || null, quantity, unit_of_measure: row.unitOfMeasure || null,
         unit_cost_tzs: row.unitCost ? Number(row.unitCost) : null, location: row.location || null,
-        taken_by: uploadedBy,
+        taken_by: uploadedBy, organization_id: organizationId,
       });
       created++;
     }
-    await logInventoryActivity("Uploaded Past Year", `${yearNum} — ${created} item(s)${skipped.length ? `, ${skipped.length} skipped` : ''}`, uploadedBy);
+    await logInventoryActivity("Uploaded Past Year", `${yearNum} — ${created} item(s)${skipped.length ? `, ${skipped.length} skipped` : ''}`, uploadedBy, organizationId);
     return res.status(200).json({ success: true, year: yearNum, created, skipped });
   } catch (err) {
     console.error("uploadInventorySnapshot error:", err);
@@ -586,10 +597,10 @@ async function handleDeleteAnnualPlanItem(req, res, deletedBy) {
   }
 }
 
-async function logFleetActivity(action, details, performedBy) {
+async function logFleetActivity(action, details, performedBy, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    await insert("fleet_activity_log", { action, details, performed_by: performedBy });
+    await insert("fleet_activity_log", { action, details, performed_by: performedBy, organization_id: organizationId });
   } catch (err) {
     console.error("logFleetActivity failed (non-fatal):", err.message);
   }
@@ -602,13 +613,13 @@ async function logFleetActivity(action, details, performedBy) {
 // as inventory categories/locations, matching exactly what was
 // actually asked for: a real dropdown, not free text retyped fresh
 // every time with no consistency.
-async function handleAddFleetDriver(req, res, addedBy) {
+async function handleAddFleetDriver(req, res, addedBy, organizationId) {
   const { name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: "A driver name is required." });
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    const created = await insert("fleet_drivers", { name: name.trim(), added_by: addedBy });
-    await logFleetActivity("Added Driver", `"${created.name}"`, addedBy);
+    const created = await insert("fleet_drivers", { name: name.trim(), added_by: addedBy, organization_id: organizationId });
+    await logFleetActivity("Added Driver", `"${created.name}"`, addedBy, organizationId);
     return res.status(200).json({ success: true, name: created.name });
   } catch (err) {
     const message = /unique/i.test(err.message) ? `"${name.trim()}" already exists.` : err.message;
@@ -617,7 +628,7 @@ async function handleAddFleetDriver(req, res, addedBy) {
   }
 }
 
-async function handleAddFleetRequest(req, res, requestedBy) {
+async function handleAddFleetRequest(req, res, requestedBy, organizationId) {
   const { vehicleId, driverName, purpose, origin, destination, tripDate, returnDate, odometerStart, notes } = req.body || {};
   if (!driverName || !driverName.trim()) return res.status(400).json({ error: "A driver name is required." });
 
@@ -626,16 +637,17 @@ async function handleAddFleetRequest(req, res, requestedBy) {
     let vehicleName = null;
     if (vehicleId) {
       const vehicle = await getById("components", vehicleId).catch(() => null);
-      vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+      if (!vehicle || vehicle.organization_id !== organizationId) return res.status(404).json({ error: "Vehicle not found." });
+      vehicleName = `${vehicle.asset_id} — ${vehicle.name}`;
     }
     const created = await insert("fleet_requests", {
       vehicle_id: vehicleId || null, driver_name: driverName.trim(), purpose: purpose || null,
       origin: origin || null, destination: destination || null, trip_date: tripDate || null,
       return_date: returnDate || null, status: "Pending",
       odometer_start: odometerStart != null && odometerStart !== "" ? Number(odometerStart) : null,
-      notes: notes || null, requested_by: requestedBy,
+      notes: notes || null, requested_by: requestedBy, organization_id: organizationId,
     });
-    await logFleetActivity("Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${origin ? ` from ${origin}` : ''}${destination ? ` to ${destination}` : ''}`, requestedBy);
+    await logFleetActivity("Requested", `${driverName.trim()}${vehicleName ? ` — ${vehicleName}` : ''}${origin ? ` from ${origin}` : ''}${destination ? ` to ${destination}` : ''}`, requestedBy, organizationId);
     return res.status(200).json({ success: true, id: created.id });
   } catch (err) {
     console.error("addFleetRequest error:", err);
@@ -649,13 +661,13 @@ async function handleAddFleetRequest(req, res, requestedBy) {
 // server-side, from the real session — never trusted from the
 // client, so this can't be spoofed by whoever happens to submit the
 // edit request.
-async function handleEditFleetRequest(req, res, editedBy) {
+async function handleEditFleetRequest(req, res, editedBy, organizationId) {
   const { requestId, vehicleId, driverName, purpose, origin, destination, tripDate, returnDate, status, odometerStart, odometerEnd, notes } = req.body || {};
   if (!requestId) return res.status(400).json({ error: "requestId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const before = await getById("fleet_requests", requestId).catch(() => null);
-    if (!before) return res.status(404).json({ error: "Request not found." });
+    if (!before || before.organization_id !== organizationId) return res.status(404).json({ error: "Request not found." });
 
     const fields = { updated_at: new Date().toISOString() };
     const changes = [];
@@ -688,8 +700,8 @@ async function handleEditFleetRequest(req, res, editedBy) {
     }
 
     if (changes.length > 0) {
-      await update("fleet_requests", requestId, fields);
-      await logFleetActivity("Updated Request", `${before.driver_name}: ${changes.join(", ")}`, editedBy);
+      await update("fleet_requests", requestId, fields, organizationId);
+      await logFleetActivity("Updated Request", `${before.driver_name}: ${changes.join(", ")}`, editedBy, organizationId);
     }
 
     // Confirmed directly: only fires on a genuine transition into
@@ -701,7 +713,7 @@ async function handleEditFleetRequest(req, res, editedBy) {
       const finalVehicleId = fields.vehicle_id !== undefined ? fields.vehicle_id : before.vehicle_id;
       if (finalVehicleId) {
         const vehicle = await getById("components", finalVehicleId).catch(() => null);
-        vehicleName = vehicle ? `${vehicle.asset_id} — ${vehicle.name}` : null;
+        vehicleName = (vehicle && vehicle.organization_id === organizationId) ? `${vehicle.asset_id} — ${vehicle.name}` : null;
       }
       await sendFleetApprovalAlert({
         driverName: fields.driver_name || before.driver_name,
@@ -719,15 +731,15 @@ async function handleEditFleetRequest(req, res, editedBy) {
   }
 }
 
-async function handleDeleteFleetRequest(req, res, deletedBy) {
+async function handleDeleteFleetRequest(req, res, deletedBy, organizationId) {
   const { requestId } = req.body || {};
   if (!requestId) return res.status(400).json({ error: "requestId is required" });
   try {
     const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
     const request = await getById("fleet_requests", requestId).catch(() => null);
-    if (!request) return res.status(404).json({ error: "Request not found." });
-    await pgQuery("delete from fleet_requests where id = $1", [requestId]);
-    await logFleetActivity("Deleted Request", `${request.driver_name}${request.destination ? ` — ${request.destination}` : ''}`, deletedBy);
+    if (!request || request.organization_id !== organizationId) return res.status(404).json({ error: "Request not found." });
+    await pgQuery("delete from fleet_requests where id = $1 and organization_id = $2", [requestId, organizationId]);
+    await logFleetActivity("Deleted Request", `${request.driver_name}${request.destination ? ` — ${request.destination}` : ''}`, deletedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteFleetRequest error:", err);
@@ -1277,15 +1289,15 @@ async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole, 
   }
 }
 
-async function handleSetItemBatchTracked(req, res, editedBy) {
+async function handleSetItemBatchTracked(req, res, editedBy, organizationId) {
   const { itemId, isBatchTracked } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { update, getById } = await import("../lib/postgresClient.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Item not found." });
-    await update("inventory_items", itemId, { is_batch_tracked: !!isBatchTracked, updated_at: new Date().toISOString() });
-    await logInventoryActivity(isBatchTracked ? "Enabled Batch Tracking" : "Disabled Batch Tracking", `${item.item_code} — "${item.name}"`, editedBy);
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
+    await update("inventory_items", itemId, { is_batch_tracked: !!isBatchTracked, updated_at: new Date().toISOString() }, organizationId);
+    await logInventoryActivity(isBatchTracked ? "Enabled Batch Tracking" : "Disabled Batch Tracking", `${item.item_code} — "${item.name}"`, editedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("setItemBatchTracked error:", err);
@@ -1297,15 +1309,15 @@ async function handleSetItemBatchTracked(req, res, editedBy) {
 // directly as a one-time step - every scan of the same product after
 // this resolves automatically, no re-confirming the same barcode
 // twice.
-async function handleLinkInventoryBarcode(req, res, linkedBy) {
+async function handleLinkInventoryBarcode(req, res, linkedBy, organizationId) {
   const { gtin, itemId } = req.body || {};
   if (!gtin || !itemId) return res.status(400).json({ error: "gtin and itemId are required" });
   try {
     const { insert, getById } = await import("../lib/postgresClient.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Item not found." });
-    await insert("inventory_barcode_links", { gtin, item_id: itemId, linked_by: linkedBy });
-    await logInventoryActivity("Linked Barcode", `${gtin} → ${item.item_code} "${item.name}"`, linkedBy);
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
+    await insert("inventory_barcode_links", { gtin, item_id: itemId, linked_by: linkedBy, organization_id: organizationId });
+    await logInventoryActivity("Linked Barcode", `${gtin} → ${item.item_code} "${item.name}"`, linkedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     const message = /unique/i.test(err.message) ? "This barcode is already linked to an item." : err.message;
@@ -1322,7 +1334,7 @@ async function handleLinkInventoryBarcode(req, res, linkedBy) {
 // specific combination hasn't been seen before - confirmed directly:
 // a batch is a real, distinct thing, not just a label on the same
 // pile.
-async function handleScanInventoryIn(req, res, performedBy) {
+async function handleScanInventoryIn(req, res, performedBy, organizationId) {
   const { gtin, lotNumber, expiryDate, quantity, itemId: providedItemId } = req.body || {};
   const qty = Number(quantity);
   if (!qty || qty <= 0) return res.status(400).json({ error: "Quantity must be a positive number." });
@@ -1333,7 +1345,7 @@ async function handleScanInventoryIn(req, res, performedBy) {
     let itemId = providedItemId;
     if (!itemId) {
       if (!gtin) return res.status(400).json({ error: "gtin or itemId is required" });
-      const link = await getByColumn("inventory_barcode_links", "gtin", gtin).catch(() => null);
+      const link = await getByColumn("inventory_barcode_links", "gtin", gtin, organizationId).catch(() => null);
       if (!link) {
         // Not an error - a real, expected first-time case. The
         // frontend uses this to prompt "which item is this?" rather
@@ -1344,7 +1356,7 @@ async function handleScanInventoryIn(req, res, performedBy) {
     }
 
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Item not found." });
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
 
     let batch = null;
     if (item.is_batch_tracked) {
@@ -1363,8 +1375,8 @@ async function handleScanInventoryIn(req, res, performedBy) {
       reason: batch ? `Scanned in — batch ${batch.lot_number || batch.id}` : "Scanned in",
       performed_by: performedBy, batch_id: batch ? batch.id : null,
     });
-    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
-    await logInventoryActivity("Scanned Stock IN", `${item.item_code} "${item.name}": +${qty}${batch ? ` (batch ${batch.lot_number || 'unlabeled'}, exp ${batch.expiry_date || 'n/a'})` : ''}`, performedBy);
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() }, organizationId);
+    await logInventoryActivity("Scanned Stock IN", `${item.item_code} "${item.name}": +${qty}${batch ? ` (batch ${batch.lot_number || 'unlabeled'}, exp ${batch.expiry_date || 'n/a'})` : ''}`, performedBy, organizationId);
 
     return res.status(200).json({ success: true, itemId, itemCode: item.item_code, itemName: item.name, newQuantity, batchId: batch ? batch.id : null });
   } catch (err) {
@@ -1381,7 +1393,7 @@ async function handleScanInventoryIn(req, res, performedBy) {
 // movement tied to the specific batch it actually came from, not
 // collapsed into one movement that hides which batch really lost
 // stock.
-async function handleScanInventoryOut(req, res, performedBy) {
+async function handleScanInventoryOut(req, res, performedBy, organizationId) {
   const { itemId, quantity, reason, department } = req.body || {};
   const qty = Number(quantity);
   if (!itemId || !qty || qty <= 0) return res.status(400).json({ error: "itemId and a positive quantity are required" });
@@ -1390,7 +1402,7 @@ async function handleScanInventoryOut(req, res, performedBy) {
     const { getById, update, insert, listAllRecords } = await import("../lib/postgresClient.js");
     const { planFefoDeduction, applyMovement, isLowStock } = await import("../lib/inventory.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Item not found." });
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
 
     if (!item.is_batch_tracked) {
       // Not batch-tracked - the same plain movement logic every other
@@ -1403,8 +1415,8 @@ async function handleScanInventoryOut(req, res, performedBy) {
         return res.status(400).json({ error: err.message });
       }
       await insert("inventory_movements", { item_id: itemId, movement_type: "OUT", quantity: qty, reason: reason || "Scanned out", department: department || null, performed_by: performedBy });
-      await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
-      await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty}`, performedBy);
+      await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() }, organizationId);
+      await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty}`, performedBy, organizationId);
       const wasLow = isLowStock({ current_quantity: item.current_quantity, reorder_level: item.reorder_level });
       const isLow = isLowStock({ current_quantity: newQuantity, reorder_level: item.reorder_level });
       if (!wasLow && isLow) await sendLowStockAlert({ itemName: item.name, itemCode: item.item_code, currentQuantity: newQuantity, reorderLevel: item.reorder_level, unit: item.unit_of_measure });
@@ -1438,8 +1450,8 @@ async function handleScanInventoryOut(req, res, performedBy) {
     }
 
     const newQuantity = Number(item.current_quantity) - qty;
-    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
-    await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty} across ${plan.length} batch${plan.length===1?'':'es'} (FEFO)`, performedBy);
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() }, organizationId);
+    await logInventoryActivity("Scanned Stock OUT", `${item.item_code} "${item.name}": -${qty} across ${plan.length} batch${plan.length===1?'':'es'} (FEFO)`, performedBy, organizationId);
 
     const wasLow = isLowStock({ current_quantity: item.current_quantity, reorder_level: item.reorder_level });
     const isLow = isLowStock({ current_quantity: newQuantity, reorder_level: item.reorder_level });
@@ -1452,7 +1464,7 @@ async function handleScanInventoryOut(req, res, performedBy) {
   }
 }
 
-async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
+async function handleAddInventoryItem(req, res, addedBy, addedByRole, organizationId) {
   if (!["stock_keeper", "procurement", "system_admin", "business_owner", "pharmacy"].includes(addedByRole)) {
     return res.status(403).json({ error: "Only Stock Keeper, Procurement, System Admin, or Business Owner can add inventory items." });
   }
@@ -1462,13 +1474,14 @@ async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
   }
   try {
     const { listAllRecords } = await import("../lib/postgresClient.js");
-    const existing = await listAllRecords("inventory_items");
+    const existing = await listAllRecords("inventory_items", organizationId);
     const result = await createOneInventoryItem(
       { name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost, initialQuantity },
       addedBy,
-      existing.map(i => i.item_code)
+      existing.map(i => i.item_code),
+      organizationId
     );
-    await logInventoryActivity("Added Item", `${result.itemCode} — "${name.trim()}"`, addedBy);
+    await logInventoryActivity("Added Item", `${result.itemCode} — "${name.trim()}"`, addedBy, organizationId);
     return res.status(200).json({ success: true, itemCode: result.itemCode, id: result.id });
   } catch (err) {
     console.error("addInventoryItem error:", err);
@@ -1482,14 +1495,14 @@ async function handleAddInventoryItem(req, res, addedBy, addedByRole) {
 // already exists. Every row gets the exact same treatment as adding
 // one item by hand - honest opening-stock movement, immediate
 // low-stock check - via the same shared creation function.
-async function handleBulkImportInventoryItems(req, res, addedBy) {
+async function handleBulkImportInventoryItems(req, res, addedBy, organizationId) {
   const { rows } = req.body || {};
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array is required" });
   }
   try {
     const { listAllRecords } = await import("../lib/postgresClient.js");
-    const existing = await listAllRecords("inventory_items");
+    const existing = await listAllRecords("inventory_items", organizationId);
     const existingCodes = existing.map(i => i.item_code);
 
     let created = 0;
@@ -1502,14 +1515,14 @@ async function handleBulkImportInventoryItems(req, res, addedBy) {
           name, category: row.category, unitOfMeasure: row.unitOfMeasure,
           reorderLevel: row.reorderLevel, targetLevel: row.targetLevel,
           location: row.location, unitCost: row.unitCost, initialQuantity: row.initialQuantity,
-        }, addedBy, existingCodes);
+        }, addedBy, existingCodes, organizationId);
         created++;
       } catch (err) {
         skipped.push({ row: name, reason: err.message });
       }
     }
     if (created > 0) {
-      await logInventoryActivity("Uploaded Inventory Sheet", `${created} item${created === 1 ? '' : 's'} created${skipped.length ? `, ${skipped.length} skipped` : ''}`, addedBy);
+      await logInventoryActivity("Uploaded Inventory Sheet", `${created} item${created === 1 ? '' : 's'} created${skipped.length ? `, ${skipped.length} skipped` : ''}`, addedBy, organizationId);
     }
     return res.status(200).json({ success: true, created, skipped });
   } catch (err) {
@@ -1523,10 +1536,10 @@ async function handleBulkImportInventoryItems(req, res, addedBy) {
 // available even as live stock keeps changing. Captured, not
 // computed later - so a past snapshot never silently shifts if items
 // get renamed or recategorized afterward.
-async function handleTakeInventorySnapshot(req, res, takenBy) {
+async function handleTakeInventorySnapshot(req, res, takenBy, organizationId) {
   try {
     const { listAllRecords, insert, query: pgQuery } = await import("../lib/postgresClient.js");
-    const items = await listAllRecords("inventory_items");
+    const items = await listAllRecords("inventory_items", organizationId);
     const active = items.filter(i => i.active !== false);
     const year = new Date().getFullYear();
 
@@ -1535,17 +1548,17 @@ async function handleTakeInventorySnapshot(req, res, takenBy) {
     // person re-running this expects "this is what it looks like as
     // of now, for this year," not a second, confusing copy alongside
     // the first.
-    await pgQuery("delete from inventory_snapshots where snapshot_year = $1", [year]);
+    await pgQuery("delete from inventory_snapshots where snapshot_year = $1 and organization_id = $2", [year, organizationId]);
 
     for (const item of active) {
       await insert("inventory_snapshots", {
         snapshot_year: year, item_code: item.item_code, name: item.name,
         category: item.category, quantity: Number(item.current_quantity),
         unit_of_measure: item.unit_of_measure, unit_cost_tzs: item.unit_cost_tzs,
-        location: item.location, taken_by: takenBy,
+        location: item.location, taken_by: takenBy, organization_id: organizationId,
       });
     }
-    await logInventoryActivity("Saved Year Snapshot", `${year} — ${active.length} item(s) captured`, takenBy);
+    await logInventoryActivity("Saved Year Snapshot", `${year} — ${active.length} item(s) captured`, takenBy, organizationId);
     return res.status(200).json({ success: true, year, itemCount: active.length });
   } catch (err) {
     console.error("takeInventorySnapshot error:", err);
@@ -1561,19 +1574,19 @@ async function handleTakeInventorySnapshot(req, res, takenBy) {
 // reorder level, so the immediate on-creation low-stock check (the
 // same real, tested code path every other item creation uses) is
 // guaranteed to fire for real.
-async function handleSeedInventoryTestData(req, res, addedBy) {
+async function handleSeedInventoryTestData(req, res, addedBy, organizationId) {
   const { generateRandomSeedItems } = await import("../lib/inventory.js");
   const sampleItems = generateRandomSeedItems(5);
   try {
     const { listAllRecords } = await import("../lib/postgresClient.js");
-    const existing = await listAllRecords("inventory_items");
+    const existing = await listAllRecords("inventory_items", organizationId);
     const existingCodes = existing.map(i => i.item_code);
     const createdItems = [];
     for (const item of sampleItems) {
-      const result = await createOneInventoryItem(item, addedBy, existingCodes);
+      const result = await createOneInventoryItem(item, addedBy, existingCodes, organizationId);
       createdItems.push({ ...result, name: item.name, willAlert: item.initialQuantity <= item.reorderLevel });
     }
-    await logInventoryActivity("Seeded Test Data", `${createdItems.length} sample items: ${createdItems.map(i => i.itemCode).join(", ")}`, addedBy);
+    await logInventoryActivity("Seeded Test Data", `${createdItems.length} sample items: ${createdItems.map(i => i.itemCode).join(", ")}`, addedBy, organizationId);
     return res.status(200).json({ success: true, items: createdItems });
   } catch (err) {
     console.error("seedInventoryTestData error:", err);
@@ -1581,13 +1594,13 @@ async function handleSeedInventoryTestData(req, res, addedBy) {
   }
 }
 
-async function handleEditInventoryItem(req, res, editedBy) {
+async function handleEditInventoryItem(req, res, editedBy, organizationId) {
   const { itemId, name, category, unitOfMeasure, reorderLevel, targetLevel, location, building, unitCost } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const before = await getById("inventory_items", itemId).catch(() => null);
-    if (!before) return res.status(404).json({ error: "Item not found." });
+    if (!before || before.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
 
     const fields = { updated_at: new Date().toISOString() };
     const changes = [];
@@ -1621,8 +1634,8 @@ async function handleEditInventoryItem(req, res, editedBy) {
     }
 
     if (changes.length > 0) {
-      await update("inventory_items", itemId, fields);
-      await logInventoryActivity("Edited Item", `${before.item_code} — "${before.name}": ${changes.join(", ")}`, editedBy);
+      await update("inventory_items", itemId, fields, organizationId);
+      await logInventoryActivity("Edited Item", `${before.item_code} — "${before.name}": ${changes.join(", ")}`, editedBy, organizationId);
     }
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -1633,7 +1646,7 @@ async function handleEditInventoryItem(req, res, editedBy) {
 
 // The core of the whole feature — every stock change goes through
 // here, and only here, as a real, attributable transaction.
-async function handleRecordInventoryMovement(req, res, performedBy) {
+async function handleRecordInventoryMovement(req, res, performedBy, organizationId) {
   const { itemId, movementType, quantity, reason, department } = req.body || {};
   if (!itemId || !movementType || !quantity) {
     return res.status(400).json({ error: "itemId, movementType, and quantity are required" });
@@ -1643,7 +1656,7 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
     const { getById, update, insert, listAllRecords } = await import("../lib/postgresClient.js");
     const { applyMovement, isLowStock, planFefoDeduction } = await import("../lib/inventory.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Inventory item not found." });
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Inventory item not found." });
 
     let newQuantity;
     try {
@@ -1698,8 +1711,8 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
       item_id: itemId, movement_type: movementType, quantity: qty,
       reason: reason || null, department: department || null, performed_by: performedBy,
     });
-    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() });
-    await logInventoryActivity(movementType === "IN" ? "Stock IN" : "Stock OUT", `${item.item_code} "${item.name}": ${qty} ${item.unit_of_measure || ''}${reason ? ` (${reason})` : ''}`, performedBy);
+    await update("inventory_items", itemId, { current_quantity: newQuantity, updated_at: new Date().toISOString() }, organizationId);
+    await logInventoryActivity(movementType === "IN" ? "Stock IN" : "Stock OUT", `${item.item_code} "${item.name}": ${qty} ${item.unit_of_measure || ''}${reason ? ` (${reason})` : ''}`, performedBy, organizationId);
 
     // Confirmed directly: low-stock notification must be active. Only
     // fires on a genuine transition into low stock — checked against
@@ -1720,14 +1733,15 @@ async function handleRecordInventoryMovement(req, res, performedBy) {
   }
 }
 
-async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
+async function handleDeactivateInventoryItem(req, res, deactivatedBy, organizationId) {
   const { itemId } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const item = await getById("inventory_items", itemId).catch(() => null);
-    await update("inventory_items", itemId, { active: false, updated_at: new Date().toISOString() });
-    await logInventoryActivity("Deactivated Item", item ? `${item.item_code} — "${item.name}"` : itemId, deactivatedBy);
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Item not found." });
+    await update("inventory_items", itemId, { active: false, updated_at: new Date().toISOString() }, organizationId);
+    await logInventoryActivity("Deactivated Item", `${item.item_code} — "${item.name}"`, deactivatedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deactivateInventoryItem error:", err);
@@ -1745,7 +1759,7 @@ async function handleDeactivateInventoryItem(req, res, deactivatedBy) {
 // item being retired, an IN on the survivor, for the same real
 // quantity - so anyone reading the history later sees a real merge
 // event, not two disconnected numbers that happen to add up.
-async function handleMergeInventoryItems(req, res, performedBy) {
+async function handleMergeInventoryItems(req, res, performedBy, organizationId) {
   const { sourceItemId, targetItemId } = req.body || {};
   if (!sourceItemId || !targetItemId) return res.status(400).json({ error: "sourceItemId and targetItemId are required." });
   if (sourceItemId === targetItemId) return res.status(400).json({ error: "Can't merge an item into itself." });
@@ -1754,8 +1768,8 @@ async function handleMergeInventoryItems(req, res, performedBy) {
     const { getById, update, insert, query: pgQuery } = await import("../lib/postgresClient.js");
     const source = await getById("inventory_items", sourceItemId).catch(() => null);
     const target = await getById("inventory_items", targetItemId).catch(() => null);
-    if (!source) return res.status(404).json({ error: "The item being merged (source) was not found." });
-    if (!target) return res.status(404).json({ error: "The item being merged into (target) was not found." });
+    if (!source || source.organization_id !== organizationId) return res.status(404).json({ error: "The item being merged (source) was not found." });
+    if (!target || target.organization_id !== organizationId) return res.status(404).json({ error: "The item being merged into (target) was not found." });
     if (source.active === false) return res.status(400).json({ error: "This item has already been merged or deactivated." });
 
     const sourceQty = Number(source.current_quantity) || 0;
@@ -1780,15 +1794,16 @@ async function handleMergeInventoryItems(req, res, performedBy) {
         item_id: targetItemId, movement_type: "IN", quantity: sourceQty,
         reason: `Merged from ${source.item_code} "${source.name}"`, performed_by: performedBy,
       });
-      await update("inventory_items", targetItemId, { current_quantity: Number(target.current_quantity) + sourceQty, updated_at: new Date().toISOString() });
+      await update("inventory_items", targetItemId, { current_quantity: Number(target.current_quantity) + sourceQty, updated_at: new Date().toISOString() }, organizationId);
     }
 
-    await update("inventory_items", sourceItemId, { current_quantity: 0, active: false, updated_at: new Date().toISOString() });
+    await update("inventory_items", sourceItemId, { current_quantity: 0, active: false, updated_at: new Date().toISOString() }, organizationId);
 
     await logInventoryActivity(
       "Merged Duplicate Item",
       `${source.item_code} "${source.name}" (${sourceQty} moved) → ${target.item_code} "${target.name}"${relinkedResult.rows.length > 0 ? `, ${relinkedResult.rows.length} barcode(s) re-linked` : ''}`,
-      performedBy
+      performedBy,
+      organizationId
     );
 
     return res.status(200).json({ success: true, quantityMoved: sourceQty, barcodesRelinked: relinkedResult.rows.length, newTargetQuantity: Number(target.current_quantity) + sourceQty });
