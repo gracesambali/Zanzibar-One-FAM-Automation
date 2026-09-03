@@ -15786,6 +15786,21 @@ restoreSidebarState();
 
 loadAssetsAndInit();
 
+// Confirmed directly as a real, reported gap: navigating back to the
+// login page, then forward again, could silently restore the exact,
+// already-authenticated dashboard straight from the browser's own
+// back-forward cache - the whole page exactly as it was in memory,
+// without ever asking the server whether the session is still
+// genuinely valid. Real security concern on a shared or unattended
+// device, not just a visual quirk. event.persisted is true
+// specifically on a bfcache restore, never on a normal, fresh load -
+// re-running the same real session check already used on first load
+// closes the gap without forcing a jarring re-login for the ordinary,
+// legitimate case where the session is still genuinely valid.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) loadAssetsAndInit();
+});
+
 </script>
 </body>
 </html>
