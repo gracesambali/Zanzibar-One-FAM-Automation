@@ -101,6 +101,9 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "createClient") {
     return handleCreateClient(req, res);
   }
+  if (req.body && req.body.action === "editClientBranding") {
+    return handleEditClientBranding(req, res);
+  }
   if (req.body && req.body.action === "listClients") {
     return handleListClients(req, res);
   }
@@ -540,6 +543,54 @@ async function handleCreateClient(req, res) {
   }
 }
 
+// Confirmed directly as a real, missing gap: logo and brand color
+// upload only ever existed at the moment of onboarding a client -
+// nothing afterward let the Master System add or change one, even
+// though the onboarding flow's own comment already said "it can
+// always be added later." Master System only - the same real gate
+// already used for creating a client in the first place, not
+// something any individual client can do to itself.
+async function handleEditClientBranding(req, res) {
+  const session = getSession(req);
+  if (!session || session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can manage a client's branding." });
+  }
+  const { targetOrgId, logoBase64, logoFilename, logoContentType, brandColor } = req.body || {};
+  if (!targetOrgId) return res.status(400).json({ error: "targetOrgId required" });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const targetOrg = await getById("organizations", targetOrgId).catch(() => null);
+    if (!targetOrg) return res.status(404).json({ error: "Client not found." });
+
+    const fields = {};
+    let logoWarning = null;
+    if (logoBase64 && logoFilename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const logoPath = `organizations/${targetOrgId}/logo-${logoFilename}`;
+        await uploadFile(logoPath, logoBase64, logoContentType || "image/png");
+        fields.logo_path = logoPath;
+      } catch (err) {
+        console.error("Client logo upload error (edit, non-fatal):", err.message);
+        logoWarning = "The logo failed to upload. You can try again.";
+      }
+    }
+    if (brandColor !== undefined) {
+      fields.brand_color = brandColor || null;
+    }
+
+    if (Object.keys(fields).length > 0) {
+      await update("organizations", targetOrgId, fields).catch(() => {});
+    }
+
+    return res.status(200).json({ success: true, ...(logoWarning ? { warning: logoWarning } : {}) });
+  } catch (err) {
+    console.error("editClientBranding error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleListClients(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in." });
@@ -552,16 +603,21 @@ async function handleListClients(req, res) {
 
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
     const result = await pgQuery(
-      `select o.id, o.name, o.slug, o.created_at, count(u.id) filter (where u.active) as active_user_count
+      `select o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color, count(u.id) filter (where u.active) as active_user_count
        from organizations o
        left join users u on u.organization_id = o.id
-       group by o.id, o.name, o.slug, o.created_at
+       group by o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color
        order by o.created_at desc`
     );
-    return res.status(200).json({
-      clients: result.rows.map(r => ({ id: r.id, name: r.name, slug: r.slug, createdAt: r.created_at, activeUserCount: Number(r.active_user_count) })),
-    });
+    const clients = await Promise.all(result.rows.map(async r => ({
+      id: r.id, name: r.name, slug: r.slug, createdAt: r.created_at,
+      activeUserCount: Number(r.active_user_count),
+      logoUrl: r.logo_path ? await getSignedUrlSafe(r.logo_path).catch(() => null) : null,
+      brandColor: r.brand_color || null,
+    })));
+    return res.status(200).json({ clients });
   } catch (err) {
     console.error("listClients error:", err);
     return res.status(500).json({ error: err.message });

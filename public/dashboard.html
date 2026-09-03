@@ -7436,6 +7436,7 @@ function renderStaffManagementTable() {
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <div style="font-size:11.5px;color:var(--muted)">${c.activeUserCount} active user${c.activeUserCount === 1 ? '' : 's'}</div>
             <button type="button" onclick="event.stopPropagation();copyClientLoginLink('${(c.slug || '').replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">Copy Link</button>
+            <button type="button" onclick="event.stopPropagation();openEditClientBrandingModal('${c.id}','${(c.name || '').replace(/'/g,"\\'")}','${c.logoUrl || ''}','${c.brandColor || ''}')" style="padding:4px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">🎨 Branding</button>
             <span style="font-size:11px;color:var(--muted)">→</span>
           </div>
         </div>`).join('')}
@@ -7852,6 +7853,69 @@ async function copyClientLoginLink(slug) {
     alert('Link copied.');
   } catch (err) {
     alert('Could not copy — here is the link:\n' + url);
+  }
+}
+
+function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColor) {
+  const overlay = document.createElement('div');
+  overlay.id = 'editBrandingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Branding — ${escapeHtml(orgName)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Add or change this client's logo and brand color any time — not just at onboarding.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${currentLogoUrl ? 'Change Logo' : 'Add Logo'}</label>
+      ${currentLogoUrl ? `<img src="${currentLogoUrl}" alt="Current logo" style="max-width:120px;max-height:60px;object-fit:contain;border-radius:6px;border:1px solid var(--border);display:block;margin-bottom:6px;padding:4px">` : ''}
+      <input id="ecb_logo" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:14px">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Brand Color</label>
+      <input id="ecb_color" type="color" value="${currentColor || '#003566'}" style="width:100%;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+
+      <div id="ecb_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('editBrandingOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ecb_submit" onclick="submitEditClientBranding('${orgId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditClientBranding(orgId) {
+  const logoFile = document.getElementById('ecb_logo').files[0];
+  const brandColor = document.getElementById('ecb_color').value;
+  const errorBox = document.getElementById('ecb_error');
+  const btn = document.getElementById('ecb_submit');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    let logoBase64 = null;
+    if (logoFile) {
+      logoBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(logoFile);
+      });
+    }
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'editClientBranding', targetOrgId: orgId, brandColor,
+        logoBase64, logoFilename: logoFile ? logoFile.name : undefined,
+        logoContentType: logoFile ? logoFile.type : undefined,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save branding');
+    document.getElementById('editBrandingOverlay')?.remove();
+    if (data.warning) alert(data.warning);
+    renderStaffManagement();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
   }
 }
 
