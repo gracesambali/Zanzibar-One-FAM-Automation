@@ -11258,6 +11258,7 @@ let floorPlanCurrentFloor = null;
 let floorPlanData = null; // { floor, imageUrl, positions }
 let floorPlanPlacementMode = false;
 let floorPlanSelectedAssetId = null;
+let floorPlanPreviewAssetId = null;
 
 function statusDotColor(status) {
   if (status === "Good") return "#16a34a";
@@ -11422,7 +11423,7 @@ async function renderFloorPlan() {
   if (!floorPlanCurrentFloor && uniqueFloors.length > 0) floorPlanCurrentFloor = uniqueFloors[0];
 
   let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-    <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;renderFloorPlan()">
+    <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;floorPlanPreviewAssetId=null;renderFloorPlan()">
       ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
     </select>
     <div id="floorPlanTwinToggle"></div>
@@ -11535,17 +11536,35 @@ function renderFloorPlanImage(canManage) {
   const unplaced = canManage ? floorAssets.filter(a => !positionsByAsset[a.id]) : [];
 
   let dotsHtml = '';
+  let previewHtml = '';
   floorAssets.forEach(a => {
     const pos = positionsByAsset[a.id];
     if (!pos) return;
     const idx = assets.indexOf(a);
-    const clickHandler = floorPlanPlacementMode ? '' : `showDetail(${idx});switchTab('assets')`;
+    const previewHandler = floorPlanPlacementMode ? '' : `event.stopPropagation();showFloorPlanPreview('${a.id}')`;
     const dragHandlers = floorPlanPlacementMode ? `onmousedown="startDotDrag(event,'${a.id}')" ontouchstart="startDotDrag(event,'${a.id}')"` : '';
-    dotsHtml += `<div class="floorplan-dot-group" data-asset-id="${a.id}" onclick="${clickHandler}" ${dragHandlers} title="${a.name} (${a.id}) — ${a.status}${floorPlanPlacementMode ? ' — drag to reposition' : ''}"
+    dotsHtml += `<div class="floorplan-dot-group" data-asset-id="${a.id}" onclick="${previewHandler}" onmouseenter="${floorPlanPlacementMode ? '' : `showFloorPlanPreview('${a.id}')`}" ${dragHandlers} title="${a.name} (${a.id}) — ${a.status}${floorPlanPlacementMode ? ' — drag to reposition' : ''}"
       style="position:absolute;left:${pos.x}%;top:${pos.y}%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:${floorPlanPlacementMode?'grab':'pointer'};z-index:2;touch-action:none">
       <div class="floorplan-dot" style="width:16px;height:16px;border-radius:50%;background:${statusDotColor(a.status)};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>
       <div style="font-size:9px;font-weight:700;color:#1A1A1A;background:rgba(255,255,255,0.85);padding:1px 4px;border-radius:3px;margin-top:2px;white-space:nowrap;line-height:1.3;box-shadow:0 1px 2px rgba(0,0,0,.15)">${a.id} ${a.name}</div>
     </div>`;
+
+    if (!floorPlanPlacementMode && floorPlanPreviewAssetId === a.id) {
+      const flipUp = pos.y > 55; // keep the card on-screen near the bottom of a tall image
+      previewHtml += `<div class="floorplan-preview" onclick="event.stopPropagation()"
+        style="position:absolute;left:${pos.x}%;top:${pos.y}%;transform:translate(-50%,${flipUp ? '-120%' : '20%'});z-index:3;width:200px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:12px;text-align:left">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--navy);line-height:1.3">${escapeHtml(a.name)}</div>
+          <button onclick="floorPlanPreviewAssetId=null;renderFloorPlanImage(true)" style="border:none;background:none;color:var(--muted);font-size:14px;cursor:pointer;line-height:1;padding:0;flex-shrink:0">✕</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${escapeHtml(a.id)}${a.system ? ' · ' + escapeHtml(a.system) : ''}</div>
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:10px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${statusDotColor(a.status)}"></span>
+          <span style="font-size:11px;color:var(--text)">${escapeHtml(a.status || '—')}${a.criticality ? ' · ' + escapeHtml(a.criticality) + ' criticality' : ''}</span>
+        </div>
+        <button onclick="showDetail(${idx});switchTab('assets')" style="width:100%;padding:7px;border:1px solid var(--navy);border-radius:7px;background:var(--navy);color:#fff;font-size:11.5px;font-weight:600;cursor:pointer">View in Asset Register →</button>
+      </div>`;
+    }
   });
 
   wrap.innerHTML = `
@@ -11555,6 +11574,7 @@ function renderFloorPlanImage(canManage) {
     <div style="position:relative;display:inline-block;max-width:100%">
       <img src="${floorPlanData.imageUrl}" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" id="floorPlanImg" onclick="handleFloorPlanClick(event)">
       ${dotsHtml}
+      ${previewHtml}
     </div>
   `;
 
@@ -13546,6 +13566,7 @@ async function submitFloorPlanUpload() {
 function toggleFloorPlanPlacementMode() {
   floorPlanPlacementMode = !floorPlanPlacementMode;
   floorPlanSelectedAssetId = null;
+  floorPlanPreviewAssetId = null;
   renderFloorPlanImage(true);
 }
 
@@ -13572,14 +13593,28 @@ async function handleFloorPlanClick(event) {
   }
 }
 
+// Confirmed directly: a quick-glance preview before committing to
+// leaving the floor plan entirely - clicking (or hovering, on
+// desktop) an existing dot now opens a small card showing the
+// asset's real name, id, system, status, and criticality right on
+// the plan itself, with its own explicit "View in Asset Register"
+// button for anyone who actually wants to jump there. Re-rendering is
+// skipped if this exact asset's preview is already open, avoiding
+// unnecessary flicker on repeated hover events within the same dot.
+function showFloorPlanPreview(assetId) {
+  if (floorPlanPreviewAssetId === assetId) return;
+  floorPlanPreviewAssetId = assetId;
+  renderFloorPlanImage(true);
+}
+
 // Confirmed directly: dragging an already-placed dot only ever
 // activates inside the same explicit, deliberate Placement Mode
 // already used for adding a new marker - never active by default, so
-// browsing the floor plan normally still just opens the Asset
-// Register on a click, exactly as before. The dot's own DOM position
-// is updated directly during the drag for smooth, immediate visual
-// feedback, rather than re-rendering the whole floor plan on every
-// pixel of movement - the full, real save only happens once, on
+// browsing the floor plan normally still opens the same quick preview
+// card on a click that it always has, not a drag. The dot's own DOM
+// position is updated directly during the drag for smooth, immediate
+// visual feedback, rather than re-rendering the whole floor plan on
+// every pixel of movement - the full, real save only happens once, on
 // release.
 let floorPlanDraggingAssetId = null;
 let floorPlanDragMoved = false;
