@@ -15963,6 +15963,28 @@ window.addEventListener('pageshow', (event) => {
   if (event.persisted) loadAssetsAndInit();
 });
 
+// Confirmed directly as a real, reported gap: switching away to a
+// separate app to pick a file - Google Drive, for instance - and
+// coming back can leave a file input visually present but genuinely
+// unresponsive to taps, a known real quirk on some mobile browsers
+// when the tab gets suspended and restored by the OS in the
+// background without properly re-attaching its own JavaScript behind
+// it. Not specific to any one upload - every file input still on the
+// page gets rebuilt fresh the moment the app is confirmed genuinely
+// visible again, discarding whatever stale, dead state it was left
+// in. Cloning preserves the element's own real attributes - its id,
+// accept filter, and any inline onchange - so nothing about how it's
+// actually used elsewhere has to change; only its underlying,
+// potentially-broken state is discarded.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  document.querySelectorAll('input[type="file"]').forEach(input => {
+    if (input.files && input.files.length > 0) return; // a real, already-selected file must never be discarded — only a genuinely empty, stuck input gets reset
+    const fresh = input.cloneNode(true);
+    input.parentNode.replaceChild(fresh, input);
+  });
+});
+
 </script>
 </body>
 </html>
