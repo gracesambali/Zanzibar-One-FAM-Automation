@@ -91,6 +91,7 @@
     if (resp.ok && data.brandColor) {
       document.querySelector('h1').style.color = data.brandColor;
       document.getElementById('loginBtn').style.background = data.brandColor;
+      document.querySelectorAll('label').forEach(el => { el.style.color = data.brandColor; });
     }
   } catch (err) {
     subtitleEl.textContent = "Sign in to view your building's live data";
