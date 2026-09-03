@@ -25,5 +25,21 @@
     { "source": "/set-password", "destination": "/set-password.html" },
     { "source": "/unit-portal", "destination": "/unit-portal.html" },
     { "source": "/pharmacy-portal", "destination": "/pharmacy-portal.html" }
+  ],
+  "headers": [
+    { "source": "/login", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/login.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/dashboard", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/dashboard.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/asset", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/asset.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/sensor-monitor", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/sensor-monitor.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/unit-portal", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/unit-portal.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/pharmacy-portal", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/pharmacy-portal.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/set-password", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/set-password.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
   ]
 }
