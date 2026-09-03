@@ -191,6 +191,7 @@ function displayRoom(room) {
 const REPORT_CATEGORY_TO_ROLE = {
   "Electrical": "Electrical",
   "Mechanical": "Mechanical",
+  "Biomedical": "Biomedical",
   "NonTechnical": "Admin",
   "TenantRelated": "Property Manager",
 };
