@@ -1887,3 +1887,23 @@ create unique index if not exists idx_inventory_items_org_code on inventory_item
 -- ============================================================
 alter table facilities drop constraint if exists facilities_facility_code_key;
 create unique index if not exists idx_facilities_org_code on facilities (organization_id, facility_code);
+
+-- ============================================================
+-- Real asset barcode links - a real, urgent client need: a hospital
+-- already has physical barcode tags on every asset, printed by a
+-- different existing system for depreciation tracking, and doesn't
+-- want a second set of tags printed. Mirrors the exact, already-
+-- proven pattern used for inventory barcode links - the first real
+-- scan of an existing tag links it once to the matching asset, no
+-- new tags needed; every scan after that resolves directly.
+-- ============================================================
+create table if not exists asset_barcode_links (
+  id              uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  code            text not null,
+  asset_record_id uuid not null references components(id) on delete cascade,
+  linked_by       text,
+  linked_at       timestamptz not null default now()
+);
+create unique index if not exists idx_asset_barcode_links_org_code on asset_barcode_links (organization_id, code);
+create index if not exists idx_asset_barcode_links_asset on asset_barcode_links (asset_record_id);
