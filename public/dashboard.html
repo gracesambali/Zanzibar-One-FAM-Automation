@@ -2288,6 +2288,9 @@ function openEditForm(idx) {
         <button type="button" onclick="openCameraCapture('ea_nameplate')" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;white-space:nowrap;flex-shrink:0">📷 Take Photo</button>
       </div>
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Physical Barcode (optional)</label>
+      <input id="ea_barcode" type="text" placeholder="e.g. KH-003090" value="${escapeHtml(a.barcode || '')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+
       <div style="display:flex;gap:8px;margin-top:6px">
         <button onclick="closeEditForm()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>
         <button id="ea_submit" onclick="submitAssetEdit('${a.recordId}')" style="flex:1;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
@@ -2381,10 +2384,29 @@ async function submitAssetEdit(recordId) {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to save changes');
+
+    // Confirmed directly as a real, reported gap: a separate action
+    // from the main edit above, since the linked barcode lives in its
+    // own table, not a plain column on the asset itself. Non-fatal if
+    // this specific part fails - the rest of the edit already
+    // genuinely succeeded and shouldn't be lost over it.
+    let barcodeWarning = null;
+    try {
+      const barcodeResp = await fetch('/api/manage-asset', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setAssetBarcode', recordId, code: document.getElementById('ea_barcode').value }),
+      });
+      const barcodeData = await barcodeResp.json();
+      if (!barcodeResp.ok) barcodeWarning = barcodeData.error || 'Could not save the barcode.';
+    } catch (barcodeErr) {
+      barcodeWarning = 'Could not save the barcode.';
+    }
+
     closeEditForm();
     await loadAssetsAndInit();
     const savedMsg = data.changesApplied ? `Saved ${data.changesApplied} change(s).` : (data.message || 'No changes detected.');
-    alert(data.warning ? `${savedMsg}\n\n${data.warning}` : savedMsg);
+    const allWarnings = [data.warning, barcodeWarning].filter(Boolean).join('\n\n');
+    alert(allWarnings ? `${savedMsg}\n\n${allWarnings}` : savedMsg);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';

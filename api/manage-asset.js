@@ -103,6 +103,7 @@ export default async function handler(req, res) {
     if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u, session.org);
     if (action === "linkInventoryBarcode") return handleLinkInventoryBarcode(req, res, session.u, session.org);
     if (action === "linkAssetBarcode") return handleLinkAssetBarcode(req, res, session.u, session.org);
+    if (action === "setAssetBarcode") return handleSetAssetBarcode(req, res, session.u, session.org);
     if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u, session.org);
     if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u, session.org);
     if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u, session.org);
@@ -1345,6 +1346,36 @@ async function handleLinkAssetBarcode(req, res, linkedBy, organizationId) {
   } catch (err) {
     const message = /unique/i.test(err.message) ? "This barcode is already linked to an asset." : err.message;
     console.error("linkAssetBarcode error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+// A real, separate action from the scan-time linking flow just
+// above - this one is for directly viewing, setting, or correcting
+// an asset's own linked barcode from its own edit form, confirmed
+// directly as a real, reported gap: a linked code only ever lived in
+// a background table, invisible on the asset itself unless it was
+// rescanned. Properly upserts - clears any existing link for this
+// asset first, so correcting an already-linked code replaces it
+// cleanly rather than leaving a stale, orphaned duplicate behind. An
+// empty code cleanly removes the link entirely.
+async function handleSetAssetBarcode(req, res, linkedBy, organizationId) {
+  const { recordId, code } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId is required" });
+  try {
+    const { insert, getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const asset = await getById("components", recordId).catch(() => null);
+    if (!asset || asset.organization_id !== organizationId) return res.status(404).json({ error: "Asset not found." });
+
+    await pgQuery("delete from asset_barcode_links where asset_record_id = $1 and organization_id = $2", [recordId, organizationId]);
+    const trimmed = (code || "").trim();
+    if (trimmed) {
+      await insert("asset_barcode_links", { code: trimmed, asset_record_id: recordId, linked_by: linkedBy, organization_id: organizationId });
+    }
+    return res.status(200).json({ success: true, barcode: trimmed || null });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? "This barcode is already linked to a different asset." : err.message;
+    console.error("setAssetBarcode error:", err);
     return res.status(500).json({ error: message });
   }
 }

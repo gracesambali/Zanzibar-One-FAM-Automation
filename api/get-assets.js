@@ -1284,11 +1284,23 @@ async function fetchAllRecords(organizationId) {
     docsByComponent[doc.component_id].push(doc);
   }
 
+  // Confirmed directly as a real, reported gap: a linked physical
+  // barcode only ever lived in this background table, invisible on
+  // the asset itself unless it was rescanned. One query for every
+  // linked code in this org, grouped in memory by asset - the exact
+  // same real, already-proven pattern as compliance documents just
+  // above, avoiding a separate query per asset.
+  const barcodeResult = await pgQuery("select * from asset_barcode_links where organization_id = $1", [organizationId]);
+  const barcodeByComponent = {};
+  for (const link of barcodeResult.rows) {
+    barcodeByComponent[link.asset_record_id] = link.code;
+  }
+
   // Signing is a real network call per asset (a fresh signed URL,
   // never a stored one — see the comment on nameplatePhoto below) —
   // run them all in parallel rather than one at a time, or a
   // dashboard load with many assets would be slow.
-  return Promise.all(components.map(row => normalizeRecord(row, docsByComponent[row.id] || [], traClassById)));
+  return Promise.all(components.map(row => normalizeRecord(row, docsByComponent[row.id] || [], traClassById, barcodeByComponent[row.id] || null)));
 }
 
 // Converts a Postgres components row into the exact same object shape
@@ -1297,7 +1309,7 @@ async function fetchAllRecords(organizationId) {
 // lastService, nextService, lifespan, note, ...). Deliberately kept
 // as close as possible to the pre-migration Airtable version below,
 // field for field, so nothing downstream needs to change.
-async function normalizeRecord(row, documents, traClassById) {
+async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
   const depreciation = calculateCurrentValue({
     acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
     residualValue: row.residual_value_tzs !== null ? Number(row.residual_value_tzs) : undefined,
@@ -1412,6 +1424,7 @@ async function normalizeRecord(row, documents, traClassById) {
     documentsUploadedDate: row.documents_uploaded_date || "",
     needsTechnicalReview: row.needs_technical_review === true,
     nameplatePhoto,
+    barcode: linkedBarcode,
 
     // Warranty — a separate clock from depreciation. An asset can still
     // be worth a lot on paper while its manufacturer warranty already
