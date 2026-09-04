@@ -2014,9 +2014,6 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
     for (const row of rows) {
       const name = (row.name || "").trim();
       if (!name) { skipped.push({ row: JSON.stringify(row), reason: "No name" }); continue; }
-      if (row.facility && row.building && !knownPairs.has(`${row.facility}|||${row.building}`)) {
-        buildingWarnings.push(`Row "${name}": "${row.building}" in "${row.facility}" isn't a recognized building/facility pair — asset was still created, but double-check the spelling.`);
-      }
       try {
         await createOneAsset({
           name, nature: row.nature, category: row.category, building: row.building, facility: row.facility,
@@ -2027,6 +2024,18 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
           status: row.status, criticality: row.criticality,
         }, addedBy, addedByRole, organizationId);
         created++;
+        // Confirmed directly as a real, genuine bug found while
+        // investigating a reported case: this warning used to fire
+        // before the actual creation attempt above and unconditionally
+        // claimed the asset was still created, even when it then
+        // failed for a completely different, real reason - every row
+        // that hit this exact warning in the reported case also failed
+        // on an invalid date, so none of them were actually created
+        // despite the message insisting otherwise. Only fires now once
+        // the asset has genuinely, actually succeeded.
+        if (row.facility && row.building && !knownPairs.has(`${row.facility}|||${row.building}`)) {
+          buildingWarnings.push(`Row "${name}": "${row.building}" in "${row.facility}" isn't a recognized building/facility pair — asset was still created, but double-check the spelling.`);
+        }
       } catch (err) {
         skipped.push({ row: name, reason: err.message });
       }
