@@ -4460,7 +4460,7 @@ async function submitTraClass(classId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
     document.getElementById('addTraClassOverlay')?.remove();
-    await refreshAssetsFromServer();
+    await loadAssetsAndInit();
     const traResp = await fetch('/api/get-assets?traClasses=true');
     if (traResp.ok) { const traData = await traResp.json(); traClassesCache = traData.classes || []; }
     renderAssets();
@@ -4481,7 +4481,7 @@ async function deleteTraClass(classId, label) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not delete');
-    await refreshAssetsFromServer();
+    await loadAssetsAndInit();
     const traResp = await fetch('/api/get-assets?traClasses=true');
     if (traResp.ok) { const traData = await traResp.json(); traClassesCache = traData.classes || []; }
     renderAssets();
@@ -4576,7 +4576,7 @@ async function submitTraClassImport() {
     statusEl.style.display = 'block';
     btn.textContent = 'Done';
 
-    if (data.updated > 0) { await refreshAssetsFromServer(); renderAssets(); } // refresh the table behind the modal so the real new values show once closed
+    if (data.updated > 0) { await loadAssetsAndInit(); renderAssets(); } // refresh the table behind the modal so the real new values show once closed
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.style.color = 'var(--red)';
@@ -9245,7 +9245,7 @@ async function submitAssetSheetUpload() {
     statusEl.innerHTML = statusHtml;
     statusEl.style.display = 'block';
     btn.textContent = 'Done';
-    await refreshAssetsFromServer();
+    await loadAssetsAndInit();
     renderAssets();
   } catch (err) {
     statusEl.textContent = err.message;
