@@ -9201,7 +9201,7 @@ function parseAssetSheetCsv(text) {
 async function parseAssetSheetExcel(file) {
   await ensureSheetJsLoaded();
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
   if (data.length === 0) return [];
   const headerMap = buildAssetSheetHeaderMap(data[0]);
@@ -9210,7 +9210,17 @@ async function parseAssetSheetExcel(file) {
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
     if (!r) continue;
-    const c = r.map(v => v != null ? String(v).trim() : '');
+    // Confirmed directly as the real, reported cause: a real date
+    // cell in Excel arrives here as a genuine JS Date once cellDates
+    // is on, not the raw internal serial number Excel stores it as
+    // (46023, in the reported case) - formatted into a clean,
+    // Postgres-compatible YYYY-MM-DD string here, rather than its
+    // own verbose, unusable toString() output.
+    const c = r.map(v => {
+      if (v == null) return '';
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      return String(v).trim();
+    });
     if (!c[headerMap.name]) continue;
     rows.push(assetSheetRowFromColumns(c, headerMap));
   }
