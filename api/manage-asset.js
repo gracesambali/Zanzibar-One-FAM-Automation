@@ -120,10 +120,10 @@ export default async function handler(req, res) {
     if (action === "deleteFuelRequest") return handleDeleteFuelRequest(req, res, session.u);
     if (action === "addFuelInvoice") return handleAddFuelInvoice(req, res, session.u);
     if (action === "deleteFuelInvoice") return handleDeleteFuelInvoice(req, res, session.u);
-    if (action === "createRequisition") return handleCreateRequisition(req, res, session.u, session.r);
-    if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r);
-    if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r);
-    if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u);
+    if (action === "createRequisition") return handleCreateRequisition(req, res, session.u, session.org);
+    if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r, session.org);
+    if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r, session.org);
+    if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u, session.org);
     if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r, session.org);
     return handleDecommission(req, res, session.u, session.org);
   }
@@ -1001,28 +1001,28 @@ async function handleDeleteFuelInvoice(req, res, deletedBy) {
 // possible SOURCE of a requisition, not a procurement tracker in its
 // own right.
 // ============================================================
-async function logRequisitionActivity(action, details, performedBy) {
+async function logRequisitionActivity(action, details, performedBy, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    await insert("requisition_activity_log", { action, details, performed_by: performedBy });
+    await insert("requisition_activity_log", { action, details, performed_by: performedBy, organization_id: organizationId });
   } catch (err) {
     console.error("logRequisitionActivity failed (non-fatal):", err.message);
   }
 }
 
-async function generateRequisitionNumber() {
+async function generateRequisitionNumber(organizationId) {
   const { query: pgQuery } = await import("../lib/postgresClient.js");
-  const result = await pgQuery("select count(*) as c from requisitions");
+  const result = await pgQuery("select count(*) as c from requisitions where organization_id = $1", [organizationId]);
   const n = Number(result.rows[0].c) + 1;
   return `REQ-${String(n).padStart(5, "0")}`;
 }
 
-async function createOneRequisition(a, requestedBy) {
+async function createOneRequisition(a, requestedBy, organizationId) {
   if (!a.itemDescription || !a.itemDescription.trim()) {
     throw new Error("A description of what's needed is required.");
   }
   const { insert } = await import("../lib/postgresClient.js");
-  const requisitionNumber = await generateRequisitionNumber();
+  const requisitionNumber = await generateRequisitionNumber(organizationId);
   const created = await insert("requisitions", {
     requisition_number: requisitionNumber,
     source_work_order_id: a.sourceWorkOrderId || null,
@@ -1036,14 +1036,15 @@ async function createOneRequisition(a, requestedBy) {
     facility: a.facility || null,
     requested_by: requestedBy,
     notes: a.notes || null,
+    organization_id: organizationId,
   });
   return { created, requisitionNumber };
 }
 
-async function handleCreateRequisition(req, res, requestedBy) {
+async function handleCreateRequisition(req, res, requestedBy, organizationId) {
   try {
-    const { created, requisitionNumber } = await createOneRequisition(req.body || {}, requestedBy);
-    await logRequisitionActivity("Requested", `${requisitionNumber} — "${(req.body.itemDescription || '').trim()}"${req.body.requestingDepartment ? ` (${req.body.requestingDepartment})` : ''}`, requestedBy);
+    const { created, requisitionNumber } = await createOneRequisition(req.body || {}, requestedBy, organizationId);
+    await logRequisitionActivity("Requested", `${requisitionNumber} — "${(req.body.itemDescription || '').trim()}"${req.body.requestingDepartment ? ` (${req.body.requestingDepartment})` : ''}`, requestedBy, organizationId);
     return res.status(200).json({ success: true, id: created.id, requisitionNumber });
   } catch (err) {
     console.error("createRequisition error:", err);
@@ -1058,12 +1059,12 @@ async function handleCreateRequisition(req, res, requestedBy) {
 // back via linked_requisition_id so the work order's own screen can
 // show a live status pulled from the real requisition rather than
 // maintaining a second, separately-drifting copy of that state.
-async function handleRequestProcurementForWorkOrder(req, res, requestedBy) {
+async function handleRequestProcurementForWorkOrder(req, res, requestedBy, organizationId) {
   const { woId, itemDescription, quantityRequested, unitOfMeasure, isAsset, notes } = req.body || {};
   if (!woId) return res.status(400).json({ error: "woId is required" });
   try {
     const { getByColumn, update } = await import("../lib/postgresClient.js");
-    const workOrder = await getByColumn("work_orders", "wo_id", woId).catch(() => null);
+    const workOrder = await getByColumn("work_orders", "wo_id", woId, organizationId).catch(() => null);
     if (!workOrder) return res.status(404).json({ error: `Work order ${woId} not found.` });
     if (workOrder.linked_requisition_id) {
       return res.status(400).json({ error: "This work order already has an active requisition linked to it." });
@@ -1074,10 +1075,10 @@ async function handleRequestProcurementForWorkOrder(req, res, requestedBy) {
       itemDescription: itemDescription || workOrder.asset_name || `Parts/materials for ${woId}`,
       quantityRequested, unitOfMeasure, isAsset, notes,
       building: workOrder.building,
-    }, requestedBy);
+    }, requestedBy, organizationId);
 
     await update("work_orders", workOrder.id, { linked_requisition_id: created.id, procurement_status: "Requested" });
-    await logRequisitionActivity("Requested (from Work Order)", `${requisitionNumber} — sourced from ${woId}`, requestedBy);
+    await logRequisitionActivity("Requested (from Work Order)", `${requisitionNumber} — sourced from ${woId}`, requestedBy, organizationId);
     return res.status(200).json({ success: true, id: created.id, requisitionNumber });
   } catch (err) {
     console.error("requestProcurementForWorkOrder error:", err);
@@ -1096,7 +1097,7 @@ async function handleRequestProcurementForWorkOrder(req, res, requestedBy) {
 // stage.
 const REQUISITION_FINANCE_ROLES = ["business_owner", "system_admin"];
 
-async function handleEditRequisition(req, res, editedBy, editedByRole) {
+async function handleEditRequisition(req, res, editedBy, editedByRole, organizationId) {
   const {
     requisitionId, itemDescription, quantityRequested, unitOfMeasure, isAsset, requestingDepartment,
     status, chosenVendorId, procurementNotes, procurementRejectionReason,
@@ -1112,7 +1113,7 @@ async function handleEditRequisition(req, res, editedBy, editedByRole) {
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const before = await getById("requisitions", requisitionId).catch(() => null);
-    if (!before) return res.status(404).json({ error: "Requisition not found." });
+    if (!before || before.organization_id !== organizationId) return res.status(404).json({ error: "Requisition not found." });
 
     // The two real, narrower financial gates — checked before
     // anything else, regardless of what else the request is trying
@@ -1187,7 +1188,7 @@ async function handleEditRequisition(req, res, editedBy, editedByRole) {
 
     if (changes.length > 0) {
       await update("requisitions", requisitionId, fields);
-      await logRequisitionActivity("Updated", `${before.requisition_number}: ${changes.join(", ")}`, editedBy);
+      await logRequisitionActivity("Updated", `${before.requisition_number}: ${changes.join(", ")}`, editedBy, organizationId);
     }
 
     // Keep the source work order's own status display honestly in
@@ -1206,7 +1207,7 @@ async function handleEditRequisition(req, res, editedBy, editedByRole) {
   }
 }
 
-async function handleDeleteRequisition(req, res, deletedBy, deletedByRole) {
+async function handleDeleteRequisition(req, res, deletedBy, deletedByRole, organizationId) {
   if (!REQUISITION_FINANCE_ROLES.includes(deletedByRole) && deletedByRole !== "procurement") {
     return res.status(403).json({ error: "Only Procurement, Business Owner, or System Admin can delete a requisition." });
   }
@@ -1215,12 +1216,12 @@ async function handleDeleteRequisition(req, res, deletedBy, deletedByRole) {
   try {
     const { getById, query: pgQuery, update } = await import("../lib/postgresClient.js");
     const requisition = await getById("requisitions", requisitionId).catch(() => null);
-    if (!requisition) return res.status(404).json({ error: "Requisition not found." });
+    if (!requisition || requisition.organization_id !== organizationId) return res.status(404).json({ error: "Requisition not found." });
     if (requisition.source_work_order_id) {
       await update("work_orders", requisition.source_work_order_id, { linked_requisition_id: null, procurement_status: "None" }).catch(() => {});
     }
     await pgQuery("delete from requisitions where id = $1", [requisitionId]);
-    await logRequisitionActivity("Deleted", requisition.requisition_number, deletedBy);
+    await logRequisitionActivity("Deleted", requisition.requisition_number, deletedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteRequisition error:", err);
@@ -1251,7 +1252,7 @@ async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole, 
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const requisition = await getById("requisitions", requisitionId).catch(() => null);
-    if (!requisition) return res.status(404).json({ error: "Requisition not found." });
+    if (!requisition || requisition.organization_id !== organizationId) return res.status(404).json({ error: "Requisition not found." });
     if (!requisition.is_asset) {
       return res.status(400).json({ error: "This requisition wasn't flagged as an asset — nothing to register." });
     }
@@ -1283,7 +1284,7 @@ async function handleRegisterRequisitionAsAsset(req, res, addedBy, addedByRole, 
     });
     await update("requisitions", requisition.id, { resulting_asset_id: created.id, status: "Completed" });
 
-    await logRequisitionActivity("Registered as Asset", `${requisition.requisition_number} → ${assetId}`, addedBy);
+    await logRequisitionActivity("Registered as Asset", `${requisition.requisition_number} → ${assetId}`, addedBy, organizationId);
     return res.status(200).json({ success: true, assetId, componentId: created.id });
   } catch (err) {
     console.error("registerRequisitionAsAsset error:", err);

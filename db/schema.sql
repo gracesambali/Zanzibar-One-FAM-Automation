@@ -1907,3 +1907,18 @@ create table if not exists asset_barcode_links (
 );
 create unique index if not exists idx_asset_barcode_links_org_code on asset_barcode_links (organization_id, code);
 create index if not exists idx_asset_barcode_links_asset on asset_barcode_links (asset_record_id);
+
+-- ============================================================
+-- Critical, real multi-tenancy fix for requisitions - confirmed
+-- directly, found while investigating adding a frontend for this:
+-- the entire table had no organization_id at all, meaning the read
+-- endpoint returned every organization's requisitions with zero
+-- filtering. Caught and fixed before any UI was ever built on top of
+-- it, which would have actively exposed this the moment it shipped.
+-- ============================================================
+alter table requisitions add column if not exists organization_id uuid references organizations(id);
+create index if not exists idx_requisitions_org on requisitions (organization_id);
+alter table requisition_activity_log add column if not exists organization_id uuid references organizations(id);
+create index if not exists idx_requisition_activity_log_org on requisition_activity_log (organization_id, performed_at desc);
+alter table requisitions drop constraint if exists requisitions_requisition_number_key;
+create unique index if not exists idx_requisitions_org_number on requisitions (organization_id, requisition_number);

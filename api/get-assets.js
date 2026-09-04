@@ -982,7 +982,9 @@ export default async function handler(req, res) {
          from requisitions r
          left join work_orders wo on wo.id = r.source_work_order_id
          left join vendors v on v.id = r.chosen_vendor_id
-         order by r.requested_at desc`
+         where r.organization_id = $1
+         order by r.requested_at desc`,
+        [session.org]
       );
       const requisitions = result.rows.map(r => ({
         id: r.id, requisitionNumber: r.requisition_number,
@@ -1016,7 +1018,7 @@ export default async function handler(req, res) {
   if (req.query.requisitionActivityLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from requisition_activity_log order by performed_at desc limit 200");
+      const result = await pgQuery("select * from requisition_activity_log where organization_id = $1 order by performed_at desc limit 200", [session.org]);
       return res.status(200).json({
         entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
       });
