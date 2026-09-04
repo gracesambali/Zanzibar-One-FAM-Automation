@@ -621,6 +621,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // Confirmed directly as a real, urgent client need: resolves an
+  // existing, external physical barcode - printed by a completely
+  // different, pre-existing system, not FAM's own generated asset ids
+  // - to whichever real asset it's already been linked to here, if
+  // any. Mirrors the proven inventory version directly above.
+  if (req.query.resolveAssetBarcode === "true" && req.query.code) {
+    try {
+      const { getByColumn, getById } = await import("../lib/postgresClient.js");
+      const link = await getByColumn("asset_barcode_links", "code", req.query.code, session.org).catch(() => null);
+      if (!link) return res.status(200).json({ needsLink: true, code: req.query.code });
+      const asset = await getById("components", link.asset_record_id).catch(() => null);
+      if (!asset || asset.organization_id !== session.org) return res.status(200).json({ needsLink: true, code: req.query.code });
+      return res.status(200).json({ needsLink: false, recordId: asset.id, assetId: asset.asset_id, assetName: asset.name });
+    } catch (err) {
+      console.error("resolveAssetBarcode read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Real-time IN/OUT totals plus the full underlying movement list,
   // confirmed directly — the same data backs both the live "today"
   // panel and the downloadable daily/weekly/monthly reports, so a

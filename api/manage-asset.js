@@ -102,6 +102,7 @@ export default async function handler(req, res) {
     if (action === "deleteInventoryItem") return handleDeleteInventoryItem(req, res, session.u, session.org);
     if (action === "uploadInventorySnapshot") return handleUploadInventorySnapshot(req, res, session.u, session.org);
     if (action === "linkInventoryBarcode") return handleLinkInventoryBarcode(req, res, session.u, session.org);
+    if (action === "linkAssetBarcode") return handleLinkAssetBarcode(req, res, session.u, session.org);
     if (action === "scanInventoryIn") return handleScanInventoryIn(req, res, session.u, session.org);
     if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u, session.org);
     if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u, session.org);
@@ -1322,6 +1323,28 @@ async function handleLinkInventoryBarcode(req, res, linkedBy, organizationId) {
   } catch (err) {
     const message = /unique/i.test(err.message) ? "This barcode is already linked to an item." : err.message;
     console.error("linkInventoryBarcode error:", err);
+    return res.status(500).json({ error: message });
+  }
+}
+
+// Confirmed directly as a real, urgent client need: a physical
+// barcode tag from a completely different, pre-existing system (not
+// FAM's own generated asset ids) can be linked once to a real asset
+// here - no new tags printed, the existing ones keep working exactly
+// as they are. Mirrors the exact, already-proven inventory barcode
+// pattern above.
+async function handleLinkAssetBarcode(req, res, linkedBy, organizationId) {
+  const { code, recordId } = req.body || {};
+  if (!code || !code.trim() || !recordId) return res.status(400).json({ error: "code and recordId are required" });
+  try {
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    const asset = await getById("components", recordId).catch(() => null);
+    if (!asset || asset.organization_id !== organizationId) return res.status(404).json({ error: "Asset not found." });
+    await insert("asset_barcode_links", { code: code.trim(), asset_record_id: recordId, linked_by: linkedBy, organization_id: organizationId });
+    return res.status(200).json({ success: true, assetId: asset.asset_id, assetName: asset.name });
+  } catch (err) {
+    const message = /unique/i.test(err.message) ? "This barcode is already linked to an asset." : err.message;
+    console.error("linkAssetBarcode error:", err);
     return res.status(500).json({ error: message });
   }
 }
