@@ -704,6 +704,20 @@ function warrantyStatus(expiryDate) {
   return { label: `Active until ${expiryDate}`, color: 'var(--green)' };
 }
 
+// Matches the exact same logic already used on the QR-scanned public
+// asset page, so both scan paths give a consistent, real answer. Red
+// if genuinely overdue, amber if within the real 7-day window before
+// its next scheduled maintenance, green otherwise - including when
+// nothing is scheduled at all, since that's not evidence of being
+// overdue.
+function maintenanceColorCode(nextService) {
+  if (!nextService) return { bg: 'var(--green-bg)', color: 'var(--green)', label: '✓ Safe to use — no overdue maintenance on record' };
+  const daysUntil = Math.round((new Date(nextService + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+  if (daysUntil < 0) return { bg: 'var(--red-bg)', color: 'var(--red)', label: `⚠ Maintenance overdue — was due ${nextService}` };
+  if (daysUntil <= 7) return { bg: '#fef3c7', color: 'var(--amber)', label: `⏰ Maintenance due soon — due ${nextService}` };
+  return { bg: 'var(--green-bg)', color: 'var(--green)', label: `✓ Safe to use — next service ${nextService}` };
+}
+
 function calcMaintenanceInterval(lastService, nextService) {
   if (!lastService || !nextService) return null;
   const days = Math.round((new Date(nextService) - new Date(lastService)) / 86400000);
@@ -2077,6 +2091,7 @@ function showDetail(idx) {
     <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
     <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span>
   </div></div>
+  ${(() => { const mc = maintenanceColorCode(a.nextService); return `<div style="padding:10px 24px;background:${mc.bg};color:${mc.color};font-size:13px;font-weight:700;text-align:center;border-bottom:1px solid var(--border)">${mc.label}</div>`; })()}
   <div style="display:flex;gap:20px;padding:16px 24px;border-bottom:1px solid var(--border);align-items:flex-start;flex-wrap:wrap">
     <img src="${qrUrl}" alt="QR Code for ${a.id}" style="width:120px;height:120px;border-radius:6px;border:1px solid var(--border)" title="Scan to view this asset's public info page">
     ${a.nameplatePhoto ? `<a href="${a.nameplatePhoto.url}" target="_blank"><img src="${a.nameplatePhoto.url}" alt="Nameplate photo" style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" title="Nameplate photo — click to view full size"></a>` : ''}
