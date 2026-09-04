@@ -9269,6 +9269,9 @@ async function submitAssetSheetUpload() {
     if (data.buildingWarnings && data.buildingWarnings.length > 0) {
       statusHtml += `<br><span style="color:var(--amber)">⚠ ${data.buildingWarnings.length} unrecognized building${data.buildingWarnings.length === 1 ? '' : 's'} (asset${data.buildingWarnings.length === 1 ? '' : 's'} still created — worth double-checking):<br>${data.buildingWarnings.slice(0, 5).map(escapeHtml).join('<br>')}${data.buildingWarnings.length > 5 ? '…' : ''}</span>`;
     }
+    if (data.duplicateWarnings && data.duplicateWarnings.length > 0) {
+      statusHtml += `<br><span style="color:var(--amber)">⚠ ${data.duplicateWarnings.length} possible duplicate${data.duplicateWarnings.length === 1 ? '' : 's'} (asset${data.duplicateWarnings.length === 1 ? '' : 's'} still created — worth double-checking):<br>${data.duplicateWarnings.slice(0, 5).map(escapeHtml).join('<br>')}${data.duplicateWarnings.length > 5 ? '…' : ''}</span>`;
+    }
     if (data.skipped && data.skipped.length > 0) {
       statusHtml += `<br><span style="color:var(--red)">${data.skipped.length} row${data.skipped.length === 1 ? '' : 's'} skipped: ${data.skipped.slice(0, 5).map(s => escapeHtml(s.reason)).join(', ')}${data.skipped.length > 5 ? '…' : ''}</span>`;
     }

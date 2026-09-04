@@ -2008,12 +2008,41 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
     );
     const knownPairs = new Set(knownResult.rows.map(r => `${r.facility_name}|||${r.building_name}`));
 
+    // Confirmed directly as a real, genuine gap: nothing checked
+    // whether a row looked like an asset that already exists,
+    // meaning re-uploading the same sheet (or an overlapping one)
+    // would silently double up every asset in it. Fetched once,
+    // upfront, for this whole org - name plus building plus facility
+    // together, since name alone is too loose (the same name can
+    // legitimately appear more than once across different rooms) but
+    // that combination is a real, tight signal of a likely duplicate.
+    const existingAssetsResult = await pgQuery(
+      "select name, building, facility from components where organization_id = $1 and active = true",
+      [organizationId]
+    );
+    const existingAssetKeys = new Set(
+      existingAssetsResult.rows.map(r => `${(r.name || '').trim().toLowerCase()}|||${r.building || ''}|||${r.facility || ''}`)
+    );
+    const seenInThisUpload = new Set();
+
     let created = 0;
     const skipped = [];
     const buildingWarnings = [];
+    const duplicateWarnings = [];
     for (const row of rows) {
       const name = (row.name || "").trim();
       if (!name) { skipped.push({ row: JSON.stringify(row), reason: "No name" }); continue; }
+      // Confirmed directly as a real, genuine gap: checked before
+      // creating, so a genuine duplicate is still flagged even if it
+      // only matches another row within this very same sheet, not
+      // just something that already existed before the upload
+      // started. Warns rather than blocks or silently skips - a name
+      // match alone isn't a certain duplicate (the same name can
+      // legitimately appear more than once across different rooms),
+      // so the real asset is still created either way; this only
+      // flags it for a real, human double-check afterward.
+      const dupeKey = `${name.toLowerCase()}|||${row.building || ''}|||${row.facility || ''}`;
+      const looksLikeDuplicate = existingAssetKeys.has(dupeKey) || seenInThisUpload.has(dupeKey);
       try {
         await createOneAsset({
           name, nature: row.nature, category: row.category, building: row.building, facility: row.facility,
@@ -2024,6 +2053,10 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
           status: row.status, criticality: row.criticality,
         }, addedBy, addedByRole, organizationId);
         created++;
+        seenInThisUpload.add(dupeKey);
+        if (looksLikeDuplicate) {
+          duplicateWarnings.push(`Row "${name}": an asset with this exact name already exists in "${row.building || 'this building'}" — asset was still created, but double-check this isn't the same one re-entered.`);
+        }
         // Confirmed directly as a real, genuine bug found while
         // investigating a reported case: this warning used to fire
         // before the actual creation attempt above and unconditionally
@@ -2040,7 +2073,7 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
         skipped.push({ row: name, reason: err.message });
       }
     }
-    return res.status(200).json({ success: true, created, skipped, buildingWarnings });
+    return res.status(200).json({ success: true, created, skipped, buildingWarnings, duplicateWarnings });
   } catch (err) {
     console.error("bulkImportAssets error:", err);
     return res.status(500).json({ error: err.message });
