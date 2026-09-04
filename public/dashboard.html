@@ -2043,7 +2043,20 @@ let currentAssetDetailIdx = null;
 function showDetail(idx) {
   currentAssetDetailIdx = idx;
   const a = assets[idx];
-  const age = a.installDate ? (new Date().getFullYear()) - parseInt(a.installDate.split("-")[0]) : 0;
+  // Confirmed directly as a real, significant bug found while
+  // investigating a reported case: age used to be a pure calendar-
+  // year subtraction, not actual elapsed time - any asset installed
+  // earlier in the same calendar year always computed to exactly 0,
+  // regardless of how many real months had actually passed, showing
+  // a misleading "0 years" and leaving the lifecycle bar completely
+  // empty even for an asset genuinely, say, 6 or 11 months old.
+  // Computed here from the real, precise number of days between the
+  // actual install date and today instead.
+  const installDateObj = a.installDate ? new Date(a.installDate + "T00:00:00") : null;
+  const ageInDays = installDateObj ? Math.max(0, (Date.now() - installDateObj.getTime()) / 86400000) : 0;
+  const ageInYears = ageInDays / 365.25;
+  const age = ageInYears;
+  const ageDisplay = !a.installDate ? "—" : ageInDays < 365 ? `${Math.round(ageInDays / 30.44)} month(s)` : `${Math.floor(ageInYears)} year(s)`;
   const pct = Math.min((age/a.lifespan)*100, 100);
   const eol = a.installDate ? parseInt(a.installDate.split("-")[0]) + a.lifespan : "—";
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
@@ -2086,7 +2099,7 @@ function showDetail(idx) {
     ["Model", a.model],
     ["Install Date", a.installDate],
     ["Expected Lifespan", a.lifespan+" years"],
-    ["Asset Age", age+" years"],
+    ["Asset Age", ageDisplay],
     ["Last Service", a.lastService || "—"],
     ["Next Service Due", a.nextService || "—"],
     ["Maintenance Interval (Calculated)", formatInterval(calcMaintenanceInterval(a.lastService, a.nextService))],
@@ -9115,7 +9128,7 @@ async function openUploadAssetSheetModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date. Only the first five are required — matched by what each header says, not by position.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date, Room/Zone, Critical Importance. Only the first five are required — matched by what each header says, not by position.</div>
       <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
       ${knownPairsHtml}
       <div style="font-size:10.5px;color:var(--muted);margin:8px 0 14px">Don't see the building you need? Add it under Asset Tracking's facility settings first, then upload.</div>
@@ -9151,6 +9164,8 @@ const ASSET_SHEET_HEADER_ALIASES = {
   model: ['model'],
   acquisitionCost: ['acquisition cost', 'acquisition cost (tzs)', 'cost', 'acquisition cost tzs'],
   installDate: ['install date', 'installation date', 'date installed'],
+  room: ['room', 'room/zone', 'room zone', 'zone', 'location'],
+  criticality: ['critical importance', 'criticality', 'importance'],
 };
 
 function normalizeAssetSheetHeader(raw) {
@@ -9169,9 +9184,11 @@ function buildAssetSheetHeaderMap(headerRow) {
 
 function assetSheetRowFromColumns(c, headerMap) {
   const get = (field) => (headerMap[field] !== undefined ? (c[headerMap[field]] || '') : '');
+  const rawCriticality = get('criticality').trim().toLowerCase();
   return {
     name: get('name'), nature: get('nature'), category: get('category'), building: get('building'), facility: get('facility'),
     system: get('system'), manufacturer: get('manufacturer'), model: get('model'), acquisitionCost: get('acquisitionCost'), installDate: get('installDate'),
+    room: get('room'), criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
   };
 }
 
