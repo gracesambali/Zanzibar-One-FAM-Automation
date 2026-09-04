@@ -375,22 +375,22 @@ button { font-family: inherit; cursor: pointer; }
       <div class="header-sub" id="header-subtitle">Facility Asset Manager</div>
     </div>
   </div>
-  <div style="display:flex;align-items:center;gap:8px;position:relative">
-    <button id="headerFiltersBtn" onclick="toggleHeaderFiltersPanel()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
-      🔎 Filters<span id="headerFiltersDot" style="display:none;width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
-    </button>
-    <div id="headerFiltersPanel" style="display:none;position:absolute;top:calc(100% + 8px);left:0;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.2);padding:14px;width:220px;z-index:500">
-      <label style="font-size:10.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility</label>
-      <select id="facilitySwitcher" onchange="onFacilityFilterChange(this.value)" style="width:100%;border:1px solid var(--border);color:var(--navy);padding:7px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:10px">
-        <option value="__all__">All Facilities</option>
-      </select>
-      <label style="font-size:10.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building</label>
-      <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="width:100%;border:1px solid var(--border);color:var(--navy);padding:7px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
-        <option value="__all__">All Buildings</option>
-      </select>
-    </div>
-  </div>
   <div style="display:flex;align-items:center;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px;position:relative">
+      <button id="headerFiltersBtn" onclick="toggleHeaderFiltersPanel()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+        📍 Facility/Building<span id="headerFiltersDot" style="display:none;width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+      </button>
+      <div id="headerFiltersPanel" style="display:none;position:absolute;top:calc(100% + 8px);right:0;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.2);padding:14px;width:220px;z-index:500">
+        <label style="font-size:10.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility</label>
+        <select id="facilitySwitcher" onchange="onFacilityFilterChange(this.value)" style="width:100%;border:1px solid var(--border);color:var(--navy);padding:7px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:10px">
+          <option value="__all__">All Facilities</option>
+        </select>
+        <label style="font-size:10.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building</label>
+        <select id="buildingSwitcher" onchange="setBuildingFilter(this.value)" style="width:100%;border:1px solid var(--border);color:var(--navy);padding:7px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
+          <option value="__all__">All Buildings</option>
+        </select>
+      </div>
+    </div>
     <div id="loggedInUserBadge" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px 4px 4px">
       <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:#1A3566;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden"></div>
       <div style="line-height:1.2">
