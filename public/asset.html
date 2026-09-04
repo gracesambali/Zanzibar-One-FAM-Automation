@@ -60,8 +60,16 @@
 
     function assetAge(installDate) {
       if (!installDate) return "—";
-      const years = new Date().getFullYear() - parseInt(installDate.split("-")[0]);
-      return years >= 0 ? years + " years" : "—";
+      const days = Math.max(0, (Date.now() - new Date(installDate + "T00:00:00").getTime()) / 86400000);
+      return days < 365 ? `${Math.round(days / 30.44)} month(s)` : `${Math.floor(days / 365.25)} year(s)`;
+    }
+
+    function maintenanceColorCode(nextService) {
+      if (!nextService) return { color: 'var(--green)', bg: '#dcfce7', label: '✓ Safe to use — no overdue maintenance on record' };
+      const daysUntil = Math.round((new Date(nextService + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+      if (daysUntil < 0) return { color: 'var(--red)', bg: '#fee2e2', label: `⚠ Maintenance overdue — was due ${nextService}` };
+      if (daysUntil <= 7) return { color: 'var(--amber)', bg: '#fef3c7', label: `⏰ Maintenance due soon — due ${nextService}` };
+      return { color: 'var(--green)', bg: '#dcfce7', label: `✓ Safe to use — next service ${nextService}` };
     }
 
     function maintenanceInterval(lastService, nextService) {
@@ -223,11 +231,13 @@
           card.innerHTML = `<div class="error">${data.error || "Asset not found."}</div>`;
           return;
         }
+        const mc = maintenanceColorCode(data.nextService);
         card.innerHTML = `
           <div class="header">
             <div class="id">${data.id}</div>
             <div class="name">${data.name}</div>
           </div>
+          <div style="padding:12px 22px;background:${mc.bg};color:${mc.color};font-size:13px;font-weight:700;text-align:center;border-bottom:1px solid var(--border)">${mc.label}</div>
           <div class="body">
             <div class="row"><span class="label">Status</span><span class="value">${data.status}</span></div>
             <div class="row"><span class="label">System</span><span class="value">${data.system || "—"}</span></div>
