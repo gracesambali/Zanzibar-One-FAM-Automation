@@ -1922,3 +1922,19 @@ alter table requisition_activity_log add column if not exists organization_id uu
 create index if not exists idx_requisition_activity_log_org on requisition_activity_log (organization_id, performed_at desc);
 alter table requisitions drop constraint if exists requisitions_requisition_number_key;
 create unique index if not exists idx_requisitions_org_number on requisitions (organization_id, requisition_number);
+
+-- Real, multi-document attachment support for requisitions - the
+-- exact same, already-proven one-row-per-file pattern already used
+-- for asset compliance documents, letting invoices and other real
+-- paperwork be attached at any point through a requisition's own
+-- lifecycle, not just the one, single GRN document slot the schema
+-- already had. Org-scoped correctly from the start.
+create table if not exists requisition_documents (
+  id              uuid primary key default gen_random_uuid(),
+  requisition_id  uuid not null references requisitions(id) on delete cascade,
+  organization_id uuid not null references organizations(id),
+  url             text not null,
+  filename        text,
+  uploaded_at     timestamptz not null default now()
+);
+create index if not exists idx_requisition_documents_requisition on requisition_documents (requisition_id);

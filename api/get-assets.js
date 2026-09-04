@@ -977,6 +977,7 @@ export default async function handler(req, res) {
   if (req.query.requisitions === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
       const result = await pgQuery(
         `select r.*, wo.wo_id as source_wo_id, wo.asset_name as source_wo_asset_name, v.vendor_name as chosen_vendor_name
          from requisitions r
@@ -986,7 +987,26 @@ export default async function handler(req, res) {
          order by r.requested_at desc`,
         [session.org]
       );
-      const requisitions = result.rows.map(r => ({
+
+      // Every real, attached document for this org's own requisitions,
+      // fetched once and grouped in memory - the exact same pattern
+      // already proven for asset compliance documents, avoiding a
+      // separate query per requisition.
+      const docsResult = await pgQuery("select * from requisition_documents where organization_id = $1", [session.org]);
+      const docsByRequisition = {};
+      for (const doc of docsResult.rows) {
+        if (!docsByRequisition[doc.requisition_id]) docsByRequisition[doc.requisition_id] = [];
+        docsByRequisition[doc.requisition_id].push(doc);
+      }
+
+      const requisitions = await Promise.all(result.rows.map(async r => {
+        const docs = docsByRequisition[r.id] || [];
+        const signedDocuments = await Promise.all(docs.map(async doc => {
+          let url = null;
+          try { url = await getSignedUrlSafe(doc.url); } catch (err) { console.error("requisitions read: could not sign document URL for", doc.filename, err.message); }
+          return { filename: doc.filename, url };
+        }));
+        return {
         id: r.id, requisitionNumber: r.requisition_number,
         sourceWorkOrderId: r.source_work_order_id, sourceWoId: r.source_wo_id, sourceWoAssetName: r.source_wo_asset_name,
         requestingDepartment: r.requesting_department, itemDescription: r.item_description,
@@ -1007,6 +1027,8 @@ export default async function handler(req, res) {
         grnNumber: r.grn_number, grnReceivedBy: r.grn_received_by, grnReceivedAt: r.grn_received_at,
         grnConditionNotes: r.grn_condition_notes, grnDocumentUrl: r.grn_document_url, grnDocumentFilename: r.grn_document_filename,
         resultingAssetId: r.resulting_asset_id, notes: r.notes,
+        documents: signedDocuments,
+        };
       }));
       return res.status(200).json({ requisitions });
     } catch (err) {

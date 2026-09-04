@@ -124,6 +124,7 @@ export default async function handler(req, res) {
     if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r, session.org);
     if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r, session.org);
     if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u, session.org);
+    if (action === "uploadRequisitionDocument") return handleUploadRequisitionDocument(req, res, session.u, session.org);
     if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r, session.org);
     return handleDecommission(req, res, session.u, session.org);
   }
@@ -2750,6 +2751,42 @@ async function handleUploadDocument(req, res, uploadedBy, organizationId) {
     return res.status(200).json({ success: true, filename, uploadedBy });
   } catch (err) {
     console.error("handleUploadDocument error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The same real, proven pattern as compliance documents above -
+// letting a real invoice or other genuine paperwork be attached to a
+// requisition at any point through its own lifecycle, not just the
+// one, single GRN document slot the schema already had.
+async function handleUploadRequisitionDocument(req, res, uploadedBy, organizationId) {
+  const { requisitionId, filename, contentType, fileBase64 } = req.body || {};
+  if (!requisitionId || !filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "requisitionId, filename, contentType, and fileBase64 are all required" });
+  }
+
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "File is too large — the upload limit is 5MB." });
+  }
+
+  try {
+    const { insert, getById } = await import("../lib/postgresClient.js");
+    const owner = await getById("requisitions", requisitionId).catch(() => null);
+    if (!owner || owner.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Requisition not found." });
+    }
+
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const docPath = `requisitions/${requisitionId}/documents/${Date.now()}-${filename}`;
+    await uploadFile(docPath, fileBase64, contentType);
+
+    await insert("requisition_documents", { requisition_id: requisitionId, url: docPath, filename, organization_id: organizationId });
+    await logRequisitionActivity("Document Uploaded", `${owner.requisition_number} — ${filename}`, uploadedBy, organizationId);
+
+    return res.status(200).json({ success: true, filename, uploadedBy });
+  } catch (err) {
+    console.error("handleUploadRequisitionDocument error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
