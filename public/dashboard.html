@@ -4327,6 +4327,19 @@ function scrollToAssetTrackingLog() {
 // on this page won't need an Excel export, so there's no reason to
 // pay for loading the library until it's actually asked for.
 let sheetJsLoadPromise = null;
+let barcodeScannerLoadPromise = null;
+function ensureBarcodeScannerLoaded() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (barcodeScannerLoadPromise) return barcodeScannerLoadPromise;
+  barcodeScannerLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Could not load the barcode scanner — check your connection and try again.'));
+    document.head.appendChild(script);
+  });
+  return barcodeScannerLoadPromise;
+}
 function ensureSheetJsLoaded() {
   if (window.XLSX) return Promise.resolve();
   if (sheetJsLoadPromise) return sheetJsLoadPromise;
@@ -8858,6 +8871,8 @@ async function parseInventorySheetExcel(file) {
 // plus Enter into whatever field is focused, the same as a keyboard,
 // so this is the genuinely practical way this gets used in the
 // field, not a camera-based reader.
+let sabScannerInstance = null;
+
 function openScanAssetBarcodeModal() {
   const overlay = document.createElement('div');
   overlay.id = 'scanAssetBarcodeOverlay';
@@ -8865,16 +8880,64 @@ function openScanAssetBarcodeModal() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Scan Asset Barcode</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Scan an existing physical tag with a barcode scanner, or type the code directly.</div>
-      <input id="sab_code" type="text" placeholder="Scan or type the barcode" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitScanAssetBarcode();}">
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Point the camera at an existing physical tag, or type the code below.</div>
+      <div id="sab_reader" style="width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:10px;min-height:220px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px">Starting camera…</div>
+      <input id="sab_code" type="text" placeholder="Or type the barcode" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitScanAssetBarcode();}">
       <div id="sab_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
-        <button onclick="document.getElementById('scanAssetBarcodeOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button onclick="closeScanAssetBarcodeModal()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
         <button id="sab_submit" onclick="submitScanAssetBarcode()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Look Up</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById('sab_code').focus();
+  startAssetBarcodeCameraScanner();
+}
+
+async function startAssetBarcodeCameraScanner() {
+  const readerEl = document.getElementById('sab_reader');
+  try {
+    await ensureBarcodeScannerLoaded();
+    if (!document.getElementById('sab_reader')) return; // modal was closed while the library was still loading
+    const formats = [
+      Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.ITF,
+    ];
+    sabScannerInstance = new Html5Qrcode('sab_reader', { formatsToSupport: formats, verbose: false });
+    await sabScannerInstance.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 120 } },
+      (decodedText) => {
+        // A real, successful scan - stop the camera immediately and
+        // resolve it the exact same way a typed or hardware-scanned
+        // code already does, reusing the same, already-proven logic.
+        document.getElementById('sab_code').value = decodedText;
+        stopAssetBarcodeCameraScanner();
+        submitScanAssetBarcode();
+      },
+      () => {} // per-frame "nothing decoded yet" noise - not a real error, ignored on purpose
+    );
+  } catch (err) {
+    // Real, common, expected cases: no camera on this device, or
+    // permission denied - the manual text field right below still
+    // works either way, so this fails quietly rather than blocking
+    // the whole modal.
+    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode below instead.</div>`;
+    console.error('Asset barcode camera scanner error:', err);
+  }
+}
+
+function stopAssetBarcodeCameraScanner() {
+  if (sabScannerInstance) {
+    sabScannerInstance.stop().catch(() => {}).finally(() => { sabScannerInstance = null; });
+  }
+}
+
+function closeScanAssetBarcodeModal() {
+  stopAssetBarcodeCameraScanner();
+  document.getElementById('scanAssetBarcodeOverlay')?.remove();
 }
 
 async function submitScanAssetBarcode() {
@@ -8891,7 +8954,7 @@ async function submitScanAssetBarcode() {
     if (!resp.ok) throw new Error(data.error || 'Could not look up this barcode');
 
     if (!data.needsLink) {
-      document.getElementById('scanAssetBarcodeOverlay')?.remove();
+      closeScanAssetBarcodeModal();
       const idx = assets.findIndex(a => a.recordId === data.recordId);
       if (idx !== -1) { showDetail(idx); switchTab('assets'); }
       else alert(`Linked to ${data.assetId} — ${data.assetName}, but couldn't open it directly. Search for it in the register.`);
@@ -8899,7 +8962,7 @@ async function submitScanAssetBarcode() {
     }
 
     // Not linked yet - a real, one-time step: pick which asset this tag belongs to
-    document.getElementById('scanAssetBarcodeOverlay')?.remove();
+    closeScanAssetBarcodeModal();
     openLinkAssetBarcodeModal(code);
   } catch (err) {
     errorBox.textContent = err.message;
