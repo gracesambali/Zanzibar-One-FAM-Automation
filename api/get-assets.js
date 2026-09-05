@@ -1019,13 +1019,19 @@ export default async function handler(req, res) {
         createdAt: c.created_at, documentCount: docsCountById[c.id] || 0,
         hasBarcode: hasBarcodeById.has(c.id), workOrderCount: woCountByAssetId[c.asset_id] || 0,
       })).sort((a, b) => {
-        // The real, most-complete-looking copy floats to the top by
-        // default - more real history attached first, oldest as the
-        // tiebreaker - but this is only ever a starting suggestion; a
-        // person still reviews and can pick differently.
-        const scoreA = a.documentCount + a.workOrderCount + (a.hasBarcode ? 1 : 0);
-        const scoreB = b.documentCount + b.workOrderCount + (b.hasBarcode ? 1 : 0);
-        if (scoreB !== scoreA) return scoreB - scoreA;
+        // Confirmed directly as requested: the earlier, lower-numbered
+        // asset id is kept by default, not whichever happens to carry
+        // the most history - that's usually the real, original entry,
+        // with later, higher numbers being the accidental re-upload
+        // copies. The real, trailing number in the asset id itself is
+        // the actual signal (e.g. "-001" before "-002"), with the real
+        // creation date as a fallback for the rare case two ids don't
+        // parse cleanly. Every real completeness signal is still shown
+        // for each member either way, so the choice stays fully
+        // informed - this only changes which one is pre-selected.
+        const numA = parseInt((a.assetId || '').match(/(\d+)$/)?.[1], 10);
+        const numB = parseInt((b.assetId || '').match(/(\d+)$/)?.[1], 10);
+        if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numA - numB;
         return new Date(a.createdAt) - new Date(b.createdAt);
       }));
 
