@@ -974,6 +974,68 @@ export default async function handler(req, res) {
   // Every real requisition, joined with its real source work order
   // (if any) and its real chosen vendor (if any) — so the list always
   // shows genuine identities, not just stored IDs.
+  // Confirmed directly as needed for a real, recurring situation, not
+  // a one-off cleanup - re-uploading a sheet, or two overlapping
+  // sheets, can leave real duplicate assets already sitting in the
+  // register. Groups by the exact same real, tight signal the upload
+  // path's own dedup logic already uses - name (case-insensitive)
+  // together with building and facility - so this reads as the same
+  // real "these are probably the same physical thing" definition
+  // throughout the app, not a separate, looser one. Each real member
+  // of a group comes back annotated with concrete signals (documents
+  // attached, a linked barcode, real work order history) so a person
+  // reviewing the group can tell which copy is the genuinely real one
+  // at a glance, rather than guessing from the name and date alone.
+  if (req.query.findDuplicateAssets === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const componentsResult = await pgQuery(
+        "select id, asset_id, name, building, facility, created_at from components where organization_id = $1 and active = true",
+        [session.org]
+      );
+      const groups = {};
+      for (const c of componentsResult.rows) {
+        const key = `${(c.name || '').trim().toLowerCase()}|||${c.building || ''}|||${c.facility || ''}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
+      }
+      const duplicateGroups = Object.values(groups).filter(g => g.length > 1);
+      if (duplicateGroups.length === 0) return res.status(200).json({ duplicateGroups: [] });
+
+      const allIds = duplicateGroups.flat().map(c => c.id);
+      const allAssetIds = duplicateGroups.flat().map(c => c.asset_id);
+
+      const [docsResult, barcodeResult, woResult] = await Promise.all([
+        pgQuery("select component_id, count(*) as c from component_documents where component_id = any($1) group by component_id", [allIds]),
+        pgQuery("select asset_record_id from asset_barcode_links where asset_record_id = any($1)", [allIds]),
+        pgQuery("select asset_id, count(*) as c from work_orders where asset_id = any($1) group by asset_id", [allAssetIds]),
+      ]);
+      const docsCountById = Object.fromEntries(docsResult.rows.map(r => [r.component_id, Number(r.c)]));
+      const hasBarcodeById = new Set(barcodeResult.rows.map(r => r.asset_record_id));
+      const woCountByAssetId = Object.fromEntries(woResult.rows.map(r => [r.asset_id, Number(r.c)]));
+
+      const annotated = duplicateGroups.map(group => group.map(c => ({
+        recordId: c.id, assetId: c.asset_id, name: c.name, building: c.building, facility: c.facility,
+        createdAt: c.created_at, documentCount: docsCountById[c.id] || 0,
+        hasBarcode: hasBarcodeById.has(c.id), workOrderCount: woCountByAssetId[c.asset_id] || 0,
+      })).sort((a, b) => {
+        // The real, most-complete-looking copy floats to the top by
+        // default - more real history attached first, oldest as the
+        // tiebreaker - but this is only ever a starting suggestion; a
+        // person still reviews and can pick differently.
+        const scoreA = a.documentCount + a.workOrderCount + (a.hasBarcode ? 1 : 0);
+        const scoreB = b.documentCount + b.workOrderCount + (b.hasBarcode ? 1 : 0);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      }));
+
+      return res.status(200).json({ duplicateGroups: annotated });
+    } catch (err) {
+      console.error("findDuplicateAssets error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   if (req.query.requisitions === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");

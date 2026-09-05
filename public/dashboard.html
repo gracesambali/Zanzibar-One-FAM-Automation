@@ -1838,6 +1838,7 @@ function renderAssets() {
   const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
 
   let html = `<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:12px">
+    <button onclick="openFindDuplicatesModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">⚠ Find Duplicates</button>
     <button onclick="openUploadAssetSheetModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Sheet</button>
     <button onclick="openAddAssetForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Asset</button>
   </div>`;
@@ -9124,6 +9125,105 @@ async function submitLinkAssetBarcode(code, recordId) {
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
+  }
+}
+
+// Confirmed directly as needed for a real, recurring situation, not
+// a one-off cleanup: re-uploading a sheet, or two overlapping ones,
+// can leave real duplicate assets already sitting in the register,
+// and reviewing them one by one through the ordinary Asset Register
+// isn't realistic at any real scale. Each group is annotated with
+// real signals (documents, a linked barcode, real work order count)
+// so a person can judge at a glance which copy actually has real
+// history attached - the backend already suggests that one as the
+// default "keep," but every group stays fully reviewable and
+// overridable before anything is actually removed. Removal reuses
+// the exact same, already-proven decommission action other real
+// removals in this app already use - safe and reversible, never a
+// hard, permanent delete.
+let duplicateGroupsCache = [];
+
+async function openFindDuplicatesModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'findDuplicatesOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:600px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column">
+      <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px">Find Duplicate Assets</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Groups of assets that share the same name, building, and facility — the exact same real signal used to catch duplicates during upload.</div>
+      <div id="fd_body" style="overflow-y:auto;flex:1;min-height:100px">Loading…</div>
+      <div id="fd_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button onclick="document.getElementById('findDuplicatesOverlay').remove()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+        <button id="fd_submit" onclick="submitRemoveDuplicates()" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--red);color:#fff;font-weight:600;font-size:13px;cursor:pointer;display:none">Remove Selected Duplicates</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/get-assets?findDuplicateAssets=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not check for duplicates');
+    duplicateGroupsCache = data.duplicateGroups || [];
+    renderDuplicateGroups();
+  } catch (err) {
+    document.getElementById('fd_body').innerHTML = `<div style="color:var(--red);font-size:13px">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderDuplicateGroups() {
+  const body = document.getElementById('fd_body');
+  const submitBtn = document.getElementById('fd_submit');
+  if (duplicateGroupsCache.length === 0) {
+    body.innerHTML = `<div style="text-align:center;padding:30px 20px;color:var(--green);font-weight:600">✓ No duplicates found.</div>`;
+    submitBtn.style.display = 'none';
+    return;
+  }
+  submitBtn.style.display = 'block';
+  body.innerHTML = duplicateGroupsCache.map((group, gi) => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">${escapeHtml(group[0].name)} — ${escapeHtml(group[0].building || '—')}</div>
+      ${group.map((m, mi) => `
+        <label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;cursor:pointer;font-size:12.5px">
+          <input type="radio" name="fd_keep_${gi}" value="${mi}" ${mi === 0 ? 'checked' : ''} style="margin-top:3px">
+          <div>
+            <div style="font-weight:600;color:var(--navy)">${escapeHtml(m.assetId)} — keep this one</div>
+            <div style="color:var(--muted)">Added ${new Date(m.createdAt).toLocaleDateString()} · ${m.documentCount} document(s) · ${m.hasBarcode ? 'has a linked barcode' : 'no barcode linked'} · ${m.workOrderCount} work order(s)</div>
+          </div>
+        </label>`).join('')}
+    </div>`).join('');
+}
+
+async function submitRemoveDuplicates() {
+  const errorBox = document.getElementById('fd_error');
+  const btn = document.getElementById('fd_submit');
+  errorBox.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Removing…';
+
+  try {
+    const toRemove = [];
+    duplicateGroupsCache.forEach((group, gi) => {
+      const keepIdx = Number(document.querySelector(`input[name="fd_keep_${gi}"]:checked`).value);
+      group.forEach((m, mi) => { if (mi !== keepIdx) toRemove.push({ recordId: m.recordId, keptAssetId: group[keepIdx].assetId }); });
+    });
+
+    for (const item of toRemove) {
+      const resp = await fetch('/api/manage-asset', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recordId: item.recordId, reason: `Removed as a duplicate — kept ${item.keptAssetId} instead` }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `Could not remove one of the duplicates`);
+    }
+
+    document.getElementById('findDuplicatesOverlay')?.remove();
+    await loadAssetsAndInit();
+    renderAssets();
+    alert(`${toRemove.length} duplicate asset(s) removed.`);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Remove Selected Duplicates';
   }
 }
 
