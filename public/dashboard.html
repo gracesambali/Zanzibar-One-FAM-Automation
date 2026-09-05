@@ -9250,7 +9250,7 @@ async function openUploadAssetSheetModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date, Room/Zone, Critical Importance. Only the first five are required — matched by what each header says, not by position.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date, Room/Zone (or separate Room and Zone columns), Critical Importance. Only the first five are required — matched by what each header says, not by position.</div>
       <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
       ${knownPairsHtml}
       <div style="font-size:10.5px;color:var(--muted);margin:8px 0 14px">Don't see the building you need? Add it under Asset Tracking's facility settings first, then upload.</div>
@@ -9286,7 +9286,9 @@ const ASSET_SHEET_HEADER_ALIASES = {
   model: ['model'],
   acquisitionCost: ['acquisition cost', 'acquisition cost (tzs)', 'cost', 'acquisition cost tzs'],
   installDate: ['install date', 'installation date', 'date installed'],
-  room: ['room', 'room/zone', 'room zone', 'zone', 'location'],
+  roomZone: ['room/zone', 'room zone', 'location'],
+  room: ['room'],
+  zone: ['zone'],
   criticality: ['critical importance', 'criticality', 'importance'],
 };
 
@@ -9307,10 +9309,19 @@ function buildAssetSheetHeaderMap(headerRow) {
 function assetSheetRowFromColumns(c, headerMap) {
   const get = (field) => (headerMap[field] !== undefined ? (c[headerMap[field]] || '') : '');
   const rawCriticality = get('criticality').trim().toLowerCase();
+  // Confirmed directly as the real cause of a reported gap: Room and
+  // Zone are genuinely separate columns in some real sheets, not
+  // always one combined "Room/Zone" column - combined here into the
+  // single, real field the backend actually stores, rather than
+  // silently picking only whichever one happened to be found first.
+  const roomZoneCombined = get('roomZone').trim();
+  const roomOnly = get('room').trim();
+  const zoneOnly = get('zone').trim();
+  const combinedRoomZone = roomZoneCombined || [roomOnly, zoneOnly].filter(Boolean).join(' - ');
   return {
     name: get('name'), nature: get('nature'), category: get('category'), building: get('building'), facility: get('facility'),
     system: get('system'), manufacturer: get('manufacturer'), model: get('model'), acquisitionCost: get('acquisitionCost'), installDate: get('installDate'),
-    room: get('room'), criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
+    room: combinedRoomZone, criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
   };
 }
 
