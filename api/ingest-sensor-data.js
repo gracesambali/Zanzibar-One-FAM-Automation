@@ -80,23 +80,27 @@ export default async function handler(req, res) {
     let targetRangeDisplay;
 
     if (type === "door" || type === "equipment") {
-      // Binary sensors: 0 = normal, 1 = abnormal. No numeric range to parse.
-      withinRange = reading === 0;
-      targetRangeDisplay = type === "door" ? "Closed (0)" : "OK (0)";
+      // Binary sensors: 0 = normal, 1 = abnormal by default - but now
+      // genuinely configurable per sensor (e.g. a door meant to stay
+      // open, not closed), not permanently hardcoded.
+      const expectedValue = sensor.target_config?.expectedValue ?? 0;
+      withinRange = reading === expectedValue;
+      targetRangeDisplay = type === "door" ? `${expectedValue === 0 ? "Closed" : "Open"} (${expectedValue})` : `${expectedValue === 0 ? "OK" : "Fault"} (${expectedValue})`;
     } else if (type === "alarm") {
       // Confirmed directly: the BMS sends real, named fault codes, not
       // just a bare signal - reading stays binary (0/1) so it's still
       // chartable as fault occurrences over time, but the real fault
       // detail flows into the alert text and log instead of a generic
       // "OK/Fault" label, so a person actually knows what's wrong.
-      withinRange = reading === 0;
-      targetRangeDisplay = reading === 0 ? "OK (0)" : (fault_message || "Fault (unspecified)");
+      const expectedValue = sensor.target_config?.expectedValue ?? 0;
+      withinRange = reading === expectedValue;
+      targetRangeDisplay = reading === expectedValue ? `OK (${expectedValue})` : (fault_message || "Fault (unspecified)");
     } else if (type === "fuel_level") {
       const fuelCheck = await checkFuelLevelDrop(device_id, reading, component, timestamp);
       withinRange = fuelCheck.withinRange;
       targetRangeDisplay = fuelCheck.display;
     } else if (SPIKE_TYPES.includes(type)) {
-      const spikeCheck = await checkForSpike(device_id, reading);
+      const spikeCheck = await checkForSpike(device_id, reading, sensor.target_config?.spikeThresholdPercent);
       withinRange = spikeCheck.withinRange;
       targetRangeDisplay = spikeCheck.display;
     } else {
@@ -210,7 +214,7 @@ async function checkFuelLevelDrop(sensorId, reading, component, currentTimestamp
 // call a spike against, so this returns null (not evaluated) rather
 // than guessing - matching the same "no target range set" null case
 // checkWithinRange already returns above.
-async function checkForSpike(sensorId, reading) {
+async function checkForSpike(sensorId, reading, thresholdPercentOverride) {
   const { query } = await import("../lib/postgresClient.js");
   const result = await query(
     `select avg(value) as avg_value, count(*) as reading_count
@@ -223,11 +227,12 @@ async function checkForSpike(sensorId, reading) {
     return { withinRange: null, display: `(building history — ${count}/${SPIKE_MIN_PRIOR_READINGS} readings so far)` };
   }
   const avg = Number(result.rows[0].avg_value);
-  const threshold = avg * SPIKE_THRESHOLD_MULTIPLIER;
+  const multiplier = 1 + (Number(thresholdPercentOverride ?? (SPIKE_THRESHOLD_MULTIPLIER - 1) * 100) / 100);
+  const threshold = avg * multiplier;
   const isSpike = reading > threshold;
   return {
     withinRange: !isSpike,
-    display: `${SPIKE_LOOKBACK_DAYS}-day avg ${avg.toFixed(1)}, spike threshold ${threshold.toFixed(1)} (+${Math.round((SPIKE_THRESHOLD_MULTIPLIER - 1) * 100)}%)`,
+    display: `${SPIKE_LOOKBACK_DAYS}-day avg ${avg.toFixed(1)}, spike threshold ${threshold.toFixed(1)} (+${Math.round((multiplier - 1) * 100)}%)`,
   };
 }
 

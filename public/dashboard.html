@@ -2849,7 +2849,7 @@ function showSensorDetail(recordId) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
           <div style="display:flex;gap:8px;flex-shrink:0">
-            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}', ${s.generatorRatedConsumptionLph ?? 'null'}, ${s.generatorTankCapacityLiters ?? 'null'}, ${s.fuelPricePerLiterTzs ?? 'null'})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
+            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}', ${s.generatorRatedConsumptionLph ?? 'null'}, ${s.generatorTankCapacityLiters ?? 'null'}, ${s.fuelPricePerLiterTzs ?? 'null'}, ${s.expectedValue ?? 'null'}, ${s.spikeThresholdPercent ?? 'null'})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
             ${s.isDemo
               ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">🗑 Remove Sample Sensor</button>`
               : `<button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>`}
@@ -3031,11 +3031,13 @@ let editSensorSelectedAsset = null;
 let editSensorRecordId = null;
 let editSensorId = null;
 
-function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange, currentRatedConsumptionLph, currentTankCapacityLiters, currentFuelPricePerLiterTzs) {
+function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange, currentRatedConsumptionLph, currentTankCapacityLiters, currentFuelPricePerLiterTzs, currentExpectedValue, currentSpikeThresholdPercent) {
   editSensorRecordId = recordId;
   editSensorId = sensorId;
   editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
   const typeOptions = BMS_SENSOR_TYPES.map(t => `<option value="${t.value}" ${t.value === currentSensorType ? 'selected' : ''}>${t.label}</option>`).join('');
+  const isBinaryType = ['door', 'equipment', 'alarm'].includes(currentSensorType);
+  const isSpikeType = ['runtime', 'electrical', 'water'].includes(currentSensorType);
   showBmsModal('Edit Sensor', `
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Linked Asset</label>
     <input id="es_assetSearch" type="text" placeholder="Search by name or asset id" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;${editSensorSelectedAsset ? 'display:none' : ''}" oninput="renderEditSensorAssetResults()">
@@ -3055,6 +3057,17 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Fuel Price (TZS/L)</label>
       <input id="es_genPrice" type="number" step="any" value="${currentFuelPricePerLiterTzs ?? ''}" placeholder="e.g. 3000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
     </div>
+    <div id="es_binaryRow" style="${isBinaryType ? '' : 'display:none'}">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Normal / Expected State</label>
+      <select id="es_expectedValue" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="0" ${(currentExpectedValue ?? 0) === 0 ? 'selected' : ''}>${currentSensorType === 'door' ? 'Closed (0)' : 'OK (0)'} — normal</option>
+        <option value="1" ${(currentExpectedValue ?? 0) === 1 ? 'selected' : ''}>${currentSensorType === 'door' ? 'Open (1)' : 'Fault (1)'} — normal</option>
+      </select>
+    </div>
+    <div id="es_spikeRow" style="${isSpikeType ? '' : 'display:none'}">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Spike Threshold (% above 14-day average)</label>
+      <input id="es_spikeThreshold" type="number" step="any" value="${currentSpikeThresholdPercent ?? 40}" placeholder="e.g. 40" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    </div>
     <div id="es_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
     <button onclick="submitEditSensor()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
   `);
@@ -3064,6 +3077,8 @@ function toggleEditSensorTypeFields() {
   const type = document.getElementById('es_sensorType').value;
   document.getElementById('es_targetRangeRow').style.display = (type === 'temperature' || type === 'humidity') ? 'block' : 'none';
   document.getElementById('es_fuelConfigRow').style.display = (type === 'fuel_level') ? 'block' : 'none';
+  document.getElementById('es_binaryRow').style.display = ['door', 'equipment', 'alarm'].includes(type) ? 'block' : 'none';
+  document.getElementById('es_spikeRow').style.display = ['runtime', 'electrical', 'water'].includes(type) ? 'block' : 'none';
 }
 
 function renderEditSensorAssetResults() {
@@ -3121,6 +3136,14 @@ async function submitEditSensor() {
     body.tankCapacityLiters = document.getElementById('es_genTank').value || null;
     body.fuelPricePerLiterTzs = document.getElementById('es_genPrice').value || null;
   }
+  const binaryRow = document.getElementById('es_binaryRow');
+  if (binaryRow.style.display !== 'none') {
+    body.expectedValue = document.getElementById('es_expectedValue').value;
+  }
+  const spikeRow = document.getElementById('es_spikeRow');
+  if (spikeRow.style.display !== 'none') {
+    body.spikeThresholdPercent = document.getElementById('es_spikeThreshold').value;
+  }
   const resp = await fetch('/api/sensors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -3143,6 +3166,17 @@ function openAddSensorModal() {
     <div id="as_targetRangeRow" style="display:none">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Range</label>
       <input id="as_targetRange" type="text" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    </div>
+    <div id="as_binaryRow" style="display:none">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Normal / Expected State</label>
+      <select id="as_expectedValue" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+        <option value="0" selected>Closed / OK (0) — normal</option>
+        <option value="1">Open / Fault (1) — normal</option>
+      </select>
+    </div>
+    <div id="as_spikeRow" style="display:none">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Spike Threshold (% above 14-day average)</label>
+      <input id="as_spikeThreshold" type="number" step="any" value="40" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
     </div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor / Device ID</label>
     <input id="as_sensorId" placeholder="Pick an asset above to suggest one" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px;box-sizing:border-box">
@@ -3199,6 +3233,8 @@ function suggestAddSensorId() {
 function toggleAddSensorTargetRange() {
   const type = document.getElementById('as_sensorType').value;
   document.getElementById('as_targetRangeRow').style.display = (type === 'temperature' || type === 'humidity') ? 'block' : 'none';
+  document.getElementById('as_binaryRow').style.display = ['door', 'equipment', 'alarm'].includes(type) ? 'block' : 'none';
+  document.getElementById('as_spikeRow').style.display = ['runtime', 'electrical', 'water'].includes(type) ? 'block' : 'none';
 }
 
 async function submitAddSensor() {
@@ -3215,6 +3251,12 @@ async function submitAddSensor() {
   };
   if (document.getElementById('as_targetRangeRow').style.display !== 'none') {
     body.targetRange = document.getElementById('as_targetRange').value.trim();
+  }
+  if (document.getElementById('as_binaryRow').style.display !== 'none') {
+    body.expectedValue = document.getElementById('as_expectedValue').value;
+  }
+  if (document.getElementById('as_spikeRow').style.display !== 'none') {
+    body.spikeThresholdPercent = document.getElementById('as_spikeThreshold').value;
   }
   const resp = await fetch('/api/sensors', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
