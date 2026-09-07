@@ -2849,7 +2849,10 @@ function showSensorDetail(recordId) {
       <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
-          <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer;flex-shrink:0">Decommission</button>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            ${s.isDemo ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">🗑 Remove Sample Sensor</button>` : ''}
+            <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>
+          </div>
         </div>
         <div class="detail-grid" style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
           <div class="detail-field"><div class="detail-field-label">Asset ID</div><div class="detail-field-value">${s.assetId || '—'}</div></div>
@@ -3216,6 +3219,17 @@ function showBmsModal(title, bodyHtml) {
 function closeBmsModal() {
   const overlay = document.getElementById('bms-modal-overlay');
   if (overlay) overlay.remove();
+}
+
+async function removeDemoSensor(sensorId) {
+  if (!confirm(`Remove the sample sensor "${sensorId}" and its sample readings? This cannot be undone.`)) return;
+  const resp = await fetch('/api/sensors', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'removeDemoSensor', sensorId }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { alert(data.error || 'Could not remove this sample sensor'); return; }
+  renderSensorMonitor();
 }
 
 async function decommissionSensor(sensorId, assetName) {
