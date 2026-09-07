@@ -125,6 +125,7 @@ export default async function handler(req, res) {
     if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r, session.org);
     if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u, session.org);
     if (action === "uploadRequisitionDocument") return handleUploadRequisitionDocument(req, res, session.u, session.org);
+    if (action === "recordFuelFillEvent") return handleRecordFuelFillEvent(req, res, session.u, session.org);
     if (action === "registerRequisitionAsAsset") return handleRegisterRequisitionAsAsset(req, res, session.u, session.r, session.org);
     return handleDecommission(req, res, session.u, session.org);
   }
@@ -2249,6 +2250,7 @@ const EDITABLE_FIELDS = [
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
   "Status", "Criticality", "Note", "TRA Class",
+  "Generator Rated Consumption (L/h)", "Generator Tank Capacity (L)", "Fuel Price (TZS/L)",
 ];
 
 const EDITABLE_FIELD_COLUMNS = {
@@ -2256,6 +2258,9 @@ const EDITABLE_FIELD_COLUMNS = {
   "Asset Category": "asset_category", "Floor/Level": "floor_level", "Zone": "zone", "Room/Zone": "room_zone",
   "Manufacturer": "manufacturer", "Model": "model", "Install Date": "install_date",
   "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
+  "Generator Rated Consumption (L/h)": "generator_rated_consumption_lph",
+  "Generator Tank Capacity (L)": "generator_tank_capacity_liters",
+  "Fuel Price (TZS/L)": "fuel_price_per_liter_tzs",
   "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
   "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
   "TRA Class": "tra_class_id",
@@ -2794,9 +2799,33 @@ async function handleUploadRequisitionDocument(req, res, uploadedBy, organizatio
   }
 }
 
-// Clears the "Needs Technical Review" flag once an Engineer has actually
-// looked at what a non-technical person entered and confirmed it's
-// correct (or fixed it via the normal Edit form first).
+// Records the real, invoiced fact of a fuel delivery for a specific
+// generator - confirmed directly as needed to reconcile against what
+// the real, actual tank-level sensor shows after the fill, catching a
+// real under-delivery (less fuel physically loaded than what was
+// invoiced) as a genuine mismatch, not a guess.
+async function handleRecordFuelFillEvent(req, res, recordedBy, organizationId) {
+  const { generatorAssetId, fillDate, invoicedLiters, invoiceReference, notes } = req.body || {};
+  if (!generatorAssetId || !fillDate || !invoicedLiters) {
+    return res.status(400).json({ error: "generatorAssetId, fillDate, and invoicedLiters are all required" });
+  }
+  try {
+    const { insert, getByColumn } = await import("../lib/postgresClient.js");
+    const generator = await getByColumn("components", "asset_id", generatorAssetId, organizationId).catch(() => null);
+    if (!generator) return res.status(404).json({ error: "Generator asset not found." });
+
+    await insert("fuel_fill_events", {
+      organization_id: organizationId, generator_asset_id: generatorAssetId,
+      fill_date: fillDate, invoiced_liters: Number(invoicedLiters),
+      invoice_reference: invoiceReference || null, recorded_by: recordedBy, notes: notes || null,
+    });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("recordFuelFillEvent error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleClearTechnicalReview(req, res, clearedBy, organizationId) {
   const { recordId } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
