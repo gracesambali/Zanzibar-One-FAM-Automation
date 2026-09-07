@@ -1825,6 +1825,72 @@ async function renderMaintCostSection(a) {
   el.innerHTML = html;
 }
 
+function buildFuelMonitorHtml(data) {
+  const pct = data.tankCapacityLiters && data.currentLevel != null ? Math.min((data.currentLevel / data.tankCapacityLiters) * 100, 100) : null;
+  let fuelHtml = `<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+    <div>
+      <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase">Current Level</div>
+      <div style="font-size:22px;font-weight:700;color:var(--navy)">${data.currentLevel != null ? `${data.currentLevel}L` : '—'}</div>
+    </div>
+    <div>
+      <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase">Running Hours (this month)</div>
+      <div style="font-size:22px;font-weight:700;color:var(--navy)">${data.runningHoursThisMonth}h</div>
+    </div>
+    <div>
+      <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase">Estimated Cost (this month)</div>
+      <div style="font-size:22px;font-weight:700;color:var(--navy)">${data.estimatedFuelCostThisMonth != null ? formatCurrency(data.estimatedFuelCostThisMonth) : '—'}</div>
+    </div>
+  </div>`;
+
+  if (pct !== null) {
+    fuelHtml += `<div style="height:10px;background:#F0F2F6;border-radius:6px;overflow:hidden;margin-bottom:14px">
+      <div style="height:100%;width:${pct}%;background:${pct < 20 ? 'var(--red)' : pct < 40 ? 'var(--amber)' : 'var(--green)'}"></div>
+    </div>`;
+  }
+
+  if (data.theftFlags && data.theftFlags.length > 0) {
+    fuelHtml += `<div style="background:var(--red-bg);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px">⚠ ${data.theftFlags.length} possible fuel loss event(s) this month</div>
+      ${data.theftFlags.map(f => `<div style="font-size:11.5px;color:var(--red)">${new Date(f.timestamp).toLocaleString()} — ${f.litersLost.toFixed(1)}L lost, a rate the generator could not genuinely burn on its own (${f.dropRateLph.toFixed(1)} L/h vs its own rated ${f.ratedRateLph} L/h)</div>`).join('')}
+    </div>`;
+  }
+
+  if (data.underDeliveryFlags && data.underDeliveryFlags.length > 0) {
+    fuelHtml += `<div style="background:#fef3c7;border-radius:8px;padding:10px 12px">
+      <div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:4px">⚠ ${data.underDeliveryFlags.length} fuel delivery short of what was invoiced</div>
+      ${data.underDeliveryFlags.map(f => `<div style="font-size:11.5px;color:var(--amber)">${new Date(f.fillDate).toLocaleDateString()} — invoiced ${f.invoicedLiters}L, only ${f.actualLitersDelivered.toFixed(1)}L genuinely arrived (${f.shortfallLiters.toFixed(1)}L short)</div>`).join('')}
+    </div>`;
+  }
+
+  return fuelHtml;
+}
+
+async function renderFuelMonitorSection(a) {
+  const el = document.getElementById('fuelMonitorContent');
+  if (!el) return;
+  try {
+    const resp = await fetch(`/api/get-assets?generatorFuelSummary=true&assetId=${encodeURIComponent(a.id)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load fuel data');
+    el.innerHTML = buildFuelMonitorHtml(data);
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px">Could not load fuel data: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function renderBmsFuelMonitorSection(assetId) {
+  const el = document.getElementById('bmsFuelMonitorContent');
+  if (!el) return;
+  try {
+    const resp = await fetch(`/api/get-assets?generatorFuelSummary=true&assetId=${encodeURIComponent(assetId)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load fuel data');
+    el.innerHTML = buildFuelMonitorHtml(data);
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px">Could not load fuel data: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
 function renderAssets() {
   currentAssetDetailIdx = null;
   const systems = ["All", ...getSystemsInUse().map(s=>s.name)];
@@ -2173,6 +2239,18 @@ function showDetail(idx) {
     </div>`;
   }
 
+  // Confirmed directly, discussed and agreed in full before building:
+  // the same real fuel summary shown here too, on the generator's own
+  // Asset Register page, not just in BMS - only rendered at all when
+  // this specific asset genuinely has fuel monitoring configured,
+  // since most assets aren't generators.
+  if (a.generatorRatedConsumptionLph) {
+    html += `<div id="fuelMonitorSection" style="padding:16px 24px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Generator Fuel Monitoring</div>
+      <div id="fuelMonitorContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+  }
+
   // ISO Maintenance Checklist — auto-matched to this asset's type from its name
   html += `<div id="checklistSection" style="padding:16px 24px;border-top:1px solid var(--border)">
     <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div>
@@ -2218,6 +2296,7 @@ function showDetail(idx) {
   document.getElementById('view-assets').innerHTML = html;
 
   if (canSeeCost) renderMaintCostSection(a);
+  if (a.generatorRatedConsumptionLph) renderFuelMonitorSection(a);
 
   // Load edit log
   fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(a.id))
@@ -2345,6 +2424,18 @@ function openEditForm(idx) {
       <input id="ea_lifespan" type="number" value="${a.lifespan||15}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       ` : ''}
 
+      ${a.system === 'Electrical' ? `
+      <div style="background:var(--navy-pale);border-radius:8px;padding:12px;margin-bottom:10px">
+        <div style="font-size:11.5px;font-weight:700;color:var(--navy);margin-bottom:8px">Generator Fuel Monitoring (if applicable)</div>
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Rated Consumption (L/h at rated load)</label>
+        <input id="ea_genRate" type="number" step="any" value="${a.generatorRatedConsumptionLph || ''}" placeholder="e.g. 20" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tank Capacity (L)</label>
+        <input id="ea_genTank" type="number" step="any" value="${a.generatorTankCapacityLiters || ''}" placeholder="e.g. 500" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Fuel Price (TZS/L)</label>
+        <input id="ea_genPrice" type="number" step="any" value="${a.fuelPricePerLiterTzs || ''}" placeholder="e.g. 3000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+      </div>
+      ` : ''}
+
       ${['procurement', 'system_admin', 'business_owner'].includes(currentUserRole) ? `
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">TRA Class</label>
       <select id="ea_traClass" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -2430,6 +2521,12 @@ async function submitAssetEdit(recordId) {
   if (costField) {
     changes["Acquisition Cost (TZS)"] = costField.value;
     changes["Expected Lifespan (Years)"] = document.getElementById('ea_lifespan').value;
+  }
+  const genRateField = document.getElementById('ea_genRate');
+  if (genRateField) {
+    changes["Generator Rated Consumption (L/h)"] = genRateField.value;
+    changes["Generator Tank Capacity (L)"] = document.getElementById('ea_genTank').value;
+    changes["Fuel Price (TZS/L)"] = document.getElementById('ea_genPrice').value;
   }
   const traClassField = document.getElementById('ea_traClass');
   if (traClassField) {
@@ -2761,6 +2858,13 @@ function showSensorDetail(recordId) {
         </div>
       </div>
 
+      ${s.sensorType === 'fuel_level' ? `
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Generator Fuel Monitoring</div>
+        <div id="bmsFuelMonitorContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+      </div>
+      ` : ''}
+
       <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
         <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:2px">Reading History</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Last 100 readings</div>
@@ -2793,6 +2897,7 @@ function showSensorDetail(recordId) {
   `;
 
   loadSensorHistoryChart(s.sensorId);
+  if (s.sensorType === 'fuel_level' && s.assetId) renderBmsFuelMonitorSection(s.assetId);
 }
 
 // Real reading history, fetched after the instant detail render above
@@ -2889,6 +2994,7 @@ const BMS_SENSOR_TYPES = [
   { value: 'runtime', label: 'Runtime (hours)' },
   { value: 'electrical', label: 'Electrical (kWh)' },
   { value: 'water', label: 'Water (Liters)' },
+  { value: 'fuel_level', label: 'Fuel Level (Liters)' },
 ];
 
 

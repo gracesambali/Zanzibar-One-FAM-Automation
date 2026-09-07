@@ -1938,3 +1938,40 @@ create table if not exists requisition_documents (
   uploaded_at     timestamptz not null default now()
 );
 create index if not exists idx_requisition_documents_requisition on requisition_documents (requisition_id);
+
+-- ============================================================
+-- Generator fuel monitoring - confirmed directly, discussed and
+-- agreed in full before building: a single fuel-level sensor (not a
+-- separate hour sensor) reports real tank level over time into the
+-- existing, generic sensors/readings pipeline. Running hours are
+-- derived from the pattern of level drops, not measured or entered
+-- directly - a drop consistent with the generator's own real, rated
+-- consumption rate is counted as running time; a drop far too fast to
+-- be genuine engine consumption is flagged as a likely theft event
+-- instead. Reconciled against real, recorded fuel deliveries to also
+-- catch under-delivery (invoiced litres not matching what the tank
+-- level actually shows after a fill).
+-- ============================================================
+alter table components add column if not exists generator_rated_consumption_lph numeric;
+alter table components add column if not exists generator_tank_capacity_liters numeric;
+alter table components add column if not exists fuel_price_per_liter_tzs numeric;
+
+-- The real, invoiced fact of a fuel delivery - what was actually paid
+-- for, when. The genuine tank-level change around that same time is
+-- computed on read from the real sensor readings already being
+-- collected, not duplicated here, so a mismatch between the two is
+-- always checked against the real, current data rather than a
+-- snapshot that could go stale.
+create table if not exists fuel_fill_events (
+  id                  uuid primary key default gen_random_uuid(),
+  organization_id     uuid not null references organizations(id),
+  generator_asset_id  text not null,
+  fill_date           timestamptz not null,
+  invoiced_liters     numeric not null,
+  invoice_reference   text,
+  recorded_by         text,
+  notes               text,
+  created_at          timestamptz not null default now()
+);
+create index if not exists idx_fuel_fill_events_generator on fuel_fill_events (generator_asset_id, fill_date desc);
+create index if not exists idx_fuel_fill_events_org on fuel_fill_events (organization_id);

@@ -986,6 +986,95 @@ export default async function handler(req, res) {
   // attached, a linked barcode, real work order history) so a person
   // reviewing the group can tell which copy is the genuinely real one
   // at a glance, rather than guessing from the name and date alone.
+  // Confirmed directly, discussed and agreed in full before building:
+  // running hours derived from the real, genuine pattern of tank-level
+  // drops - a drop consistent with this specific generator's own real,
+  // rated consumption rate is genuine running time; a drop far faster
+  // than the engine could ever physically burn, even at full load, is
+  // flagged as a likely theft event instead, not counted as running at
+  // all. Reconciled against real, recorded fuel deliveries
+  // (fuel_fill_events) to also catch a genuine under-delivery - less
+  // fuel physically loaded than what was actually invoiced. Shared by
+  // both real surfaces this was agreed to appear on - the generator's
+  // own BMS sensor view and its own Asset Register page - computed
+  // once here rather than duplicated in two places.
+  if (req.query.generatorFuelSummary === "true" && req.query.assetId) {
+    try {
+      const { query: pgQuery, getByColumn } = await import("../lib/postgresClient.js");
+      const generator = await getByColumn("components", "asset_id", req.query.assetId, session.org).catch(() => null);
+      if (!generator) return res.status(404).json({ error: "Generator asset not found." });
+
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+
+      const readingsResult = await pgQuery(
+        "select value, timestamp from readings where asset_id = $1 and unit = 'Liters' order by timestamp asc",
+        [req.query.assetId]
+      );
+      const readings = readingsResult.rows;
+      const currentLevel = readings.length > 0 ? Number(readings[readings.length - 1].value) : null;
+
+      const ratedRate = Number(generator.generator_rated_consumption_lph) || null;
+      const THEFT_MULTIPLIER = 1.5;
+      let runningHoursThisMonth = 0;
+      let litersConsumedThisMonth = 0;
+      const theftFlags = [];
+
+      for (let i = 1; i < readings.length; i++) {
+        const prev = readings[i - 1];
+        const curr = readings[i];
+        const currTime = new Date(curr.timestamp);
+        if (currTime < monthStart) continue; // only this month's real activity counts toward the running summary
+
+        const hoursElapsed = (currTime - new Date(prev.timestamp)) / 3600000;
+        const change = Number(curr.value) - Number(prev.value);
+        if (change >= 0 || hoursElapsed <= 0) continue; // a refill, not consumption - reconciled separately below
+
+        const dropRate = Math.abs(change) / hoursElapsed;
+        if (ratedRate && dropRate > ratedRate * THEFT_MULTIPLIER) {
+          theftFlags.push({ timestamp: curr.timestamp, litersLost: Math.abs(change), dropRateLph: dropRate, ratedRateLph: ratedRate });
+        } else {
+          runningHoursThisMonth += hoursElapsed;
+          litersConsumedThisMonth += Math.abs(change);
+        }
+      }
+
+      const fuelPrice = Number(generator.fuel_price_per_liter_tzs) || null;
+      const estimatedFuelCostThisMonth = fuelPrice ? litersConsumedThisMonth * fuelPrice : null;
+
+      // Real under-delivery check: for every fill this month, compare
+      // the invoiced amount against the real, actual level change
+      // observed around that same real timestamp.
+      const fillsResult = await pgQuery(
+        "select * from fuel_fill_events where organization_id = $1 and generator_asset_id = $2 and fill_date >= $3 order by fill_date asc",
+        [session.org, req.query.assetId, monthStart.toISOString()]
+      );
+      const underDeliveryFlags = [];
+      for (const fill of fillsResult.rows) {
+        const fillTime = new Date(fill.fill_date);
+        const before = readings.filter(r => new Date(r.timestamp) < fillTime).pop();
+        const after = readings.find(r => new Date(r.timestamp) >= fillTime);
+        if (!before || !after) continue; // no real sensor data around this fill yet to check against
+        const actualIncrease = Number(after.value) - Number(before.value);
+        const invoiced = Number(fill.invoiced_liters);
+        if (actualIncrease < invoiced * 0.9) { // confirmed directly: more than 10% short of what was genuinely invoiced
+          underDeliveryFlags.push({ fillDate: fill.fill_date, invoicedLiters: invoiced, actualLitersDelivered: actualIncrease, shortfallLiters: invoiced - actualIncrease });
+        }
+      }
+
+      return res.status(200).json({
+        currentLevel, runningHoursThisMonth: Math.round(runningHoursThisMonth * 10) / 10,
+        litersConsumedThisMonth: Math.round(litersConsumedThisMonth * 10) / 10,
+        estimatedFuelCostThisMonth, ratedConsumptionLph: ratedRate, tankCapacityLiters: Number(generator.generator_tank_capacity_liters) || null,
+        theftFlags, underDeliveryFlags,
+      });
+    } catch (err) {
+      console.error("generatorFuelSummary error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   if (req.query.findDuplicateAssets === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
@@ -1516,6 +1605,9 @@ async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
     documentsUploadedDate: row.documents_uploaded_date || "",
     needsTechnicalReview: row.needs_technical_review === true,
     nameplatePhoto,
+    generatorRatedConsumptionLph: row.generator_rated_consumption_lph !== null ? Number(row.generator_rated_consumption_lph) : null,
+    generatorTankCapacityLiters: row.generator_tank_capacity_liters !== null ? Number(row.generator_tank_capacity_liters) : null,
+    fuelPricePerLiterTzs: row.fuel_price_per_liter_tzs !== null ? Number(row.fuel_price_per_liter_tzs) : null,
     barcode: linkedBarcode,
 
     // Warranty — a separate clock from depreciation. An asset can still

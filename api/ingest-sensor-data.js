@@ -37,6 +37,7 @@ const UNIT_BY_TYPE = {
   runtime: "hours",
   electrical: "kWh",
   water: "Liters",
+  fuel_level: "Liters",
 };
 
 // Confirmed directly: consumption/runtime readings arrive as a real
@@ -90,6 +91,10 @@ export default async function handler(req, res) {
       // "OK/Fault" label, so a person actually knows what's wrong.
       withinRange = reading === 0;
       targetRangeDisplay = reading === 0 ? "OK (0)" : (fault_message || "Fault (unspecified)");
+    } else if (type === "fuel_level") {
+      const fuelCheck = await checkFuelLevelDrop(device_id, reading, component, timestamp);
+      withinRange = fuelCheck.withinRange;
+      targetRangeDisplay = fuelCheck.display;
     } else if (SPIKE_TYPES.includes(type)) {
       const spikeCheck = await checkForSpike(device_id, reading);
       withinRange = spikeCheck.withinRange;
@@ -149,6 +154,52 @@ function checkWithinRange(value, rangeStr) {
   const min = parseFloat(match[1]);
   const max = parseFloat(match[3]);
   return value >= min && value <= max;
+}
+
+async function checkFuelLevelDrop(sensorId, reading, component, currentTimestamp) {
+  const { query } = await import("../lib/postgresClient.js");
+  const priorResult = await query(
+    "select value, timestamp from readings where sensor_id = $1 and unit = 'Liters' order by timestamp desc limit 1",
+    [sensorId]
+  );
+  if (priorResult.rows.length === 0) {
+    return { withinRange: null, display: "(first reading — establishing a baseline)" };
+  }
+
+  const prior = priorResult.rows[0];
+  const priorValue = Number(prior.value);
+  // Confirmed directly as a real, genuine bug found through direct
+  // testing: this must be measured against the actual reading's own
+  // real timestamp, not the real, current wall-clock time - a
+  // delayed or backfilled reading would otherwise badly dilute the
+  // computed drop rate and mask a genuine theft event as normal.
+  const hoursElapsed = (new Date(currentTimestamp) - new Date(prior.timestamp)) / 3600000;
+  if (hoursElapsed <= 0) return { withinRange: null, display: "(reading arrived out of order — not evaluated)" };
+
+  const change = reading - priorValue;
+  if (change >= 0) {
+    // A genuine refill - reconciled separately against a real,
+    // recorded invoice (fuel_fill_events), not flagged as an anomaly
+    // here at all.
+    return { withinRange: true, display: `Level rose from ${priorValue}L to ${reading}L — refill` };
+  }
+
+  const dropRate = Math.abs(change) / hoursElapsed; // real litres/hour
+  const ratedRate = Number(component?.generator_rated_consumption_lph);
+  if (!ratedRate || ratedRate <= 0) {
+    // Confirmed directly: without this generator's own real, rated
+    // consumption rate on file, there's genuinely no honest way to
+    // tell normal running apart from theft - not evaluated, rather
+    // than guessing.
+    return { withinRange: null, display: `Dropped ${Math.abs(change).toFixed(1)}L over ${hoursElapsed.toFixed(1)}h — no rated consumption rate on file to evaluate against` };
+  }
+
+  const THEFT_MULTIPLIER = 1.5; // confirmed directly: a drop this far past the generator's own real, rated ceiling cannot be genuine engine consumption
+  const isTooFast = dropRate > ratedRate * THEFT_MULTIPLIER;
+  return {
+    withinRange: !isTooFast,
+    display: `Drop rate ${dropRate.toFixed(2)} L/h vs rated ${ratedRate} L/h${isTooFast ? " — far exceeds what the engine can genuinely burn" : ""}`,
+  };
 }
 
 // Confirmed directly: alert on a real spike against recent normal
