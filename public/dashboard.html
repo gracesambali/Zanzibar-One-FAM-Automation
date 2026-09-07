@@ -2849,7 +2849,7 @@ function showSensorDetail(recordId) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
           <div style="display:flex;gap:8px;flex-shrink:0">
-            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
+            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}', ${s.generatorRatedConsumptionLph ?? 'null'}, ${s.generatorTankCapacityLiters ?? 'null'}, ${s.fuelPricePerLiterTzs ?? 'null'})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
             ${s.isDemo
               ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">🗑 Remove Sample Sensor</button>`
               : `<button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>`}
@@ -3031,7 +3031,7 @@ let editSensorSelectedAsset = null;
 let editSensorRecordId = null;
 let editSensorId = null;
 
-function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange) {
+function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange, currentRatedConsumptionLph, currentTankCapacityLiters, currentFuelPricePerLiterTzs) {
   editSensorRecordId = recordId;
   editSensorId = sensorId;
   editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
@@ -3042,19 +3042,28 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
     <div id="es_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
     <div id="es_assetSelected" style="${editSensorSelectedAsset ? '' : 'display:none'};background:var(--navy-pale);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:var(--navy);font-weight:600">${editSensorSelectedAsset ? `${escapeHtml(editSensorSelectedAsset.name)} (${escapeHtml(editSensorSelectedAsset.id)}) <button type="button" onclick="clearEditSensorAsset()" style="float:right;background:none;border:none;color:var(--navy);cursor:pointer;font-weight:600">change</button>` : ''}</div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor Type</label>
-    <select id="es_sensorType" onchange="toggleEditSensorTargetRange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <select id="es_sensorType" onchange="toggleEditSensorTypeFields()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
     <div id="es_targetRangeRow" style="${(currentSensorType === 'temperature' || currentSensorType === 'humidity') ? '' : 'display:none'}">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Range</label>
       <input id="es_targetRange" type="text" value="${escapeHtml(currentTargetRange || '')}" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    </div>
+    <div id="es_fuelConfigRow" style="${currentSensorType === 'fuel_level' ? '' : 'display:none'}">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Rated Consumption (L/h)</label>
+      <input id="es_genRate" type="number" step="any" value="${currentRatedConsumptionLph ?? ''}" placeholder="e.g. 20" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tank Capacity (L)</label>
+      <input id="es_genTank" type="number" step="any" value="${currentTankCapacityLiters ?? ''}" placeholder="e.g. 500" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Fuel Price (TZS/L)</label>
+      <input id="es_genPrice" type="number" step="any" value="${currentFuelPricePerLiterTzs ?? ''}" placeholder="e.g. 3000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
     </div>
     <div id="es_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
     <button onclick="submitEditSensor()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
   `);
 }
 
-function toggleEditSensorTargetRange() {
+function toggleEditSensorTypeFields() {
   const type = document.getElementById('es_sensorType').value;
   document.getElementById('es_targetRangeRow').style.display = (type === 'temperature' || type === 'humidity') ? 'block' : 'none';
+  document.getElementById('es_fuelConfigRow').style.display = (type === 'fuel_level') ? 'block' : 'none';
 }
 
 function renderEditSensorAssetResults() {
@@ -3105,6 +3114,12 @@ async function submitEditSensor() {
   };
   if (targetRangeRow.style.display !== 'none') {
     body.targetRange = document.getElementById('es_targetRange').value.trim();
+  }
+  const fuelConfigRow = document.getElementById('es_fuelConfigRow');
+  if (fuelConfigRow.style.display !== 'none') {
+    body.ratedConsumptionLph = document.getElementById('es_genRate').value || null;
+    body.tankCapacityLiters = document.getElementById('es_genTank').value || null;
+    body.fuelPricePerLiterTzs = document.getElementById('es_genPrice').value || null;
   }
   const resp = await fetch('/api/sensors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },

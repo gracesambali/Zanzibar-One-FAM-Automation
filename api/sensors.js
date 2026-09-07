@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleEditSensor(req, res, editedBy, organizationId) {
-  const { recordId, notes, status, assignee, assetId, sensorType, targetRange } = req.body || {};
+  const { recordId, notes, status, assignee, assetId, sensorType, targetRange, ratedConsumptionLph, tankCapacityLiters, fuelPricePerLiterTzs } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (sensorType && !categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
@@ -88,6 +88,9 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
       await update("sensors", recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
     }
 
+    const effectiveType = (sensorType || current.sensor_type || "").toLowerCase();
+    const effectiveAssetId = assetId !== undefined ? assetId : current.asset_id;
+
     // Confirmed directly as a genuine, missing capability: a target
     // range lives on the real, linked asset, not the sensor itself -
     // temperature and humidity are the only two real sensor types
@@ -95,8 +98,6 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
     // whichever sensor type is now genuinely in effect (a type just
     // changed above, or the existing one otherwise).
     if (targetRange !== undefined) {
-      const effectiveType = (sensorType || current.sensor_type || "").toLowerCase();
-      const effectiveAssetId = assetId !== undefined ? assetId : current.asset_id;
       if (effectiveType === "temperature" || effectiveType === "humidity") {
         const { getByColumn } = await import("../lib/postgresClient.js");
         const asset = await getByColumn("components", "asset_id", effectiveAssetId, organizationId).catch(() => null);
@@ -106,6 +107,36 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
             await update("components", asset.id, { [column]: targetRange || null }).catch(() => { throw new Error("Could not save target range"); });
             changes.push(["Target Range", asset[column] || "", targetRange || "(cleared)"]);
           }
+        }
+      }
+    }
+
+    // Confirmed directly, exactly as questioned: a fuel_level sensor's
+    // own real theft-detection threshold depends entirely on its
+    // linked generator's own rated consumption rate - previously only
+    // editable from the Asset Edit form, not from the sensor's own
+    // detail view the way a target range now is. Same real fields
+    // already used by the fuel-monitoring feature itself, just
+    // reachable from here too now.
+    if (effectiveType === "fuel_level" && (ratedConsumptionLph !== undefined || tankCapacityLiters !== undefined || fuelPricePerLiterTzs !== undefined)) {
+      const { getByColumn } = await import("../lib/postgresClient.js");
+      const asset = await getByColumn("components", "asset_id", effectiveAssetId, organizationId).catch(() => null);
+      if (asset) {
+        const assetFields = {};
+        if (ratedConsumptionLph !== undefined && String(ratedConsumptionLph) !== String(asset.generator_rated_consumption_lph || "")) {
+          assetFields.generator_rated_consumption_lph = ratedConsumptionLph || null;
+          changes.push(["Rated Consumption (L/h)", asset.generator_rated_consumption_lph || "", ratedConsumptionLph || "(cleared)"]);
+        }
+        if (tankCapacityLiters !== undefined && String(tankCapacityLiters) !== String(asset.generator_tank_capacity_liters || "")) {
+          assetFields.generator_tank_capacity_liters = tankCapacityLiters || null;
+          changes.push(["Tank Capacity (L)", asset.generator_tank_capacity_liters || "", tankCapacityLiters || "(cleared)"]);
+        }
+        if (fuelPricePerLiterTzs !== undefined && String(fuelPricePerLiterTzs) !== String(asset.fuel_price_per_liter_tzs || "")) {
+          assetFields.fuel_price_per_liter_tzs = fuelPricePerLiterTzs || null;
+          changes.push(["Fuel Price (TZS/L)", asset.fuel_price_per_liter_tzs || "", fuelPricePerLiterTzs || "(cleared)"]);
+        }
+        if (Object.keys(assetFields).length > 0) {
+          await update("components", asset.id, assetFields).catch(() => { throw new Error("Could not save fuel configuration"); });
         }
       }
     }
@@ -198,6 +229,9 @@ async function handleGetReadings(req, res, organizationId) {
         assetName: component.name || assetId,
         location: component.room_zone || "",
         targetRange,
+        generatorRatedConsumptionLph: component.generator_rated_consumption_lph !== undefined ? component.generator_rated_consumption_lph : null,
+        generatorTankCapacityLiters: component.generator_tank_capacity_liters !== undefined ? component.generator_tank_capacity_liters : null,
+        fuelPricePerLiterTzs: component.fuel_price_per_liter_tzs !== undefined ? component.fuel_price_per_liter_tzs : null,
         latestValue: latest ? (latest.value !== null ? Number(latest.value) : null) : null,
         latestUnit: latest ? latest.unit : null,
         withinRange: latest ? latest.within_range : null,
