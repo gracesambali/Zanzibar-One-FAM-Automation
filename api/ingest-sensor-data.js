@@ -190,16 +190,40 @@ async function checkFuelLevelDrop(sensorId, reading, component, currentTimestamp
 
   const dropRate = Math.abs(change) / hoursElapsed; // real litres/hour
   const ratedRate = Number(component?.generator_rated_consumption_lph);
+
+  // Confirmed directly, discussed and agreed: a real, separate,
+  // everyday alert - "this needs a refill soon" - completely
+  // independent of whether the drop rate itself was normal or too
+  // fast. Only fires on the real transition into that state (was
+  // above the target, now at or below it), not on every subsequent
+  // reading while it stays low, so this doesn't flood the same
+  // ongoing situation with repeat alerts.
+  const targetRefillLiters = Number(component?.target_refill_liters);
+  const justCrossedRefillThreshold = targetRefillLiters && reading <= targetRefillLiters && priorValue > targetRefillLiters;
+
   if (!ratedRate || ratedRate <= 0) {
     // Confirmed directly: without this generator's own real, rated
     // consumption rate on file, there's genuinely no honest way to
-    // tell normal running apart from theft - not evaluated, rather
-    // than guessing.
+    // tell normal running apart from a sharp, unexplained loss - not
+    // evaluated for that specific check, though a real refill alert
+    // can still fire independently of it.
+    if (justCrossedRefillThreshold) {
+      return { withinRange: false, display: `Fuel level at ${reading}L — at or below the target refill level of ${targetRefillLiters}L, a refill is needed` };
+    }
     return { withinRange: null, display: `Dropped ${Math.abs(change).toFixed(1)}L over ${hoursElapsed.toFixed(1)}h — no rated consumption rate on file to evaluate against` };
   }
 
-  const THEFT_MULTIPLIER = 1.5; // confirmed directly: a drop this far past the generator's own real, rated ceiling cannot be genuine engine consumption
-  const isTooFast = dropRate > ratedRate * THEFT_MULTIPLIER;
+  const SHARP_DROP_MULTIPLIER = 1.5; // confirmed directly: a drop this far past the generator's own real, rated ceiling cannot be genuine engine consumption, and needs its own real notification regardless of running time
+  const isTooFast = dropRate > ratedRate * SHARP_DROP_MULTIPLIER;
+
+  if (justCrossedRefillThreshold) {
+    const refillMsg = `Fuel level at ${reading}L — at or below the target refill level of ${targetRefillLiters}L, a refill is needed`;
+    return {
+      withinRange: false,
+      display: isTooFast ? `${refillMsg}. Also: drop rate ${dropRate.toFixed(2)} L/h vs rated ${ratedRate} L/h — far exceeds what the engine can genuinely burn` : refillMsg,
+    };
+  }
+
   return {
     withinRange: !isTooFast,
     display: `Drop rate ${dropRate.toFixed(2)} L/h vs rated ${ratedRate} L/h${isTooFast ? " — far exceeds what the engine can genuinely burn" : ""}`,
@@ -268,7 +292,14 @@ async function createReading({ timestamp, sensorId, assetId, value, unit, within
     asset_id: assetId,
     value,
     unit,
-    within_range: withinRange === true,
+    // Confirmed directly as a real, genuine bug found through direct
+    // testing: withinRange === true previously coerced a real null
+    // (genuinely not yet evaluated - a first reading, or still
+    // building history) into false (a real problem detected), purely
+    // because null !== true in JavaScript. Stored as-is now, so
+    // "not yet evaluated" is never silently misrepresented as
+    // "flagged."
+    within_range: withinRange === undefined ? null : withinRange,
   }).catch(e => console.error("Reading write failed:", e.message));
 }
 

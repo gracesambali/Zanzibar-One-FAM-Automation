@@ -1989,3 +1989,16 @@ create index if not exists idx_fuel_fill_events_org on fuel_fill_events (organiz
 -- application logic, never a schema migration.
 -- ============================================================
 alter table sensors add column if not exists target_config jsonb;
+
+-- ============================================================
+-- Target Refill Level - confirmed directly, discussed and agreed:
+-- a real, meaningful fuel threshold - once the tank drops to or
+-- below this level, a real refill notification fires, the same way
+-- a temperature or humidity crossing its own target range already
+-- does. Sits alongside the existing rated-consumption/tank-capacity/
+-- fuel-price fields, which the sharp-drop detection still needs -
+-- this doesn't replace that, it adds the other real, everyday alert
+-- a facility actually wants: "this needs a refill," not just "this
+-- might be stolen."
+-- ============================================================
+alter table components add column if not exists target_refill_liters numeric;

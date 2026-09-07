@@ -2849,7 +2849,7 @@ function showSensorDetail(recordId) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
           <div style="display:flex;gap:8px;flex-shrink:0">
-            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}', ${s.generatorRatedConsumptionLph ?? 'null'}, ${s.generatorTankCapacityLiters ?? 'null'}, ${s.fuelPricePerLiterTzs ?? 'null'}, ${s.expectedValue ?? 'null'}, ${s.spikeThresholdPercent ?? 'null'})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
+            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}', ${s.generatorRatedConsumptionLph ?? 'null'}, ${s.generatorTankCapacityLiters ?? 'null'}, ${s.fuelPricePerLiterTzs ?? 'null'}, ${s.expectedValue ?? 'null'}, ${s.spikeThresholdPercent ?? 'null'}, ${s.targetRefillLiters ?? 'null'})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
             ${s.isDemo
               ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">🗑 Remove Sample Sensor</button>`
               : `<button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>`}
@@ -3031,7 +3031,7 @@ let editSensorSelectedAsset = null;
 let editSensorRecordId = null;
 let editSensorId = null;
 
-function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange, currentRatedConsumptionLph, currentTankCapacityLiters, currentFuelPricePerLiterTzs, currentExpectedValue, currentSpikeThresholdPercent) {
+function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange, currentRatedConsumptionLph, currentTankCapacityLiters, currentFuelPricePerLiterTzs, currentExpectedValue, currentSpikeThresholdPercent, currentTargetRefillLiters) {
   editSensorRecordId = recordId;
   editSensorId = sensorId;
   editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
@@ -3050,7 +3050,9 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
       <input id="es_targetRange" type="text" value="${escapeHtml(currentTargetRange || '')}" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
     </div>
     <div id="es_fuelConfigRow" style="${currentSensorType === 'fuel_level' ? '' : 'display:none'}">
-      <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:6px">Target (theft/consumption threshold)</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Refill Level (L)</label>
+      <input id="es_targetRefill" type="number" step="any" value="${currentTargetRefillLiters ?? ''}" placeholder="e.g. 100" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px;box-sizing:border-box">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Sends a real refill alert once the tank reaches or drops below this level.</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Rated Consumption (L/h)</label>
       <input id="es_genRate" type="number" step="any" value="${currentRatedConsumptionLph ?? ''}" placeholder="e.g. 20" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tank Capacity (L)</label>
@@ -3136,6 +3138,7 @@ async function submitEditSensor() {
     body.ratedConsumptionLph = document.getElementById('es_genRate').value || null;
     body.tankCapacityLiters = document.getElementById('es_genTank').value || null;
     body.fuelPricePerLiterTzs = document.getElementById('es_genPrice').value || null;
+    body.targetRefillLiters = document.getElementById('es_targetRefill').value || null;
   }
   const binaryRow = document.getElementById('es_binaryRow');
   if (binaryRow.style.display !== 'none') {
