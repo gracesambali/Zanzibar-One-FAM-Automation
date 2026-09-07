@@ -44,6 +44,7 @@ export default async function handler(req, res) {
     if (action === "addSensor") return handleAddSensor(req, res, session.u, session.org);
     if (action === "seedDemoData") return handleSeedDemoData(req, res, session.u, session.org);
     if (action === "clearDemoData") return handleClearDemoData(req, res, session.org);
+    if (action === "removeDemoSensor") return handleRemoveDemoSensor(req, res, session.org);
     if (action === "decommissionSensor") return handleDecommissionSensor(req, res, session.u, session.org);
     if (action === "setNotificationRoles") return handleSetNotificationRoles(req, res);
     return handleRunTest(req, res, session.u, session.org); // no action field - the existing test tool's plain body
@@ -769,6 +770,32 @@ async function handleClearDemoData(req, res, organizationId) {
     return res.status(200).json({ success: true, removed: result.rows.map(r => r.sensor_id) });
   } catch (err) {
     console.error("handleClearDemoData error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly: a real, precise fix for a reported gap -
+// clearDemoData removes every sample sensor at once, too blunt a tool
+// for fixing one that's simply linked to the wrong asset. A genuine,
+// permanent delete rather than the soft decommission real sensors
+// use, since sample data has no real history worth preserving, and a
+// leftover, inactive row would otherwise silently block a clean
+// re-seed afterward - the seeding check only looks for any existing
+// row, active or not. The is_demo check in the delete itself is a
+// real safety guard, not just a UI convention - this can never
+// delete a real sensor even if a real sensorId were somehow passed
+// in.
+async function handleRemoveDemoSensor(req, res, organizationId) {
+  const { sensorId } = req.body || {};
+  if (!sensorId) return res.status(400).json({ error: "A real sensorId is required." });
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    await pgQuery("delete from readings where sensor_id = $1 and is_demo = true and organization_id = $2", [sensorId, organizationId]);
+    const result = await pgQuery("delete from sensors where sensor_id = $1 and is_demo = true and organization_id = $2 returning sensor_id", [sensorId, organizationId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "No sample sensor with that id was found." });
+    return res.status(200).json({ success: true, removed: sensorId });
+  } catch (err) {
+    console.error("handleRemoveDemoSensor error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
