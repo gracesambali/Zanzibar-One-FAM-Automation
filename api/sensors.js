@@ -60,8 +60,9 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleEditSensor(req, res, editedBy, organizationId) {
-  const { recordId, notes, status, assignee } = req.body || {};
+  const { recordId, notes, status, assignee, assetId, sensorType } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
+  if (sensorType && !categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
@@ -80,6 +81,8 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
     if (notes !== undefined && notes !== current.notes) { fields.notes = notes; changes.push(["Notes", current.notes || "", notes]); }
     if (status !== undefined && status !== current.status) { fields.status = status; changes.push(["Status", current.status || "", status]); }
     if (assignee !== undefined && assignee !== current.assignee) { fields.assignee = assignee; changes.push(["Assignee", current.assignee || "", assignee]); }
+    if (assetId !== undefined && assetId !== current.asset_id) { fields.asset_id = assetId; changes.push(["Linked Asset", current.asset_id || "", assetId]); }
+    if (sensorType !== undefined && sensorType !== current.sensor_type) { fields.sensor_type = sensorType; changes.push(["Sensor Type", current.sensor_type || "", sensorType]); }
 
     if (Object.keys(fields).length > 0) {
       await update("sensors", recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
