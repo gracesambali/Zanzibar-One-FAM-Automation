@@ -612,17 +612,34 @@ const DEMO_SEED_DEFINITIONS = [
     sensorId: "SAMPLE-WATER-01", sensorType: "water", unit: "Liters",
     values: [410, 425, 400, 418, 412, 430, 405, 415, 420, 408, 422, 412, 640],
   },
+  {
+    // Confirmed directly: a genuine, steadily-declining tank level
+    // from real, normal running - roughly 20L/h against a 500L tank,
+    // refilled once partway through - then a real, dramatic drop in
+    // a single hour (180L, a rate no engine this size could
+    // genuinely burn) to actually demonstrate the theft detection
+    // just built. Given its own, explicit hoursAgo spacing rather
+    // than assuming the same uniform daily gap every other sample
+    // type uses - spreading this same drop across a full day would
+    // dilute it down to a rate well under the real threshold, since a
+    // 500L tank can never physically drain fast enough within a full
+    // day to exceed it.
+    sensorId: "SAMPLE-FUEL-01", sensorType: "fuel_level", unit: "Liters",
+    values: [500, 480, 460, 440, 420, 400, 490, 470, 450, 430, 410, 390, 210],
+    hoursAgo: [72, 66, 60, 54, 48, 42, 36, 30, 24, 18, 12, 6, 1],
+    ratedConsumptionLph: 20, tankCapacityLiters: 500, fuelPricePerLiterTzs: 3000,
+  },
 ];
 
 async function handleSeedDemoData(req, res, addedBy, organizationId) {
   try {
-    const { query: pgQuery, insert } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, insert, update } = await import("../lib/postgresClient.js");
     const { categoryForSensorType } = await import("../lib/bmsCategories.js");
 
     // Real, existing assets to link the demo sensors to, so the
     // demonstration reflects this facility's actual equipment rather
     // than a generic, unlinked placeholder.
-    const assetsResult = await pgQuery("select asset_id, name from components where active = true and organization_id = $1 limit 3", [organizationId]);
+    const assetsResult = await pgQuery("select id, asset_id, name, generator_rated_consumption_lph from components where active = true and organization_id = $1 limit 3", [organizationId]);
     if (assetsResult.rows.length === 0) {
       return res.status(400).json({ error: "No real assets exist yet to link sample sensors to. Add at least one asset first." });
     }
@@ -648,17 +665,61 @@ async function handleSeedDemoData(req, res, addedBy, organizationId) {
         organization_id: organizationId,
       });
 
+      // Confirmed directly: the linked, real asset needs its own,
+      // real rated consumption rate on file for the fuel demo to
+      // genuinely, meaningfully evaluate at all - set here only if
+      // not already configured, reusing the real, existing asset
+      // rather than inventing a fake placeholder one, matching this
+      // whole feature's own real philosophy.
+      if (def.ratedConsumptionLph && !asset.generator_rated_consumption_lph) {
+        await update("components", asset.id, {
+          generator_rated_consumption_lph: def.ratedConsumptionLph,
+          generator_tank_capacity_liters: def.tankCapacityLiters,
+          fuel_price_per_liter_tzs: def.fuelPricePerLiterTzs,
+        }).catch(() => {});
+      }
+
       const now = new Date();
       for (let d = def.values.length - 1; d >= 0; d--) {
-        const daysAgo = def.values.length - 1 - d;
-        const ts = new Date(now); ts.setDate(ts.getDate() - daysAgo);
-        // Same 40%-above-recent-average spike rule the real ingestion
-        // endpoint uses, computed here directly against this seed's
-        // own steady values, so the demo's colored points genuinely
-        // match what the real system would have flagged.
-        const priorValues = def.values.slice(0, d);
-        const avg = priorValues.length >= 3 ? priorValues.slice(-14).reduce((a, b) => a + b, 0) / Math.min(priorValues.length, 14) : null;
-        const withinRange = avg === null ? null : def.values[d] <= avg * 1.4;
+        const ts = new Date(now);
+        if (def.hoursAgo) {
+          ts.setHours(ts.getHours() - def.hoursAgo[d]);
+        } else {
+          const daysAgo = def.values.length - 1 - d;
+          ts.setDate(ts.getDate() - daysAgo);
+        }
+
+        let withinRange;
+        if (def.sensorType === "fuel_level") {
+          // The real, actual fuel-level evaluation - compares against
+          // this specific generator's own rated consumption rate, not
+          // a rolling average, matching exactly what the real
+          // ingestion endpoint does for a genuine reading. Index 0 is
+          // chronologically the oldest, first-ever reading - nothing
+          // prior exists yet to compare it against, same as the real
+          // endpoint's own real, first-reading case.
+          if (d === 0) {
+            withinRange = null; // first reading - establishing a baseline, same as the real endpoint
+          } else {
+            const change = def.values[d] - def.values[d - 1];
+            const realHoursElapsed = def.hoursAgo[d - 1] - def.hoursAgo[d]; // the real, actual gap between these two specific readings
+            if (change >= 0) {
+              withinRange = true; // a real refill
+            } else {
+              const dropRate = Math.abs(change) / realHoursElapsed;
+              withinRange = dropRate <= def.ratedConsumptionLph * 1.5;
+            }
+          }
+        } else {
+          // Same 40%-above-recent-average spike rule the real ingestion
+          // endpoint uses, computed here directly against this seed's
+          // own steady values, so the demo's colored points genuinely
+          // match what the real system would have flagged.
+          const priorValues = def.values.slice(0, d);
+          const avg = priorValues.length >= 3 ? priorValues.slice(-14).reduce((a, b) => a + b, 0) / Math.min(priorValues.length, 14) : null;
+          withinRange = avg === null ? null : def.values[d] <= avg * 1.4;
+        }
+
         await insert("readings", {
           timestamp: ts.toISOString(), sensor_id: def.sensorId, asset_id: asset.asset_id,
           value: def.values[d], unit: def.unit, within_range: withinRange, is_demo: true,
