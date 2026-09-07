@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleEditSensor(req, res, editedBy, organizationId) {
-  const { recordId, notes, status, assignee, assetId, sensorType } = req.body || {};
+  const { recordId, notes, status, assignee, assetId, sensorType, targetRange } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (sensorType && !categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
@@ -86,6 +86,28 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
 
     if (Object.keys(fields).length > 0) {
       await update("sensors", recordId, fields).catch(() => { throw new Error("Could not save sensor"); });
+    }
+
+    // Confirmed directly as a genuine, missing capability: a target
+    // range lives on the real, linked asset, not the sensor itself -
+    // temperature and humidity are the only two real sensor types
+    // that use one, so this only ever applies for those, using
+    // whichever sensor type is now genuinely in effect (a type just
+    // changed above, or the existing one otherwise).
+    if (targetRange !== undefined) {
+      const effectiveType = (sensorType || current.sensor_type || "").toLowerCase();
+      const effectiveAssetId = assetId !== undefined ? assetId : current.asset_id;
+      if (effectiveType === "temperature" || effectiveType === "humidity") {
+        const { getByColumn } = await import("../lib/postgresClient.js");
+        const asset = await getByColumn("components", "asset_id", effectiveAssetId, organizationId).catch(() => null);
+        if (asset) {
+          const column = effectiveType === "temperature" ? "target_range_temp" : "target_range_humidity";
+          if (targetRange !== (asset[column] || "")) {
+            await update("components", asset.id, { [column]: targetRange || null }).catch(() => { throw new Error("Could not save target range"); });
+            changes.push(["Target Range", asset[column] || "", targetRange || "(cleared)"]);
+          }
+        }
+      }
     }
 
     for (const [field, oldVal, newVal] of changes) {
@@ -521,13 +543,13 @@ async function handleSetNotificationRoles(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleAddSensor(req, res, addedBy, organizationId) {
-  const { sensorId, assetId, sensorType } = req.body || {};
+  const { sensorId, assetId, sensorType, targetRange } = req.body || {};
   if (!sensorId || !sensorId.trim()) return res.status(400).json({ error: "A real sensor/device ID is required." });
   if (!assetId) return res.status(400).json({ error: "Choose a real asset to link this sensor to." });
   if (!categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
   try {
-    const { insert } = await import("../lib/postgresClient.js");
+    const { insert, getByColumn, update } = await import("../lib/postgresClient.js");
     const sensor = await insert("sensors", {
       sensor_id: sensorId.trim(),
       asset_id: assetId,
@@ -536,6 +558,20 @@ async function handleAddSensor(req, res, addedBy, organizationId) {
       activity_log: JSON.stringify([{ text: `Registered by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
       organization_id: organizationId,
     });
+
+    // Confirmed directly as a genuine, missing capability - a target
+    // range lives on the real, linked asset, only for a temperature or
+    // humidity sensor specifically, set here directly at creation so a
+    // separate edit step right afterward isn't required.
+    const sensorTypeLower = (sensorType || "").toLowerCase();
+    if (targetRange && (sensorTypeLower === "temperature" || sensorTypeLower === "humidity")) {
+      const asset = await getByColumn("components", "asset_id", assetId, organizationId).catch(() => null);
+      if (asset) {
+        const column = sensorTypeLower === "temperature" ? "target_range_temp" : "target_range_humidity";
+        await update("components", asset.id, { [column]: targetRange }).catch(() => {});
+      }
+    }
+
     return res.status(200).json({ success: true, sensorId: sensor.sensor_id });
   } catch (err) {
     // Confirmed directly: a real, separate regression fixed here too -

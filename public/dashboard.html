@@ -2849,7 +2849,7 @@ function showSensorDetail(recordId) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
           <div style="display:flex;gap:8px;flex-shrink:0">
-            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
+            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}', '${(s.targetRange || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
             ${s.isDemo
               ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">🗑 Remove Sample Sensor</button>`
               : `<button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>`}
@@ -3031,7 +3031,7 @@ let editSensorSelectedAsset = null;
 let editSensorRecordId = null;
 let editSensorId = null;
 
-function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType) {
+function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType, currentTargetRange) {
   editSensorRecordId = recordId;
   editSensorId = sensorId;
   editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
@@ -3042,10 +3042,19 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
     <div id="es_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
     <div id="es_assetSelected" style="${editSensorSelectedAsset ? '' : 'display:none'};background:var(--navy-pale);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:var(--navy);font-weight:600">${editSensorSelectedAsset ? `${escapeHtml(editSensorSelectedAsset.name)} (${escapeHtml(editSensorSelectedAsset.id)}) <button type="button" onclick="clearEditSensorAsset()" style="float:right;background:none;border:none;color:var(--navy);cursor:pointer;font-weight:600">change</button>` : ''}</div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor Type</label>
-    <select id="es_sensorType" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <select id="es_sensorType" onchange="toggleEditSensorTargetRange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <div id="es_targetRangeRow" style="${(currentSensorType === 'temperature' || currentSensorType === 'humidity') ? '' : 'display:none'}">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Range</label>
+      <input id="es_targetRange" type="text" value="${escapeHtml(currentTargetRange || '')}" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    </div>
     <div id="es_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
     <button onclick="submitEditSensor()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
   `);
+}
+
+function toggleEditSensorTargetRange() {
+  const type = document.getElementById('es_sensorType').value;
+  document.getElementById('es_targetRangeRow').style.display = (type === 'temperature' || type === 'humidity') ? 'block' : 'none';
 }
 
 function renderEditSensorAssetResults() {
@@ -3087,13 +3096,19 @@ async function submitEditSensor() {
   const errEl = document.getElementById('es_error');
   errEl.textContent = '';
   if (!editSensorSelectedAsset) { errEl.textContent = 'Search for and pick the asset this sensor belongs to.'; return; }
+  const sensorType = document.getElementById('es_sensorType').value;
+  const targetRangeRow = document.getElementById('es_targetRangeRow');
+  const body = {
+    recordId: editSensorRecordId,
+    assetId: editSensorSelectedAsset.id,
+    sensorType,
+  };
+  if (targetRangeRow.style.display !== 'none') {
+    body.targetRange = document.getElementById('es_targetRange').value.trim();
+  }
   const resp = await fetch('/api/sensors', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recordId: editSensorRecordId,
-      assetId: editSensorSelectedAsset.id,
-      sensorType: document.getElementById('es_sensorType').value,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not save changes'; return; }
@@ -3109,7 +3124,11 @@ function openAddSensorModal() {
     <div id="as_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
     <div id="as_assetSelected" style="display:none;background:var(--navy-pale);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:var(--navy);font-weight:600"></div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor Type</label>
-    <select id="as_sensorType" onchange="suggestAddSensorId()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <select id="as_sensorType" onchange="suggestAddSensorId(); toggleAddSensorTargetRange();" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <div id="as_targetRangeRow" style="display:none">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Target Range</label>
+      <input id="as_targetRange" type="text" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+    </div>
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor / Device ID</label>
     <input id="as_sensorId" placeholder="Pick an asset above to suggest one" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px;box-sizing:border-box">
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px">A real suggestion appears once an asset is picked — configure your device to send this same id, or replace it here if your hardware already has its own fixed one.</div>
@@ -3162,20 +3181,29 @@ function suggestAddSensorId() {
   document.getElementById('as_sensorId').value = `${addSensorSelectedAsset.id}-${type.toUpperCase()}`;
 }
 
+function toggleAddSensorTargetRange() {
+  const type = document.getElementById('as_sensorType').value;
+  document.getElementById('as_targetRangeRow').style.display = (type === 'temperature' || type === 'humidity') ? 'block' : 'none';
+}
+
 async function submitAddSensor() {
   const errEl = document.getElementById('as_error');
   errEl.textContent = '';
   if (!addSensorSelectedAsset) { errEl.textContent = 'Search for and pick the asset this sensor belongs to.'; return; }
   const sensorId = document.getElementById('as_sensorId').value.trim();
   if (!sensorId) { errEl.textContent = 'A sensor / device id is required.'; return; }
+  const body = {
+    action: 'addSensor',
+    sensorId,
+    assetId: addSensorSelectedAsset.id,
+    sensorType: document.getElementById('as_sensorType').value,
+  };
+  if (document.getElementById('as_targetRangeRow').style.display !== 'none') {
+    body.targetRange = document.getElementById('as_targetRange').value.trim();
+  }
   const resp = await fetch('/api/sensors', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'addSensor',
-      sensorId,
-      assetId: addSensorSelectedAsset.id,
-      sensorType: document.getElementById('as_sensorType').value,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not add sensor'; return; }
