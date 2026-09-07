@@ -2849,6 +2849,7 @@ function showSensorDetail(recordId) {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--navy)">${s.assetName} — ${s.sensorId}</div>
           <div style="display:flex;gap:8px;flex-shrink:0">
+            <button onclick="openEditSensorModal('${s.recordId}', '${s.sensorId}', '${(s.assetId || '').replace(/'/g,"\\'")}', '${s.assetName.replace(/'/g,"\\'")}', '${s.sensorType}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>
             ${s.isDemo ? `<button onclick="removeDemoSensor('${s.sensorId}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">🗑 Remove Sample Sensor</button>` : ''}
             <button onclick="decommissionSensor('${s.sensorId}', '${s.assetName.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>
           </div>
@@ -3022,6 +3023,80 @@ async function submitSeedDemoData() {
     }
     alert(msg);
   }
+  renderSensorMonitor();
+}
+
+let editSensorSelectedAsset = null;
+let editSensorRecordId = null;
+let editSensorId = null;
+
+function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetName, currentSensorType) {
+  editSensorRecordId = recordId;
+  editSensorId = sensorId;
+  editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
+  const typeOptions = BMS_SENSOR_TYPES.map(t => `<option value="${t.value}" ${t.value === currentSensorType ? 'selected' : ''}>${t.label}</option>`).join('');
+  showBmsModal('Edit Sensor', `
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Linked Asset</label>
+    <input id="es_assetSearch" type="text" placeholder="Search by name or asset id" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;${editSensorSelectedAsset ? 'display:none' : ''}" oninput="renderEditSensorAssetResults()">
+    <div id="es_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
+    <div id="es_assetSelected" style="${editSensorSelectedAsset ? '' : 'display:none'};background:var(--navy-pale);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:var(--navy);font-weight:600">${editSensorSelectedAsset ? `${escapeHtml(editSensorSelectedAsset.name)} (${escapeHtml(editSensorSelectedAsset.id)}) <button type="button" onclick="clearEditSensorAsset()" style="float:right;background:none;border:none;color:var(--navy);cursor:pointer;font-weight:600">change</button>` : ''}</div>
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Sensor Type</label>
+    <select id="es_sensorType" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">${typeOptions}</select>
+    <div id="es_error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+    <button onclick="submitEditSensor()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Save Changes</button>
+  `);
+}
+
+function renderEditSensorAssetResults() {
+  const q = document.getElementById('es_assetSearch').value.trim().toLowerCase();
+  const resultsEl = document.getElementById('es_assetResults');
+  if (q.length < 2) {
+    resultsEl.innerHTML = q.length === 0 ? '' : `<div style="font-size:12px;color:var(--muted);text-align:center;padding:10px">Type at least 2 characters to search.</div>`;
+    return;
+  }
+  const matches = assets.filter(a => a.name.toLowerCase().includes(q) || (a.id || '').toLowerCase().includes(q)).slice(0, 25);
+  if (matches.length === 0) {
+    resultsEl.innerHTML = `<div style="font-size:12px;color:var(--muted);text-align:center;padding:10px">No matching assets.</div>`;
+    return;
+  }
+  resultsEl.innerHTML = matches.map(a => `
+    <button type="button" onclick="selectEditSensorAsset('${a.id}','${escapeHtml(a.name).replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 10px;margin-bottom:4px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer">
+      <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(a.name)}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(a.id)}</div>
+    </button>`).join('');
+}
+
+function selectEditSensorAsset(assetId, assetName) {
+  editSensorSelectedAsset = { id: assetId, name: assetName };
+  document.getElementById('es_assetSearch').style.display = 'none';
+  document.getElementById('es_assetResults').innerHTML = '';
+  const selectedEl = document.getElementById('es_assetSelected');
+  selectedEl.style.display = 'block';
+  selectedEl.innerHTML = `${escapeHtml(assetName)} (${escapeHtml(assetId)}) <button type="button" onclick="clearEditSensorAsset()" style="float:right;background:none;border:none;color:var(--navy);cursor:pointer;font-weight:600">change</button>`;
+}
+
+function clearEditSensorAsset() {
+  editSensorSelectedAsset = null;
+  document.getElementById('es_assetSearch').style.display = 'block';
+  document.getElementById('es_assetSearch').value = '';
+  document.getElementById('es_assetSelected').style.display = 'none';
+}
+
+async function submitEditSensor() {
+  const errEl = document.getElementById('es_error');
+  errEl.textContent = '';
+  if (!editSensorSelectedAsset) { errEl.textContent = 'Search for and pick the asset this sensor belongs to.'; return; }
+  const resp = await fetch('/api/sensors', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recordId: editSensorRecordId,
+      assetId: editSensorSelectedAsset.id,
+      sensorType: document.getElementById('es_sensorType').value,
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { errEl.textContent = data.error || 'Could not save changes'; return; }
+  closeBmsModal();
   renderSensorMonitor();
 }
 
