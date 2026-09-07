@@ -653,11 +653,26 @@ async function handleSeedDemoData(req, res, addedBy, organizationId) {
     // specifically here, by name or by already having real fuel
     // monitoring configured; if none exists at all, the fuel sample is
     // skipped entirely below rather than ever repeating that mistake.
-    const generatorAssetResult = await pgQuery(
-      "select id, asset_id, name, generator_rated_consumption_lph from components where active = true and organization_id = $1 and (lower(name) like '%generator%' or generator_rated_consumption_lph is not null) limit 1",
+    // Confirmed directly, fixing a real bug in the fix itself: a
+    // single query with an OR condition gave no real priority between
+    // a genuine name match and an asset that merely already had fuel
+    // fields set on it - which, after the original bug, was the CCTV
+    // asset itself, letting it win again with no deterministic
+    // ordering between the two. A real name match is now always tried
+    // first and always wins if found; the "already configured"
+    // fallback only ever runs at all when no name match exists.
+    const byNameResult = await pgQuery(
+      "select id, asset_id, name, generator_rated_consumption_lph from components where active = true and organization_id = $1 and lower(name) like '%generator%' order by name asc limit 1",
       [organizationId]
     );
-    const generatorAsset = generatorAssetResult.rows[0] || null;
+    let generatorAsset = byNameResult.rows[0] || null;
+    if (!generatorAsset) {
+      const byConfigResult = await pgQuery(
+        "select id, asset_id, name, generator_rated_consumption_lph from components where active = true and organization_id = $1 and generator_rated_consumption_lph is not null order by name asc limit 1",
+        [organizationId]
+      );
+      generatorAsset = byConfigResult.rows[0] || null;
+    }
 
     const skipped = [];
     const created = [];
