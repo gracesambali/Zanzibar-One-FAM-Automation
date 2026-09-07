@@ -644,10 +644,31 @@ async function handleSeedDemoData(req, res, addedBy, organizationId) {
       return res.status(400).json({ error: "No real assets exist yet to link sample sensors to. Add at least one asset first." });
     }
 
+    // Confirmed directly, fixing a real, genuine bug: the fuel demo
+    // needs a genuinely generator-like asset, not whichever one
+    // happens to come first in an arbitrary, unordered pick - that
+    // previously landed on a CCTV camera in a real, reported case,
+    // even while a real generator asset already existed. Searched for
+    // specifically here, by name or by already having real fuel
+    // monitoring configured; if none exists at all, the fuel sample is
+    // skipped entirely below rather than ever repeating that mistake.
+    const generatorAssetResult = await pgQuery(
+      "select id, asset_id, name, generator_rated_consumption_lph from components where active = true and organization_id = $1 and (lower(name) like '%generator%' or generator_rated_consumption_lph is not null) limit 1",
+      [organizationId]
+    );
+    const generatorAsset = generatorAssetResult.rows[0] || null;
+
+    const skipped = [];
     const created = [];
     for (let i = 0; i < DEMO_SEED_DEFINITIONS.length; i++) {
       const def = DEMO_SEED_DEFINITIONS[i];
-      const asset = assetsResult.rows[i % assetsResult.rows.length];
+      let asset;
+      if (def.sensorType === "fuel_level") {
+        if (!generatorAsset) { skipped.push({ sensorId: def.sensorId, reason: "No generator-like asset exists yet to link this to." }); continue; }
+        asset = generatorAsset;
+      } else {
+        asset = assetsResult.rows[i % assetsResult.rows.length];
+      }
 
       // Real, per-org uniqueness - re-seeding after a partial clear
       // shouldn't fail on a duplicate sensor_id. Confirmed directly:
@@ -729,7 +750,7 @@ async function handleSeedDemoData(req, res, addedBy, organizationId) {
       created.push(def.sensorId);
     }
 
-    return res.status(200).json({ success: true, created });
+    return res.status(200).json({ success: true, created, skipped });
   } catch (err) {
     console.error("handleSeedDemoData error:", err);
     return res.status(500).json({ error: err.message });
