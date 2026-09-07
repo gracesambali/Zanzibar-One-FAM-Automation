@@ -2738,7 +2738,6 @@ async function renderSensorMonitor(isRefresh) {
           <button onclick="openBmsDecommissionedModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">👁 Decommissioned</button>
           <button onclick="openBmsNotificationSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔔 Notification Settings</button>
           <button onclick="submitSeedDemoData()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🎬 Add Sample Data</button>
-          <button onclick="submitClearDemoData()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">🗑 Clear Sample Data</button>
           <button onclick="openAddSensorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Sensor</button>
         </div>
       </div>`;
@@ -3008,18 +3007,6 @@ const BMS_SENSOR_TYPES = [
 // reuses real, existing assets already in the register rather than
 // inventing fake ones, so a demonstration reflects this facility's
 // own real equipment.
-async function submitClearDemoData() {
-  if (!confirm('Remove all sample sensors and their sample readings? This cannot be undone.')) return;
-  const resp = await fetch('/api/sensors', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clearDemoData' }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Could not clear sample data'); return; }
-  alert(data.removed.length === 0 ? 'No sample data to remove.' : `Removed ${data.removed.length} sample sensor(s): ${data.removed.join(', ')}.`);
-  renderSensorMonitor();
-}
-
 async function submitSeedDemoData() {
   const resp = await fetch('/api/sensors', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
