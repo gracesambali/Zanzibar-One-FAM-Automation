@@ -3050,6 +3050,7 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
       <input id="es_targetRange" type="text" value="${escapeHtml(currentTargetRange || '')}" placeholder="e.g. 2-8" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
     </div>
     <div id="es_fuelConfigRow" style="${currentSensorType === 'fuel_level' ? '' : 'display:none'}">
+      <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:6px">Target (theft/consumption threshold)</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Rated Consumption (L/h)</label>
       <input id="es_genRate" type="number" step="any" value="${currentRatedConsumptionLph ?? ''}" placeholder="e.g. 20" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Tank Capacity (L)</label>
