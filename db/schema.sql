@@ -1975,3 +1975,17 @@ create table if not exists fuel_fill_events (
 );
 create index if not exists idx_fuel_fill_events_generator on fuel_fill_events (generator_asset_id, fill_date desc);
 create index if not exists idx_fuel_fill_events_org on fuel_fill_events (organization_id);
+
+-- ============================================================
+-- Generic, per-sensor target configuration - confirmed directly:
+-- every sensor type should have its own threshold genuinely editable,
+-- now and for any type invented later, without needing a new column
+-- (and a new UI section wired to it) added to this schema every
+-- single time. A flexible JSON blob rather than more dedicated
+-- columns - each sensor type's evaluation logic reads its own,
+-- specific keys out of this same one column (e.g. spikeThresholdPercent
+-- for a consumption type, expectedValue for a binary state type),
+-- so a brand new sensor type in the future only ever needs new
+-- application logic, never a schema migration.
+-- ============================================================
+alter table sensors add column if not exists target_config jsonb;

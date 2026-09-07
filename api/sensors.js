@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleEditSensor(req, res, editedBy, organizationId) {
-  const { recordId, notes, status, assignee, assetId, sensorType, targetRange, ratedConsumptionLph, tankCapacityLiters, fuelPricePerLiterTzs } = req.body || {};
+  const { recordId, notes, status, assignee, assetId, sensorType, targetRange, ratedConsumptionLph, tankCapacityLiters, fuelPricePerLiterTzs, expectedValue, spikeThresholdPercent } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (sensorType && !categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
@@ -141,6 +141,32 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
       }
     }
 
+    // Confirmed directly, as part of making every sensor type's own
+    // target genuinely editable now and for any type invented later:
+    // a binary sensor's real expected value (e.g. a door meant to
+    // stay open, not closed) and a consumption sensor's own real
+    // spike threshold percentage. Both live directly on the sensor
+    // itself in one, generic target_config column, which the actual
+    // evaluation logic reads from directly - this genuinely changes
+    // what gets detected, not just a display label.
+    const BINARY_TYPES = ["door", "equipment", "alarm"];
+    if (BINARY_TYPES.includes(effectiveType) && expectedValue !== undefined) {
+      const currentConfig = current.target_config || {};
+      const newExpectedValue = Number(expectedValue);
+      if (newExpectedValue !== (currentConfig.expectedValue ?? 0)) {
+        await update("sensors", recordId, { target_config: { ...currentConfig, expectedValue: newExpectedValue } }).catch(() => { throw new Error("Could not save expected value"); });
+        changes.push(["Expected Value", currentConfig.expectedValue ?? 0, newExpectedValue]);
+      }
+    }
+    if (["runtime", "electrical", "water"].includes(effectiveType) && spikeThresholdPercent !== undefined) {
+      const currentConfig = current.target_config || {};
+      const newPct = Number(spikeThresholdPercent);
+      if (newPct !== (currentConfig.spikeThresholdPercent ?? 40)) {
+        await update("sensors", recordId, { target_config: { ...currentConfig, spikeThresholdPercent: newPct } }).catch(() => { throw new Error("Could not save spike threshold"); });
+        changes.push(["Spike Threshold (%)", currentConfig.spikeThresholdPercent ?? 40, newPct]);
+      }
+    }
+
     for (const [field, oldVal, newVal] of changes) {
       await appendSensorActivity(recordId, `${field} changed from "${oldVal}" to "${newVal}"`, editedBy);
     }
@@ -199,22 +225,25 @@ async function handleGetReadings(req, res, organizationId) {
       const sensorType = s.sensor_type || "";
       const sensorTypeLower = sensorType.toLowerCase();
 
+      const targetConfig = s.target_config || {};
       let targetRange;
       if (sensorTypeLower === "humidity") {
         targetRange = component.target_range_humidity || null;
       } else if (sensorTypeLower === "temperature") {
         targetRange = component.target_range_temp || null;
       } else if (sensorTypeLower === "door") {
-        targetRange = "Closed (0)";
-      } else if (sensorTypeLower === "equipment" || sensorTypeLower === "equipment status") {
-        targetRange = "OK (0)";
-      } else if (sensorTypeLower === "alarm") {
-        targetRange = "OK (0)";
+        const expectedValue = targetConfig.expectedValue ?? 0;
+        targetRange = `${expectedValue === 0 ? "Closed" : "Open"} (${expectedValue})`;
+      } else if (sensorTypeLower === "equipment" || sensorTypeLower === "equipment status" || sensorTypeLower === "alarm") {
+        const expectedValue = targetConfig.expectedValue ?? 0;
+        targetRange = `${expectedValue === 0 ? "OK" : "Fault"} (${expectedValue})`;
       } else if (["runtime", "electrical", "water"].includes(sensorTypeLower)) {
-        // Spike-based, not a fixed range - real threshold only exists
-        // at the moment a reading is evaluated, not as a static value
-        // to display here.
-        targetRange = "40% above 14-day average";
+        // Spike-based, not a fixed range - the real threshold only
+        // exists at the moment a reading is evaluated, but the real,
+        // configured percentage itself (or the existing default) is
+        // shown here so it's not left looking permanently fixed.
+        const pct = targetConfig.spikeThresholdPercent ?? 40;
+        targetRange = `${pct}% above 14-day average`;
       } else {
         targetRange = null;
       }
@@ -229,6 +258,8 @@ async function handleGetReadings(req, res, organizationId) {
         assetName: component.name || assetId,
         location: component.room_zone || "",
         targetRange,
+        expectedValue: targetConfig.expectedValue ?? null,
+        spikeThresholdPercent: targetConfig.spikeThresholdPercent ?? null,
         generatorRatedConsumptionLph: component.generator_rated_consumption_lph !== undefined ? component.generator_rated_consumption_lph : null,
         generatorTankCapacityLiters: component.generator_tank_capacity_liters !== undefined ? component.generator_tank_capacity_liters : null,
         fuelPricePerLiterTzs: component.fuel_price_per_liter_tzs !== undefined ? component.fuel_price_per_liter_tzs : null,
@@ -577,18 +608,22 @@ async function handleSetNotificationRoles(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleAddSensor(req, res, addedBy, organizationId) {
-  const { sensorId, assetId, sensorType, targetRange } = req.body || {};
+  const { sensorId, assetId, sensorType, targetRange, expectedValue, spikeThresholdPercent } = req.body || {};
   if (!sensorId || !sensorId.trim()) return res.status(400).json({ error: "A real sensor/device ID is required." });
   if (!assetId) return res.status(400).json({ error: "Choose a real asset to link this sensor to." });
   if (!categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
   try {
     const { insert, getByColumn, update } = await import("../lib/postgresClient.js");
+    const targetConfig = {};
+    if (expectedValue !== undefined && expectedValue !== "") targetConfig.expectedValue = Number(expectedValue);
+    if (spikeThresholdPercent !== undefined && spikeThresholdPercent !== "") targetConfig.spikeThresholdPercent = Number(spikeThresholdPercent);
     const sensor = await insert("sensors", {
       sensor_id: sensorId.trim(),
       asset_id: assetId,
       sensor_type: sensorType,
       status: "Active",
+      target_config: Object.keys(targetConfig).length > 0 ? targetConfig : null,
       activity_log: JSON.stringify([{ text: `Registered by ${addedBy}`, by: addedBy, at: new Date().toISOString() }]),
       organization_id: organizationId,
     });
