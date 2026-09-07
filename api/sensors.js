@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 // ---------------------------------------------------------------------
 
 async function handleEditSensor(req, res, editedBy, organizationId) {
-  const { recordId, notes, status, assignee, assetId, sensorType, targetRange, ratedConsumptionLph, tankCapacityLiters, fuelPricePerLiterTzs, expectedValue, spikeThresholdPercent } = req.body || {};
+  const { recordId, notes, status, assignee, assetId, sensorType, targetRange, ratedConsumptionLph, tankCapacityLiters, fuelPricePerLiterTzs, targetRefillLiters, expectedValue, spikeThresholdPercent } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (sensorType && !categoryForSensorType(sensorType)) return res.status(400).json({ error: "Unknown sensor type." });
 
@@ -118,7 +118,7 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
     // detail view the way a target range now is. Same real fields
     // already used by the fuel-monitoring feature itself, just
     // reachable from here too now.
-    if (effectiveType === "fuel_level" && (ratedConsumptionLph !== undefined || tankCapacityLiters !== undefined || fuelPricePerLiterTzs !== undefined)) {
+    if (effectiveType === "fuel_level" && (ratedConsumptionLph !== undefined || tankCapacityLiters !== undefined || fuelPricePerLiterTzs !== undefined || targetRefillLiters !== undefined)) {
       const { getByColumn } = await import("../lib/postgresClient.js");
       const asset = await getByColumn("components", "asset_id", effectiveAssetId, organizationId).catch(() => null);
       if (asset) {
@@ -134,6 +134,10 @@ async function handleEditSensor(req, res, editedBy, organizationId) {
         if (fuelPricePerLiterTzs !== undefined && String(fuelPricePerLiterTzs) !== String(asset.fuel_price_per_liter_tzs || "")) {
           assetFields.fuel_price_per_liter_tzs = fuelPricePerLiterTzs || null;
           changes.push(["Fuel Price (TZS/L)", asset.fuel_price_per_liter_tzs || "", fuelPricePerLiterTzs || "(cleared)"]);
+        }
+        if (targetRefillLiters !== undefined && String(targetRefillLiters) !== String(asset.target_refill_liters || "")) {
+          assetFields.target_refill_liters = targetRefillLiters || null;
+          changes.push(["Target Refill Level (L)", asset.target_refill_liters || "", targetRefillLiters || "(cleared)"]);
         }
         if (Object.keys(assetFields).length > 0) {
           await update("components", asset.id, assetFields).catch(() => { throw new Error("Could not save fuel configuration"); });
@@ -262,6 +266,7 @@ async function handleGetReadings(req, res, organizationId) {
         spikeThresholdPercent: targetConfig.spikeThresholdPercent ?? null,
         generatorRatedConsumptionLph: component.generator_rated_consumption_lph !== undefined ? component.generator_rated_consumption_lph : null,
         generatorTankCapacityLiters: component.generator_tank_capacity_liters !== undefined ? component.generator_tank_capacity_liters : null,
+        targetRefillLiters: component.target_refill_liters !== undefined ? component.target_refill_liters : null,
         fuelPricePerLiterTzs: component.fuel_price_per_liter_tzs !== undefined ? component.fuel_price_per_liter_tzs : null,
         latestValue: latest ? (latest.value !== null ? Number(latest.value) : null) : null,
         latestUnit: latest ? latest.unit : null,
