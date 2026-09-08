@@ -407,7 +407,7 @@ button { font-family: inherit; cursor: pointer; }
      Register - matches the exact same, pre-existing ungated
      visibility the button already had there, only its position and
      reach are actually changing. -->
-<button onclick="openScanAssetBarcodeModal()" title="Scan Asset Barcode" style="position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.3);font-size:22px;cursor:pointer;z-index:400;display:flex;align-items:center;justify-content:center">🔍</button>
+<button onclick="openScanAssetBarcodeModal()" title="Scan Asset Barcode or QR Code" style="position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.3);font-size:22px;cursor:pointer;z-index:400;display:flex;align-items:center;justify-content:center">🔍</button>
 
 <div class="main-layout">
 <div class="sidebar" id="sidebar">
@@ -4791,7 +4791,7 @@ function ensureBarcodeScannerLoaded() {
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
     script.onload = resolve;
-    script.onerror = () => reject(new Error('Could not load the barcode scanner — check your connection and try again.'));
+    script.onerror = () => reject(new Error('Could not load the scanner — check your connection and try again.'));
     document.head.appendChild(script);
   });
   return barcodeScannerLoadPromise;
@@ -9343,9 +9343,9 @@ function openCloseWorkOrderScanModal(woId, assetName) {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Close Work Order</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Scan the tag on ${escapeHtml(assetName)} to confirm you're at the equipment.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Scan the barcode or QR code on ${escapeHtml(assetName)} to confirm you're at the equipment.</div>
       <div id="wc_reader" style="width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:10px;min-height:220px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px">Starting camera…</div>
-      <input id="wc_code" type="text" placeholder="Or type the barcode" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitCloseWoScan();}">
+      <input id="wc_code" type="text" placeholder="Or type the barcode / QR code" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitCloseWoScan();}">
       <div id="wc_confirmSection" style="display:none;margin-bottom:14px">
         <div style="background:var(--green-bg);color:var(--green);border-radius:8px;padding:10px 12px;font-size:12.5px;font-weight:600;margin-bottom:10px">✓ Tag confirmed — <span id="wc_confirmedAssetName"></span></div>
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Closing as</label>
@@ -9386,7 +9386,7 @@ async function startCloseWoCameraScanner() {
       () => {} // per-frame "nothing decoded yet" noise - not a real error, ignored on purpose
     );
   } catch (err) {
-    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode below instead.</div>`;
+    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode or QR code below instead.</div>`;
     console.error('Close WO scan camera error:', err);
   }
 }
@@ -9413,7 +9413,7 @@ async function submitCloseWoScan() {
   const errorBox = document.getElementById('wc_error');
   const btn = document.getElementById('wc_submit');
   errorBox.style.display = 'none';
-  if (!code) { errorBox.textContent = 'Scan or enter the barcode.'; errorBox.style.display = 'block'; return; }
+  if (!code) { errorBox.textContent = 'Scan or enter the barcode or QR code.'; errorBox.style.display = 'block'; return; }
 
   const confirmSection = document.getElementById('wc_confirmSection');
   if (confirmSection.style.display !== 'none') {
@@ -9469,10 +9469,10 @@ function openScanAssetBarcodeModal() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Scan Asset Barcode</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Point the camera at an existing physical tag, or type the code below.</div>
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Scan Asset Barcode or QR Code</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Point the camera at the barcode or QR code on the tag, or type the code below.</div>
       <div id="sab_reader" style="width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:10px;min-height:220px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px">Starting camera…</div>
-      <input id="sab_code" type="text" placeholder="Or type the barcode" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitScanAssetBarcode();}">
+      <input id="sab_code" type="text" placeholder="Or type the barcode / QR code" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitScanAssetBarcode();}">
       <div id="sab_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <button onclick="closeScanAssetBarcodeModal()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -9514,7 +9514,7 @@ async function startAssetBarcodeCameraScanner() {
     // permission denied - the manual text field right below still
     // works either way, so this fails quietly rather than blocking
     // the whole modal.
-    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode below instead.</div>`;
+    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode or QR code below instead.</div>`;
     console.error('Asset barcode camera scanner error:', err);
   }
 }
@@ -10328,7 +10328,7 @@ async function openScanModal(mode) {
         <video id="scanVideo" style="width:100%;display:block" playsinline muted></video>
         <div style="position:absolute;inset:0;border:3px solid rgba(255,255,255,0.4);pointer-events:none;margin:14%"></div>
       </div>
-      <div id="scanStatus" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Point the camera at the barcode…</div>
+      <div id="scanStatus" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Point the camera at the barcode or QR code…</div>
     </div>`;
   document.body.appendChild(overlay);
 
