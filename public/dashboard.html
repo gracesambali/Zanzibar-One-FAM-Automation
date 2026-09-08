@@ -694,6 +694,33 @@ let financeEnabled = true; // filled in after login by loadAssetsAndInit() from 
 let currentUserOrgId = ""; // filled in after login by loadAssetsAndInit(), from the verified session
 const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
 let currentUsername = ""; // the actual login identity chat participation is checked against — never the display name
+
+// Confirmed directly, discussed and agreed in full before building:
+// applies to every tab, no exceptions. Right after login's own real
+// data finishes loading, every other tab's own real data starts
+// fetching quietly in the background, all at once - not blocking
+// login itself, and not shown to anyone while it happens. A tab with
+// a real, current entry here renders instantly straight from it the
+// moment it's opened, then quietly re-fetches in the background to
+// stay current - the same real, already-proven pattern this app
+// already uses for a quiet post-action refresh (see
+// refreshInventoryQuietly), just now applied at initial tab open
+// too. A tab with no entry yet (the prefetch hasn't reached it, or
+// genuinely failed) falls back to its own real, existing loading
+// behavior - never a broken or blank screen.
+let tabPrefetchCache = {};
+const TAB_PREFETCH_FETCHERS = {};
+
+async function prefetchAllTabsInBackground() {
+  await Promise.all(Object.entries(TAB_PREFETCH_FETCHERS).map(async ([tab, fetcher]) => {
+    try {
+      tabPrefetchCache[tab] = { data: await fetcher(), fetchedAt: Date.now() };
+    } catch (err) {
+      console.error(`Background prefetch failed for "${tab}" (non-fatal - that tab will just load normally when opened):`, err.message);
+    }
+  }));
+}
+
 let currentWODetailId = null; // which work order's detail view is open right now, if any — lets polling refresh it in place instead of yanking someone back to the list
 let currentDashboardWindow = 30; // days — changeable via the dashboard timeframe selector
 
@@ -3786,17 +3813,12 @@ function floorSortKey(floor) {
 // defined floors are fetched per building since a brand-new client's
 // building genuinely has zero assets on it yet but still has a real
 // structure worth setting up.
-async function renderLevelView() {
+async function fetchLevelViewData() {
   const relevantBuildings = currentBuildingFilter !== "__all__"
     ? [currentBuildingFilter]
     : currentFacilityFilter !== "__all__"
       ? (facilitiesData.find(f => f.name === currentFacilityFilter)?.buildings || [])
       : facilitiesData.flatMap(f => f.buildings);
-
-  const container = document.getElementById('view-levelview');
-  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
-
-  const canManageStructure = typeof currentUserPermissions !== 'undefined' && currentUserPermissions && currentUserPermissions.manageUsers;
 
   // Real facilities involved, in the order their buildings first
   // appear - grouping headers shown once per facility, not once per
@@ -3875,6 +3897,19 @@ async function renderLevelView() {
     zonesByTripleKey[tKey] = zonesResults[i];
     roomsByTripleKey[tKey] = roomsResults[i];
   });
+
+  return {
+    relevantBuildings, facilitiesInvolved, buildingPairs, definedFloorsByPair, allFloorIdsByPair,
+    zonesByTripleKey, roomsByTripleKey,
+    buildingFilter: currentBuildingFilter, facilityFilter: currentFacilityFilter,
+  };
+}
+TAB_PREFETCH_FETCHERS.levelview = fetchLevelViewData;
+
+function renderLevelViewFromData(bundle) {
+  const { relevantBuildings, facilitiesInvolved, buildingPairs, definedFloorsByPair, allFloorIdsByPair, zonesByTripleKey, roomsByTripleKey } = bundle;
+  const container = document.getElementById('view-levelview');
+  const canManageStructure = typeof currentUserPermissions !== 'undefined' && currentUserPermissions && currentUserPermissions.manageUsers;
 
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
@@ -4011,6 +4046,45 @@ async function renderLevelView() {
   }
 
   container.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here, no
+// exception. A real, current cache entry - matching today's actual
+// filter selection, not a stale one from before it changed - renders
+// instantly with zero loading state, then quietly refreshes itself in
+// the background right after so it stays current. No usable cache
+// yet (a genuinely new filter combination, or the background prefetch
+// hasn't reached here yet) falls back to the original, real loading
+// behavior for that one case only.
+async function renderLevelView() {
+  const cached = tabPrefetchCache.levelview;
+  const filterMatches = cached && cached.data.buildingFilter === currentBuildingFilter && cached.data.facilityFilter === currentFacilityFilter;
+
+  if (filterMatches) {
+    renderLevelViewFromData(cached.data);
+    fetchLevelViewData().then(data => {
+      tabPrefetchCache.levelview = { data, fetchedAt: Date.now() };
+      // Only re-render if still genuinely looking at this same tab and
+      // filter combination - a silent background refresh should never
+      // yank someone back to a screen they've since navigated away
+      // from, or overwrite a filter change made while this was in flight.
+      if (document.getElementById('view-levelview')?.classList.contains('active')
+          && data.buildingFilter === currentBuildingFilter && data.facilityFilter === currentFacilityFilter) {
+        renderLevelViewFromData(data);
+      }
+    }).catch(err => console.error('Background Level View refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  const container = document.getElementById('view-levelview');
+  container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+  try {
+    const data = await fetchLevelViewData();
+    tabPrefetchCache.levelview = { data, fetchedAt: Date.now() };
+    renderLevelViewFromData(data);
+  } catch (err) {
+    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
 }
 
 // Level View's own building-add entry point - same real backend
@@ -17260,6 +17334,7 @@ async function loadAssetsAndInit() {
     } else {
       renderDashboard();
     }
+    prefetchAllTabsInBackground(); // confirmed directly: fire-and-forget, never awaited - login itself never waits on this
   } catch (err) {
     if (loadingEl) {
       loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
