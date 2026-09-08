@@ -2002,3 +2002,21 @@ alter table sensors add column if not exists target_config jsonb;
 -- might be stolen."
 -- ============================================================
 alter table components add column if not exists target_refill_liters numeric;
+
+-- ============================================================
+-- Close Work Order via Scan (proof of presence) - confirmed
+-- directly, discussed and agreed in full before building. A
+-- technician closes a work order themselves by scanning the real,
+-- physical tag on the actual equipment - the scan itself is the
+-- proof they were genuinely there, not a separate verification
+-- step. Replaces the prior supervisor-approval gate for work
+-- orders that have a real, linked asset to scan; a work order with
+-- no asset at all still closes the existing way, since there's
+-- nothing physical to prove presence at. The routed role is
+-- notified after the fact, with a real, one-tap way to reopen it if
+-- something looks wrong - the same, already-proven pattern already
+-- used for the original reporter's own satisfaction check.
+-- ============================================================
+alter table work_orders add column if not exists closure_method text;
+alter table work_orders add column if not exists supervisor_review_status text;
+alter table work_orders add column if not exists supervisor_review_reason text;

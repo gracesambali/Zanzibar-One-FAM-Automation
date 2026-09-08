@@ -14,6 +14,85 @@
 
 import { getContactsForRole } from "../lib/staffDirectory.js";
 
+// Confirmed directly, discussed and agreed in full before building:
+// the routed role's own real, one-tap way to reopen a work order
+// closed via scan, if something looks wrong - mirrors
+// handleSatisfactionResponse's exact structure, including the same
+// real double-click protection, since email/SMS link-scanning can
+// visit a link before a person ever sees it. Uses its own, separate
+// status field rather than the reporter's own satisfaction_status -
+// these are two different people's independent responses to the
+// same real closure, not the same fact recorded twice.
+async function handleSupervisorReviewResponse(req, res) {
+  const { recordId, supervisorReview, reason } = req.query;
+  if (!recordId || (supervisorReview !== "yes" && supervisorReview !== "no")) {
+    return res.status(400).send("Invalid link.");
+  }
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+
+    if (supervisorReview === "no" && !reason) {
+      return res.status(200).send(supervisorReasonFormPage(recordId));
+    }
+
+    const existing = await getById("work_orders", recordId).catch(() => null);
+    if (!existing) {
+      return res.status(404).send(simplePage("Not found", "This work order could not be found."));
+    }
+    if (existing.supervisor_review_status && existing.supervisor_review_status !== "Pending") {
+      return res.status(200).send(simplePage("Already recorded", "Thanks — your response was already recorded, no further action needed."));
+    }
+
+    const fields = {
+      supervisor_review_status: supervisorReview === "yes" ? "Acknowledged" : "Reopened",
+    };
+    if (supervisorReview === "no") {
+      fields.status = "Open"; // reopens — not a dead end
+      fields.supervisor_review_reason = reason;
+    }
+
+    const patchOk = await update("work_orders", recordId, fields).then(() => true).catch(() => false);
+    if (!patchOk) {
+      return res.status(500).send(simplePage("Something went wrong", "Please contact the technical team directly."));
+    }
+
+    const log = Array.isArray(existing.activity_log) ? existing.activity_log : [];
+    log.push({
+      type: "system",
+      text: supervisorReview === "yes"
+        ? "✅ Routed role acknowledged the scan-confirmed closure."
+        : `🔄 Routed role was NOT satisfied — reopened. Reason: ${reason}`,
+      by: "supervisor",
+      at: new Date().toISOString(),
+    });
+    await update("work_orders", recordId, { activity_log: JSON.stringify(log) }).catch(() => {});
+
+    if (supervisorReview === "yes") {
+      return res.status(200).send(simplePage("Thank you!", "Acknowledged — no further action needed."));
+    }
+
+    return res.status(200).send(simplePage("We've reopened this", "Thanks for the flag — this work order is open again."));
+  } catch (err) {
+    console.error("supervisor review response error:", err);
+    return res.status(500).send(simplePage("Something went wrong", "Please contact the technical team directly."));
+  }
+}
+
+function supervisorReasonFormPage(recordId) {
+  return `<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>What's wrong?</title>
+    <style>body{font-family:-apple-system,sans-serif;padding:40px 24px;color:#1A1A2E;max-width:400px;margin:0 auto}
+    h1{color:#1A3566;font-size:18px}textarea{width:100%;padding:10px;border:1px solid #E2E6ED;border-radius:8px;font-size:14px;margin:12px 0;box-sizing:border-box}
+    button{background:#1A3566;color:#fff;border:none;border-radius:8px;padding:12px 20px;font-size:14px;font-weight:600;width:100%}</style></head>
+    <body><h1>What looks wrong with this closure?</h1>
+    <form action="/api/report-issue" method="get">
+      <input type="hidden" name="supervisorReview" value="no">
+      <input type="hidden" name="recordId" value="${recordId}">
+      <textarea name="reason" rows="4" placeholder="Briefly describe the concern" required></textarea>
+      <button type="submit">Reopen Work Order</button>
+    </form></body></html>`;
+}
+
 async function handleSatisfactionResponse(req, res) {
   const { recordId, satisfaction, reason } = req.query;
   if (!recordId || (satisfaction !== "yes" && satisfaction !== "no")) {
@@ -697,6 +776,16 @@ export default async function handler(req, res) {
   // reopens the work order instead of leaving a dead end.
   if (req.method === "GET" && req.query.satisfaction) {
     return handleSatisfactionResponse(req, res);
+  }
+
+  // Confirmed directly, discussed and agreed in full before building:
+  // the routed role's own real, one-tap way to reopen a work order
+  // that was closed via scan, if something looks wrong - mirroring the
+  // exact same reasoning already used for the reporter's own
+  // satisfaction check just above. No login: same "no account needed"
+  // principle as the rest of this file.
+  if (req.method === "GET" && req.query.supervisorReview) {
+    return handleSupervisorReviewResponse(req, res);
   }
 
   // Unit portal — a real password gate now, not just possessing the
