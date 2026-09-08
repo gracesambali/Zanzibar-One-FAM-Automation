@@ -6836,33 +6836,64 @@ let financeBillsCache = [];
 let financeLiabilitiesCache = [];
 let financeVendorsCache = [];
 
+async function fetchFinanceShellData() {
+  const [catResp, vendorResp] = await Promise.all([
+    fetch('/api/finance?categories=true'),
+    fetch('/api/work-orders?vendors=true'),
+  ]);
+  if (catResp.status === 403) throw new Error('__ACCESS_RESTRICTED__'); // never cache this - a role change must always show the real message
+  const catData = await catResp.json();
+  if (!catResp.ok) throw new Error(catData.error || 'Could not load Finance');
+  const categories = catData.categories || [];
+  const vendors = vendorResp.ok ? ((await vendorResp.json()).vendors || []) : [];
+  return { categories, vendors };
+}
+TAB_PREFETCH_FETCHERS.finance = fetchFinanceShellData;
+
+async function renderFinanceFromData(bundle) {
+  financeCategoriesCache = bundle.categories;
+  financeVendorsCache = bundle.vendors;
+  renderFinanceShell();
+  await renderFinanceSubTab(financeSubTab);
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern - the shell's own
+// shared data (categories, vendors), not any individual sub-tab's own
+// data, which each still fetches separately when selected.
 async function renderFinance() {
   const container = document.getElementById('view-finance');
+  const cached = tabPrefetchCache.finance;
+
+  if (cached) {
+    await renderFinanceFromData(cached.data);
+    fetchFinanceShellData().then(bundle => {
+      tabPrefetchCache.finance = { data: bundle, fetchedAt: Date.now() };
+      // Deliberately does NOT re-render here even if still on this tab -
+      // financeCategoriesCache/financeVendorsCache updating quietly in
+      // the background is enough; re-running renderFinanceShell would
+      // reset which sub-tab is showing and reload it again, which is
+      // a real, worse experience than just letting the shared data
+      // catch up silently for next time.
+    }).catch(err => console.error('Background Finance shell refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const [catResp, vendorResp] = await Promise.all([
-      fetch('/api/finance?categories=true'),
-      fetch('/api/work-orders?vendors=true'),
-    ]);
-    if (catResp.status === 403) {
+    const bundle = await fetchFinanceShellData();
+    tabPrefetchCache.finance = { data: bundle, fetchedAt: Date.now() };
+    await renderFinanceFromData(bundle);
+  } catch (err) {
+    if (err.message === '__ACCESS_RESTRICTED__') {
       container.innerHTML = `<div style="padding:60px 24px;text-align:center">
         <div style="font-size:32px;margin-bottom:12px">🔒</div>
         <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
         <div style="font-size:13px;color:var(--muted)">Finance is not available to this role.</div>
       </div>`;
-      return;
+    } else {
+      container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
     }
-    const catData = await catResp.json();
-    if (!catResp.ok) throw new Error(catData.error || 'Could not load Finance');
-    financeCategoriesCache = catData.categories || [];
-    if (vendorResp.ok) {
-      const vendorData = await vendorResp.json();
-      financeVendorsCache = vendorData.vendors || [];
-    }
-    renderFinanceShell();
-    await renderFinanceSubTab(financeSubTab);
-  } catch (err) {
-    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
 }
 
