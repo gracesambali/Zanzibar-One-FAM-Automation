@@ -1827,11 +1827,18 @@ function getFilteredAssets() {
 // a small line underneath, not the headline. Confirmed with Grace:
 // "numbers are direct, ratios are complex" — so the ratio is context,
 // not the star of the display.
-async function renderMaintCostSection(a) {
+async function fetchMaintCostData(assetId) {
+  const summaries = await loadAssetCostSummaries();
+  return summaries[assetId] || null;
+}
+// Confirmed directly: no single, meaningful "default asset" to
+// prefetch at login for this panel - populated on-demand per asset
+// instead, so this deliberately does not register with
+// TAB_PREFETCH_FETCHERS at all.
+
+function renderMaintCostFromData(a, s) {
   const el = document.getElementById('maintCostContent');
   if (!el) return;
-  const summaries = await loadAssetCostSummaries();
-  const s = summaries[a.id];
 
   if (!s || !s.total) {
     el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No maintenance costs recorded yet for this asset.</div>`;
@@ -1863,6 +1870,32 @@ async function renderMaintCostSection(a) {
   }
 
   el.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific asset actually being viewed - a
+// real, current cache entry for this exact asset renders instantly,
+// then quietly refreshes in the background.
+async function renderMaintCostSection(a) {
+  const el = document.getElementById('maintCostContent');
+  if (!el) return;
+  const cacheKey = a.id;
+  const cached = tabPrefetchCache.maintCostByAsset && tabPrefetchCache.maintCostByAsset.key === cacheKey ? tabPrefetchCache.maintCostByAsset.data : null;
+
+  const hasCacheForThisAsset = tabPrefetchCache.maintCostByAsset && tabPrefetchCache.maintCostByAsset.key === cacheKey;
+
+  if (hasCacheForThisAsset) {
+    renderMaintCostFromData(a, cached);
+    fetchMaintCostData(a.id).then(s => {
+      tabPrefetchCache.maintCostByAsset = { key: cacheKey, data: s, fetchedAt: Date.now() };
+      if (document.getElementById('maintCostContent')) renderMaintCostFromData(a, s);
+    }).catch(err => console.error('Background Maintenance Cost refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  const s = await fetchMaintCostData(a.id);
+  tabPrefetchCache.maintCostByAsset = { key: cacheKey, data: s, fetchedAt: Date.now() };
+  renderMaintCostFromData(a, s);
 }
 
 function buildFuelMonitorHtml(data) {
@@ -1905,13 +1938,33 @@ function buildFuelMonitorHtml(data) {
   return fuelHtml;
 }
 
+async function fetchFuelMonitorData(assetId) {
+  const resp = await fetch(`/api/get-assets?generatorFuelSummary=true&assetId=${encodeURIComponent(assetId)}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load fuel data');
+  return data;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific asset actually being viewed.
 async function renderFuelMonitorSection(a) {
   const el = document.getElementById('fuelMonitorContent');
   if (!el) return;
+  const cacheKey = a.id;
+  const cached = tabPrefetchCache.fuelMonitorByAsset && tabPrefetchCache.fuelMonitorByAsset.key === cacheKey ? tabPrefetchCache.fuelMonitorByAsset.data : null;
+
+  if (cached) {
+    el.innerHTML = buildFuelMonitorHtml(cached);
+    fetchFuelMonitorData(a.id).then(data => {
+      tabPrefetchCache.fuelMonitorByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('fuelMonitorContent')) el.innerHTML = buildFuelMonitorHtml(data);
+    }).catch(err => console.error('Background Fuel Monitor refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch(`/api/get-assets?generatorFuelSummary=true&assetId=${encodeURIComponent(a.id)}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load fuel data');
+    const data = await fetchFuelMonitorData(a.id);
+    tabPrefetchCache.fuelMonitorByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
     el.innerHTML = buildFuelMonitorHtml(data);
   } catch (err) {
     el.innerHTML = `<div style="color:var(--red);font-size:12px">Could not load fuel data: ${escapeHtml(err.message)}</div>`;
@@ -2338,52 +2391,104 @@ function showDetail(idx) {
   if (canSeeCost) renderMaintCostSection(a);
   if (a.generatorRatedConsumptionLph) renderFuelMonitorSection(a);
 
-  // Load edit log
-  fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(a.id))
-    .then(r => r.json())
-    .then(data => {
-      const el = document.getElementById('editLogEntries');
-      if (!data.entries || data.entries.length === 0) {
-        el.textContent = 'No edits recorded yet.';
-        return;
-      }
-      el.innerHTML = data.entries.map(e => {
-        const dt = new Date(e.timestamp);
-        const dateStr = dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) + ', ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
-        return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${e.field}</strong> changed from "${e.oldValue}" to "${e.newValue}" — by <strong>${e.editedBy}</strong> at ${dateStr}</div>`;
-      }).join('');
-    })
-    .catch(() => {
-      const el = document.getElementById('editLogEntries');
-      if (el) el.textContent = 'Could not load edit history.';
-    });
+  loadAssetEditLog(a.id);
+  loadAssetChecklist(a);
+}
 
-  // Load ISO maintenance checklist — auto-matched from the asset's name/system,
-  // with a generic discipline-level fallback (derived from System, same
-  // routing logic used for work orders) whenever no precise class matches.
+async function fetchAssetEditLogData(assetId) {
+  const resp = await fetch('/api/get-assets?editlog=true&id=' + encodeURIComponent(assetId));
+  return resp.json();
+}
+
+function renderAssetEditLogFromData(data) {
+  const el = document.getElementById('editLogEntries');
+  if (!el) return;
+  if (!data.entries || data.entries.length === 0) {
+    el.textContent = 'No edits recorded yet.';
+    return;
+  }
+  el.innerHTML = data.entries.map(e => {
+    const dt = new Date(e.timestamp);
+    const dateStr = dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) + ', ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${e.field}</strong> changed from "${e.oldValue}" to "${e.newValue}" — by <strong>${e.editedBy}</strong> at ${dateStr}</div>`;
+  }).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific asset actually being viewed.
+async function loadAssetEditLog(assetId) {
+  const el = document.getElementById('editLogEntries');
+  if (!el) return;
+  const cacheKey = assetId;
+  const cached = tabPrefetchCache.editLogByAsset && tabPrefetchCache.editLogByAsset.key === cacheKey ? tabPrefetchCache.editLogByAsset.data : null;
+
+  if (cached) {
+    renderAssetEditLogFromData(cached);
+    fetchAssetEditLogData(assetId).then(data => {
+      tabPrefetchCache.editLogByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('editLogEntries')) renderAssetEditLogFromData(data);
+    }).catch(() => {});
+    return;
+  }
+
+  try {
+    const data = await fetchAssetEditLogData(assetId);
+    tabPrefetchCache.editLogByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+    renderAssetEditLogFromData(data);
+  } catch {
+    if (el) el.textContent = 'Could not load edit history.';
+  }
+}
+
+async function fetchAssetChecklistData(a) {
   const checklistClass = guessChecklistClass(a.name, a.system);
-  fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&system=' + encodeURIComponent(a.system || '') + '&assetName=' + encodeURIComponent(a.name || ''))
-    .then(r => r.json())
-    .then(data => {
-      const el = document.getElementById('checklistContent');
-      if (!data.items || data.items.length === 0) {
-        el.innerHTML = `<div>No checklist items defined yet.</div>`;
-        return;
-      }
-      window.currentAssetChecklist = { asset: a, checklistClass: data.class, data };
-      el.innerHTML = `
-        <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${data.class}</strong> — ${data.items.length} items${data.generic ? '' : ', sourced from:'}</div>
-        ${data.generic
-          ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:12px">General checklist — no asset-specific standard mapped yet</div>`
-          : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>`}
-        <div style="display:flex;gap:8px">
-          <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
-          <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
-        </div>`;
-    })
-    .catch(() => {
-      document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
-    });
+  const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&system=' + encodeURIComponent(a.system || '') + '&assetName=' + encodeURIComponent(a.name || ''));
+  return resp.json();
+}
+
+function renderAssetChecklistFromData(a, data) {
+  const el = document.getElementById('checklistContent');
+  if (!el) return;
+  if (!data.items || data.items.length === 0) {
+    el.innerHTML = `<div>No checklist items defined yet.</div>`;
+    return;
+  }
+  window.currentAssetChecklist = { asset: a, checklistClass: data.class, data };
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--text);margin-bottom:4px"><strong>${data.class}</strong> — ${data.items.length} items${data.generic ? '' : ', sourced from:'}</div>
+    ${data.generic
+      ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:12px">General checklist — no asset-specific standard mapped yet</div>`
+      : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:12px">${data.sourceStandard || 'Not specified'}</div>`}
+    <div style="display:flex;gap:8px">
+      <button onclick="previewMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">👁 Preview</button>
+      <button onclick="downloadMaintenanceChecklist()" style="padding:7px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download PDF</button>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific asset actually being viewed.
+async function loadAssetChecklist(a) {
+  const el = document.getElementById('checklistContent');
+  if (!el) return;
+  const cacheKey = a.id;
+  const cached = tabPrefetchCache.checklistByAsset && tabPrefetchCache.checklistByAsset.key === cacheKey ? tabPrefetchCache.checklistByAsset.data : null;
+
+  if (cached) {
+    renderAssetChecklistFromData(a, cached);
+    fetchAssetChecklistData(a).then(data => {
+      tabPrefetchCache.checklistByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('checklistContent')) renderAssetChecklistFromData(a, data);
+    }).catch(() => {});
+    return;
+  }
+
+  try {
+    const data = await fetchAssetChecklistData(a);
+    tabPrefetchCache.checklistByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+    renderAssetChecklistFromData(a, data);
+  } catch {
+    if (document.getElementById('checklistContent')) document.getElementById('checklistContent').innerHTML = `<div>Could not load checklist.</div>`;
+  }
 }
 
 // --- Relocation form + API call ---
@@ -13691,139 +13796,193 @@ async function loadPendingForMe() {
   }
 }
 
+async function fetchStaffPerformanceData() {
+  const resp = await fetch('/api/get-assets?staffperformance=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load');
+  return data;
+}
+TAB_PREFETCH_FETCHERS.staffPerformance = fetchStaffPerformanceData;
+
+function renderStaffPerformanceFromData(data) {
+  const el = document.getElementById('staffPerformancePanel');
+  if (!el) return;
+
+  if (data.performance.length === 0 && data.procurement.length === 0 && (data.pending || []).length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No completed work orders yet — this fills in as the system runs.</div>';
+    return;
+  }
+
+  let rows = '';
+  const people = new Set([...data.performance.map(p=>p.person), ...data.procurement.map(p=>p.person), ...(data.pending || []).map(p=>p.person)]);
+  for (const person of people) {
+    const perf = data.performance.find(p => p.person === person) || {};
+    const proc = data.procurement.find(p => p.person === person) || {};
+    const pend = (data.pending || []).find(p => p.person === person) || {};
+    rows += `<div class="staff-perf-row">
+      <div class="staff-perf-cell staff-perf-name">${person}</div>
+      <div class="staff-perf-cell"><span class="staff-perf-label">Pending</span><span class="staff-perf-val" style="${pend.pendingTasks > 0 ? 'color:var(--red);font-weight:700' : ''}">${pend.pendingTasks ?? 0}</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-label">Closed</span><span class="staff-perf-val">${perf.workOrdersClosed ?? '—'}</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-label">Avg. Days</span><span class="staff-perf-val">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-label">Procurement Reqs</span><span class="staff-perf-val">${proc.requestsMade ?? '—'}</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-label">Rejection Rate</span><span class="staff-perf-val">${proc.requestsMade ? proc.rejectionRate + '%' : '—'}</span></div>
+    </div>`;
+  }
+
+  const escalationBadges = Object.entries(data.escalationsByRole || {}).map(([role, count]) => `<span style="background:#FEE2E2;color:#991B1B;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;margin-right:6px;display:inline-block;margin-bottom:6px">${role}: ${count} escalated</span>`).join('');
+
+  el.innerHTML = `
+    <div class="staff-perf-header">
+      <div class="staff-perf-cell staff-perf-name">Person</div>
+      <div class="staff-perf-cell"><span class="staff-perf-val">Pending</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-val">Closed</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-val">Avg. Days</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-val">Procurement Reqs</span></div>
+      <div class="staff-perf-cell"><span class="staff-perf-val">Rejection Rate</span></div>
+    </div>
+    <div class="staff-perf-body">${rows}</div>
+    ${escalationBadges ? `<div style="margin-top:12px">${escalationBadges}</div>` : ''}
+  `;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadStaffPerformance() {
   const el = document.getElementById('staffPerformancePanel');
   if (!el) return;
+  const cached = tabPrefetchCache.staffPerformance;
+
+  if (cached) {
+    renderStaffPerformanceFromData(cached.data);
+    fetchStaffPerformanceData().then(data => {
+      tabPrefetchCache.staffPerformance = { data, fetchedAt: Date.now() };
+      if (document.getElementById('staffPerformancePanel')) renderStaffPerformanceFromData(data);
+    }).catch(err => console.error('Background Staff Performance refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/get-assets?staffperformance=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load');
-
-    if (data.performance.length === 0 && data.procurement.length === 0 && (data.pending || []).length === 0) {
-      el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No completed work orders yet — this fills in as the system runs.</div>';
-      return;
-    }
-
-    let rows = '';
-    const people = new Set([...data.performance.map(p=>p.person), ...data.procurement.map(p=>p.person), ...(data.pending || []).map(p=>p.person)]);
-    for (const person of people) {
-      const perf = data.performance.find(p => p.person === person) || {};
-      const proc = data.procurement.find(p => p.person === person) || {};
-      const pend = (data.pending || []).find(p => p.person === person) || {};
-      rows += `<div class="staff-perf-row">
-        <div class="staff-perf-cell staff-perf-name">${person}</div>
-        <div class="staff-perf-cell"><span class="staff-perf-label">Pending</span><span class="staff-perf-val" style="${pend.pendingTasks > 0 ? 'color:var(--red);font-weight:700' : ''}">${pend.pendingTasks ?? 0}</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-label">Closed</span><span class="staff-perf-val">${perf.workOrdersClosed ?? '—'}</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-label">Avg. Days</span><span class="staff-perf-val">${perf.avgDaysToClose != null ? perf.avgDaysToClose + 'd' : '—'}</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-label">Procurement Reqs</span><span class="staff-perf-val">${proc.requestsMade ?? '—'}</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-label">Rejection Rate</span><span class="staff-perf-val">${proc.requestsMade ? proc.rejectionRate + '%' : '—'}</span></div>
-      </div>`;
-    }
-
-    const escalationBadges = Object.entries(data.escalationsByRole || {}).map(([role, count]) => `<span style="background:#FEE2E2;color:#991B1B;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;margin-right:6px;display:inline-block;margin-bottom:6px">${role}: ${count} escalated</span>`).join('');
-
-    el.innerHTML = `
-      <div class="staff-perf-header">
-        <div class="staff-perf-cell staff-perf-name">Person</div>
-        <div class="staff-perf-cell"><span class="staff-perf-val">Pending</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-val">Closed</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-val">Avg. Days</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-val">Procurement Reqs</span></div>
-        <div class="staff-perf-cell"><span class="staff-perf-val">Rejection Rate</span></div>
-      </div>
-      <div class="staff-perf-body">${rows}</div>
-      ${escalationBadges ? `<div style="margin-top:12px">${escalationBadges}</div>` : ''}
-    `;
+    const data = await fetchStaffPerformanceData();
+    tabPrefetchCache.staffPerformance = { data, fetchedAt: Date.now() };
+    renderStaffPerformanceFromData(data);
   } catch (err) {
     el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load: ${err.message}</div>`;
   }
 }
 
+async function fetchCostOverviewData() {
+  const resp = await fetch('/api/work-orders?report=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load cost overview');
+  const costSummaries = await loadAssetCostSummaries();
+  return { report: data, costSummaries, pendingIdCost: pendingIdCostCache, unattributedCost: unattributedCostCache };
+}
+TAB_PREFETCH_FETCHERS.costOverview = fetchCostOverviewData;
+
+function renderCostOverviewFromData(bundle) {
+  const panel = document.getElementById('costOverviewContent');
+  if (!panel) return;
+  const data = bundle.report;
+
+  const byType = (data.summary && data.summary.costByMaintenanceType) || {};
+  const total = (data.summary && data.summary.totalCostRecorded) || 0;
+  const types = Object.keys(byType);
+
+  if (types.length === 0) {
+    panel.innerHTML = `<div>No costs recorded yet — costs get added when Engineer+ closes a work order, or via "Edit Cost" on a completed one. Once a few are in, this fills in automatically.</div>`;
+    return;
+  }
+
+  const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
+  const maxVal = Math.max(...types.map(t => byType[t]));
+
+  let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">${formatCurrency(total)} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
+  types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
+    const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
+    html += `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+        <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
+        <span style="color:var(--muted)">${formatCurrency(byType[type])}</span>
+      </div>
+      <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
+      </div>
+    </div>`;
+  });
+
+  const preventive = byType['Preventive'] || 0;
+  const corrective = byType['Corrective'] || 0;
+  if (preventive > 0 && corrective > 0) {
+    const ratio = (corrective / preventive).toFixed(1);
+    html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
+  }
+
+  // By Asset — which specific Asset IDs actually made up that total.
+  // Reuses the exact same cost-summary function and rules already
+  // built for the Asset Register (every status counts, rejected
+  // procurement excluded), so this always agrees with what each
+  // asset's own page shows — no separate logic to drift out of sync.
+  const costSummaries = bundle.costSummaries;
+  const assetRows = Object.entries(costSummaries)
+    .map(([assetId, s]) => {
+      const asset = assets.find(a => a.id === assetId);
+      return { assetId, name: asset ? asset.name : '(asset not found in register)', total: s.total };
+    })
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  if (assetRows.length > 0) {
+    const shown = assetRows.slice(0, 10);
+    html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">By Asset</div>
+      ${shown.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+        <span><span style="font-weight:600;color:var(--text)">${r.assetId}</span> <span style="color:var(--muted)">— ${r.name}</span></span>
+        <span style="color:var(--navy);font-weight:600">${formatCurrency(r.total)}</span>
+      </div>`).join('')}
+      ${assetRows.length > 10 ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">+${assetRows.length - 10} more — see Asset Register, sorted by Maintenance Cost Ratio, for the full list.</div>` : ''}
+    </div>`;
+  }
+
+  // Costs with no Asset ID never just vanish from this total — they
+  // split into two honest, distinct lines instead of one vague one.
+  // "Pending" still needs someone to actually attach the real asset;
+  // "Confirmed non-asset" has already been deliberately resolved.
+  if (bundle.pendingIdCost > 0 || bundle.unattributedCost > 0) {
+    html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      ${bundle.pendingIdCost > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+        <span style="color:#92400E;font-weight:600">⚠ Pending Asset Identification</span>
+        <span style="color:#92400E;font-weight:600">${formatCurrency(bundle.pendingIdCost)}</span>
+      </div>` : ''}
+      ${bundle.unattributedCost > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
+        <span style="color:var(--muted)">Unattributed / Non-Asset Costs</span>
+        <span style="color:var(--muted);font-weight:600">${formatCurrency(bundle.unattributedCost)}</span>
+      </div>` : ''}
+    </div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadCostOverview() {
   const panel = document.getElementById('costOverviewContent');
   if (!panel) return;
+  const cached = tabPrefetchCache.costOverview;
+
+  if (cached) {
+    renderCostOverviewFromData(cached.data);
+    fetchCostOverviewData().then(bundle => {
+      tabPrefetchCache.costOverview = { data: bundle, fetchedAt: Date.now() };
+      if (document.getElementById('costOverviewContent')) renderCostOverviewFromData(bundle);
+    }).catch(err => console.error('Background Cost Overview refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/work-orders?report=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load cost overview');
-
-    const byType = (data.summary && data.summary.costByMaintenanceType) || {};
-    const total = (data.summary && data.summary.totalCostRecorded) || 0;
-    const types = Object.keys(byType);
-
-    if (types.length === 0) {
-      panel.innerHTML = `<div>No costs recorded yet — costs get added when Engineer+ closes a work order, or via "Edit Cost" on a completed one. Once a few are in, this fills in automatically.</div>`;
-      return;
-    }
-
-    const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
-    const maxVal = Math.max(...types.map(t => byType[t]));
-
-    let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">${formatCurrency(total)} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
-    types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
-      const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
-      html += `<div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-          <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
-          <span style="color:var(--muted)">${formatCurrency(byType[type])}</span>
-        </div>
-        <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
-          <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
-        </div>
-      </div>`;
-    });
-
-    const preventive = byType['Preventive'] || 0;
-    const corrective = byType['Corrective'] || 0;
-    if (preventive > 0 && corrective > 0) {
-      const ratio = (corrective / preventive).toFixed(1);
-      html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
-    }
-
-    // By Asset — which specific Asset IDs actually made up that total.
-    // Reuses the exact same cost-summary function and rules already
-    // built for the Asset Register (every status counts, rejected
-    // procurement excluded), so this always agrees with what each
-    // asset's own page shows — no separate logic to drift out of sync.
-    const costSummaries = await loadAssetCostSummaries();
-    const assetRows = Object.entries(costSummaries)
-      .map(([assetId, s]) => {
-        const asset = assets.find(a => a.id === assetId);
-        return { assetId, name: asset ? asset.name : '(asset not found in register)', total: s.total };
-      })
-      .filter(r => r.total > 0)
-      .sort((a, b) => b.total - a.total);
-
-    if (assetRows.length > 0) {
-      const shown = assetRows.slice(0, 10);
-      html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">By Asset</div>
-        ${shown.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-          <span><span style="font-weight:600;color:var(--text)">${r.assetId}</span> <span style="color:var(--muted)">— ${r.name}</span></span>
-          <span style="color:var(--navy);font-weight:600">${formatCurrency(r.total)}</span>
-        </div>`).join('')}
-        ${assetRows.length > 10 ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">+${assetRows.length - 10} more — see Asset Register, sorted by Maintenance Cost Ratio, for the full list.</div>` : ''}
-      </div>`;
-    }
-
-    // Costs with no Asset ID never just vanish from this total — they
-    // split into two honest, distinct lines instead of one vague one.
-    // "Pending" still needs someone to actually attach the real asset;
-    // "Confirmed non-asset" has already been deliberately resolved.
-    if (pendingIdCostCache > 0 || unattributedCostCache > 0) {
-      html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        ${pendingIdCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-          <span style="color:#92400E;font-weight:600">⚠ Pending Asset Identification</span>
-          <span style="color:#92400E;font-weight:600">${formatCurrency(pendingIdCostCache)}</span>
-        </div>` : ''}
-        ${unattributedCostCache > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-          <span style="color:var(--muted)">Unattributed / Non-Asset Costs</span>
-          <span style="color:var(--muted);font-weight:600">${formatCurrency(unattributedCostCache)}</span>
-        </div>` : ''}
-      </div>`;
-    }
-
-    panel.innerHTML = html;
+    const bundle = await fetchCostOverviewData();
+    tabPrefetchCache.costOverview = { data: bundle, fetchedAt: Date.now() };
+    renderCostOverviewFromData(bundle);
   } catch (err) {
     panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
   }
