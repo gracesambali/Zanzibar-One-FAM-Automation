@@ -392,7 +392,7 @@ button { font-family: inherit; cursor: pointer; }
       </div>
     </div>
     <div id="loggedInUserBadge" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px 4px 4px">
-      <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:#1A3566;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden"></div>
+      <div id="userAvatarCircle" style="width:26px;height:26px;border-radius:50%;background:#F0A93E;color:var(--navy);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden"></div>
       <div style="line-height:1.2">
         <div id="userNameLabel" style="font-size:12px;font-weight:600;color:#fff"></div>
         <div id="userRoleLabel" style="font-size:10px;color:rgba(255,255,255,0.7)"></div>
@@ -558,7 +558,7 @@ button { font-family: inherit; cursor: pointer; }
 </div>
 
 <div id="loading-screen" style="text-align:center;padding:100px 20px;flex:1">
-  <div style="width:36px;height:36px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto 16px;animation:spin 0.8s linear infinite;"></div>
+  <div style="width:36px;height:36px;border:3px solid #E2E6ED;border-top-color:var(--navy);border-radius:50%;margin:0 auto 16px;animation:spin 0.8s linear infinite;"></div>
   <div style="font-size:14px;color:#6B7280;">Loading live asset data…</div>
 </div>
 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
@@ -647,6 +647,19 @@ function applyBrandColorThroughoutApp(hexColor) {
   const root = document.documentElement.style;
   root.setProperty('--navy', '#' + match[1]);
   root.setProperty('--navy-pale', paleHex);
+}
+
+// Confirmed directly as a genuine, real gap: document exports
+// (reports, checklists) never read the client's own real, applied
+// brand color at all - they hardcoded the Master System's own navy
+// instead, regardless of what was actually applied to the rest of
+// the app for this specific client. Reads the real, current value
+// straight back from the same CSS variable applyBrandColorThroughoutApp
+// already sets, so this is always genuinely in sync, never a second,
+// separately-drifting copy of the color.
+function getClientBrandColor() {
+  const value = getComputedStyle(document.documentElement).getPropertyValue('--navy').trim();
+  return value || '#003566';
 }
 
 function applyClientConfigToPage() {
@@ -3940,7 +3953,7 @@ async function renderLevelView() {
           const rowFill = i % 2 === 0 ? '#F7F9FC' : '#EDF1F7';
           html += `
             <rect x="4" y="${y}" width="372" height="${rowHeight - 2}" fill="${rowFill}" stroke="#E2E6ED" stroke-width="0.5"/>
-            <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="#1A3566">${escapeHtml(label)}</text>
+            <text x="12" y="${y + rowHeight/2 + 4}" font-size="10.5" font-weight="700" fill="${getClientBrandColor()}">${escapeHtml(label)}</text>
             <text x="130" y="${y + rowHeight/2 + 4}" font-size="9" fill="#64748B">${escapeHtml(breakdown)}</text>`;
         });
         html += `</svg>`;
@@ -5677,17 +5690,18 @@ async function downloadFleetReportPdf(period) {
         <td>${escapeHtml(r.status)}</td>
       </tr>`).join('');
 
+    const brandColor = getClientBrandColor();
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
       <html><head><title>Fleet ${label} Report</title>
       <style>
         body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-        h1 { font-size: 18px; color: #003566; margin-bottom: 2px; }
+        h1 { font-size: 18px; color: ${brandColor}; margin-bottom: 2px; }
         .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
         table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
         th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
         th { background: #F7F8FA; }
-        .download-btn { background:#003566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+        .download-btn { background:${brandColor}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
         @media print { .download-btn { display:none; } }
       </style></head><body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
@@ -5766,18 +5780,19 @@ async function downloadFuelReportPdf(period) {
         <td>${escapeHtml(r.status)}</td>
       </tr>`).join('');
 
+    const brandColor = getClientBrandColor();
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
       <html><head><title>Fuel ${label} Report</title>
       <style>
         body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-        h1 { font-size: 18px; color: #003566; margin-bottom: 2px; }
+        h1 { font-size: 18px; color: ${brandColor}; margin-bottom: 2px; }
         .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
         table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
         th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
         th { background: #F7F8FA; }
-        .totals td { font-weight: 700; border-top: 2px solid #003566; }
-        .download-btn { background:#003566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+        .totals td { font-weight: 700; border-top: 2px solid ${brandColor}; }
+        .download-btn { background:${brandColor}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
         @media print { .download-btn { display:none; } }
       </style></head><body>
       <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
@@ -6135,13 +6150,13 @@ function exportAnnualPlanPdf() {
     <html><head><title>Annual Plan FY${annualPlanCurrentYear} — ${escapeHtml(CLIENT_CONFIG.clientName)}</title>
     <style>
       body { font-family: Arial, sans-serif; padding: 24px; color: #1A1A2E; }
-      h1 { font-size: 18px; color: #1A3566; margin-bottom: 2px; }
+      h1 { font-size: 18px; color: ${getClientBrandColor()}; margin-bottom: 2px; }
       .meta { font-size: 11px; color: #6B7280; margin-bottom: 16px; }
       table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
       th, td { padding: 6px 8px; border-bottom: 1px solid #E2E6ED; text-align: left; }
       th { background: #F7F8FA; }
-      .totals td { font-weight: 700; border-top: 2px solid #1A3566; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      .totals td { font-weight: 700; border-top: 2px solid ${getClientBrandColor()}; }
+      .download-btn { background:${getClientBrandColor()}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
       @media print { .download-btn { display:none; } }
     </style></head><body>
     <button class="download-btn" onclick="window.print()">↓ Download as PDF</button>
@@ -7371,19 +7386,19 @@ function buildFinanceReportHtml(data) {
       body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 14px; max-width: 720px; margin: 0 auto; }
       .report-header { display:flex; align-items:center; gap:14px; margin-bottom:12px; }
       .report-header img { width:46px; height:46px; object-fit:contain; }
-      h1 { color:#1A3566; font-size:22px; margin-bottom:2px; }
+      h1 { color:${getClientBrandColor()}; font-size:22px; margin-bottom:2px; }
       .sub { color:#6B7280; font-size:13px; margin-bottom:16px; }
       .kpi-row { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
       .kpi { flex:1; min-width:120px; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 12px; }
-      .kpi-val { font-size:19px; font-weight:700; color:#1A3566; }
+      .kpi-val { font-size:19px; font-weight:700; color:${getClientBrandColor()}; }
       .kpi-label { font-size:11px; color:#6B7280; }
-      h2 { color:#1A3566; font-size:15px; margin:20px 0 8px; }
+      h2 { color:${getClientBrandColor()}; font-size:15px; margin:20px 0 8px; }
       .report-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; margin-bottom:10px; }
-      .report-table th { background:#1A3566; color:#fff; text-align:left; padding:7px 10px; }
+      .report-table th { background:${getClientBrandColor()}; color:#fff; text-align:left; padding:7px 10px; }
       .report-table td { padding:6px 10px; border-bottom:1px solid #E2E6ED; }
       .report-table tr:nth-child(even) { background:#F8FAFC; }
       .empty { color:#6B7280; font-style:italic; padding:8px 0; font-size:13px; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      .download-btn { background:${getClientBrandColor()}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -7624,23 +7639,23 @@ function buildInvoiceHtml(inv) {
       body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 14px; max-width: 720px; margin: 0 auto; }
       .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; }
       .header img { width:46px; height:46px; object-fit:contain; margin-bottom:8px; }
-      h1 { color:#1A3566; font-size:22px; margin-bottom:2px; }
+      h1 { color:${getClientBrandColor()}; font-size:22px; margin-bottom:2px; }
       .sub { color:#6B7280; font-size:13px; }
       .meta { text-align:right; font-size:13px; color:#1A1A2E; }
       .meta .label { color:#6B7280; }
       .bill-to { background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:14px 16px; margin-bottom:20px; }
       .bill-to .label { font-size:11px; color:#6B7280; text-transform:uppercase; margin-bottom:4px; }
       table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:16px; }
-      th { background:#1A3566; color:#fff; text-align:left; padding:8px 10px; }
+      th { background:${getClientBrandColor()}; color:#fff; text-align:left; padding:8px 10px; }
       th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align:right; }
       td { padding:8px 10px; border-bottom:1px solid #E2E6ED; }
       .totals { margin-left:auto; width:260px; }
       .totals div { display:flex; justify-content:space-between; padding:4px 0; font-size:13px; }
-      .totals .grand { font-weight:700; font-size:16px; color:#1A3566; border-top:1px solid #E2E6ED; padding-top:8px; margin-top:4px; }
+      .totals .grand { font-weight:700; font-size:16px; color:${getClientBrandColor()}; border-top:1px solid #E2E6ED; padding-top:8px; margin-top:4px; }
       .terms { background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:14px 16px; margin-top:20px; font-size:12.5px; line-height:1.7; }
       .terms .label { font-size:11px; color:#6B7280; text-transform:uppercase; margin-bottom:6px; }
       .notes { margin-top:16px; font-size:12.5px; color:#6B7280; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      .download-btn { background:${getClientBrandColor()}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -12909,20 +12924,23 @@ function buildChecklistDocumentHtml() {
     </div>`;
   });
 
+  const brandColor = getClientBrandColor();
+  const orgName = currentUserOrgName || APP_BRAND_NAME;
+
   return `
     <html><head><title>Maintenance Checklist — ${a.name}</title>
     <style>
       body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
       .doc { max-width: 700px; margin: 0 auto; }
-      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
-      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .header { border-bottom: 3px solid ${brandColor}; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:${brandColor}; font-weight:700; margin-bottom:4px; }
       .subtitle { font-size:13px; color:#6B7280; }
       .meta-grid { display:grid; grid-template-columns: 1fr 1fr; gap:6px 20px; margin: 16px 0 20px; font-size:12.5px; }
       .meta-label { color:#6B7280; }
       .meta-value { font-weight:600; color:#1A1A2E; }
-      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid ${brandColor}; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
       .freq-section { margin-bottom: 20px; }
-      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:${brandColor}; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
       .items-table { width:100%; border-collapse:collapse; }
       .items-table tr { border-bottom: 1px solid #E5E7EB; }
       .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
@@ -12930,7 +12948,7 @@ function buildChecklistDocumentHtml() {
       .signoff { display:flex; justify-content:space-between; margin-top:40px; font-size:12px; }
       .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
       .footer-note { margin-top:30px; font-size:10.5px; color:#9CA3AF; text-align:center; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      .download-btn { background:${brandColor}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -12938,7 +12956,7 @@ function buildChecklistDocumentHtml() {
       <div class="doc">
         <div class="header">
           <div class="title">Maintenance Checklist</div>
-          <div class="subtitle">${checklistClass} — Gracing Ventures Facility Asset Management</div>
+          <div class="subtitle">${checklistClass} — ${escapeHtml(orgName)} Facility Asset Management</div>
         </div>
         <div class="meta-grid">
           <div><span class="meta-label">Asset:</span> <span class="meta-value">${a.name}</span></div>
@@ -12952,7 +12970,7 @@ function buildChecklistDocumentHtml() {
           <div class="sig-line">Technician Signature</div>
           <div class="sig-line">Date</div>
         </div>
-        <div class="footer-note">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+        <div class="footer-note">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · ${escapeHtml(orgName)} Facility Asset Management</div>
       </div>
     </body></html>
   `;
@@ -14385,23 +14403,26 @@ function downloadWODetailChecklist() {
     </table></div>`;
   });
 
+  const brandColor = getClientBrandColor();
+  const orgName = currentUserOrgName || APP_BRAND_NAME;
+
   const win = window.open('', '_blank');
   win.document.write(`
     <html><head><title>Checklist — ${assetName}</title>
     <style>
       body { font-family: Arial, Helvetica, sans-serif; padding: 40px; color:#1A1A2E; }
       .doc { max-width: 700px; margin: 0 auto; }
-      .header { border-bottom: 3px solid #1A3566; padding-bottom: 16px; margin-bottom: 20px; }
-      .title { font-size:20px; color:#1A3566; font-weight:700; margin-bottom:4px; }
+      .header { border-bottom: 3px solid ${brandColor}; padding-bottom: 16px; margin-bottom: 20px; }
+      .title { font-size:20px; color:${brandColor}; font-weight:700; margin-bottom:4px; }
       .subtitle { font-size:13px; color:#6B7280; }
-      .standard-box { background:#F0F4FA; border-left: 3px solid #1A3566; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
+      .standard-box { background:#F0F4FA; border-left: 3px solid ${brandColor}; padding:10px 14px; font-size:12.5px; margin-bottom: 24px; }
       .freq-section { margin-bottom: 20px; }
-      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#1A3566; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
+      .freq-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:${brandColor}; background:#EEF1F5; padding:6px 10px; margin-bottom:6px; }
       .items-table { width:100%; border-collapse:collapse; }
       .items-table tr { border-bottom: 1px solid #E5E7EB; }
       .items-table td { padding: 8px 6px; font-size:13px; vertical-align:top; }
       .check-col { width:24px; font-size:15px; color:#6B7280; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      .download-btn { background:${brandColor}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -14410,7 +14431,7 @@ function downloadWODetailChecklist() {
         <div class="header"><div class="title">Maintenance Checklist</div><div class="subtitle">${checklistClass} — ${assetName}</div></div>
         <div class="standard-box"><strong>Reference Standard:</strong> ${data.sourceStandard || 'Not specified'}</div>
         ${sectionsHtml}
-        <div style="margin-top:30px;font-size:10.5px;color:#9CA3AF;text-align:center">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Gracing Ventures Facility Asset Management</div>
+        <div style="margin-top:30px;font-size:10.5px;color:#9CA3AF;text-align:center">Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · ${escapeHtml(orgName)} Facility Asset Management</div>
       </div>
     </body></html>
   `);
@@ -16105,15 +16126,16 @@ function generateCertificate(recordId) {
     ? new Date(wo.completedDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
     : 'Not recorded — completed before certificate tracking was enabled';
 
+  const brandColor = getClientBrandColor();
   const win = window.open('', '_blank');
   win.document.write(`
     <html><head><title>Certificate of Maintenance — ${wo.assetName}</title>
     <style>
       body { font-family: Georgia, 'Times New Roman', serif; padding: 50px; color:#1A1A2E; }
-      .border { border: 3px double #1A3566; padding: 40px; max-width: 700px; margin: 0 auto; }
+      .border { border: 3px double ${brandColor}; padding: 40px; max-width: 700px; margin: 0 auto; }
       .header { text-align:center; margin-bottom: 30px; }
       .logo { width:70px; height:70px; border-radius:50%; margin: 0 auto 12px; display:block; }
-      .title { font-size:24px; color:#1A3566; letter-spacing:1px; margin-bottom:4px; }
+      .title { font-size:24px; color:${brandColor}; letter-spacing:1px; margin-bottom:4px; }
       .subtitle { font-size:13px; color:#6B7280; font-style:italic; }
       .divider { border-top: 1px solid #E2E6ED; margin: 24px 0; }
       .field-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px dotted #D1D5DB; font-size:14px; }
@@ -16122,7 +16144,7 @@ function generateCertificate(recordId) {
       .notes-box { margin-top:20px; padding:16px; background:#F8FAFC; border-radius:8px; font-size:13px; line-height:1.7; }
       .signoff { display:flex; justify-content:space-between; margin-top:50px; font-size:12px; }
       .sig-line { border-top:1px solid #1A1A2E; width:200px; padding-top:6px; text-align:center; color:#6B7280; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
+      .download-btn { background:${brandColor}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:24px; display:block; margin-left:auto; margin-right:auto; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -16355,7 +16377,7 @@ function exportSingleAssetFormat(assetId, format) {
     const win = window.open('', '_blank');
     win.document.write(`
       <html><head><title>${asset.id} — ${asset.name}</title>
-      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1A1A2E}h1{color:#1A3566;font-size:20px}
+      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1A1A2E}h1{color:${getClientBrandColor()};font-size:20px}
       table{width:100%;border-collapse:collapse;margin-top:16px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
       td:first-child{font-weight:600;color:#6B7280;width:200px}</style></head><body>
       <h1>${asset.name} (${asset.id})</h1>
@@ -16399,14 +16421,14 @@ function printMaintenancePlan(windowDays) {
     <html><head><title>Maintenance Plan — ${CLIENT_CONFIG.clientName}</title>
     <style>
       body { font-family: Arial, sans-serif; padding: 30px; color:#1A1A2E; }
-      h1 { color:#1A3566; font-size:20px; }
+      h1 { color:${getClientBrandColor()}; font-size:20px; }
       .sub { color:#6B7280; font-size:12px; margin-bottom:16px; }
       .empty { color:#6B7280; font-style:italic; padding:12px 0; }
       table { width:100%; border-collapse:collapse; font-size:12px; }
-      th { background:#1A3566; color:#fff; text-align:left; padding:8px; }
+      th { background:${getClientBrandColor()}; color:#fff; text-align:left; padding:8px; }
       td { padding:7px 8px; border-bottom:1px solid #E2E6ED; }
       tr:nth-child(even) { background:#F8FAFC; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
+      .download-btn { background:${getClientBrandColor()}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:20px; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
@@ -16457,23 +16479,23 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 14px; max-width: 720px; margin: 0 auto; }
       .report-header { display:flex; align-items:center; gap:14px; margin-bottom:12px; }
       .report-header img { width:46px; height:46px; object-fit:contain; }
-      h1 { color:#1A3566; font-size:22px; margin-bottom:2px; }
+      h1 { color:${getClientBrandColor()}; font-size:22px; margin-bottom:2px; }
       .sub { color:#6B7280; font-size:13px; margin-bottom:16px; }
       .kpi-row { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
       .kpi { flex:1; min-width:90px; background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:10px 12px; }
-      .kpi-val { font-size:19px; font-weight:700; color:#1A3566; }
+      .kpi-val { font-size:19px; font-weight:700; color:${getClientBrandColor()}; }
       .kpi-label { font-size:11px; color:#6B7280; }
-      h2 { color:#1A3566; font-size:15px; margin:20px 0 8px; }
-      h3 { color:#1A3566; font-size:13px; margin:14px 0 6px; }
+      h2 { color:${getClientBrandColor()}; font-size:15px; margin:20px 0 8px; }
+      h3 { color:${getClientBrandColor()}; font-size:13px; margin:14px 0 6px; }
       .report-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; margin-bottom:10px; }
-      .report-table th { background:#1A3566; color:#fff; text-align:left; padding:7px 10px; }
+      .report-table th { background:${getClientBrandColor()}; color:#fff; text-align:left; padding:7px 10px; }
       .report-table td { padding:6px 10px; border-bottom:1px solid #E2E6ED; }
       .report-table tr:nth-child(even) { background:#F8FAFC; }
       .cost-highlight { background:#F8FAFC; border:1px solid #E2E6ED; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
-      .cost-val { font-size:23px; font-weight:700; color:#1A3566; }
+      .cost-val { font-size:23px; font-weight:700; color:${getClientBrandColor()}; }
       .cost-label { font-size:11px; color:#6B7280; }
       .empty { color:#6B7280; font-style:italic; padding:8px 0; font-size:13px; }
-      .download-btn { background:#1A3566; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
+      .download-btn { background:${getClientBrandColor()}; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:16px; }
       @media print { .download-btn { display:none; } }
     </style></head>
     <body>
