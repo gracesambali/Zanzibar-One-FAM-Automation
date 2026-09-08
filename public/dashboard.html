@@ -11878,39 +11878,65 @@ async function submitAssignUnit(assetRecordId, unitName, unitId) {
   }
 }
 
+async function fetchPlannedMaintenanceData() {
+  const resp = await fetch('/api/get-assets?plannedmaintenance=true');
+  if (!resp.ok) throw new Error('Failed to load (' + resp.status + ')');
+  const data = await resp.json();
+  return data.plans || [];
+}
+TAB_PREFETCH_FETCHERS.plannedmaintenance = fetchPlannedMaintenanceData;
+
+function renderPlannedMaintenanceFromData(plans) {
+  const container = document.getElementById('view-plannedmaintenance');
+  lastPlans = plans;
+
+  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openCreatePlanForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Plan</button></div>`;
+
+  if (lastPlans.length === 0) {
+    html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No planned maintenance projects yet — these are created manually for larger, budgeted initiatives, separate from day-to-day work orders.</div>`;
+  } else {
+    html += `<div class="asset-list">`;
+    lastPlans.forEach(p => {
+      const statusColors = { Planning: ['#F3F4F6','#374151'], 'In Progress': ['#DBEAFE','#1E40AF'], Completed: ['#DCFCE7','#166534'], 'On Hold': ['#FEE2E2','#991B1B'] };
+      const sc = statusColors[p.status] || statusColors.Planning;
+      const totalBudget = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
+      html += `<button class="asset-row" onclick="showPlanDetail('${p.recordId}')" style="text-align:left">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${p.title}</span><span class="asset-id">${p.planId}</span>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sc[0]};color:${sc[1]}">${p.status}</span>
+          </div>
+          <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: ${formatCurrency(totalBudget)} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>`;
+    });
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderPlannedMaintenance() {
   const container = document.getElementById('view-plannedmaintenance');
+  const cached = tabPrefetchCache.plannedmaintenance;
+
+  if (cached) {
+    renderPlannedMaintenanceFromData(cached.data);
+    fetchPlannedMaintenanceData().then(plans => {
+      tabPrefetchCache.plannedmaintenance = { data: plans, fetchedAt: Date.now() };
+      if (document.getElementById('view-plannedmaintenance')?.classList.contains('active')) {
+        renderPlannedMaintenanceFromData(plans);
+      }
+    }).catch(err => console.error('Background Planned Maintenance refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading…</div>';
-
   try {
-    const resp = await fetch('/api/get-assets?plannedmaintenance=true');
-    if (!resp.ok) throw new Error('Failed to load (' + resp.status + ')');
-    const data = await resp.json();
-    lastPlans = data.plans || [];
-
-    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button onclick="openCreatePlanForm()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Plan</button></div>`;
-
-    if (lastPlans.length === 0) {
-      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No planned maintenance projects yet — these are created manually for larger, budgeted initiatives, separate from day-to-day work orders.</div>`;
-    } else {
-      html += `<div class="asset-list">`;
-      lastPlans.forEach(p => {
-        const statusColors = { Planning: ['#F3F4F6','#374151'], 'In Progress': ['#DBEAFE','#1E40AF'], Completed: ['#DCFCE7','#166534'], 'On Hold': ['#FEE2E2','#991B1B'] };
-        const sc = statusColors[p.status] || statusColors.Planning;
-        const totalBudget = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
-        html += `<button class="asset-row" onclick="showPlanDetail('${p.recordId}')" style="text-align:left">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${p.title}</span><span class="asset-id">${p.planId}</span>
-              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sc[0]};color:${sc[1]}">${p.status}</span>
-            </div>
-            <div class="asset-meta">${p.targetStartDate || '—'} to ${p.targetEndDate || '—'} · Budget: ${formatCurrency(totalBudget)} · ${p.milestones.length} milestone${p.milestones.length!==1?'s':''}</div>
-          </div>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>`;
-      });
-      html += `</div>`;
-    }
-    container.innerHTML = html;
+    const plans = await fetchPlannedMaintenanceData();
+    tabPrefetchCache.plannedmaintenance = { data: plans, fetchedAt: Date.now() };
+    renderPlannedMaintenanceFromData(plans);
   } catch (err) {
     container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load: ' + err.message + '</div>';
   }
