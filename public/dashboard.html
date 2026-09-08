@@ -12782,6 +12782,54 @@ async function submitDigitalTwinUrl(which) {
   }
 }
 
+async function fetchFloorPlanDataForFloor(floor) {
+  const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floor));
+  const data = await resp.json();
+
+  // Fall back to the built-in conceptual defaults if Airtable has no image
+  // or positions yet for this floor — Airtable always wins once populated.
+  if (!data.imageUrl && DEFAULT_FLOOR_PLAN_IMAGES[floor]) {
+    data.imageUrl = DEFAULT_FLOOR_PLAN_IMAGES[floor];
+    data.isDefaultImage = true;
+  }
+  // IMPORTANT: only use the pre-computed random positions when we're ALSO
+  // showing the default conceptual image. Those positions were scattered
+  // for that specific placeholder drawing — once a real floor plan is
+  // uploaded, they'd be meaningless on it (dots floating over random
+  // spots with no relation to the real layout). So on a real uploaded
+  // drawing with no saved positions yet, assets correctly show as
+  // "unplaced" instead, prompting you to place them for real via
+  // Place Markers mode.
+  if (data.isDefaultImage && (!data.positions || data.positions.length === 0)) {
+    const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floor);
+    if (defaults.length > 0) {
+      data.positions = defaults;
+      data.isDefaultPositions = true;
+    }
+  }
+  return data;
+}
+
+function renderFloorPlanDataIntoDom(data, canManage) {
+  const activityEl = document.getElementById('floorPlanActivityLog');
+  if (activityEl) {
+    let log = [];
+    try { log = JSON.parse(data.activityLog || '[]'); } catch { log = []; }
+    if (log.length === 0) {
+      activityEl.innerHTML = '<div style="font-size:12px;color:var(--muted)">No activity yet for this floor.</div>';
+    } else {
+      activityEl.innerHTML = log.slice().reverse().map(entry => `
+        <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
+          <div style="font-size:13px;color:var(--text)">${entry.text}</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+        </div>
+      `).join('');
+    }
+  }
+  floorPlanData = data;
+  renderFloorPlanImage(canManage);
+}
+
 async function renderFloorPlan() {
   const container = document.getElementById('view-floorplan');
   const canManage = currentUserPermissions && currentUserPermissions.addOrDecommissionAssets;
@@ -12790,6 +12838,13 @@ async function renderFloorPlan() {
     .sort((a, b) => displayFloor(a).localeCompare(displayFloor(b), undefined, { numeric: true }));
 
   if (!floorPlanCurrentFloor && uniqueFloors.length > 0) floorPlanCurrentFloor = uniqueFloors[0];
+
+  // Confirmed directly, discussed and agreed in full: applies here too,
+  // no exception. A real, current cache entry for this exact floor
+  // skips the "Loading floor plan…" text entirely - shown instantly
+  // instead, with a quiet background refresh right after.
+  const cacheKey = `${floorPlanCurrentFloor}|${currentBuildingFilter}|${currentFacilityFilter}`;
+  const cached = tabPrefetchCache.floorplan && tabPrefetchCache.floorplan.data && tabPrefetchCache.floorplan.data.key === cacheKey ? tabPrefetchCache.floorplan.data.data : null;
 
   let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
     <select class="filter-select" onchange="floorPlanCurrentFloor=this.value;floorPlanPlacementMode=false;floorPlanSelectedAssetId=null;floorPlanPreviewAssetId=null;renderFloorPlan()">
@@ -12817,10 +12872,10 @@ async function renderFloorPlan() {
     <div style="font-size:11px;color:var(--muted);margin-top:8px">Max 5MB. This replaces the conceptual placeholder for the selected floor — your name and today's date are recorded automatically.</div>
     <div id="fp_uploadError" style="display:none;color:var(--red);font-size:12px;margin-top:8px"></div>
   </div>
-  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">Loading floor plan…</div>
+  <div id="floorPlanImageWrap" style="position:relative;text-align:center;color:var(--muted);padding:40px">${cached ? '' : 'Loading floor plan…'}</div>
   <div style="padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:10px;margin-top:16px">
     <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity</div>
-    <div id="floorPlanActivityLog" style="font-size:12px;color:var(--muted)">Loading…</div>
+    <div id="floorPlanActivityLog" style="font-size:12px;color:var(--muted)">${cached ? '' : 'Loading…'}</div>
   </div>`;
 
   container.innerHTML = html;
@@ -12831,9 +12886,9 @@ async function renderFloorPlan() {
   // to the same DOM element) is handled below by only ever rendering
   // once both have genuinely finished and a real decision has been
   // made about which one actually belongs on screen.
-  const floorPlanFetchPromise = floorPlanCurrentFloor
-    ? fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor)).then(r => r.json()).catch(err => ({ __error: err }))
-    : Promise.resolve(null);
+  const floorPlanFetchPromise = cached
+    ? Promise.resolve(cached)
+    : (floorPlanCurrentFloor ? fetchFloorPlanDataForFloor(floorPlanCurrentFloor).catch(err => ({ __error: err })) : Promise.resolve(null));
 
   const [, floorPlanFetchResult] = await Promise.all([loadDigitalTwinToggle(), floorPlanFetchPromise]);
 
@@ -12852,52 +12907,36 @@ async function renderFloorPlan() {
 
   try {
     if (floorPlanFetchResult && floorPlanFetchResult.__error) throw floorPlanFetchResult.__error;
-    const data = floorPlanFetchResult;
+    renderFloorPlanDataIntoDom(floorPlanFetchResult, canManage);
+    if (!cached) tabPrefetchCache.floorplan = { data: { key: cacheKey, data: floorPlanFetchResult }, fetchedAt: Date.now() };
 
-    const activityEl = document.getElementById('floorPlanActivityLog');
-    if (activityEl) {
-      let log = [];
-      try { log = JSON.parse(data.activityLog || '[]'); } catch { log = []; }
-      if (log.length === 0) {
-        activityEl.innerHTML = '<div style="font-size:12px;color:var(--muted)">No activity yet for this floor.</div>';
-      } else {
-        activityEl.innerHTML = log.slice().reverse().map(entry => `
-          <div style="padding:10px 12px;background:#F7F8FA;border-radius:8px;margin-bottom:8px">
-            <div style="font-size:13px;color:var(--text)">${entry.text}</div>
-            <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${entry.by} · ${new Date(entry.at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
-          </div>
-        `).join('');
-      }
+    // Confirmed directly: a real, quiet background refresh right after
+    // an instant cache hit, matching the exact same real behavior
+    // already proven for Level View - never re-renders over someone
+    // who's genuinely moved on to a different floor, filter, or tab
+    // while it was still in flight.
+    if (cached) {
+      fetchFloorPlanDataForFloor(floorPlanCurrentFloor).then(freshData => {
+        tabPrefetchCache.floorplan = { data: { key: cacheKey, data: freshData }, fetchedAt: Date.now() };
+        if (document.getElementById('view-floorplan')?.classList.contains('active')
+            && `${floorPlanCurrentFloor}|${currentBuildingFilter}|${currentFacilityFilter}` === cacheKey
+            && floorPlanViewMode === '2d') {
+          renderFloorPlanDataIntoDom(freshData, canManage);
+        }
+      }).catch(err => console.error('Background Floor Plan refresh failed (non-fatal):', err.message));
     }
-
-    // Fall back to the built-in conceptual defaults if Airtable has no image
-    // or positions yet for this floor — Airtable always wins once populated.
-    if (!data.imageUrl && DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor]) {
-      data.imageUrl = DEFAULT_FLOOR_PLAN_IMAGES[floorPlanCurrentFloor];
-      data.isDefaultImage = true;
-    }
-    // IMPORTANT: only use the pre-computed random positions when we're ALSO
-    // showing the default conceptual image. Those positions were scattered
-    // for that specific placeholder drawing — once a real floor plan is
-    // uploaded, they'd be meaningless on it (dots floating over random
-    // spots with no relation to the real layout). So on a real uploaded
-    // drawing with no saved positions yet, assets correctly show as
-    // "unplaced" instead, prompting you to place them for real via
-    // Place Markers mode.
-    if (data.isDefaultImage && (!data.positions || data.positions.length === 0)) {
-      const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floorPlanCurrentFloor);
-      if (defaults.length > 0) {
-        data.positions = defaults;
-        data.isDefaultPositions = true;
-      }
-    }
-
-    floorPlanData = data;
-    renderFloorPlanImage(canManage);
   } catch (err) {
     document.getElementById('floorPlanImageWrap').innerHTML = `<div style="padding:60px 20px;color:var(--red)">Could not load floor plan: ${err.message}</div>`;
   }
 }
+TAB_PREFETCH_FETCHERS.floorplan = async () => {
+  const uniqueFloors = [...new Set(assets.map(a => a.floor).filter(Boolean))]
+    .sort((a, b) => displayFloor(a).localeCompare(displayFloor(b), undefined, { numeric: true }));
+  const floor = floorPlanCurrentFloor || uniqueFloors[0];
+  if (!floor) return null;
+  const data = await fetchFloorPlanDataForFloor(floor);
+  return { key: `${floor}|${currentBuildingFilter}|${currentFacilityFilter}`, data };
+};
 
 function renderFloorPlanImage(canManage) {
   const wrap = document.getElementById('floorPlanImageWrap');
