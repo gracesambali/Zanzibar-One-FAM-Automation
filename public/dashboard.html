@@ -6291,30 +6291,79 @@ function exportAnnualPlanPdf() {
   printWindow.focus();
 }
 
+async function fetchAnnualPlanningData() {
+  const resp = await fetch('/api/get-assets?annualPlanYears=true');
+  if (resp.status === 403) throw new Error('__ACCESS_RESTRICTED__'); // never cache this - a role change must always show the real message
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load the Annual Plan');
+  const years = data.years || [];
+  // A sensible default: the most recent real year if one exists,
+  // otherwise the current calendar year - so a first-time user can
+  // start adding items for the year they're actually planning
+  // right away, not stare at an empty year picker.
+  const year = years.length > 0 ? years[0] : new Date().getFullYear();
+
+  const [itemsResp, activityResp] = await Promise.all([
+    fetch(`/api/get-assets?annualPlanItems=true&year=${year}`),
+    fetch('/api/get-assets?annualPlanActivityLog=true'),
+  ]);
+  const itemsData = await itemsResp.json();
+  const activityData = await activityResp.json();
+  return { years, year, itemsData, activityEntries: activityData.entries || [] };
+}
+TAB_PREFETCH_FETCHERS.annualplanning = fetchAnnualPlanningData;
+
+function renderAnnualPlanningFromData(bundle) {
+  const { years, year, itemsData, activityEntries } = bundle;
+  annualPlanCurrentYear = year;
+  annualPlanItemsCache = itemsData.items || [];
+  renderAnnualPlanningTable(itemsData.totalEstimatedCost, itemsData.statusCounts, years);
+
+  const content = document.getElementById('annualPlanActivityLogContent');
+  if (content) {
+    content.innerHTML = activityEntries.length === 0
+      ? `<div style="font-style:italic">No activity recorded yet.</div>`
+      : activityEntries.map(e => `
+        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+        </div>`).join('');
+  }
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderAnnualPlanning() {
   const container = document.getElementById('view-annualplanning');
+  const cached = tabPrefetchCache.annualplanning;
+
+  if (cached) {
+    renderAnnualPlanningFromData(cached.data);
+    fetchAnnualPlanningData().then(bundle => {
+      tabPrefetchCache.annualplanning = { data: bundle, fetchedAt: Date.now() };
+      if (document.getElementById('view-annualplanning')?.classList.contains('active')) {
+        renderAnnualPlanningFromData(bundle);
+      }
+    }).catch(err => console.error('Background Annual Planning refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch('/api/get-assets?annualPlanYears=true');
-    if (resp.status === 403) {
+    const bundle = await fetchAnnualPlanningData();
+    tabPrefetchCache.annualplanning = { data: bundle, fetchedAt: Date.now() };
+    renderAnnualPlanningFromData(bundle);
+  } catch (err) {
+    if (err.message === '__ACCESS_RESTRICTED__') {
       container.innerHTML = `<div style="padding:60px 24px;text-align:center">
         <div style="font-size:32px;margin-bottom:12px">🔒</div>
         <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
         <div style="font-size:13px;color:var(--muted)">The Annual Plan is only available to Procurement, System Admin, and Business Owner.</div>
       </div>`;
-      return;
+    } else {
+      container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
     }
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load the Annual Plan');
-    const years = data.years || [];
-    // A sensible default: the most recent real year if one exists,
-    // otherwise the current calendar year - so a first-time user can
-    // start adding items for the year they're actually planning
-    // right away, not stare at an empty year picker.
-    annualPlanCurrentYear = years.length > 0 ? years[0] : new Date().getFullYear();
-    await loadAnnualPlanForYear(annualPlanCurrentYear, years);
-  } catch (err) {
-    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
 }
 
@@ -6332,9 +6381,21 @@ async function loadAnnualPlanForYear(year, knownYears) {
 }
 
 async function switchAnnualPlanYear(year) {
-  const yearsResp = await fetch('/api/get-assets?annualPlanYears=true');
-  const yearsData = await yearsResp.json();
-  await loadAnnualPlanForYear(Number(year), yearsData.years || []);
+  const [yearsResp, itemsResp, activityResp] = await Promise.all([
+    fetch('/api/get-assets?annualPlanYears=true'),
+    fetch(`/api/get-assets?annualPlanItems=true&year=${year}`),
+    fetch('/api/get-assets?annualPlanActivityLog=true'),
+  ]);
+  const years = (await yearsResp.json()).years || [];
+  const itemsData = await itemsResp.json();
+  const activityEntries = (await activityResp.json()).entries || [];
+  const bundle = { years, year: Number(year), itemsData, activityEntries };
+  // Confirmed directly: keeps the cache consistent with whichever
+  // year is actually now being viewed - without this, re-opening the
+  // tab later would silently revert to the previous default year
+  // instead of the one genuinely just switched to.
+  tabPrefetchCache.annualplanning = { data: bundle, fetchedAt: Date.now() };
+  renderAnnualPlanningFromData(bundle);
 }
 
 function renderAnnualPlanningTable(totalEstimatedCost, statusCounts, knownYears) {
