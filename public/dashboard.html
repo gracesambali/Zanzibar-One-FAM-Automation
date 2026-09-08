@@ -3807,6 +3807,75 @@ async function renderLevelView() {
     if (facility && !facilitiesInvolved.some(f => f.id === facility.id)) facilitiesInvolved.push(facility);
   });
 
+  // Confirmed directly, discussed and agreed: every building's own
+  // real floors fetched genuinely in parallel, not one at a time -
+  // this was the real, actual cause of the slow load, a dozens-deep
+  // chain of sequential requests each waiting for the last to finish.
+  const buildingPairs = [];
+  facilitiesInvolved.forEach(facility => {
+    relevantBuildings.filter(b => facility.buildings.includes(b)).forEach(buildingName => {
+      buildingPairs.push({ facility, buildingName });
+    });
+  });
+
+  const buildingFloorsResults = await Promise.all(buildingPairs.map(({ facility, buildingName }) =>
+    fetch(`/api/get-assets?buildingFloors=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}`)
+      .then(r => r.ok ? r.json() : { floors: [] })
+      .then(d => d.floors || [])
+      .catch(err => { console.error('Could not load defined floors for', buildingName, err); return []; })
+  ));
+
+  // Real key: facility + building together, since a floor id like
+  // "1" or "Ground" could genuinely repeat across different, real
+  // buildings.
+  const definedFloorsByPair = {};
+  const allFloorIdsByPair = {};
+  buildingPairs.forEach(({ facility, buildingName }, i) => {
+    const key = `${facility.id}|${buildingName}`;
+    const definedByFloorId = {};
+    buildingFloorsResults[i].forEach(f => { definedByFloorId[f.floorId] = f; });
+    definedFloorsByPair[key] = definedByFloorId;
+
+    const buildingAssets = assets.filter(a => a.building === buildingName);
+    const assetFloors = new Set(buildingAssets.map(a => a.floor).filter(Boolean));
+    allFloorIdsByPair[key] = [...new Set([...assetFloors, ...Object.keys(definedByFloorId)])]
+      .sort((a, b) => floorSortKey(b) - floorSortKey(a));
+  });
+
+  // Confirmed directly, discussed and agreed: every floor's own real
+  // zones and rooms fetched genuinely all at once too, not one floor
+  // at a time and not one request-type at a time within a floor
+  // either - this was the second, real half of the same slow-load
+  // cause.
+  const floorTriples = [];
+  buildingPairs.forEach(({ facility, buildingName }) => {
+    const key = `${facility.id}|${buildingName}`;
+    allFloorIdsByPair[key].forEach(floorId => floorTriples.push({ facility, buildingName, floorId }));
+  });
+
+  const [zonesResults, roomsResults] = await Promise.all([
+    Promise.all(floorTriples.map(({ facility, buildingName, floorId }) =>
+      fetch(`/api/get-assets?floorZones=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`)
+        .then(r => r.ok ? r.json() : { zones: [] })
+        .then(d => d.zones || [])
+        .catch(err => { console.error('Could not load zones for', buildingName, floorId, err); return []; })
+    )),
+    Promise.all(floorTriples.map(({ facility, buildingName, floorId }) =>
+      fetch(`/api/get-assets?floorRooms=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`)
+        .then(r => r.ok ? r.json() : { rooms: [] })
+        .then(d => d.rooms || [])
+        .catch(err => { console.error('Could not load rooms for', buildingName, floorId, err); return []; })
+    )),
+  ]);
+
+  const zonesByTripleKey = {};
+  const roomsByTripleKey = {};
+  floorTriples.forEach(({ facility, buildingName, floorId }, i) => {
+    const tKey = `${facility.id}|${buildingName}|${floorId}`;
+    zonesByTripleKey[tKey] = zonesResults[i];
+    roomsByTripleKey[tKey] = roomsResults[i];
+  });
+
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="font-size:12px;color:var(--muted)">The real facility, building, floor, and zone structure - set it up here as it actually exists, even before any assets are added. Zones are optional.</div>
@@ -3830,42 +3899,16 @@ async function renderLevelView() {
 
     for (const buildingName of buildingsHere) {
       const buildingAssets = assets.filter(a => a.building === buildingName);
-      const assetFloors = new Set(buildingAssets.map(a => a.floor).filter(Boolean));
-
-      let definedFloors = [];
-      try {
-        const resp = await fetch(`/api/get-assets?buildingFloors=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}`);
-        if (resp.ok) definedFloors = (await resp.json()).floors || [];
-      } catch (err) {
-        console.error('Could not load defined floors for', buildingName, err);
-      }
-      const definedByFloorId = {};
-      definedFloors.forEach(f => { definedByFloorId[f.floorId] = f; });
-
-      // Union of both real sources - a floor that's been explicitly
-      // defined but has no assets yet is still real and still shows.
-      const allFloorIds = [...new Set([...assetFloors, ...Object.keys(definedByFloorId)])]
-        .sort((a, b) => floorSortKey(b) - floorSortKey(a));
-
-      // Real, defined zones per floor - fetched alongside floors,
-      // since Level View is where the whole real structure gets
-      // reviewed together, not just floors alone.
+      const key = `${facility.id}|${buildingName}`;
+      const definedByFloorId = definedFloorsByPair[key];
+      const allFloorIds = allFloorIdsByPair[key];
       const zonesByFloorId = {};
       const roomsByFloorId = {};
-      for (const floorId of allFloorIds) {
-        try {
-          const zResp = await fetch(`/api/get-assets?floorZones=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`);
-          if (zResp.ok) zonesByFloorId[floorId] = (await zResp.json()).zones || [];
-        } catch (err) {
-          console.error('Could not load zones for', buildingName, floorId, err);
-        }
-        try {
-          const rResp = await fetch(`/api/get-assets?floorRooms=true&facilityId=${encodeURIComponent(facility.id)}&building=${encodeURIComponent(buildingName)}&floorId=${encodeURIComponent(floorId)}`);
-          if (rResp.ok) roomsByFloorId[floorId] = (await rResp.json()).rooms || [];
-        } catch (err) {
-          console.error('Could not load rooms for', buildingName, floorId, err);
-        }
-      }
+      allFloorIds.forEach(floorId => {
+        const tKey = `${key}|${floorId}`;
+        zonesByFloorId[floorId] = zonesByTripleKey[tKey] || [];
+        roomsByFloorId[floorId] = roomsByTripleKey[tKey] || [];
+      });
 
       html += `<div class="dash-panel"><div class="dash-panel-title" style="display:block">
         <div style="margin-bottom:6px">${escapeHtml(buildingName)} — Floor-by-Floor Asset Summary</div>
@@ -12707,7 +12750,18 @@ async function renderFloorPlan() {
   </div>`;
 
   container.innerHTML = html;
-  await loadDigitalTwinToggle();
+
+  // Confirmed directly, discussed and agreed: these two real, genuinely
+  // independent requests now start together instead of one waiting on
+  // the other - the real risk this used to avoid (both racing to write
+  // to the same DOM element) is handled below by only ever rendering
+  // once both have genuinely finished and a real decision has been
+  // made about which one actually belongs on screen.
+  const floorPlanFetchPromise = floorPlanCurrentFloor
+    ? fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor)).then(r => r.json()).catch(err => ({ __error: err }))
+    : Promise.resolve(null);
+
+  const [, floorPlanFetchResult] = await Promise.all([loadDigitalTwinToggle(), floorPlanFetchPromise]);
 
   // If a 3D view is currently active and its URL genuinely exists,
   // show it and stop here entirely - never let this run concurrently
@@ -12723,8 +12777,8 @@ async function renderFloorPlan() {
   }
 
   try {
-    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
-    const data = await resp.json();
+    if (floorPlanFetchResult && floorPlanFetchResult.__error) throw floorPlanFetchResult.__error;
+    const data = floorPlanFetchResult;
 
     const activityEl = document.getElementById('floorPlanActivityLog');
     if (activityEl) {
