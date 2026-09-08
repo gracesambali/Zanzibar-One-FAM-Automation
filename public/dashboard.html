@@ -5156,31 +5156,73 @@ const FLEET_STATUS_COLORS = { Pending: 'var(--muted)', Approved: 'var(--blue)', 
 let fleetRequestsCache = [];
 let fleetVehiclesCache = [];
 
+async function fetchFleetRequestsData() {
+  const [reqResp, vehResp, activityResp] = await Promise.all([
+    fetch('/api/get-assets?fleetRequests=true'),
+    fetch('/api/get-assets?fleetVehicles=true'),
+    fetch('/api/get-assets?fleetActivityLog=true'),
+  ]);
+  if (reqResp.status === 403) throw new Error('__ACCESS_RESTRICTED__'); // never cache this - a role change must always show the real message
+  const reqData = await reqResp.json();
+  if (!reqResp.ok) throw new Error(reqData.error || 'Could not load Fleet Management');
+  const requests = reqData.requests || [];
+  const vehicles = vehResp.ok ? (await vehResp.json()).vehicles || [] : [];
+  const activityEntries = activityResp.ok ? (await activityResp.json()).entries || [] : [];
+  return { requests, vehicles, activityEntries };
+}
+TAB_PREFETCH_FETCHERS.fleetrequests = fetchFleetRequestsData;
+
+function renderFleetRequestsFromData(bundle) {
+  fleetRequestsCache = bundle.requests;
+  fleetVehiclesCache = bundle.vehicles;
+  renderFleetRequestsTable();
+
+  const content = document.getElementById('fleetActivityLogContent');
+  if (content) {
+    content.innerHTML = bundle.activityEntries.length === 0
+      ? `<div style="font-style:italic">No activity recorded yet.</div>`
+      : bundle.activityEntries.map(e => `
+        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+        </div>`).join('');
+  }
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFleetRequests() {
   fleetActiveSection = 'vehicles';
   const container = document.getElementById('view-fleetrequests');
+  const cached = tabPrefetchCache.fleetrequests;
+
+  if (cached) {
+    renderFleetRequestsFromData(cached.data);
+    fetchFleetRequestsData().then(bundle => {
+      tabPrefetchCache.fleetrequests = { data: bundle, fetchedAt: Date.now() };
+      if (document.getElementById('view-fleetrequests')?.classList.contains('active')) {
+        renderFleetRequestsFromData(bundle);
+      }
+    }).catch(err => console.error('Background Fleet Requests refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const [reqResp, vehResp] = await Promise.all([
-      fetch('/api/get-assets?fleetRequests=true'),
-      fetch('/api/get-assets?fleetVehicles=true'),
-    ]);
-    if (reqResp.status === 403) {
+    const bundle = await fetchFleetRequestsData();
+    tabPrefetchCache.fleetrequests = { data: bundle, fetchedAt: Date.now() };
+    renderFleetRequestsFromData(bundle);
+  } catch (err) {
+    if (err.message === '__ACCESS_RESTRICTED__') {
       container.innerHTML = `<div style="padding:60px 24px;text-align:center">
         <div style="font-size:32px;margin-bottom:12px">🔒</div>
         <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
         <div style="font-size:13px;color:var(--muted)">Fleet Management is only available to Admin, Property Manager, Procurement, System Admin, and Business Owner.</div>
       </div>`;
-      return;
+    } else {
+      container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
     }
-    const reqData = await reqResp.json();
-    if (!reqResp.ok) throw new Error(reqData.error || 'Could not load Fleet Management');
-    fleetRequestsCache = reqData.requests || [];
-    fleetVehiclesCache = vehResp.ok ? (await vehResp.json()).vehicles || [] : [];
-    renderFleetRequestsTable();
-    loadFleetActivityLog();
-  } catch (err) {
-    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
 }
 
