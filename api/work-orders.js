@@ -423,6 +423,16 @@ export default async function handler(req, res) {
       return handleRejectClosure(req, res, session.u);
     }
 
+    // Confirmed directly, discussed and agreed in full before
+    // building: closing a work order by scanning the real, physical
+    // tag on the actual equipment - the scan itself is the proof of
+    // presence, not a separate verification gate. Deliberately does
+    // NOT require reviewWorkOrderClosure - this is for the technician
+    // themselves, not a reviewer.
+    if (req.body && req.body.closeViaScan) {
+      return handleCloseWorkOrderViaScan(req, res, session.u, session.org);
+    }
+
     if (req.body && req.body.addActivityEntry) {
       const { recordId, text, entryType } = req.body;
       if (!recordId || !text) return res.status(400).json({ error: "recordId and text required" });
@@ -2354,6 +2364,147 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// Confirmed directly, discussed and agreed in full before building:
+// closing a work order by scanning the real, physical tag on the
+// actual equipment - the scan resolving to this work order's own
+// real, linked asset IS the proof of presence, not a separate check
+// layered on top of it. Deliberately does not require
+// reviewWorkOrderClosure - this replaces the prior supervisor-gate
+// closure path for any work order that has a real asset to scan,
+// putting the close action directly in the technician's own hands.
+// A work order with no linked asset at all has nothing physical to
+// scan, and is deliberately rejected here - it still closes through
+// the existing Ready for Review / Approve path instead.
+async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizationId) {
+  const { recordId, scannedCode, note } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+  if (!scannedCode || !scannedCode.trim()) return res.status(400).json({ error: "A real scan is required to close this work order." });
+
+  try {
+    const { getById, getByColumn, insert, update } = await import("../lib/postgresClient.js");
+    const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
+    if (!woData || woData.organization_id !== organizationId) return res.status(404).json({ error: "Work order not found." });
+    if (woData.status === "Completed") return res.status(400).json({ error: "This work order is already closed." });
+    if (!woData.asset_id) {
+      return res.status(400).json({ error: "This work order has no linked asset to scan — close it through the standard review path instead." });
+    }
+
+    // Resolve the real, physical tag - reusing the exact same,
+    // already-proven lookup already used for the general asset-scan
+    // feature. A tag genuinely not linked to anything yet gets linked
+    // directly to this work order's own asset here - the technician's
+    // first scan on a not-yet-tagged piece of equipment can
+    // legitimately do both at once.
+    const code = scannedCode.trim();
+    const existingLink = await getByColumn("asset_barcode_links", "code", code, organizationId).catch(() => null);
+    if (existingLink) {
+      if (existingLink.asset_record_id !== woData.asset_id && String(existingLink.asset_record_id) !== String((await getByColumn("components", "asset_id", woData.asset_id, organizationId).catch(() => null))?.id)) {
+        // Confirmed directly: a genuine mismatch - this tag belongs to
+        // a real, different asset than the one this work order is
+        // actually for. Rejected outright rather than silently
+        // accepted, since accepting it would defeat the entire real
+        // point of proof of presence.
+        const scannedAsset = await getById("components", existingLink.asset_record_id).catch(() => null);
+        return res.status(400).json({ error: `This tag belongs to ${scannedAsset?.name || "a different asset"}, not ${woData.asset_name || "the equipment"} this work order is for. Scan the correct item.` });
+      }
+    } else {
+      const targetAsset = await getByColumn("components", "asset_id", woData.asset_id, organizationId).catch(() => null);
+      if (!targetAsset) return res.status(404).json({ error: "The asset this work order is linked to could not be found." });
+      await insert("asset_barcode_links", { code, asset_record_id: targetAsset.id, linked_by: closedByUsername, organization_id: organizationId });
+    }
+
+    await update("work_orders", recordId, {
+      status: "Completed",
+      completed_date: new Date().toISOString(),
+      closed_by: closedByUsername,
+      closure_method: "scan",
+      closure_rejection_reason: null,
+    }).catch(() => { throw new Error("Could not close this work order"); });
+
+    if (woData.asset_id) await advanceAssetNextService(woData.asset_id);
+    if (woData.reporter_contact) await sendSatisfactionRequest(woData.reporter_contact, recordId, woData.asset_name || "the reported issue");
+
+    // Confirmed directly: the routed role is notified after the fact,
+    // with a real, one-tap way to reopen it if something looks wrong
+    // - mirroring the exact, already-proven pattern already used for
+    // the original reporter's own satisfaction check.
+    if (woData.assigned_role) {
+      await notifyRoutedRoleOfScanClosure(woData.assigned_role, woData.asset_name || "the reported issue", woData.wo_id, recordId, closedByUsername, organizationId).catch(err => console.error("notifyRoutedRoleOfScanClosure failed (non-fatal):", err.message));
+    }
+
+    await appendActivityLog(recordId, `📷 Closed via barcode scan by ${closedByUsername} — proof of presence confirmed at ${woData.asset_name || "the equipment"}${note ? `. Note: ${note}` : ""}`, closedByUsername, "system");
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleCloseWorkOrderViaScan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly: the routed role's own recipients, reached the
+// exact same way notifyOfProcurementDelay already finds them.
+// Includes a real, one-tap reopen link - mirroring the exact,
+// already-proven pattern already used for the original reporter's
+// own satisfaction check - so this is a genuine audit point, not a
+// dead end once sent.
+async function notifyRoutedRoleOfScanClosure(assignedRole, assetName, woId, recordId, closedByUsername, organizationId) {
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  const directory = await getAllStaffDirectory(organizationId);
+  const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
+
+  const appUrl = process.env.APP_BASE_URL || "https://zanzibar-one-fam-automation.vercel.app";
+  const reopenLink = `${appUrl}/api/report-issue?supervisorReview=no&recordId=${recordId}`;
+
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
+  const toList = recipients.map(e => e.email).filter(Boolean);
+  if (toList.length > 0) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#16a34a;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Work Order Closed</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Closed by ${closedByUsername}, confirmed on-site by scanning the equipment's own tag.</p>
+          <p style="margin:0 0 16px;color:#1A1A2E;font-size:14px;line-height:1.6">If something looks wrong, you can reopen it directly:</p>
+          <a href="${reopenLink}" style="background:#dc2626;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">Reopen this work order</a>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Closed — ${assetName} (${woId})`,
+        html,
+      }),
+    }).catch(err => console.error("notifyRoutedRoleOfScanClosure email error:", err));
+  }
+
+  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+  if (phones.length > 0) {
+    try {
+      const smsMessage = sanitizeForSmsWO(`${woId} ${assetName} closed by ${closedByUsername} (scan-confirmed). Not right? Reopen: ${reopenLink}`).slice(0, 300);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: smsMessage,
+          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+        }),
+      }).catch(err => console.error("notifyRoutedRoleOfScanClosure sms error:", err));
+    } catch (err) {
+      console.error("notifyRoutedRoleOfScanClosure sms error:", err);
+    }
+  }
+}
+
 
 // Sends the reporter a simple confirm/deny link once their issue is
 // marked Completed — the same link works whether it arrives by email

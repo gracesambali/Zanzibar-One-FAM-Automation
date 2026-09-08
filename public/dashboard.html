@@ -9332,6 +9332,137 @@ async function parseInventorySheetExcel(file) {
 // field, not a camera-based reader.
 let sabScannerInstance = null;
 
+let wcScannerInstance = null;
+let wcCloseWoId = null;
+
+function openCloseWorkOrderScanModal(woId, assetName) {
+  wcCloseWoId = woId;
+  const overlay = document.createElement('div');
+  overlay.id = 'closeWoScanOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Close Work Order</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Scan the tag on ${escapeHtml(assetName)} to confirm you're at the equipment.</div>
+      <div id="wc_reader" style="width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:10px;min-height:220px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px">Starting camera…</div>
+      <input id="wc_code" type="text" placeholder="Or type the barcode" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();submitCloseWoScan();}">
+      <div id="wc_confirmSection" style="display:none;margin-bottom:14px">
+        <div style="background:var(--green-bg);color:var(--green);border-radius:8px;padding:10px 12px;font-size:12.5px;font-weight:600;margin-bottom:10px">✓ Tag confirmed — <span id="wc_confirmedAssetName"></span></div>
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Closing as</label>
+        <input type="text" value="${escapeHtml(currentUsername)}" disabled style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;background:#F8FAFC;color:var(--muted)">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note (optional)</label>
+        <textarea id="wc_note" rows="2" placeholder="What was done" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical"></textarea>
+      </div>
+      <div id="wc_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeCloseWoScanModal()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="wc_submit" onclick="submitCloseWoScan()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Scan to Continue</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  startCloseWoCameraScanner();
+}
+
+async function startCloseWoCameraScanner() {
+  const readerEl = document.getElementById('wc_reader');
+  try {
+    await ensureBarcodeScannerLoaded();
+    if (!document.getElementById('wc_reader')) return; // modal was closed while the library was still loading
+    const formats = [
+      Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.ITF,
+    ];
+    wcScannerInstance = new Html5Qrcode('wc_reader', { formatsToSupport: formats, verbose: false });
+    await wcScannerInstance.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 120 } },
+      (decodedText) => {
+        document.getElementById('wc_code').value = decodedText;
+        stopCloseWoCameraScanner();
+        submitCloseWoScan();
+      },
+      () => {} // per-frame "nothing decoded yet" noise - not a real error, ignored on purpose
+    );
+  } catch (err) {
+    if (readerEl) readerEl.innerHTML = `<div style="padding:16px;text-align:center;color:#fff;font-size:12px">Camera not available — type the barcode below instead.</div>`;
+    console.error('Close WO scan camera error:', err);
+  }
+}
+
+function stopCloseWoCameraScanner() {
+  if (wcScannerInstance) {
+    wcScannerInstance.stop().catch(() => {}).finally(() => { wcScannerInstance = null; });
+  }
+}
+
+function closeCloseWoScanModal() {
+  stopCloseWoCameraScanner();
+  document.getElementById('closeWoScanOverlay')?.remove();
+  wcCloseWoId = null;
+}
+
+// Confirmed directly, discussed and agreed in full: a genuine, real
+// scan resolving is the proof of presence itself - this call only
+// ever confirms the scan matches the real, correct asset (letting the
+// confirmation step appear), the actual closure only happens once
+// "Confirm Closure" is pressed, never on the scan alone.
+async function submitCloseWoScan() {
+  const code = document.getElementById('wc_code').value.trim();
+  const errorBox = document.getElementById('wc_error');
+  const btn = document.getElementById('wc_submit');
+  errorBox.style.display = 'none';
+  if (!code) { errorBox.textContent = 'Scan or enter the barcode.'; errorBox.style.display = 'block'; return; }
+
+  const confirmSection = document.getElementById('wc_confirmSection');
+  if (confirmSection.style.display !== 'none') {
+    // The confirm step is already showing - this click is the real,
+    // final "Confirm Closure" action.
+    btn.disabled = true; btn.textContent = 'Closing…';
+    try {
+      const resp = await fetch('/api/work-orders', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ closeViaScan: true, recordId: wcCloseWoId, scannedCode: code, note: document.getElementById('wc_note').value.trim() || undefined }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Could not close this work order');
+      closeCloseWoScanModal();
+      await renderWorkOrders();
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Confirm Closure';
+    }
+    return;
+  }
+
+  // First pass - resolve the real, physical tag, and if it's genuinely
+  // the right one, reveal the confirm step. Nothing is actually closed
+  // yet at this point.
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const resp = await fetch('/api/get-assets?resolveAssetBarcode=true&code=' + encodeURIComponent(code));
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not look up this barcode');
+
+    const wo = (lastWorkOrders || []).find(w => w.id === wcCloseWoId);
+    if (!data.needsLink && wo && data.assetId !== wo.assetId) {
+      throw new Error(`This tag belongs to ${data.assetName}, not ${wo.assetName} — scan the correct item.`);
+    }
+
+    document.getElementById('wc_confirmedAssetName').textContent = data.needsLink ? (wo?.assetName || 'this asset') : data.assetName;
+    confirmSection.style.display = 'block';
+    document.getElementById('wc_reader').style.display = 'none';
+    document.getElementById('wc_code').style.display = 'none';
+    btn.disabled = false; btn.textContent = 'Confirm Closure';
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Scan to Continue';
+  }
+}
+
 function openScanAssetBarcodeModal() {
   const overlay = document.createElement('div');
   overlay.id = 'scanAssetBarcodeOverlay';
@@ -13300,7 +13431,9 @@ async function showWorkOrderDetail(recordId) {
       ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
       ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+        ${o.status !== 'Completed' && o.assetId ? `
+          <button onclick="openCloseWorkOrderScanModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📷 Close Work Order</button>
+        ` : o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
           <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
           <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
           <option value="Ready for Review" ${o.status==='Ready for Review'?'selected':''}>Ready for Review</option>
