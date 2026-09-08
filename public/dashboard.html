@@ -7224,40 +7224,67 @@ async function deleteFinanceTransaction(transactionId) {
 
 // --- Bills ---
 
+async function fetchFinanceBillsData() {
+  const resp = await fetch('/api/finance?bills=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load bills');
+  return data.bills || [];
+}
+TAB_PREFETCH_FETCHERS.financeBills = fetchFinanceBillsData;
+
+function renderFinanceBillsFromData(bills) {
+  const el = document.getElementById('finance-subtab-content');
+  financeBillsCache = bills;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button onclick="openAddBillModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Bill</button>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Name</th><th style="padding:10px 12px">Frequency</th><th style="padding:10px 12px">Next Due</th>
+          <th style="padding:10px 12px;text-align:right">Amount</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
+        </tr></thead>
+        <tbody>
+          ${financeBillsCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No bills set up yet.</td></tr>` :
+            financeBillsCache.map(b => `
+              <tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px">${escapeHtml(b.name)}</td>
+                <td style="padding:10px 12px">${b.frequency === 'monthly' ? 'Monthly' : 'Annual'}</td>
+                <td style="padding:10px 12px">${b.nextDueDate}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(b.amount)}</td>
+                <td style="padding:10px 12px">${b.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
+                <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                  <button onclick="openFinanceAttachmentsModal('bill','${b.id}','${escapeHtml(b.name)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${b.documentCount || 0}</button>
+                  ${b.status === 'active' ? `<button onclick="markFinanceBillPaid('${b.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFinanceBills() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financeBills;
+
+  if (cached) {
+    renderFinanceBillsFromData(cached.data);
+    fetchFinanceBillsData().then(bills => {
+      tabPrefetchCache.financeBills = { data: bills, fetchedAt: Date.now() };
+      if (financeSubTab === 'bills' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinanceBillsFromData(bills);
+      }
+    }).catch(err => console.error('Background Finance Bills refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/finance?bills=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load bills');
-    financeBillsCache = data.bills || [];
-    el.innerHTML = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-        <button onclick="openAddBillModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Bill</button>
-      </div>
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#F8FAFC;text-align:left">
-            <th style="padding:10px 12px">Name</th><th style="padding:10px 12px">Frequency</th><th style="padding:10px 12px">Next Due</th>
-            <th style="padding:10px 12px;text-align:right">Amount</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
-          </tr></thead>
-          <tbody>
-            ${financeBillsCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No bills set up yet.</td></tr>` :
-              financeBillsCache.map(b => `
-                <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 12px">${escapeHtml(b.name)}</td>
-                  <td style="padding:10px 12px">${b.frequency === 'monthly' ? 'Monthly' : 'Annual'}</td>
-                  <td style="padding:10px 12px">${b.nextDueDate}</td>
-                  <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(b.amount)}</td>
-                  <td style="padding:10px 12px">${b.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
-                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
-                    <button onclick="openFinanceAttachmentsModal('bill','${b.id}','${escapeHtml(b.name)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${b.documentCount || 0}</button>
-                    ${b.status === 'active' ? `<button onclick="markFinanceBillPaid('${b.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}
-                  </td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const bills = await fetchFinanceBillsData();
+    tabPrefetchCache.financeBills = { data: bills, fetchedAt: Date.now() };
+    renderFinanceBillsFromData(bills);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7360,6 +7387,7 @@ async function submitAddBill() {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not save bill'; return; }
   closeFinanceModal();
+  tabPrefetchCache.financeBills = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceBills();
 }
 
@@ -7371,45 +7399,73 @@ async function markFinanceBillPaid(billId) {
   });
   const data = await resp.json();
   if (!resp.ok) { alert(data.error || 'Could not mark bill paid'); return; }
+  tabPrefetchCache.financeBills = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceBills();
 }
 
 // --- Liabilities ---
 
+async function fetchFinanceLiabilitiesData() {
+  const resp = await fetch('/api/finance?liabilities=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load liabilities');
+  return data.liabilities || [];
+}
+TAB_PREFETCH_FETCHERS.financeLiabilities = fetchFinanceLiabilitiesData;
+
+function renderFinanceLiabilitiesFromData(liabilities) {
+  const el = document.getElementById('finance-subtab-content');
+  financeLiabilitiesCache = liabilities;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button onclick="openAddLiabilityModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Liability</button>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Lender</th><th style="padding:10px 12px">Principal</th><th style="padding:10px 12px">Remaining</th>
+          <th style="padding:10px 12px">Next Payment</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
+        </tr></thead>
+        <tbody>
+          ${financeLiabilitiesCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No liabilities recorded yet.</td></tr>` :
+            financeLiabilitiesCache.map(l => `
+              <tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px">${escapeHtml(l.lender)}</td>
+                <td style="padding:10px 12px">${formatCurrency(l.principal)}</td>
+                <td style="padding:10px 12px;font-weight:600">${formatCurrency(l.remainingBalance)}</td>
+                <td style="padding:10px 12px">${l.nextPaymentDate || '—'}</td>
+                <td style="padding:10px 12px">${l.status === 'active' ? '<span style="color:var(--amber,#B45309)">Active</span>' : '<span style="color:var(--green)">Paid Off</span>'}</td>
+                <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                  <button onclick="openFinanceAttachmentsModal('liability','${l.id}','${escapeHtml(l.lender)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${l.documentCount || 0}</button>
+                  ${l.status === 'active' ? `<button onclick="openRecordPaymentModal('${l.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Record Payment</button>` : ''}
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFinanceLiabilities() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financeLiabilities;
+
+  if (cached) {
+    renderFinanceLiabilitiesFromData(cached.data);
+    fetchFinanceLiabilitiesData().then(liabilities => {
+      tabPrefetchCache.financeLiabilities = { data: liabilities, fetchedAt: Date.now() };
+      if (financeSubTab === 'liabilities' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinanceLiabilitiesFromData(liabilities);
+      }
+    }).catch(err => console.error('Background Finance Liabilities refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/finance?liabilities=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load liabilities');
-    financeLiabilitiesCache = data.liabilities || [];
-    el.innerHTML = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-        <button onclick="openAddLiabilityModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Liability</button>
-      </div>
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#F8FAFC;text-align:left">
-            <th style="padding:10px 12px">Lender</th><th style="padding:10px 12px">Principal</th><th style="padding:10px 12px">Remaining</th>
-            <th style="padding:10px 12px">Next Payment</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
-          </tr></thead>
-          <tbody>
-            ${financeLiabilitiesCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No liabilities recorded yet.</td></tr>` :
-              financeLiabilitiesCache.map(l => `
-                <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 12px">${escapeHtml(l.lender)}</td>
-                  <td style="padding:10px 12px">${formatCurrency(l.principal)}</td>
-                  <td style="padding:10px 12px;font-weight:600">${formatCurrency(l.remainingBalance)}</td>
-                  <td style="padding:10px 12px">${l.nextPaymentDate || '—'}</td>
-                  <td style="padding:10px 12px">${l.status === 'active' ? '<span style="color:var(--amber,#B45309)">Active</span>' : '<span style="color:var(--green)">Paid Off</span>'}</td>
-                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
-                    <button onclick="openFinanceAttachmentsModal('liability','${l.id}','${escapeHtml(l.lender)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${l.documentCount || 0}</button>
-                    ${l.status === 'active' ? `<button onclick="openRecordPaymentModal('${l.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Record Payment</button>` : ''}
-                  </td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const liabilities = await fetchFinanceLiabilitiesData();
+    tabPrefetchCache.financeLiabilities = { data: liabilities, fetchedAt: Date.now() };
+    renderFinanceLiabilitiesFromData(liabilities);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7457,6 +7513,7 @@ async function submitAddLiability() {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not save liability'; return; }
   closeFinanceModal();
+  tabPrefetchCache.financeLiabilities = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceLiabilities();
 }
 
@@ -7485,46 +7542,73 @@ async function submitRecordPayment(liabilityId) {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not record payment'; return; }
   closeFinanceModal();
+  tabPrefetchCache.financeLiabilities = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceLiabilities();
 }
 
 // --- Vendors ---
 
+async function fetchFinanceVendorsData() {
+  const resp = await fetch('/api/finance?vendorSpend=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load vendor spend');
+  return data.vendors || [];
+}
+TAB_PREFETCH_FETCHERS.financeVendorsSpend = fetchFinanceVendorsData;
+
+function renderFinanceVendorsFromData(vendors) {
+  const el = document.getElementById('finance-subtab-content');
+  el.innerHTML = `
+    <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12.5px;color:var(--navy)">
+      Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them.
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button onclick="openAddVendorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Vendor</button>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Vendor</th><th style="padding:10px 12px">Contact</th>
+          <th style="padding:10px 12px;text-align:right">Total Spend</th><th style="padding:10px 12px;text-align:right">Transactions</th><th style="padding:10px 12px">Last Activity</th><th style="padding:10px 12px"></th>
+        </tr></thead>
+        <tbody>
+          ${vendors.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No vendors set up yet.</td></tr>` :
+            vendors.map(v => `
+              <tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px;font-weight:600">${escapeHtml(v.name)}</td>
+                <td style="padding:10px 12px;color:var(--muted)">${escapeHtml(v.email || v.phone || '—')}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:700;color:${v.totalSpend > 0 ? 'var(--navy)' : 'var(--muted)'}">${formatCurrency(v.totalSpend)}</td>
+                <td style="padding:10px 12px;text-align:right">${v.transactionCount}</td>
+                <td style="padding:10px 12px">${v.lastTransactionDate || '—'}</td>
+                <td style="padding:10px 12px"><button onclick="submitRemoveVendorFromFinance('${v.id}','${(v.name || '').replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button></td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFinanceVendors() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financeVendorsSpend;
+
+  if (cached) {
+    renderFinanceVendorsFromData(cached.data);
+    fetchFinanceVendorsData().then(vendors => {
+      tabPrefetchCache.financeVendorsSpend = { data: vendors, fetchedAt: Date.now() };
+      if (financeSubTab === 'vendors' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinanceVendorsFromData(vendors);
+      }
+    }).catch(err => console.error('Background Finance Vendors refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch('/api/finance?vendorSpend=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load vendor spend');
-    const vendors = data.vendors || [];
-    el.innerHTML = `
-      <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:12.5px;color:var(--navy)">
-        Total spend against each vendor, combining every bill payment, liability payment, and direct transaction linked to them.
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-        <button onclick="openAddVendorModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Vendor</button>
-      </div>
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#F8FAFC;text-align:left">
-            <th style="padding:10px 12px">Vendor</th><th style="padding:10px 12px">Contact</th>
-            <th style="padding:10px 12px;text-align:right">Total Spend</th><th style="padding:10px 12px;text-align:right">Transactions</th><th style="padding:10px 12px">Last Activity</th><th style="padding:10px 12px"></th>
-          </tr></thead>
-          <tbody>
-            ${vendors.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No vendors set up yet.</td></tr>` :
-              vendors.map(v => `
-                <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 12px;font-weight:600">${escapeHtml(v.name)}</td>
-                  <td style="padding:10px 12px;color:var(--muted)">${escapeHtml(v.email || v.phone || '—')}</td>
-                  <td style="padding:10px 12px;text-align:right;font-weight:700;color:${v.totalSpend > 0 ? 'var(--navy)' : 'var(--muted)'}">${formatCurrency(v.totalSpend)}</td>
-                  <td style="padding:10px 12px;text-align:right">${v.transactionCount}</td>
-                  <td style="padding:10px 12px">${v.lastTransactionDate || '—'}</td>
-                  <td style="padding:10px 12px"><button onclick="submitRemoveVendorFromFinance('${v.id}','${(v.name || '').replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--red);border-radius:6px;background:#fff;color:var(--red);cursor:pointer">Remove</button></td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const vendors = await fetchFinanceVendorsData();
+    tabPrefetchCache.financeVendorsSpend = { data: vendors, fetchedAt: Date.now() };
+    renderFinanceVendorsFromData(vendors);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7566,6 +7650,7 @@ async function submitAddVendorFromFinance() {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save vendor');
     closeFinanceModal();
+    tabPrefetchCache.financeVendorsSpend = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderFinanceVendors();
   } catch (err) {
     errEl.textContent = err.message;
@@ -7582,6 +7667,7 @@ async function submitRemoveVendorFromFinance(vendorId, vendorName) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove vendor');
+    tabPrefetchCache.financeVendorsSpend = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderFinanceVendors();
   } catch (err) {
     alert('Could not remove: ' + err.message);
@@ -7607,38 +7693,64 @@ function maskAccountNumber(number) {
   return '•••• ' + number.slice(-4);
 }
 
+async function fetchFinancePayrollData() {
+  const resp = await fetch('/api/finance?payroll=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load payroll');
+  return data.payroll || [];
+}
+TAB_PREFETCH_FETCHERS.financePayroll = fetchFinancePayrollData;
+
+function renderFinancePayrollFromData(payroll) {
+  const el = document.getElementById('finance-subtab-content');
+  el.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button onclick="openAddPayrollModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Payroll Entry</button>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Employee</th><th style="padding:10px 12px">Salary</th><th style="padding:10px 12px">Payment To</th>
+          <th style="padding:10px 12px">Next Pay Date</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
+        </tr></thead>
+        <tbody>
+          ${payroll.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No payroll entries set up yet.</td></tr>` :
+            payroll.map(p => `
+              <tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px;font-weight:600">${escapeHtml(p.employeeName)}</td>
+                <td style="padding:10px 12px;font-weight:600">${formatCurrency(p.salaryAmount)}</td>
+                <td style="padding:10px 12px;color:var(--muted)">${p.paymentMethod === 'bank' ? 'Bank' : 'Mobile Money'} · ${maskAccountNumber(p.accountNumber)}</td>
+                <td style="padding:10px 12px">${p.nextPayDate}</td>
+                <td style="padding:10px 12px">${p.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
+                <td style="padding:10px 12px;text-align:right">${p.status === 'active' ? `<button onclick="markFinancePayrollPaid('${p.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFinancePayroll() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financePayroll;
+
+  if (cached) {
+    renderFinancePayrollFromData(cached.data);
+    fetchFinancePayrollData().then(payroll => {
+      tabPrefetchCache.financePayroll = { data: payroll, fetchedAt: Date.now() };
+      if (financeSubTab === 'payroll' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinancePayrollFromData(payroll);
+      }
+    }).catch(err => console.error('Background Finance Payroll refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch('/api/finance?payroll=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load payroll');
-    const payroll = data.payroll || [];
-    el.innerHTML = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-        <button onclick="openAddPayrollModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Payroll Entry</button>
-      </div>
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#F8FAFC;text-align:left">
-            <th style="padding:10px 12px">Employee</th><th style="padding:10px 12px">Salary</th><th style="padding:10px 12px">Payment To</th>
-            <th style="padding:10px 12px">Next Pay Date</th><th style="padding:10px 12px">Status</th><th style="padding:10px 12px"></th>
-          </tr></thead>
-          <tbody>
-            ${payroll.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No payroll entries set up yet.</td></tr>` :
-              payroll.map(p => `
-                <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 12px;font-weight:600">${escapeHtml(p.employeeName)}</td>
-                  <td style="padding:10px 12px;font-weight:600">${formatCurrency(p.salaryAmount)}</td>
-                  <td style="padding:10px 12px;color:var(--muted)">${p.paymentMethod === 'bank' ? 'Bank' : 'Mobile Money'} · ${maskAccountNumber(p.accountNumber)}</td>
-                  <td style="padding:10px 12px">${p.nextPayDate}</td>
-                  <td style="padding:10px 12px">${p.status === 'active' ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--muted)">Paused</span>'}</td>
-                  <td style="padding:10px 12px;text-align:right">${p.status === 'active' ? `<button onclick="markFinancePayrollPaid('${p.id}')" style="padding:5px 10px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:11.5px;font-weight:600;cursor:pointer">Mark Paid</button>` : ''}</td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const payroll = await fetchFinancePayrollData();
+    tabPrefetchCache.financePayroll = { data: payroll, fetchedAt: Date.now() };
+    renderFinancePayrollFromData(payroll);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7655,74 +7767,109 @@ const REPORT_PERIOD_LABELS = {
   semiannual: 'Semi-Annual', annual: 'Annual',
 };
 
+async function fetchFinanceReportData(period, offset) {
+  const resp = await fetch(`/api/finance?periodReport=${period}&offset=${offset}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load report');
+  return data;
+}
+TAB_PREFETCH_FETCHERS.financeReports = async () => {
+  const data = await fetchFinanceReportData(currentReportPeriod, currentReportOffset);
+  return { key: `${currentReportPeriod}|${currentReportOffset}`, data };
+};
+
+function renderFinanceReportsFromData(data) {
+  const el = document.getElementById('finance-subtab-content');
+  currentFinanceReportData = data; // cached so the Download button doesn't need a second fetch
+
+  const catColors = ['var(--navy)', 'var(--green)', 'var(--red)', 'var(--amber, #B45309)', '#7C3AED', '#0891B2', 'var(--muted)'];
+  const categoryBreakdown = data.categoryBreakdown || [];
+  const catTotal = categoryBreakdown.reduce((s, c) => s + c.total, 0);
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <select onchange="currentReportPeriod=this.value;currentReportOffset=0;renderFinanceReports()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600">
+        ${Object.entries(REPORT_PERIOD_LABELS).map(([k, label]) => `<option value="${k}"${currentReportPeriod===k?' selected':''}>${label}</option>`).join('')}
+      </select>
+      <div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:4px">
+        <button onclick="currentReportOffset++;renderFinanceReports()" style="padding:6px 10px;border:none;background:none;cursor:pointer;font-size:13px;color:var(--navy);font-weight:600">◀</button>
+        <div style="font-size:13px;font-weight:700;color:var(--navy);min-width:170px;text-align:center">${escapeHtml(data.label)}</div>
+        <button onclick="currentReportOffset=Math.max(0,currentReportOffset-1);renderFinanceReports()" ${currentReportOffset===0?'disabled style="opacity:0.3"':''} style="padding:6px 10px;border:none;background:none;cursor:${currentReportOffset===0?'default':'pointer'};font-size:13px;color:var(--navy);font-weight:600">▶</button>
+      </div>
+      </div>
+      <button onclick="downloadFinanceReport()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+      ${[
+        { label: 'Income', value: data.totalIncome, color: 'var(--green)' },
+        { label: 'Expense', value: data.totalExpense, color: 'var(--red)' },
+        { label: 'Net Position', value: data.netPosition, color: data.netPosition >= 0 ? 'var(--green)' : 'var(--red)' },
+      ].map(c => `
+        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+          <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
+          <div style="font-size:20px;font-weight:800;color:${c.color}">${formatCurrency(c.value)}</div>
+        </div>`).join('')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+      ${[
+        { label: 'Bills Paid', data: data.billsPaid },
+        { label: 'Payroll Paid', data: data.payrollPaid },
+        { label: 'Loan Payments', data: data.liabilityPayments },
+      ].map(c => `
+        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+          <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
+          <div style="font-size:16px;font-weight:700;color:var(--navy)">${formatCurrency(c.data.total)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${c.data.count} payment${c.data.count === 1 ? '' : 's'}</div>
+        </div>`).join('')}
+    </div>
+
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">Expense by Category</div>
+      ${categoryBreakdown.length === 0
+        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No expenses recorded in this period.</div>`
+        : categoryBreakdown.map((c, i) => `
+          <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+              <span style="color:var(--text)">${escapeHtml(c.category)}</span>
+              <span style="font-weight:600;color:var(--navy)">${formatCurrency(c.total)}</span>
+            </div>
+            <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:${catTotal > 0 ? (c.total / catTotal * 100) : 0}%;background:${catColors[i % catColors.length]}"></div>
+            </div>
+          </div>`).join('')}
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the exact period and offset actually being
+// viewed - a real, current cache entry only renders instantly when it
+// genuinely matches what's currently selected, the same real
+// principle already proven for Level View's filter-aware caching.
 async function renderFinanceReports() {
   const el = document.getElementById('finance-subtab-content');
+  const cacheKey = `${currentReportPeriod}|${currentReportOffset}`;
+  const cached = tabPrefetchCache.financeReports && tabPrefetchCache.financeReports.data && tabPrefetchCache.financeReports.data.key === cacheKey ? tabPrefetchCache.financeReports.data.data : null;
+
+  if (cached) {
+    renderFinanceReportsFromData(cached);
+    fetchFinanceReportData(currentReportPeriod, currentReportOffset).then(data => {
+      tabPrefetchCache.financeReports = { data: { key: cacheKey, data }, fetchedAt: Date.now() };
+      if (financeSubTab === 'reports' && document.getElementById('view-finance')?.classList.contains('active')
+          && `${currentReportPeriod}|${currentReportOffset}` === cacheKey) {
+        renderFinanceReportsFromData(data);
+      }
+    }).catch(err => console.error('Background Finance Reports refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch(`/api/finance?periodReport=${currentReportPeriod}&offset=${currentReportOffset}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load report');
-    currentFinanceReportData = data; // cached so the Download button doesn't need a second fetch
-
-    const catColors = ['var(--navy)', 'var(--green)', 'var(--red)', 'var(--amber, #B45309)', '#7C3AED', '#0891B2', 'var(--muted)'];
-    const categoryBreakdown = data.categoryBreakdown || [];
-    const catTotal = categoryBreakdown.reduce((s, c) => s + c.total, 0);
-
-    el.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <select onchange="currentReportPeriod=this.value;currentReportOffset=0;renderFinanceReports()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600">
-          ${Object.entries(REPORT_PERIOD_LABELS).map(([k, label]) => `<option value="${k}"${currentReportPeriod===k?' selected':''}>${label}</option>`).join('')}
-        </select>
-        <div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:4px">
-          <button onclick="currentReportOffset++;renderFinanceReports()" style="padding:6px 10px;border:none;background:none;cursor:pointer;font-size:13px;color:var(--navy);font-weight:600">◀</button>
-          <div style="font-size:13px;font-weight:700;color:var(--navy);min-width:170px;text-align:center">${escapeHtml(data.label)}</div>
-          <button onclick="currentReportOffset=Math.max(0,currentReportOffset-1);renderFinanceReports()" ${currentReportOffset===0?'disabled style="opacity:0.3"':''} style="padding:6px 10px;border:none;background:none;cursor:${currentReportOffset===0?'default':'pointer'};font-size:13px;color:var(--navy);font-weight:600">▶</button>
-        </div>
-        </div>
-        <button onclick="downloadFinanceReport()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download</button>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
-        ${[
-          { label: 'Income', value: data.totalIncome, color: 'var(--green)' },
-          { label: 'Expense', value: data.totalExpense, color: 'var(--red)' },
-          { label: 'Net Position', value: data.netPosition, color: data.netPosition >= 0 ? 'var(--green)' : 'var(--red)' },
-        ].map(c => `
-          <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
-            <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
-            <div style="font-size:20px;font-weight:800;color:${c.color}">${formatCurrency(c.value)}</div>
-          </div>`).join('')}
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
-        ${[
-          { label: 'Bills Paid', data: data.billsPaid },
-          { label: 'Payroll Paid', data: data.payrollPaid },
-          { label: 'Loan Payments', data: data.liabilityPayments },
-        ].map(c => `
-          <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
-            <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
-            <div style="font-size:16px;font-weight:700;color:var(--navy)">${formatCurrency(c.data.total)}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">${c.data.count} payment${c.data.count === 1 ? '' : 's'}</div>
-          </div>`).join('')}
-      </div>
-
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">Expense by Category</div>
-        ${categoryBreakdown.length === 0
-          ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No expenses recorded in this period.</div>`
-          : categoryBreakdown.map((c, i) => `
-            <div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-                <span style="color:var(--text)">${escapeHtml(c.category)}</span>
-                <span style="font-weight:600;color:var(--navy)">${formatCurrency(c.total)}</span>
-              </div>
-              <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${catTotal > 0 ? (c.total / catTotal * 100) : 0}%;background:${catColors[i % catColors.length]}"></div>
-              </div>
-            </div>`).join('')}
-      </div>`;
+    const data = await fetchFinanceReportData(currentReportPeriod, currentReportOffset);
+    tabPrefetchCache.financeReports = { data: { key: cacheKey, data }, fetchedAt: Date.now() };
+    renderFinanceReportsFromData(data);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7804,51 +7951,79 @@ function downloadFinanceReport() {
 let invoicesCache = [];
 let invoiceLineItemCount = 0;
 
+async function fetchFinanceInvoicesData() {
+  const resp = await fetch('/api/finance?invoices=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load invoices');
+  return data.invoices || [];
+}
+TAB_PREFETCH_FETCHERS.financeInvoices = fetchFinanceInvoicesData;
+
+function renderFinanceInvoicesFromData(invoices) {
+  const el = document.getElementById('finance-subtab-content');
+  invoicesCache = invoices;
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Invoices</div>
+        <div style="font-size:12px;color:var(--muted)">Every new invoice defaults to 40% advance, 60% on completion, and 30 days' validity — editable per invoice.</div>
+      </div>
+      <button onclick="openNewInvoiceModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Invoice</button>
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Invoice #</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Client</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Issue Date</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Due Date</th>
+            <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Total</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${invoicesCache.length === 0
+            ? `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No invoices yet.</td></tr>`
+            : invoicesCache.map(inv => `
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(inv.invoiceNumber)}</td>
+                <td style="padding:9px 12px">${escapeHtml(inv.clientName)}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${new Date(inv.issueDate).toLocaleDateString()}</td>
+                <td style="padding:9px 12px;color:var(--muted)">${new Date(inv.dueDate).toLocaleDateString()}</td>
+                <td style="padding:9px 12px;text-align:right;font-weight:600;color:var(--navy)">${formatCurrency(inv.total)}</td>
+                <td style="padding:9px 12px"><button onclick="downloadInvoice('${inv.id}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button></td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern. This is the final
+// Finance sub-tab, completing every real sub-tab in this app.
 async function renderFinanceInvoices() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financeInvoices;
+
+  if (cached) {
+    renderFinanceInvoicesFromData(cached.data);
+    fetchFinanceInvoicesData().then(invoices => {
+      tabPrefetchCache.financeInvoices = { data: invoices, fetchedAt: Date.now() };
+      if (financeSubTab === 'invoices' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinanceInvoicesFromData(invoices);
+      }
+    }).catch(err => console.error('Background Finance Invoices refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch('/api/finance?invoices=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load invoices');
-    invoicesCache = data.invoices || [];
-
-    el.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div>
-          <div style="font-size:18px;font-weight:700;color:var(--navy)">Invoices</div>
-          <div style="font-size:12px;color:var(--muted)">Every new invoice defaults to 40% advance, 60% on completion, and 30 days' validity — editable per invoice.</div>
-        </div>
-        <button onclick="openNewInvoiceModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Invoice</button>
-      </div>
-
-      <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-          <thead>
-            <tr style="background:#F7F8FA;border-bottom:1px solid var(--border)">
-              <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Invoice #</th>
-              <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Client</th>
-              <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Issue Date</th>
-              <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600">Due Date</th>
-              <th style="text-align:right;padding:10px 12px;color:var(--muted);font-weight:600">Total</th>
-              <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600"></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${invoicesCache.length === 0
-              ? `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No invoices yet.</td></tr>`
-              : invoicesCache.map(inv => `
-                <tr style="border-bottom:1px solid var(--border)">
-                  <td style="padding:9px 12px;font-weight:600;color:var(--navy)">${escapeHtml(inv.invoiceNumber)}</td>
-                  <td style="padding:9px 12px">${escapeHtml(inv.clientName)}</td>
-                  <td style="padding:9px 12px;color:var(--muted)">${new Date(inv.issueDate).toLocaleDateString()}</td>
-                  <td style="padding:9px 12px;color:var(--muted)">${new Date(inv.dueDate).toLocaleDateString()}</td>
-                  <td style="padding:9px 12px;text-align:right;font-weight:600;color:var(--navy)">${formatCurrency(inv.total)}</td>
-                  <td style="padding:9px 12px"><button onclick="downloadInvoice('${inv.id}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ Download</button></td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const invoices = await fetchFinanceInvoicesData();
+    tabPrefetchCache.financeInvoices = { data: invoices, fetchedAt: Date.now() };
+    renderFinanceInvoicesFromData(invoices);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7952,6 +8127,7 @@ async function submitNewInvoice() {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create invoice');
     document.getElementById('newInvoiceOverlay')?.remove();
     downloadInvoiceFromData(data.invoice);
+    tabPrefetchCache.financeInvoices = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderFinanceInvoices();
   } catch (err) {
     errorBox.textContent = err.message;
@@ -8113,6 +8289,7 @@ async function submitAddPayroll() {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not save payroll entry'; return; }
   closeFinanceModal();
+  tabPrefetchCache.financePayroll = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinancePayroll();
 }
 
@@ -8124,6 +8301,7 @@ async function markFinancePayrollPaid(payrollEntryId) {
   });
   const data = await resp.json();
   if (!resp.ok) { alert(data.error || 'Could not mark payroll paid'); return; }
+  tabPrefetchCache.financePayroll = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinancePayroll();
 }
 
@@ -8207,7 +8385,9 @@ async function submitFinanceAttachment(recordType, recordId) {
     // separate manual refresh.
     tabPrefetchCache.financeTransactions = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (recordType === 'transaction') renderFinanceTransactions();
+    tabPrefetchCache.financeBills = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (recordType === 'bill') renderFinanceBills();
+    tabPrefetchCache.financeLiabilities = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (recordType === 'liability') renderFinanceLiabilities();
   } catch (err) {
     statusEl.style.color = 'var(--red)';
