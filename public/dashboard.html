@@ -2742,12 +2742,36 @@ async function submitRelocation(recordId) {
   }
 }
 
+async function fetchSensorMonitorData() {
+  const [resp, catResp] = await Promise.all([fetch('/api/sensors'), fetch('/api/sensors?categories=true')]);
+  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
+  const data = await resp.json();
+  const catData = await catResp.json();
+  return { sensors: data.sensors || [], categories: catData.categories || [] };
+}
+TAB_PREFETCH_FETCHERS.sensors = fetchSensorMonitorData;
+
 async function renderSensorMonitor(isRefresh) {
   const container = document.getElementById('view-sensors');
+  const cached = !isRefresh ? tabPrefetchCache.sensors : null;
+
+  if (cached) {
+    window.bmsCategoriesCache = cached.data.categories;
+    await renderSensorMonitorFromData(cached.data.sensors, cached.data.categories, false);
+    fetchSensorMonitorData().then(fresh => {
+      tabPrefetchCache.sensors = { data: fresh, fetchedAt: Date.now() };
+      if (document.getElementById('view-sensors')?.classList.contains('active')) {
+        window.bmsCategoriesCache = fresh.categories;
+        renderSensorMonitorFromData(fresh.sensors, fresh.categories, true);
+      }
+    }).catch(err => console.error('Background Sensors refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   if (!isRefresh) {
     container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading sensor data…</div>';
   }
-
   try {
     const [resp, catResp] = await Promise.all([
       fetch('/api/sensors'),
@@ -2761,8 +2785,19 @@ async function renderSensorMonitor(isRefresh) {
       const catData = await catResp.json();
       window.bmsCategoriesCache = catData.categories || [];
     }
-    const categories = window.bmsCategoriesCache || [];
+    if (!isRefresh) tabPrefetchCache.sensors = { data: { sensors, categories: window.bmsCategoriesCache || [] }, fetchedAt: Date.now() };
+    await renderSensorMonitorFromData(sensors, window.bmsCategoriesCache || [], isRefresh);
+  } catch (err) {
+    if (!isRefresh) {
+      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
+    } else {
+      console.error('Sensor refresh failed:', err);
+    }
+  }
+}
 
+async function renderSensorMonitorFromData(sensors, categories, isRefresh) {
+  const container = document.getElementById('view-sensors');
     // The test tool panel (dropdown, value input, result box) is built
     // ONLY on first load, never on a refresh - refreshing used to rebuild
     // this whole area, which wiped out the test result message and the
@@ -2858,13 +2893,6 @@ async function renderSensorMonitor(isRefresh) {
 
     const listArea = document.getElementById('sensorListArea');
     if (listArea) listArea.innerHTML = listHtml;
-  } catch (err) {
-    if (!isRefresh) {
-      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load sensor data: ' + err.message + '</div>';
-    } else {
-      console.error('Sensor refresh failed:', err);
-    }
-  }
 
   clearTimeout(window._sensorRefreshTimer);
   window._sensorRefreshTimer = setTimeout(() => {
@@ -11056,73 +11084,100 @@ async function openInventoryHistoryModal(itemId, itemName) {
   }
 }
 
+async function fetchUnitsData() {
+  const resp = await fetch('/api/get-assets?units=true');
+  const data = await resp.json();
+  return data.units || [];
+}
+TAB_PREFETCH_FETCHERS.units = fetchUnitsData;
+
+function renderUnitsFromData(allUnits) {
+  const container = document.getElementById('view-units');
+  if (!container) return;
+  lastUnits = allUnits;
+  const units = filterByBuilding(lastUnits);
+
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div>
+      <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Management</div>
+      <div style="font-size:12px;color:var(--muted)">Click a unit to open its own page — chat, activity, contract, and assets all live there together.</div>
+    </div>
+    <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
+  </div>`;
+
+  // Rent Roll — portfolio-wide balance across every unit, confirmed
+  // to live as a section here on Tenant Units rather than the
+  // overall dashboard/reports. Sorted by who owes the most, so the
+  // people actually behind surface first rather than needing to be
+  // found by scanning every unit individually.
+  const unitsOwing = lastUnits.filter(u => (u.balance || 0) > 0).sort((a, b) => b.balance - a.balance);
+  const totalOwed = unitsOwing.reduce((sum, u) => sum + u.balance, 0);
+  if (unitsOwing.length > 0) {
+    html += `<div class="dash-panel" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+        <div class="dash-panel-title" style="margin-bottom:0">Rent Roll — ${unitsOwing.length} unit${unitsOwing.length === 1 ? '' : 's'} owing, ${formatCurrency(totalOwed)} total</div>
+        ${currencySwitcherHtml('rentroll')}
+      </div>
+      <div style="margin-top:10px">` + unitsOwing.map(u => `
+        <button onclick="showUnitDetail('${u.id}')" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer;font:inherit">
+          <span style="font-size:12.5px;color:var(--text)">${u.name}${u.tenantName ? ' — ' + escapeHtml(u.tenantName) : ''}</span>
+          <strong style="font-size:12.5px;color:var(--red)">${formatCurrency(u.balance)}</strong>
+        </button>`).join('') + `
+      </div>
+    </div>`;
+  }
+
+  if (units.length === 0) {
+    html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No units yet${currentBuildingFilter !== '__all__' || currentFacilityFilter !== '__all__' ? ' in this selection' : ''}.</div>`;
+    container.innerHTML = html;
+    return;
+  }
+
+  const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
+
+  html += `<div class="asset-list">` + units.map(u => {
+    const unitAssetCount = assets.filter(a => a.unit === u.name).length;
+    const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
+    return `<button class="asset-row" onclick="showUnitDetail('${u.id}')" style="text-align:left">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="asset-name">${u.name}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
+          ${u.chatLog && u.chatLog.length ? `<span class="wo-row-unread-dot" title="Has chat activity">${u.chatLog.length > 9 ? '9+' : u.chatLog.length}</span>` : ''}
+        </div>
+        <div class="asset-meta">${u.building}${u.tenantName ? ' · ' + u.tenantName : ''} · ${unitAssetCount} asset${unitAssetCount !== 1 ? 's' : ''}</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>`;
+  }).join('') + `</div>`;
+
+  container.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderUnits() {
   const container = document.getElementById('view-units');
   if (!container) return;
+  const cached = tabPrefetchCache.units;
+
+  if (cached) {
+    renderUnitsFromData(cached.data);
+    fetchUnitsData().then(units => {
+      tabPrefetchCache.units = { data: units, fetchedAt: Date.now() };
+      if (document.getElementById('view-units')?.classList.contains('active')) {
+        renderUnitsFromData(units);
+      }
+    }).catch(err => console.error('Background Units refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">Loading units…</div>`;
-
   try {
-    const resp = await fetch('/api/get-assets?units=true');
-    const data = await resp.json();
-    lastUnits = data.units || [];
-    const units = filterByBuilding(lastUnits);
-
-    let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div>
-        <div style="font-size:18px;font-weight:700;color:var(--navy)">Tenant Management</div>
-        <div style="font-size:12px;color:var(--muted)">Click a unit to open its own page — chat, activity, contract, and assets all live there together.</div>
-      </div>
-      <button onclick="openAddUnitModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Unit</button>
-    </div>`;
-
-    // Rent Roll — portfolio-wide balance across every unit, confirmed
-    // to live as a section here on Tenant Units rather than the
-    // overall dashboard/reports. Sorted by who owes the most, so the
-    // people actually behind surface first rather than needing to be
-    // found by scanning every unit individually.
-    const unitsOwing = lastUnits.filter(u => (u.balance || 0) > 0).sort((a, b) => b.balance - a.balance);
-    const totalOwed = unitsOwing.reduce((sum, u) => sum + u.balance, 0);
-    if (unitsOwing.length > 0) {
-      html += `<div class="dash-panel" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-          <div class="dash-panel-title" style="margin-bottom:0">Rent Roll — ${unitsOwing.length} unit${unitsOwing.length === 1 ? '' : 's'} owing, ${formatCurrency(totalOwed)} total</div>
-          ${currencySwitcherHtml('rentroll')}
-        </div>
-        <div style="margin-top:10px">` + unitsOwing.map(u => `
-          <button onclick="showUnitDetail('${u.id}')" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer;font:inherit">
-            <span style="font-size:12.5px;color:var(--text)">${u.name}${u.tenantName ? ' — ' + escapeHtml(u.tenantName) : ''}</span>
-            <strong style="font-size:12.5px;color:var(--red)">${formatCurrency(u.balance)}</strong>
-          </button>`).join('') + `
-        </div>
-      </div>`;
-    }
-
-    if (units.length === 0) {
-      html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No units yet${currentBuildingFilter !== '__all__' || currentFacilityFilter !== '__all__' ? ' in this selection' : ''}.</div>`;
-      container.innerHTML = html;
-      return;
-    }
-
-    const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
-
-    html += `<div class="asset-list">` + units.map(u => {
-      const unitAssetCount = assets.filter(a => a.unit === u.name).length;
-      const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
-      return `<button class="asset-row" onclick="showUnitDetail('${u.id}')" style="text-align:left">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="asset-name">${u.name}</span>
-            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">${u.unitType || 'Unspecified'}</span>
-            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${lc[0]};color:${lc[1]}">${u.leaseStatus || 'Unspecified'}</span>
-            ${u.chatLog && u.chatLog.length ? `<span class="wo-row-unread-dot" title="Has chat activity">${u.chatLog.length > 9 ? '9+' : u.chatLog.length}</span>` : ''}
-          </div>
-          <div class="asset-meta">${u.building}${u.tenantName ? ' · ' + u.tenantName : ''} · ${unitAssetCount} asset${unitAssetCount !== 1 ? 's' : ''}</div>
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-      </button>`;
-    }).join('') + `</div>`;
-
-    container.innerHTML = html;
+    const units = await fetchUnitsData();
+    tabPrefetchCache.units = { data: units, fetchedAt: Date.now() };
+    renderUnitsFromData(units);
   } catch (err) {
     container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load units: ${err.message}</div>`;
   }
