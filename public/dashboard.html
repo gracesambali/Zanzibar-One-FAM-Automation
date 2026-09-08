@@ -1971,13 +1971,29 @@ async function renderFuelMonitorSection(a) {
   }
 }
 
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Reuses the exact same real fetcher and cache entry
+// already built for the asset-detail version of this same panel -
+// this is the identical real data for the same asset, shown from a
+// different entry point.
 async function renderBmsFuelMonitorSection(assetId) {
   const el = document.getElementById('bmsFuelMonitorContent');
   if (!el) return;
+  const cacheKey = assetId;
+  const cached = tabPrefetchCache.fuelMonitorByAsset && tabPrefetchCache.fuelMonitorByAsset.key === cacheKey ? tabPrefetchCache.fuelMonitorByAsset.data : null;
+
+  if (cached) {
+    el.innerHTML = buildFuelMonitorHtml(cached);
+    fetchFuelMonitorData(assetId).then(data => {
+      tabPrefetchCache.fuelMonitorByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('bmsFuelMonitorContent')) el.innerHTML = buildFuelMonitorHtml(data);
+    }).catch(err => console.error('Background BMS Fuel Monitor refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch(`/api/get-assets?generatorFuelSummary=true&assetId=${encodeURIComponent(assetId)}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load fuel data');
+    const data = await fetchFuelMonitorData(assetId);
+    tabPrefetchCache.fuelMonitorByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
     el.innerHTML = buildFuelMonitorHtml(data);
   } catch (err) {
     el.innerHTML = `<div style="color:var(--red);font-size:12px">Could not load fuel data: ${escapeHtml(err.message)}</div>`;
@@ -3083,21 +3099,51 @@ function showSensorDetail(recordId) {
 // rather than blocking it - matches the same pattern already used
 // elsewhere (Finance's cost overview) for anything that needs its own
 // network round trip.
+async function fetchSensorHistoryData(sensorId) {
+  const resp = await fetch(`/api/sensors?readingsHistory=true&sensorId=${encodeURIComponent(sensorId)}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load history');
+  return data.readings || [];
+}
+
+function renderSensorHistoryFromData(readings) {
+  const statusEl = document.getElementById('sensorHistoryStatus');
+  const canvas = document.getElementById('sensorHistoryChart');
+  if (!statusEl || !canvas) return;
+  if (readings.length === 0) {
+    statusEl.textContent = 'No readings recorded yet.';
+    return;
+  }
+  drawSensorHistoryChart(canvas, readings);
+  statusEl.textContent = `${readings.length} reading${readings.length === 1 ? '' : 's'} shown, oldest to most recent.`;
+}
+
+// Real reading history, fetched after the instant detail render above
+// rather than blocking it - matches the same pattern already used
+// elsewhere (Finance's cost overview) for anything that needs its own
+// network round trip. Confirmed directly, discussed and agreed in
+// full: applies here too, no exception - keyed by the specific sensor
+// actually being viewed.
 async function loadSensorHistoryChart(sensorId) {
   const statusEl = document.getElementById('sensorHistoryStatus');
   const canvas = document.getElementById('sensorHistoryChart');
   if (!statusEl || !canvas) return;
+  const cacheKey = sensorId;
+  const cached = tabPrefetchCache.sensorHistory && tabPrefetchCache.sensorHistory.key === cacheKey ? tabPrefetchCache.sensorHistory.data : null;
+
+  if (cached) {
+    renderSensorHistoryFromData(cached);
+    fetchSensorHistoryData(sensorId).then(readings => {
+      tabPrefetchCache.sensorHistory = { key: cacheKey, data: readings, fetchedAt: Date.now() };
+      if (document.getElementById('sensorHistoryStatus')) renderSensorHistoryFromData(readings);
+    }).catch(err => console.error('Background Sensor History refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch(`/api/sensors?readingsHistory=true&sensorId=${encodeURIComponent(sensorId)}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load history');
-    const readings = data.readings || [];
-    if (readings.length === 0) {
-      statusEl.textContent = 'No readings recorded yet.';
-      return;
-    }
-    drawSensorHistoryChart(canvas, readings);
-    statusEl.textContent = `${readings.length} reading${readings.length === 1 ? '' : 's'} shown, oldest to most recent.`;
+    const readings = await fetchSensorHistoryData(sensorId);
+    tabPrefetchCache.sensorHistory = { key: cacheKey, data: readings, fetchedAt: Date.now() };
+    renderSensorHistoryFromData(readings);
   } catch (err) {
     statusEl.textContent = 'Could not load history: ' + err.message;
   }
@@ -3450,12 +3496,16 @@ async function submitAddSensor() {
 
 // --- Decommissioned Sensors ---
 
-async function openBmsDecommissionedModal() {
-  showBmsModal('Decommissioned Sensors', `<div id="dc_body">Loading…</div>`);
+async function fetchDecommissionedSensorsData() {
   const resp = await fetch('/api/sensors?decommissioned=true');
   const data = await resp.json();
-  const sensors = data.sensors || [];
-  document.getElementById('dc_body').innerHTML = sensors.length === 0
+  return data.sensors || [];
+}
+
+function renderDecommissionedSensorsFromData(sensors) {
+  const el = document.getElementById('dc_body');
+  if (!el) return;
+  el.innerHTML = sensors.length === 0
     ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No sensors have been decommissioned.</div>`
     : sensors.map(s => `
       <div style="padding:10px 0;border-bottom:1px solid var(--border)">
@@ -3466,20 +3516,44 @@ async function openBmsDecommissionedModal() {
     `).join('');
 }
 
-async function openBmsNotificationSettingsModal() {
-  showBmsModal('BMS Notification Settings', `<div id="ns_body">Loading…</div>`);
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
+async function openBmsDecommissionedModal() {
+  const cached = tabPrefetchCache.decommissionedSensors;
+  showBmsModal('Decommissioned Sensors', `<div id="dc_body">${cached ? '' : 'Loading…'}</div>`);
+
+  if (cached) {
+    renderDecommissionedSensorsFromData(cached.data);
+    fetchDecommissionedSensorsData().then(sensors => {
+      tabPrefetchCache.decommissionedSensors = { data: sensors, fetchedAt: Date.now() };
+      if (document.getElementById('dc_body')) renderDecommissionedSensorsFromData(sensors);
+    }).catch(err => console.error('Background Decommissioned Sensors refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  const sensors = await fetchDecommissionedSensorsData();
+  tabPrefetchCache.decommissionedSensors = { data: sensors, fetchedAt: Date.now() };
+  renderDecommissionedSensorsFromData(sensors);
+}
+
+async function fetchBmsNotificationSettingsData() {
   const [catResp, rolesResp] = await Promise.all([
     fetch('/api/sensors?categories=true'),
     fetch('/api/sensors?notificationRoles=true'),
   ]);
   const catData = await catResp.json();
   const rolesData = await rolesResp.json();
-  const categories = catData.categories || [];
-  const rolesByCategory = rolesData.rolesByCategory || {};
+  return { categories: catData.categories || [], rolesByCategory: rolesData.rolesByCategory || {} };
+}
+
+function renderBmsNotificationSettingsFromData(bundle) {
+  const el = document.getElementById('ns_body');
+  if (!el) return;
+  const { categories, rolesByCategory } = bundle;
   const allRoles = ['technician', 'electrical_engineer', 'mechanical_engineer', 'biomedical_technician', 'property_manager', 'procurement', 'business_owner', 'system_admin'];
   const roleLabels = { technician: 'Technician', electrical_engineer: 'Electrical Engineer', mechanical_engineer: 'Mechanical Engineer', biomedical_technician: 'Biomedical Technician', property_manager: 'Property Manager', procurement: 'Procurement', business_owner: 'Business Owner', system_admin: 'System Admin' };
 
-  document.getElementById('ns_body').innerHTML = `
+  el.innerHTML = `
     <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Choose which roles get notified when a sensor in each category triggers a real alert. Assigned once per category — every sensor in it inherits this automatically.</div>
     ${categories.map(cat => `
       <div style="margin-bottom:16px">
@@ -3499,6 +3573,29 @@ async function openBmsNotificationSettingsModal() {
   `;
 }
 
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception, with one real, deliberate difference - this is an
+// editable form, not a read-only display, so the background refresh
+// only ever updates the cache quietly for next time, never
+// re-rendering over checkbox changes someone may have already
+// started making before saving.
+async function openBmsNotificationSettingsModal() {
+  const cached = tabPrefetchCache.bmsNotificationSettings;
+  showBmsModal('BMS Notification Settings', `<div id="ns_body">${cached ? '' : 'Loading…'}</div>`);
+
+  if (cached) {
+    renderBmsNotificationSettingsFromData(cached.data);
+    fetchBmsNotificationSettingsData().then(bundle => {
+      tabPrefetchCache.bmsNotificationSettings = { data: bundle, fetchedAt: Date.now() };
+    }).catch(err => console.error('Background BMS Notification Settings refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  const bundle = await fetchBmsNotificationSettingsData();
+  tabPrefetchCache.bmsNotificationSettings = { data: bundle, fetchedAt: Date.now() };
+  renderBmsNotificationSettingsFromData(bundle);
+}
+
 async function submitBmsNotificationSettings() {
   const errEl = document.getElementById('ns_error');
   errEl.textContent = '';
@@ -3516,6 +3613,7 @@ async function submitBmsNotificationSettings() {
       });
       if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || 'Could not save'); }
     }
+    tabPrefetchCache.bmsNotificationSettings = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-save checkbox state next time
     closeBmsModal();
   } catch (err) {
     errEl.textContent = err.message;
@@ -5012,21 +5110,46 @@ function toggleAssetTrackingCategories() {
   renderAssets();
 }
 
+async function fetchAssetTrackingLogData() {
+  const resp = await fetch('/api/get-assets?assetTrackingLog=true');
+  const data = await resp.json();
+  return data.entries || [];
+}
+TAB_PREFETCH_FETCHERS.assetTrackingLog = fetchAssetTrackingLogData;
+
+function renderAssetTrackingLogFromData(entries) {
+  const content = document.getElementById('assetTrackingLogContent');
+  if (!content) return;
+  content.innerHTML = entries.length === 0
+    ? `<div style="font-style:italic">No activity recorded yet.</div>`
+    : entries.map(e => `
+      <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+        <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+      </div>`).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadAssetTrackingLog() {
   const content = document.getElementById('assetTrackingLogContent');
   if (!content) return;
+  const cached = tabPrefetchCache.assetTrackingLog;
+
+  if (cached) {
+    renderAssetTrackingLogFromData(cached.data);
+    fetchAssetTrackingLogData().then(entries => {
+      tabPrefetchCache.assetTrackingLog = { data: entries, fetchedAt: Date.now() };
+      if (document.getElementById('assetTrackingLogContent')) renderAssetTrackingLogFromData(entries);
+    }).catch(err => console.error('Background Asset Tracking Log refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/get-assets?assetTrackingLog=true');
-    const data = await resp.json();
-    const entries = data.entries || [];
-    content.innerHTML = entries.length === 0
-      ? `<div style="font-style:italic">No activity recorded yet.</div>`
-      : entries.map(e => `
-        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
-          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
-          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
-        </div>`).join('');
+    const entries = await fetchAssetTrackingLogData();
+    tabPrefetchCache.assetTrackingLog = { data: entries, fetchedAt: Date.now() };
+    renderAssetTrackingLogFromData(entries);
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
   }
