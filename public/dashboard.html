@@ -7080,40 +7080,67 @@ function drawFinanceTrendChart(canvas, monthlyTrend) {
 
 // --- Transactions ---
 
+async function fetchFinanceTransactionsData() {
+  const resp = await fetch('/api/finance?transactions=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load transactions');
+  return data.transactions || [];
+}
+TAB_PREFETCH_FETCHERS.financeTransactions = fetchFinanceTransactionsData;
+
+function renderFinanceTransactionsFromData(transactions) {
+  const el = document.getElementById('finance-subtab-content');
+  financeTransactionsCache = transactions;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button onclick="openAddTransactionModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Transaction</button>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Date</th><th style="padding:10px 12px">Type</th><th style="padding:10px 12px">Category</th>
+          <th style="padding:10px 12px">Description</th><th style="padding:10px 12px;text-align:right">Amount</th><th style="padding:10px 12px"></th>
+        </tr></thead>
+        <tbody>
+          ${financeTransactionsCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No transactions recorded yet.</td></tr>` :
+            financeTransactionsCache.map(t => `
+              <tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px">${t.date}</td>
+                <td style="padding:10px 12px"><span style="color:${t.type==='income'?'var(--green)':'var(--red)'};font-weight:600">${t.type==='income'?'Income':'Expense'}</span></td>
+                <td style="padding:10px 12px">${escapeHtml(t.category)}</td>
+                <td style="padding:10px 12px">${escapeHtml(t.description || '—')}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(t.amount)}</td>
+                <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+                  <button onclick="openFinanceAttachmentsModal('transaction','${t.id}','${escapeHtml(t.description || t.category)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${t.documentCount || 0}</button>
+                  <button onclick="deleteFinanceTransaction('${t.id}')" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:12px">Delete</button>
+                </td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderFinanceTransactions() {
   const el = document.getElementById('finance-subtab-content');
+  const cached = tabPrefetchCache.financeTransactions;
+
+  if (cached) {
+    renderFinanceTransactionsFromData(cached.data);
+    fetchFinanceTransactionsData().then(transactions => {
+      tabPrefetchCache.financeTransactions = { data: transactions, fetchedAt: Date.now() };
+      if (financeSubTab === 'transactions' && document.getElementById('view-finance')?.classList.contains('active')) {
+        renderFinanceTransactionsFromData(transactions);
+      }
+    }).catch(err => console.error('Background Finance Transactions refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/finance?transactions=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load transactions');
-    financeTransactionsCache = data.transactions || [];
-    el.innerHTML = `
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-        <button onclick="openAddTransactionModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Add Transaction</button>
-      </div>
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#F8FAFC;text-align:left">
-            <th style="padding:10px 12px">Date</th><th style="padding:10px 12px">Type</th><th style="padding:10px 12px">Category</th>
-            <th style="padding:10px 12px">Description</th><th style="padding:10px 12px;text-align:right">Amount</th><th style="padding:10px 12px"></th>
-          </tr></thead>
-          <tbody>
-            ${financeTransactionsCache.length === 0 ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted)">No transactions recorded yet.</td></tr>` :
-              financeTransactionsCache.map(t => `
-                <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 12px">${t.date}</td>
-                  <td style="padding:10px 12px"><span style="color:${t.type==='income'?'var(--green)':'var(--red)'};font-weight:600">${t.type==='income'?'Income':'Expense'}</span></td>
-                  <td style="padding:10px 12px">${escapeHtml(t.category)}</td>
-                  <td style="padding:10px 12px">${escapeHtml(t.description || '—')}</td>
-                  <td style="padding:10px 12px;text-align:right;font-weight:600">${formatCurrency(t.amount)}</td>
-                  <td style="padding:10px 12px;text-align:right;white-space:nowrap">
-                    <button onclick="openFinanceAttachmentsModal('transaction','${t.id}','${escapeHtml(t.description || t.category)}')" style="border:none;background:none;color:var(--navy);cursor:pointer;font-size:12px;margin-right:10px">📎 ${t.documentCount || 0}</button>
-                    <button onclick="deleteFinanceTransaction('${t.id}')" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:12px">Delete</button>
-                  </td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const transactions = await fetchFinanceTransactionsData();
+    tabPrefetchCache.financeTransactions = { data: transactions, fetchedAt: Date.now() };
+    renderFinanceTransactionsFromData(transactions);
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7181,6 +7208,7 @@ async function submitAddTransaction() {
   const data = await resp.json();
   if (!resp.ok) { errEl.textContent = data.error || 'Could not save transaction'; return; }
   closeFinanceModal();
+  tabPrefetchCache.financeTransactions = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceTransactions();
 }
 
@@ -7190,6 +7218,7 @@ async function deleteFinanceTransaction(transactionId) {
     method: 'DELETE', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'deleteTransaction', transactionId }),
   });
+  tabPrefetchCache.financeTransactions = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
   renderFinanceTransactions();
 }
 
@@ -8176,6 +8205,7 @@ async function submitFinanceAttachment(recordType, recordId) {
     // Refresh whichever list is currently open, so its own document
     // count reflects the real, just-added file without needing a
     // separate manual refresh.
+    tabPrefetchCache.financeTransactions = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (recordType === 'transaction') renderFinanceTransactions();
     if (recordType === 'bill') renderFinanceBills();
     if (recordType === 'liability') renderFinanceLiabilities();
