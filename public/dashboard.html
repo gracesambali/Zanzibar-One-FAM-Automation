@@ -6723,53 +6723,72 @@ let staffActivityLogCache = [];
 let viewingClientOrgId = null;
 let viewingClientName = '';
 
+async function fetchStaffManagementData(targetOrgId) {
+  const [accResp, logResp, clientResp] = await Promise.all([
+    fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'listStaffAccounts', targetOrgId: targetOrgId || null }) }),
+    fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'listStaffActivityLog', targetOrgId: targetOrgId || null }) }),
+    fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'listClients' }) }),
+  ]);
+  if (accResp.status === 403) throw new Error('__ACCESS_RESTRICTED__'); // never cache this - a role change must always show the real message
+  const accData = await accResp.json();
+  if (!accResp.ok) throw new Error(accData.error || 'Could not load staff accounts');
+  const accounts = accData.accounts || [];
+  const activityEntries = logResp.ok ? ((await logResp.json()).entries || []) : [];
+  // A 403 here just means this login isn't a Master System session -
+  // handled silently, not as an error, since most logins correctly
+  // aren't. Only the Master System gets the "onboard a new client"
+  // section at all.
+  const isMasterSystem = clientResp.ok;
+  const clients = isMasterSystem ? ((await clientResp.json()).clients || []) : [];
+  return { accounts, activityEntries, clients, isMasterSystem };
+}
+TAB_PREFETCH_FETCHERS.staffmanagement = async () => ({ key: '__own__', data: await fetchStaffManagementData(null) });
+
+function renderStaffManagementFromData(bundle) {
+  staffAccountsCache = bundle.accounts;
+  staffActivityLogCache = bundle.activityEntries;
+  clientsCache = bundle.clients;
+  isMasterSystemCache = bundle.isMasterSystem;
+  renderStaffManagementTable();
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern - keyed by which
+// client is actually being viewed, so switching between clients never
+// shows the wrong one's cached staff list.
 async function renderStaffManagement(targetOrgId, targetOrgName) {
   viewingClientOrgId = targetOrgId || null;
   viewingClientName = targetOrgName || '';
   const container = document.getElementById('view-staffmanagement');
+  const cacheKey = targetOrgId || '__own__';
+  const cached = tabPrefetchCache.staffmanagement && tabPrefetchCache.staffmanagement.data && tabPrefetchCache.staffmanagement.data.key === cacheKey ? tabPrefetchCache.staffmanagement.data.data : null;
+
+  if (cached) {
+    renderStaffManagementFromData(cached);
+    fetchStaffManagementData(targetOrgId).then(bundle => {
+      tabPrefetchCache.staffmanagement = { data: { key: cacheKey, data: bundle }, fetchedAt: Date.now() };
+      if (document.getElementById('view-staffmanagement')?.classList.contains('active') && viewingClientOrgId === (targetOrgId || null)) {
+        renderStaffManagementFromData(bundle);
+      }
+    }).catch(err => console.error('Background Staff Management refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const resp = await fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'listStaffAccounts', targetOrgId: viewingClientOrgId }),
-    });
-    if (resp.status === 403) {
+    const bundle = await fetchStaffManagementData(targetOrgId);
+    tabPrefetchCache.staffmanagement = { data: { key: cacheKey, data: bundle }, fetchedAt: Date.now() };
+    renderStaffManagementFromData(bundle);
+  } catch (err) {
+    if (err.message === '__ACCESS_RESTRICTED__') {
       container.innerHTML = `<div style="padding:60px 24px;text-align:center">
         <div style="font-size:32px;margin-bottom:12px">🔒</div>
         <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
         <div style="font-size:13px;color:var(--muted)">Only System Admin or Business Owner can manage staff accounts.</div>
       </div>`;
-      return;
-    }
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load staff accounts');
-    staffAccountsCache = data.accounts || [];
-
-    const logResp = await fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'listStaffActivityLog', targetOrgId: viewingClientOrgId }),
-    });
-    staffActivityLogCache = logResp.ok ? ((await logResp.json()).entries || []) : [];
-
-    // A 403 here just means this login isn't a Master System session -
-    // handled silently, not as an error, since most logins correctly
-    // aren't. Only the Master System gets the "onboard a new client"
-    // section at all.
-    const clientResp = await fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'listClients' }),
-    });
-    if (clientResp.ok) {
-      const clientData = await clientResp.json();
-      clientsCache = clientData.clients || [];
-      isMasterSystemCache = true;
     } else {
-      isMasterSystemCache = false;
+      container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
     }
-
-    renderStaffManagementTable();
-  } catch (err) {
-    container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
 }
 
@@ -8290,6 +8309,7 @@ async function submitDeactivateStaff(username) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not remove');
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement(viewingClientOrgId, viewingClientName);
   } catch (err) {
     alert('Could not remove: ' + err.message);
@@ -8352,6 +8372,7 @@ async function submitResetStaffPassword(username) {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not set password');
     alert(`Password set for ${username}.`);
     document.getElementById('editStaffOverlay')?.remove();
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement(viewingClientOrgId, viewingClientName);
   } catch (err) {
     errorBox.textContent = err.message;
@@ -8382,6 +8403,7 @@ async function submitEditStaff(username) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
     document.getElementById('editStaffOverlay')?.remove();
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement(viewingClientOrgId, viewingClientName);
   } catch (err) {
     errorBox.textContent = err.message;
@@ -8717,8 +8739,8 @@ async function submitEditClientBranding(orgId) {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save branding');
     document.getElementById('editBrandingOverlay')?.remove();
     if (data.warning) alert(data.warning);
-    if (viewingClientOrgId) renderStaffManagement(viewingClientOrgId, viewingClientName);
-    else renderStaffManagement();
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
+    if (viewingClientOrgId) { renderStaffManagement(viewingClientOrgId, viewingClientName); } else { renderStaffManagement(); }
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -8756,6 +8778,7 @@ async function submitAddClient() {
     document.getElementById('addClientOverlay')?.remove();
     const loginUrl = `${window.location.origin}/login?org=${encodeURIComponent(data.client.slug)}`;
     alert(`Client created. Their real login link:\n\n${loginUrl}`);
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement();
   } catch (err) {
     errorBox.textContent = err.message;
@@ -8817,6 +8840,7 @@ async function submitAddStaff() {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create account');
     document.getElementById('addStaffOverlay')?.remove();
+    tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement(viewingClientOrgId, viewingClientName);
   } catch (err) {
     errorBox.textContent = err.message;
