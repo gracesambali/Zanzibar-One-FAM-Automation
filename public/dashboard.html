@@ -8722,8 +8722,30 @@ async function submitAddStaff() {
   }
 }
 
+async function fetchInventoryData() {
+  const resp = await fetch('/api/get-assets?inventoryItems=true');
+  if (resp.status === 403) throw new Error('__ACCESS_RESTRICTED__'); // never cache this - a role change must always show the real message, not a stale table
+  if (!resp.ok) throw new Error('Failed to load inventory (' + resp.status + ')');
+  const data = await resp.json();
+  return data.items || [];
+}
+TAB_PREFETCH_FETCHERS.inventory = fetchInventoryData;
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Reuses refreshInventoryQuietly directly for the
+// background refresh - the same, already-proven function this app
+// already trusted for a quiet post-action refresh.
 async function renderInventory() {
   const container = document.getElementById('view-inventory');
+  const cached = tabPrefetchCache.inventory;
+
+  if (cached) {
+    inventoryItemsCache = cached.data;
+    renderInventoryTable();
+    refreshInventoryQuietly();
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
     const resp = await fetch('/api/get-assets?inventoryItems=true');
@@ -8738,6 +8760,7 @@ async function renderInventory() {
     if (!resp.ok) throw new Error('Failed to load inventory (' + resp.status + ')');
     const data = await resp.json();
     inventoryItemsCache = data.items || [];
+    tabPrefetchCache.inventory = { data: inventoryItemsCache, fetchedAt: Date.now() };
     renderInventoryTable();
   } catch (err) {
     container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load Inventory: ${err.message}</div>`;
@@ -8756,6 +8779,7 @@ async function refreshInventoryQuietly() {
     if (!resp.ok) return; // a quiet refresh failing silently is fine - the person still sees their last-known-good state, not an error interrupting them
     const data = await resp.json();
     inventoryItemsCache = data.items || [];
+    tabPrefetchCache.inventory = { data: inventoryItemsCache, fetchedAt: Date.now() };
     renderInventoryTable();
   } catch (err) {
     console.error('Quiet inventory refresh failed (non-fatal):', err.message);
@@ -15353,24 +15377,52 @@ async function buildWorkOrdersHtml(orders) {
 // from the person's point of view.
 let lastWOSignature = null;
 
+async function fetchWorkOrdersData() {
+  const resp = await fetch('/api/work-orders');
+  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
+  const data = await resp.json();
+  return data.workOrders || [];
+}
+TAB_PREFETCH_FETCHERS.workorders = fetchWorkOrdersData;
+
+async function renderWorkOrdersFromData(orders) {
+  const container = document.getElementById('view-workorders');
+  currentWODetailId = null;
+  lastWorkOrders = orders; // cache for generateCertificate() to reference — unfiltered, so detail lookups always work regardless of building selection
+  dashboardWorkOrders = orders; // same fetch covers the sidebar unread badge — no reason to keep two stale copies
+  updateWOUnreadBadges();
+  lastWOSignature = JSON.stringify(orders);
+  refreshBuildingSwitcherOptions();
+  container.innerHTML = await buildWorkOrdersHtml(filterByBuilding(orders));
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. A real, current cache entry renders instantly with
+// zero loading state, then quietly refreshes itself in the background
+// right after - the same real, already-proven pattern already
+// applied to Level View and Floor Plan.
 async function renderWorkOrders() {
+  const cached = tabPrefetchCache.workorders;
+
+  if (cached) {
+    await renderWorkOrdersFromData(cached.data);
+    fetchWorkOrdersData().then(async orders => {
+      tabPrefetchCache.workorders = { data: orders, fetchedAt: Date.now() };
+      if (document.getElementById('view-workorders')?.classList.contains('active')) {
+        await renderWorkOrdersFromData(orders);
+      }
+    }).catch(err => console.error('Background Work Orders refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   currentWODetailId = null;
   const container = document.getElementById('view-workorders');
   container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading work orders…</div>';
-
   try {
-    const resp = await fetch('/api/work-orders');
-    if (resp.status === 401) { window.location.href = '/login'; return; }
-    if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
-    const data = await resp.json();
-    const orders = data.workOrders || [];
-    lastWorkOrders = orders; // cache for generateCertificate() to reference — unfiltered, so detail lookups always work regardless of building selection
-    dashboardWorkOrders = orders; // same fetch covers the sidebar unread badge — no reason to keep two stale copies
-    updateWOUnreadBadges();
-    lastWOSignature = JSON.stringify(orders);
-    refreshBuildingSwitcherOptions();
-
-    container.innerHTML = await buildWorkOrdersHtml(filterByBuilding(orders));
+    const orders = await fetchWorkOrdersData();
+    tabPrefetchCache.workorders = { data: orders, fetchedAt: Date.now() };
+    await renderWorkOrdersFromData(orders);
   } catch (err) {
     container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load work orders: ' + err.message + '</div>';
   }
@@ -15397,53 +15449,79 @@ function requisitionStatusBadge(status) {
 
 let requisitionsCache = [];
 
+async function fetchProcurementData() {
+  const resp = await fetch('/api/get-assets?requisitions=true');
+  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Failed to load requisitions');
+  return data.requisitions || [];
+}
+TAB_PREFETCH_FETCHERS.procurement = fetchProcurementData;
+
+function renderProcurementFromData(requisitions) {
+  const container = document.getElementById('view-procurement');
+  requisitionsCache = requisitions;
+  const open = requisitionsCache.filter(r => r.status !== 'Completed' && r.status !== 'Rejected').length;
+
+  container.innerHTML = `
+    <div style="padding:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">Procurement</h2>
+          <div style="font-size:12.5px;color:var(--muted);margin-top:2px">Every real purchase, from the moment it's first requested through delivery and payment — ${open} currently open</div>
+        </div>
+        <button onclick="openNewRequisitionForm()" style="padding:10px 18px;font-size:13px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Requisition</button>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#F8FAFC;text-align:left">
+            <th style="padding:10px 12px">Requisition</th>
+            <th style="padding:10px 12px">Description</th>
+            <th style="padding:10px 12px">Requested By</th>
+            <th style="padding:10px 12px">Status</th>
+            <th style="padding:10px 12px">Requested</th>
+          </tr></thead>
+          <tbody>
+            ${requisitionsCache.length === 0 ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted)">No requisitions yet — start one with "+ New Requisition."</td></tr>` :
+              requisitionsCache.map(r => {
+                const badge = requisitionStatusBadge(r.status);
+                return `
+                <tr onclick="openRequisitionDetail('${r.id}')" style="border-top:1px solid var(--border);cursor:pointer" onmouseenter="this.style.background='#F8FAFC'" onmouseleave="this.style.background=''">
+                  <td style="padding:10px 12px;font-weight:600;color:var(--navy);font-family:monospace">${escapeHtml(r.requisitionNumber)}</td>
+                  <td style="padding:10px 12px">${escapeHtml(r.itemDescription)}${r.sourceWoId ? ` <span style="color:var(--muted);font-size:11px">(from ${escapeHtml(r.sourceWoId)})</span>` : ''}</td>
+                  <td style="padding:10px 12px;color:var(--muted)">${escapeHtml(r.requestedBy || '—')}</td>
+                  <td style="padding:10px 12px"><span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11.5px;font-weight:600;background:${badge.bg};color:${badge.color}">${escapeHtml(r.status)}</span></td>
+                  <td style="padding:10px 12px;color:var(--muted)">${r.requestedAt ? new Date(r.requestedAt).toLocaleDateString() : '—'}</td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function renderProcurement() {
+  const cached = tabPrefetchCache.procurement;
+
+  if (cached) {
+    renderProcurementFromData(cached.data);
+    fetchProcurementData().then(requisitions => {
+      tabPrefetchCache.procurement = { data: requisitions, fetchedAt: Date.now() };
+      if (document.getElementById('view-procurement')?.classList.contains('active')) {
+        renderProcurementFromData(requisitions);
+      }
+    }).catch(err => console.error('Background Procurement refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   const container = document.getElementById('view-procurement');
   container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--muted)">Loading procurement…</div>';
   try {
-    const resp = await fetch('/api/get-assets?requisitions=true');
-    if (resp.status === 401) { window.location.href = '/login'; return; }
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Failed to load requisitions');
-    requisitionsCache = data.requisitions || [];
-
-    const open = requisitionsCache.filter(r => r.status !== 'Completed' && r.status !== 'Rejected').length;
-
-    container.innerHTML = `
-      <div style="padding:24px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-          <div>
-            <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">Procurement</h2>
-            <div style="font-size:12.5px;color:var(--muted);margin-top:2px">Every real purchase, from the moment it's first requested through delivery and payment — ${open} currently open</div>
-          </div>
-          <button onclick="openNewRequisitionForm()" style="padding:10px 18px;font-size:13px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ New Requisition</button>
-        </div>
-        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead><tr style="background:#F8FAFC;text-align:left">
-              <th style="padding:10px 12px">Requisition</th>
-              <th style="padding:10px 12px">Description</th>
-              <th style="padding:10px 12px">Requested By</th>
-              <th style="padding:10px 12px">Status</th>
-              <th style="padding:10px 12px">Requested</th>
-            </tr></thead>
-            <tbody>
-              ${requisitionsCache.length === 0 ? `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted)">No requisitions yet — start one with "+ New Requisition."</td></tr>` :
-                requisitionsCache.map(r => {
-                  const badge = requisitionStatusBadge(r.status);
-                  return `
-                  <tr onclick="openRequisitionDetail('${r.id}')" style="border-top:1px solid var(--border);cursor:pointer" onmouseenter="this.style.background='#F8FAFC'" onmouseleave="this.style.background=''">
-                    <td style="padding:10px 12px;font-weight:600;color:var(--navy);font-family:monospace">${escapeHtml(r.requisitionNumber)}</td>
-                    <td style="padding:10px 12px">${escapeHtml(r.itemDescription)}${r.sourceWoId ? ` <span style="color:var(--muted);font-size:11px">(from ${escapeHtml(r.sourceWoId)})</span>` : ''}</td>
-                    <td style="padding:10px 12px;color:var(--muted)">${escapeHtml(r.requestedBy || '—')}</td>
-                    <td style="padding:10px 12px"><span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11.5px;font-weight:600;background:${badge.bg};color:${badge.color}">${escapeHtml(r.status)}</span></td>
-                    <td style="padding:10px 12px;color:var(--muted)">${r.requestedAt ? new Date(r.requestedAt).toLocaleDateString() : '—'}</td>
-                  </tr>`;
-                }).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+    const requisitions = await fetchProcurementData();
+    tabPrefetchCache.procurement = { data: requisitions, fetchedAt: Date.now() };
+    renderProcurementFromData(requisitions);
   } catch (err) {
     container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load procurement: ${err.message}</div>`;
   }
