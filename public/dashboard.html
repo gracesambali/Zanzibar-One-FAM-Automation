@@ -1513,6 +1513,7 @@ function switchTab(tab) {
   if (tab === 'units' && currentUserRole === 'technician') {
     tab = 'workorders'; // same defense-in-depth principle — never trust hidden-button alone
   }
+  try { localStorage.setItem('fam_last_tab', tab); } catch {}
   ensureNavGroupExpandedFor(tab);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -18576,8 +18577,15 @@ async function loadAssetsAndInit() {
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.content').style.display = 'block';
     applySimplifiedNavIfNeeded();
+    let restoredTab = null;
+    try {
+      const savedTab = localStorage.getItem('fam_last_tab');
+      if (savedTab && document.getElementById('view-' + savedTab)) restoredTab = savedTab;
+    } catch {}
     if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
       switchTab('workorders');
+    } else if (restoredTab) {
+      switchTab(restoredTab);
     } else {
       renderDashboard();
     }
