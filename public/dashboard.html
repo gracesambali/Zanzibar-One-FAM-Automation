@@ -4877,20 +4877,15 @@ let lastPlans = [];
 // Technician, confirmed simple rule). Filtered by the exact same
 // global Building/Facility switcher as everywhere else — units carry
 // a .building field, so filterByBuilding works here unchanged.
-async function showUnitDetail(unitId) {
-  let u = lastUnits.find(x => x.id === unitId);
+async function fetchUnitDetailData(unitId) {
+  const resp = await fetch('/api/get-assets?units=true');
+  const data = await resp.json();
+  lastUnits = data.units || [];
+  return lastUnits.find(x => x.id === unitId) || null;
+}
+
+function renderUnitDetailFromData(u) {
   const container = document.getElementById('view-units');
-  container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">Loading…</div>`;
-
-  // Always refetch fresh rather than trust the list snapshot — chat and
-  // activity change from outside this page too (the tenant's own portal).
-  try {
-    const resp = await fetch('/api/get-assets?units=true');
-    const data = await resp.json();
-    lastUnits = data.units || [];
-    u = lastUnits.find(x => x.id === unitId);
-  } catch { /* fall back to whatever we already had, if anything */ }
-
   if (!u) { container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Unit not found.</div>`; return; }
 
   const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
@@ -5050,7 +5045,36 @@ async function showUnitDetail(unitId) {
   container.innerHTML = html;
 }
 
-let unitChatPendingFile = null;
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific unit actually being viewed - a
+// real, current cache entry renders instantly, then quietly refreshes
+// in the background right after, satisfying the same real freshness
+// concern already noted here (chat and activity changing from outside
+// this page too, via the tenant's own portal) without blocking the
+// initial display.
+async function showUnitDetail(unitId) {
+  const container = document.getElementById('view-units');
+  const cached = tabPrefetchCache.unitDetail && tabPrefetchCache.unitDetail.key === unitId ? tabPrefetchCache.unitDetail.data : null;
+
+  if (cached) {
+    renderUnitDetailFromData(cached);
+    fetchUnitDetailData(unitId).then(u => {
+      tabPrefetchCache.unitDetail = { key: unitId, data: u, fetchedAt: Date.now() };
+      if (document.getElementById('view-units')?.classList.contains('active')) renderUnitDetailFromData(u);
+    }).catch(err => console.error('Background Unit Detail refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--muted)">Loading…</div>`;
+  try {
+    const u = await fetchUnitDetailData(unitId);
+    tabPrefetchCache.unitDetail = { key: unitId, data: u, fetchedAt: Date.now() };
+    renderUnitDetailFromData(u);
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--red)">Could not load: ${err.message}</div>`;
+  }
+}
+
 
 function onUnitChatFileSelected() {
   const fileInput = document.getElementById('unitDetailChatFile');
@@ -5512,6 +5536,19 @@ function renderFleetSectionToggle(active) {
   </div>`;
 }
 
+async function fetchFleetFuelData() {
+  const [reqResp, invResp] = await Promise.all([
+    fetch('/api/get-assets?fuelRequests=true'),
+    fetch('/api/get-assets?fuelInvoices=true'),
+  ]);
+  const requests = reqResp.ok ? (await reqResp.json()).requests || [] : [];
+  const invoices = invResp.ok ? (await invResp.json()).invoices || [] : [];
+  return { requests, invoices };
+}
+TAB_PREFETCH_FETCHERS.fleetFuel = fetchFleetFuelData;
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function switchFleetSection(section) {
   fleetActiveSection = section;
   if (section === 'vehicles') {
@@ -5519,15 +5556,32 @@ async function switchFleetSection(section) {
     loadFleetActivityLog();
     return;
   }
+
   const container = document.getElementById('view-fleetrequests');
+  const cached = tabPrefetchCache.fleetFuel;
+
+  if (cached) {
+    fuelRequestsCache = cached.data.requests;
+    fuelInvoicesCache = cached.data.invoices;
+    renderFuelSection();
+    loadFleetActivityLog();
+    fetchFleetFuelData().then(data => {
+      tabPrefetchCache.fleetFuel = { data, fetchedAt: Date.now() };
+      if (fleetActiveSection === 'fuel' && document.getElementById('view-fleetrequests')?.classList.contains('active')) {
+        fuelRequestsCache = data.requests;
+        fuelInvoicesCache = data.invoices;
+        renderFuelSection();
+      }
+    }).catch(err => console.error('Background Fleet Fuel refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   try {
-    const [reqResp, invResp] = await Promise.all([
-      fetch('/api/get-assets?fuelRequests=true'),
-      fetch('/api/get-assets?fuelInvoices=true'),
-    ]);
-    fuelRequestsCache = reqResp.ok ? (await reqResp.json()).requests || [] : [];
-    fuelInvoicesCache = invResp.ok ? (await invResp.json()).invoices || [] : [];
+    const data = await fetchFleetFuelData();
+    tabPrefetchCache.fleetFuel = { data, fetchedAt: Date.now() };
+    fuelRequestsCache = data.requests;
+    fuelInvoicesCache = data.invoices;
     renderFuelSection();
     loadFleetActivityLog();
   } catch (err) {
@@ -8571,27 +8625,52 @@ async function openFinanceAttachmentsModal(recordType, recordId, recordLabel) {
   await loadFinanceAttachments(recordType, recordId);
 }
 
+async function fetchFinanceAttachmentsData(recordType, recordId) {
+  const resp = await fetch(`/api/finance?documents=true&recordType=${recordType}&recordId=${recordId}`);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load attachments');
+  return data.documents || [];
+}
+
+function renderFinanceAttachmentsFromData(recordType, recordId, docs) {
+  const body = document.getElementById('fa_body');
+  if (!body) return;
+  body.innerHTML = `
+    ${docs.length === 0 ? `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">No files attached yet.</div>` : `
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+      ${docs.map(d => `
+        <a href="${d.signedUrl}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--navy);font-size:12.5px">
+          📎 ${escapeHtml(d.filename)}
+        </a>`).join('')}
+    </div>`}
+    <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Attach a file (max 5MB)</label>
+    <input id="fa_file" type="file" style="width:100%;font-size:12.5px;margin-bottom:8px">
+    <div id="fa_status" style="font-size:12px;margin-bottom:8px"></div>
+    <button onclick="submitFinanceAttachment('${recordType}','${recordId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Upload</button>
+  `;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific record actually being viewed.
 async function loadFinanceAttachments(recordType, recordId) {
   const body = document.getElementById('fa_body');
   if (!body) return;
+  const cacheKey = `${recordType}|${recordId}`;
+  const cached = tabPrefetchCache.financeAttachments && tabPrefetchCache.financeAttachments.key === cacheKey ? tabPrefetchCache.financeAttachments.data : null;
+
+  if (cached) {
+    renderFinanceAttachmentsFromData(recordType, recordId, cached);
+    fetchFinanceAttachmentsData(recordType, recordId).then(docs => {
+      tabPrefetchCache.financeAttachments = { key: cacheKey, data: docs, fetchedAt: Date.now() };
+      if (document.getElementById('fa_body')) renderFinanceAttachmentsFromData(recordType, recordId, docs);
+    }).catch(err => console.error('Background Finance Attachments refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch(`/api/finance?documents=true&recordType=${recordType}&recordId=${recordId}`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load attachments');
-    const docs = data.documents || [];
-    body.innerHTML = `
-      ${docs.length === 0 ? `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">No files attached yet.</div>` : `
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
-        ${docs.map(d => `
-          <a href="${d.signedUrl}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--navy);font-size:12.5px">
-            📎 ${escapeHtml(d.filename)}
-          </a>`).join('')}
-      </div>`}
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Attach a file (max 5MB)</label>
-      <input id="fa_file" type="file" style="width:100%;font-size:12.5px;margin-bottom:8px">
-      <div id="fa_status" style="font-size:12px;margin-bottom:8px"></div>
-      <button onclick="submitFinanceAttachment('${recordType}','${recordId}')" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Upload</button>
-    `;
+    const docs = await fetchFinanceAttachmentsData(recordType, recordId);
+    tabPrefetchCache.financeAttachments = { key: cacheKey, data: docs, fetchedAt: Date.now() };
+    renderFinanceAttachmentsFromData(recordType, recordId, docs);
   } catch (err) {
     body.innerHTML = `<div style="color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -8632,6 +8711,7 @@ async function submitFinanceAttachment(recordType, recordId) {
     statusEl.style.color = 'var(--green)';
     statusEl.textContent = `✓ Uploaded ${file.name}`;
     if (fileInput) fileInput.value = '';
+    tabPrefetchCache.financeAttachments = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show the stale, pre-upload file list instantly right after a real upload just succeeded
     await loadFinanceAttachments(recordType, recordId);
     // Refresh whichever list is currently open, so its own document
     // count reflects the real, just-added file without needing a
@@ -12130,20 +12210,38 @@ async function submitUploadLeaseDoc(unitId) {
 }
 
 // once, so this keeps the main unit list fast.
-let unitFinancialsLoaded = {};
+async function fetchUnitFinancialsData(unitId) {
+  const resp = await fetch(`/api/get-assets?unitFinancials=true&unitId=${unitId}`);
+  const data = await resp.json();
+  return { invoices: data.invoices || [], payments: data.payments || [] };
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific unit being viewed.
 async function toggleUnitFinancialsHistory(unitId) {
   const el = document.getElementById('unitFinancialsHistory-' + unitId);
   if (!el) return;
   const isOpen = el.style.display !== 'none';
   if (isOpen) { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  if (unitFinancialsLoaded[unitId]) return; // already fetched once, no need to refetch on every toggle
+
+  const cacheKey = unitId;
+  const cached = tabPrefetchCache.unitFinancials && tabPrefetchCache.unitFinancials.key === cacheKey ? tabPrefetchCache.unitFinancials.data : null;
+
+  if (cached) {
+    renderUnitFinancialsHistory(unitId, cached.invoices, cached.payments);
+    fetchUnitFinancialsData(unitId).then(data => {
+      tabPrefetchCache.unitFinancials = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('unitFinancialsHistory-' + unitId)) renderUnitFinancialsHistory(unitId, data.invoices, data.payments);
+    }).catch(err => console.error('Background Unit Financials refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">Loading…</div>`;
   try {
-    const resp = await fetch(`/api/get-assets?unitFinancials=true&unitId=${unitId}`);
-    const data = await resp.json();
-    renderUnitFinancialsHistory(unitId, data.invoices || [], data.payments || []);
-    unitFinancialsLoaded[unitId] = true;
+    const data = await fetchUnitFinancialsData(unitId);
+    tabPrefetchCache.unitFinancials = { key: cacheKey, data, fetchedAt: Date.now() };
+    renderUnitFinancialsHistory(unitId, data.invoices, data.payments);
   } catch (err) {
     el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load history: ${err.message}</div>`;
   }
@@ -12228,7 +12326,7 @@ async function submitGenerateInvoice(unitId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not generate invoice');
     document.getElementById('generateInvoiceOverlay')?.remove();
-    delete unitFinancialsLoaded[unitId]; // force a refetch next time history is opened
+    if (tabPrefetchCache.unitFinancials && tabPrefetchCache.unitFinancials.key === unitId) tabPrefetchCache.unitFinancials = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderUnits();
   } catch (err) {
     errorBox.textContent = err.message;
@@ -12290,7 +12388,7 @@ async function submitRecordPayment(unitId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not record payment');
     document.getElementById('recordPaymentOverlay')?.remove();
-    delete unitFinancialsLoaded[unitId];
+    if (tabPrefetchCache.unitFinancials && tabPrefetchCache.unitFinancials.key === unitId) tabPrefetchCache.unitFinancials = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderUnits();
   } catch (err) {
     errorBox.textContent = err.message;
@@ -14185,28 +14283,53 @@ async function loadCostOverview() {
   }
 }
 
+async function fetchApiKeyInfoData() {
+  const resp = await fetch('/api/get-assets?apikeyinfo=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load API key info');
+  return data;
+}
+TAB_PREFETCH_FETCHERS.apiKeyInfo = fetchApiKeyInfoData;
+
+function renderApiKeyInfoFromData(data) {
+  const panel = document.getElementById('apiKeyPanelContent');
+  if (!panel) return;
+  if (!data.configured) {
+    panel.innerHTML = `<div style="color:var(--amber)">No API key configured yet. Add <code>API_INTEGRATION_KEY</code> (any long random string) to your Vercel environment variables, then redeploy — it'll appear here automatically once set.</div>`;
+    return;
+  }
+  panel.innerHTML = `
+    <div style="margin-bottom:8px">Acts as role: <strong>${data.actsAsRole}</strong></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <code id="apiKeyValue" style="flex:1;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all">${data.apiKey}</code>
+      <button onclick="copyApiKey()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Copy</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Example usage for whoever's building the ERP/SAP connection:</div>
+    <code style="display:block;padding:8px 10px;background:#1A1A2E;color:#D1D5DB;border-radius:6px;font-size:10.5px;white-space:pre-wrap;word-break:break-all">${data.usageExample}</code>
+  `;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadApiKeyInfo() {
   const panel = document.getElementById('apiKeyPanelContent');
+  if (!panel) return;
+  const cached = tabPrefetchCache.apiKeyInfo;
+
+  if (cached) {
+    renderApiKeyInfoFromData(cached.data);
+    fetchApiKeyInfoData().then(data => {
+      tabPrefetchCache.apiKeyInfo = { data, fetchedAt: Date.now() };
+      if (document.getElementById('apiKeyPanelContent')) renderApiKeyInfoFromData(data);
+    }).catch(err => console.error('Background API Key Info refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   panel.innerHTML = 'Loading…';
   try {
-    const resp = await fetch('/api/get-assets?apikeyinfo=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load API key info');
-
-    if (!data.configured) {
-      panel.innerHTML = `<div style="color:var(--amber)">No API key configured yet. Add <code>API_INTEGRATION_KEY</code> (any long random string) to your Vercel environment variables, then redeploy — it'll appear here automatically once set.</div>`;
-      return;
-    }
-
-    panel.innerHTML = `
-      <div style="margin-bottom:8px">Acts as role: <strong>${data.actsAsRole}</strong></div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-        <code id="apiKeyValue" style="flex:1;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all">${data.apiKey}</code>
-        <button onclick="copyApiKey()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Copy</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Example usage for whoever's building the ERP/SAP connection:</div>
-      <code style="display:block;padding:8px 10px;background:#1A1A2E;color:#D1D5DB;border-radius:6px;font-size:10.5px;white-space:pre-wrap;word-break:break-all">${data.usageExample}</code>
-    `;
+    const data = await fetchApiKeyInfoData();
+    tabPrefetchCache.apiKeyInfo = { data, fetchedAt: Date.now() };
+    renderApiKeyInfoFromData(data);
   } catch (err) {
     panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
   }
@@ -14773,9 +14896,27 @@ function closeVendorModal() {
   document.getElementById('vendorModalOverlay')?.remove();
 }
 
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Reuses the exact same real vendor data already
+// fetched and cached for the Finance shell (fetchFinanceShellData) -
+// this is the identical underlying data, not duplicated into a
+// second, separate fetch and cache entry.
 async function loadVendorList() {
   const area = document.getElementById('vendorListArea');
   if (!area) return;
+  const cached = tabPrefetchCache.finance;
+
+  if (cached) {
+    vendorListCache = cached.data.vendors;
+    renderVendorList();
+    fetchFinanceShellData().then(bundle => {
+      tabPrefetchCache.finance = { data: bundle, fetchedAt: Date.now() };
+      vendorListCache = bundle.vendors;
+      if (document.getElementById('vendorListArea')) renderVendorList();
+    }).catch(err => console.error('Background Vendor List refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
     const resp = await fetch('/api/work-orders?vendors=true');
     const data = await resp.json();
@@ -15218,6 +15359,53 @@ function renderWODetailProcurement(o) {
 // even after one's been chosen and fulfilled. Sorted cheapest first by
 // the backend, matching the "same specs, lowest bidder" logic from the
 // original workflow.
+async function fetchProcurementResponsesData(woId) {
+  const resp = await fetch('/api/work-orders?procurementResponses=' + encodeURIComponent(woId));
+  const data = await resp.json();
+  return data.responses || [];
+}
+
+function renderProcurementResponsesListFromData(o, responses) {
+  const listEl = document.getElementById('procurementResponsesList');
+  if (!listEl) return;
+  const canManage = currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+  const stillOpen = (o.procurementStatus || 'None') === 'Requested';
+
+  if (responses.length === 0) {
+    listEl.innerHTML = `<div style="font-style:italic">No vendor quotes yet.</div>`;
+    return;
+  }
+
+  // Lowest bidder gets a clear visual flag — procurement still has
+  // to click Choose themselves (confirmed: no auto-selection), this
+  // just saves them doing the comparison math by eye. Only shown
+  // when there's more than one quote with an actual extracted cost
+  // to compare against — flagging "the lowest" among a single quote
+  // says nothing useful.
+  const extractedCosts = responses.filter(r => r.totalCost != null).map(r => r.totalCost);
+  const lowestCost = extractedCosts.length > 1 ? Math.min(...extractedCosts) : null;
+
+  listEl.innerHTML = responses.map(r => {
+    const isLowest = lowestCost !== null && r.totalCost === lowestCost && !r.chosen;
+    return `
+    <div style="border:1px solid ${r.chosen ? 'var(--green)' : isLowest ? 'var(--navy)' : 'var(--border)'};background:${r.chosen ? '#F0FDF4' : isLowest ? '#F0F5FC' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}${isLowest ? ' <span style="color:var(--navy);font-weight:700;font-size:11px">● Lowest bid</span>' : ''}</div>
+          ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">${formatCurrency(r.totalCost)}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
+          ${r.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${r.vatStatus}</div>` : ''}
+          ${r.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${r.summary}</div>` : ''}
+          ${r.attachmentUrl ? `<a href="${r.attachmentUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">View proforma${r.attachmentFilename ? ' — ' + r.attachmentFilename : ''}</a>` : `<div style="font-size:11px;color:var(--muted);font-style:italic">No file attached yet</div>`}
+        </div>
+        ${canManage && stillOpen && !r.chosen ? `<button onclick="chooseProcurementResponse('${o.id}', '${o.woId}', '${r.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Choose</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific work order's own real
+// procurement quotes.
 async function renderWODetailProcurementResponses(o) {
   const el = document.getElementById('woDetailProcurementResponses');
   if (!el) return;
@@ -15226,51 +15414,29 @@ async function renderWODetailProcurementResponses(o) {
 
   const canManage = currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
   const stillOpen = procStatus === 'Requested';
+  const cacheKey = o.woId;
+  const cached = tabPrefetchCache.procurementResponses && tabPrefetchCache.procurementResponses.key === cacheKey ? tabPrefetchCache.procurementResponses.data : null;
 
   let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:12px;font-weight:700;color:var(--navy)">Vendor Quotes</div>
     ${canManage && stillOpen ? `<button onclick="openAddProcurementResponseModal('${o.id}', '${o.woId}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Vendor Quote</button>` : ''}
   </div>
-  <div id="procurementResponsesList" style="font-size:12px;color:var(--muted)">Loading…</div>`;
+  <div id="procurementResponsesList" style="font-size:12px;color:var(--muted)">${cached ? '' : 'Loading…'}</div>`;
   el.innerHTML = html;
 
+  if (cached) {
+    renderProcurementResponsesListFromData(o, cached);
+    fetchProcurementResponsesData(o.woId).then(responses => {
+      tabPrefetchCache.procurementResponses = { key: cacheKey, data: responses, fetchedAt: Date.now() };
+      if (document.getElementById('procurementResponsesList')) renderProcurementResponsesListFromData(o, responses);
+    }).catch(err => console.error('Background Procurement Responses refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/work-orders?procurementResponses=' + encodeURIComponent(o.woId));
-    const data = await resp.json();
-    const responses = data.responses || [];
-    const listEl = document.getElementById('procurementResponsesList');
-    if (!listEl) return;
-
-    if (responses.length === 0) {
-      listEl.innerHTML = `<div style="font-style:italic">No vendor quotes yet.</div>`;
-      return;
-    }
-
-    // Lowest bidder gets a clear visual flag — procurement still has
-    // to click Choose themselves (confirmed: no auto-selection), this
-    // just saves them doing the comparison math by eye. Only shown
-    // when there's more than one quote with an actual extracted cost
-    // to compare against — flagging "the lowest" among a single quote
-    // says nothing useful.
-    const extractedCosts = responses.filter(r => r.totalCost != null).map(r => r.totalCost);
-    const lowestCost = extractedCosts.length > 1 ? Math.min(...extractedCosts) : null;
-
-    listEl.innerHTML = responses.map(r => {
-      const isLowest = lowestCost !== null && r.totalCost === lowestCost && !r.chosen;
-      return `
-      <div style="border:1px solid ${r.chosen ? 'var(--green)' : isLowest ? 'var(--navy)' : 'var(--border)'};background:${r.chosen ? '#F0FDF4' : isLowest ? '#F0F5FC' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-          <div>
-            <div style="font-size:13px;font-weight:600;color:var(--text)">${r.vendorName}${r.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}${isLowest ? ' <span style="color:var(--navy);font-weight:700;font-size:11px">● Lowest bid</span>' : ''}</div>
-            ${r.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">${formatCurrency(r.totalCost)}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
-            ${r.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${r.vatStatus}</div>` : ''}
-            ${r.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${r.summary}</div>` : ''}
-            ${r.attachmentUrl ? `<a href="${r.attachmentUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">View proforma${r.attachmentFilename ? ' — ' + r.attachmentFilename : ''}</a>` : `<div style="font-size:11px;color:var(--muted);font-style:italic">No file attached yet</div>`}
-          </div>
-          ${canManage && stillOpen && !r.chosen ? `<button onclick="chooseProcurementResponse('${o.id}', '${o.woId}', '${r.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Choose</button>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+    const responses = await fetchProcurementResponsesData(o.woId);
+    tabPrefetchCache.procurementResponses = { key: cacheKey, data: responses, fetchedAt: Date.now() };
+    renderProcurementResponsesListFromData(o, responses);
   } catch (err) {
     const listEl = document.getElementById('procurementResponsesList');
     if (listEl) listEl.innerHTML = `<div style="color:var(--red)">Could not load vendor quotes: ${err.message}</div>`;
@@ -15353,6 +15519,7 @@ async function submitAddProcurementResponse(recordId, woId) {
 
     document.getElementById('addQuoteOverlay')?.remove();
     const o = lastWorkOrders.find(w => w.id === recordId);
+    tabPrefetchCache.procurementResponses = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (o) renderWODetailProcurementResponses(o);
   } catch (err) {
     errorBox.textContent = err.message;
@@ -15373,12 +15540,71 @@ async function chooseProcurementResponse(recordId, woId, responseId) {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not choose this quote');
     const o = lastWorkOrders.find(w => w.id === recordId);
+    tabPrefetchCache.procurementResponses = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     if (o) renderWODetailProcurementResponses(o);
   } catch (err) {
     alert('Could not choose this quote: ' + err.message);
   }
 }
 
+async function fetchWODetailChecklistData(checklistClass, assignedRole) {
+  const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&assignedRole=' + encodeURIComponent(assignedRole || ''));
+  return resp.json();
+}
+
+function renderWODetailChecklistFromData(o, data, progress) {
+  const el = document.getElementById('woDetailChecklist');
+  if (!el) return;
+
+  if (!data.items || data.items.length === 0) {
+    el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet.</div>`;
+    return;
+  }
+  window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass: data.class, data, progress };
+
+  // Time-bound grouping — same pattern as the printable version, so
+  // this reads consistently whether viewed on screen or downloaded.
+  const freqGroups = {};
+  data.items.forEach((item, i) => {
+    const freq = item.frequency || 'Unscheduled';
+    (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
+  });
+  const freqOrder = ['Every occurrence','Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
+  const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
+
+  const completedCount = data.items.filter((_, i) => progress[i] && progress[i].checked).length;
+
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${data.class}</div>
+    <button onclick="downloadWODetailChecklist()" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download PDF</button>
+  </div>
+  ${data.generic
+    ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:2px">General checklist — no asset-specific standard mapped yet</div>`
+    : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>`}
+  <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${completedCount} of ${data.items.length} completed — optional tracking, does not block closing this work order</div>`;
+
+  orderedFreqs.forEach(freq => {
+    html += `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--navy);background:#EEF1F5;padding:5px 10px;margin-top:10px">${freq}</div>`;
+    freqGroups[freq].forEach(item => {
+      const state = progress[item._index] || {};
+      const noteText = state.checked
+        ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
+        : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
+      html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer">
+        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
+        <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
+      </label>`;
+    });
+  });
+
+  el.innerHTML = html;
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the exact checklist class and assigned role,
+// since that's what the real fetch itself depends on - the real
+// per-item progress (o.checklistProgress) is already part of the
+// same, already-cached work order object, not fetched separately.
 async function renderWODetailChecklist(o) {
   const el = document.getElementById('woDetailChecklist');
   if (!el) return;
@@ -15387,51 +15613,22 @@ async function renderWODetailChecklist(o) {
   let progress = {};
   try { progress = JSON.parse(o.checklistProgress || '{}'); } catch { progress = {}; }
 
+  const cacheKey = `${checklistClass}|${o.assignedRole || ''}`;
+  const cached = tabPrefetchCache.woDetailChecklist && tabPrefetchCache.woDetailChecklist.key === cacheKey ? tabPrefetchCache.woDetailChecklist.data : null;
+
+  if (cached) {
+    renderWODetailChecklistFromData(o, cached, progress);
+    fetchWODetailChecklistData(checklistClass, o.assignedRole).then(data => {
+      tabPrefetchCache.woDetailChecklist = { key: cacheKey, data, fetchedAt: Date.now() };
+      if (document.getElementById('woDetailChecklist')) renderWODetailChecklistFromData(o, data, progress);
+    }).catch(err => console.error('Background WO Checklist refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass || '') + '&assignedRole=' + encodeURIComponent(o.assignedRole || ''));
-    const data = await resp.json();
-    if (!data.items || data.items.length === 0) {
-      el.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">Maintenance Checklist</div><div style="font-size:12px;color:var(--muted)">No checklist items defined yet.</div>`;
-      return;
-    }
-    window.currentWODetailChecklist = { workOrderId: o.id, assetName: o.assetName, checklistClass: data.class, data, progress };
-
-    // Time-bound grouping — same pattern as the printable version, so
-    // this reads consistently whether viewed on screen or downloaded.
-    const freqGroups = {};
-    data.items.forEach((item, i) => {
-      const freq = item.frequency || 'Unscheduled';
-      (freqGroups[freq] = freqGroups[freq] || []).push({ ...item, _index: i });
-    });
-    const freqOrder = ['Every occurrence','Daily','Weekly','Monthly','Quarterly','Semi-annually','Annually','Unscheduled'];
-    const orderedFreqs = Object.keys(freqGroups).sort((x,y) => freqOrder.indexOf(x) - freqOrder.indexOf(y));
-
-    const completedCount = data.items.filter((_, i) => progress[i] && progress[i].checked).length;
-
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div style="font-size:12px;font-weight:700;color:var(--navy)">Maintenance Checklist — ${data.class}</div>
-      <button onclick="downloadWODetailChecklist()" style="padding:6px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">↓ Download PDF</button>
-    </div>
-    ${data.generic
-      ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:2px">General checklist — no asset-specific standard mapped yet</div>`
-      : `<div style="font-size:11px;color:var(--navy);font-weight:600;margin-bottom:2px">${data.sourceStandard || ''}</div>`}
-    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${completedCount} of ${data.items.length} completed — optional tracking, does not block closing this work order</div>`;
-
-    orderedFreqs.forEach(freq => {
-      html += `<div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--navy);background:#EEF1F5;padding:5px 10px;margin-top:10px">${freq}</div>`;
-      freqGroups[freq].forEach(item => {
-        const state = progress[item._index] || {};
-        const noteText = state.checked
-          ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
-          : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
-        html += `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer">
-          <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${o.id}', ${item._index}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
-          <span><div style="font-size:13px">${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
-        </label>`;
-      });
-    });
-
-    el.innerHTML = html;
+    const data = await fetchWODetailChecklistData(checklistClass, o.assignedRole);
+    tabPrefetchCache.woDetailChecklist = { key: cacheKey, data, fetchedAt: Date.now() };
+    renderWODetailChecklistFromData(o, data, progress);
   } catch (err) {
     el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load checklist: ${err.message}</div>`;
   }
@@ -15727,6 +15924,34 @@ async function submitWODetailChatMessage(recordId) {
   }
 }
 
+async function fetchWorkOrderChecklistPreviewData(checklistClass) {
+  const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
+  return resp.json();
+}
+
+function renderWorkOrderChecklistPreviewFromData(recordId, data, progress) {
+  const body = document.getElementById('wo_checklist_body');
+  if (!body) return;
+  if (!data.items || data.items.length === 0) {
+    body.innerHTML = `<div>No checklist items defined yet for ${data.class || 'this asset'}.</div>`;
+    return;
+  }
+  body.innerHTML = data.items.map((item, i) => {
+    const state = progress[i] || {};
+    const noteText = state.checked
+      ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
+      : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
+    return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
+      <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
+    </label>`;
+  }).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the exact checklist class - a real, separate
+// cache entry from the work-order-detail version, since this is a
+// genuinely different request (no assigned-role filter).
 async function openWorkOrderChecklist(recordId, assetName, system) {
   const checklistClass = guessChecklistClass(assetName, system);
   if (!checklistClass) return;
@@ -15735,35 +15960,32 @@ async function openWorkOrderChecklist(recordId, assetName, system) {
   let progress = {};
   try { progress = JSON.parse((wo && wo.checklistProgress) || "{}"); } catch { progress = {}; }
 
+  const cached = tabPrefetchCache.woChecklistPreview && tabPrefetchCache.woChecklistPreview.key === checklistClass ? tabPrefetchCache.woChecklistPreview.data : null;
+
   const overlay = document.createElement('div');
   overlay.id = 'checklistWOOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
   overlay.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;padding:28px">
     <h3 style="font-size:16px;color:var(--navy);margin-bottom:4px">Checklist: ${assetName}</h3>
     <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Optional tracking — checking items off does not block closing this work order.</div>
-    <div id="wo_checklist_body" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+    <div id="wo_checklist_body" style="font-size:12.5px;color:var(--muted)">${cached ? '' : 'Loading…'}</div>
     <button onclick="document.getElementById('checklistWOOverlay').remove()" style="margin-top:16px;width:100%;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Close</button>
   </div>`;
   document.body.appendChild(overlay);
 
+  if (cached) {
+    renderWorkOrderChecklistPreviewFromData(recordId, cached, progress);
+    fetchWorkOrderChecklistPreviewData(checklistClass).then(data => {
+      tabPrefetchCache.woChecklistPreview = { key: checklistClass, data, fetchedAt: Date.now() };
+      if (document.getElementById('wo_checklist_body')) renderWorkOrderChecklistPreviewFromData(recordId, data, progress);
+    }).catch(err => console.error('Background WO Checklist Preview refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/work-orders?checklist=' + encodeURIComponent(checklistClass));
-    const data = await resp.json();
-    const body = document.getElementById('wo_checklist_body');
-    if (!data.items || data.items.length === 0) {
-      body.innerHTML = `<div>No checklist items defined yet for ${checklistClass}.</div>`;
-      return;
-    }
-    body.innerHTML = data.items.map((item, i) => {
-      const state = progress[i] || {};
-      const noteText = state.checked
-        ? `Checked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}`
-        : (state.by ? `Unchecked by ${state.by}${state.at ? ' · ' + new Date(state.at).toLocaleDateString() : ''}` : '');
-      return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">
-        <input type="checkbox" ${state.checked ? 'checked' : ''} onchange="toggleWOChecklistItem('${recordId}', ${i}, this.checked, this, '${(item.task||'').replace(/'/g,"\\'")}')" style="margin-top:2px">
-        <span><div>${item.task}</div>${noteText ? `<div style="font-size:10.5px;color:${state.checked?'var(--green)':'var(--muted)'};margin-top:2px">${state.checked?'✓':'○'} ${noteText}</div>` : ''}</span>
-      </label>`;
-    }).join('');
+    const data = await fetchWorkOrderChecklistPreviewData(checklistClass);
+    tabPrefetchCache.woChecklistPreview = { key: checklistClass, data, fetchedAt: Date.now() };
+    renderWorkOrderChecklistPreviewFromData(recordId, data, progress);
   } catch (err) {
     document.getElementById('wo_checklist_body').innerHTML = `<div style="color:var(--red)">Could not load checklist: ${err.message}</div>`;
   }
