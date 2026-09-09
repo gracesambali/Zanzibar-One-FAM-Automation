@@ -16684,11 +16684,17 @@ function openNewRequisitionForm() {
       <div style="display:flex;gap:10px;margin-bottom:10px">
         <div style="flex:1">
           <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility</label>
-          <input id="nr_facility" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+          <select id="nr_facility" onchange="updateNewRequisitionBuildingOptions()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+            <option value="">— Select —</option>
+            ${facilitiesData.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('')}
+          </select>
         </div>
         <div style="flex:1">
           <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building</label>
-          <input id="nr_building" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+          <select id="nr_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+            <option value="">— Select —</option>
+            ${facilitiesData.flatMap(f => f.buildings).map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+          </select>
         </div>
       </div>
 
@@ -16701,7 +16707,10 @@ function openNewRequisitionForm() {
       </label>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
-      <textarea id="nr_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box;resize:vertical"></textarea>
+      <textarea id="nr_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;resize:vertical"></textarea>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Attach a file (optional — a quote, reference photo, or similar; max 5MB)</label>
+      <input id="nr_attachment" type="file" style="width:100%;font-size:12.5px;margin-bottom:14px">
 
       <div id="nr_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -16711,6 +16720,21 @@ function openNewRequisitionForm() {
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById('nr_description').focus();
+}
+
+// Same real, already-proven pattern already used for relocating an
+// asset — picking a facility narrows Building to just that
+// facility's real buildings; leaving it unset keeps every building
+// available.
+function updateNewRequisitionBuildingOptions() {
+  const facilitySelect = document.getElementById('nr_facility');
+  const buildingSelect = document.getElementById('nr_building');
+  const selectedFacility = facilitySelect.value;
+  const buildings = selectedFacility
+    ? (facilitiesData.find(f => f.name === selectedFacility)?.buildings || [])
+    : facilitiesData.flatMap(f => f.buildings);
+  buildingSelect.innerHTML = `<option value="">— Select —</option>` +
+    buildings.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
 }
 
 async function submitNewRequisition() {
@@ -16737,8 +16761,31 @@ async function submitNewRequisition() {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create the requisition');
+
+    const attachmentFile = document.getElementById('nr_attachment').files[0];
+    let attachmentWarning = null;
+    if (attachmentFile) {
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(attachmentFile);
+        });
+        const attResp = await fetch('/api/manage-asset', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'uploadRequisitionDocument', requisitionId: data.id, filename: attachmentFile.name, contentType: attachmentFile.type, fileBase64: base64 }),
+        });
+        const attData = await attResp.json();
+        if (!attResp.ok || !attData.success) attachmentWarning = attData.error || 'Could not attach the file.';
+      } catch (attErr) {
+        attachmentWarning = 'Could not attach the file.';
+      }
+    }
+
     document.getElementById('newRequisitionOverlay')?.remove();
     await renderProcurement();
+    if (attachmentWarning) alert(`Requisition ${data.requisitionNumber} was created, but the attachment failed: ${attachmentWarning}\n\nYou can attach it from the requisition's own page instead.`);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
