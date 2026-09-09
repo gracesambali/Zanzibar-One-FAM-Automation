@@ -13154,6 +13154,7 @@ async function loadAssetCostSummaries() {
       if (!resp.ok) return assetCostSummaryCache || {};
       const data = await resp.json();
       const orders = data.workOrders || [];
+      const reqCosts = data.requisitionCosts || [];
       const map = {};
       let unattributed = 0, pendingId = 0;
       const TYPES = ['Preventive', 'Corrective', 'Inspection', 'Procurement'];
@@ -13169,6 +13170,12 @@ async function loadAssetCostSummaries() {
         const type = TYPES.includes(o.maintenanceType) ? o.maintenanceType : 'Other';
         map[o.assetId][type] += cost;
         map[o.assetId].total += cost;
+      });
+      reqCosts.forEach(rc => {
+        if (!rc.assetId || !rc.cost) return;
+        if (!map[rc.assetId]) map[rc.assetId] = { Preventive: 0, Corrective: 0, Inspection: 0, Procurement: 0, Other: 0, total: 0 };
+        map[rc.assetId].Procurement += rc.cost;
+        map[rc.assetId].total += rc.cost;
       });
       assetCostSummaryCache = map;
       unattributedCostCache = unattributed;
@@ -16970,9 +16977,15 @@ function openNewRequisitionForm() {
       <input id="nr_department" type="text" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
 
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);margin-bottom:10px;cursor:pointer">
-        <input id="nr_isAsset" type="checkbox" style="width:16px;height:16px">
+        <input id="nr_isAsset" type="checkbox" onchange="document.getElementById('nr_relatedAssetWrap').style.display=this.checked?'none':'block'" style="width:16px;height:16px">
         This will become a real asset once it arrives — not a consumable or a one-off service
       </label>
+
+      <div id="nr_relatedAssetWrap">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Related Asset (optional)</label>
+        <input id="nr_relatedAsset" list="nr_relatedAsset_list" placeholder="Search for an existing asset this is for" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <datalist id="nr_relatedAsset_list">${assets.map(a => `<option value="${escapeHtml(a.id)} — ${escapeHtml(a.name)}">`).join('')}</datalist>
+      </div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Notes</label>
       <textarea id="nr_notes" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;resize:vertical"></textarea>
@@ -17014,6 +17027,10 @@ async function submitNewRequisition() {
 
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
+    const isAsset = document.getElementById('nr_isAsset').checked;
+    const relatedAssetRaw = document.getElementById('nr_relatedAsset').value.trim();
+    const linkedAssetId = (!isAsset && relatedAssetRaw) ? relatedAssetRaw.split(' — ')[0].trim() : undefined;
+
     const resp = await fetch('/api/manage-asset', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -17023,7 +17040,7 @@ async function submitNewRequisition() {
         facility: document.getElementById('nr_facility').value.trim() || undefined,
         building: document.getElementById('nr_building').value.trim() || undefined,
         requestingDepartment: document.getElementById('nr_department').value.trim() || undefined,
-        isAsset: document.getElementById('nr_isAsset').checked,
+        isAsset, linkedAssetId,
         notes: document.getElementById('nr_notes').value.trim() || undefined,
       }),
     });
@@ -17130,6 +17147,7 @@ async function openRequisitionDetail(id) {
           <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Department</div><div style="font-size:13px;margin-top:2px">${escapeHtml(r.requestingDepartment || '—')}</div></div>
           <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Facility / Building</div><div style="font-size:13px;margin-top:2px">${escapeHtml(r.facility || '—')} / ${escapeHtml(r.building || '—')}</div></div>
           <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Vendor</div><div style="font-size:13px;margin-top:2px">${escapeHtml(r.chosenVendorName || '—')}</div></div>
+          <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Related Asset</div><div style="font-size:13px;margin-top:2px">${r.linkedAssetId ? escapeHtml((assets.find(a => a.id === r.linkedAssetId)?.name) ? `${r.linkedAssetId} — ${assets.find(a => a.id === r.linkedAssetId).name}` : r.linkedAssetId) : '—'}</div></div>
           <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Payment</div><div style="font-size:13px;margin-top:2px">${escapeHtml(r.paymentStatus || 'Not Paid')}${r.paymentAmount ? ` — ${Number(r.paymentAmount).toLocaleString()} TZS` : ''}</div></div>
           <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Source Work Order</div><div style="font-size:13px;margin-top:2px">${r.sourceWoId ? escapeHtml(r.sourceWoId) : '—'}</div></div>
           ${r.isAsset ? `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Becomes an Asset</div><div style="font-size:13px;margin-top:2px">${r.resultingAssetId ? '✓ Registered' : 'Not yet'}</div></div>` : ''}
