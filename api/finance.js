@@ -726,70 +726,67 @@ async function handleFinancePeriodReport(req, res, organizationId) {
 async function handleFinanceSummary(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
-    const totals = await query(
-      `select type, coalesce(sum(amount), 0) as total from transactions where organization_id = $1 group by type`,
-      [organizationId]
-    );
-    const income = Number(totals.rows.find(r => r.type === "income")?.total || 0);
-    const expense = Number(totals.rows.find(r => r.type === "expense")?.total || 0);
 
-    const liabilityTotal = await query(
-      `select coalesce(sum(remaining_balance), 0) as total from liabilities where organization_id = $1 and status = 'active'`,
-      [organizationId]
-    );
+    // One real, unified source of maintenance spend - the same two
+    // real sources already proven for Cost Overview, Lifecycle &
+    // Replacement, and the rebuilt Reports - used consistently for
+    // every card and chart below, rather than several separate
+    // queries that could quietly drift out of sync with each other.
+    const spendCte = `
+      with all_spend as (
+        select coalesce(maintenance_type, 'Other') as type, asset_id, asset_name,
+               coalesce(cost_tzs, 0) as cost, coalesce(cost_edited_date, completed_date) as spend_date
+        from work_orders
+        where organization_id = $1 and cost_tzs is not null and cost_tzs > 0
+          and coalesce(cost_edited_date, completed_date) is not null
+        union all
+        select 'Procurement' as type, r.linked_asset_id as asset_id, null as asset_name,
+               coalesce(r.payment_amount_tzs, 0) as cost, r.payment_date as spend_date
+        from requisitions r
+        where r.organization_id = $1 and r.payment_status = 'Paid' and r.is_asset = false
+          and r.linked_asset_id is not null and r.payment_date is not null
+      )
+    `;
 
-    const upcomingBills = await query(
-      `select coalesce(sum(amount), 0) as total from bills where organization_id = $1 and status = 'active' and next_due_date <= current_date + interval '30 days'`,
-      [organizationId]
-    );
-
-    // Real, 6-month income/expense trend for the Overview chart -
-    // generate_series ensures a month with zero activity still shows
+    // generate_series ensures a month with zero real spend still shows
     // as a real zero bar, not a gap that looks like missing data.
     const monthlyTrend = await query(
-      `select
-         to_char(month_start, 'YYYY-MM') as month,
-         coalesce(sum(t.amount) filter (where t.type = 'income'), 0) as income,
-         coalesce(sum(t.amount) filter (where t.type = 'expense'), 0) as expense
+      `${spendCte}
+       select to_char(month_start, 'YYYY-MM') as month,
+              coalesce(sum(s.cost), 0) as cost
        from generate_series(date_trunc('month', current_date - interval '5 months'), date_trunc('month', current_date), interval '1 month') as month_start
-       left join transactions t on date_trunc('month', t.transaction_date) = month_start and t.organization_id = $1
+       left join all_spend s on date_trunc('month', s.spend_date) = month_start
        group by month_start
        order by month_start asc`,
       [organizationId]
     );
 
-    // Real expense-by-category breakdown for the Overview chart -
-    // top 6 by spend, with anything beyond that folded into a real
-    // "Other" total rather than an unreadably long legend. Scoped to
-    // the same 6-month window as the trend chart above - confirmed
-    // directly this needed fixing, since an all-time total here would
-    // silently mismatch what the trend chart shows for the same
-    // period, which would read as broken rather than intentional.
-    const categoryBreakdown = await query(
-      `select coalesce(c.name, 'Uncategorized') as category, sum(t.amount) as total
-       from transactions t
-       left join transaction_categories c on c.id = t.category_id
-       where t.organization_id = $1 and t.type = 'expense'
-         and t.transaction_date >= date_trunc('month', current_date - interval '5 months')
-       group by c.name
-       order by total desc`,
+    const typeBreakdown = await query(
+      `${spendCte}
+       select type, sum(cost) as total from all_spend
+       where spend_date >= date_trunc('month', current_date - interval '5 months')
+       group by type order by total desc`,
       [organizationId]
     );
 
+    const topAsset = await query(
+      `${spendCte}
+       select asset_id, sum(cost) as total from all_spend
+       where spend_date >= date_trunc('month', current_date - interval '5 months') and asset_id is not null
+       group by asset_id order by total desc limit 1`,
+      [organizationId]
+    );
+
+    const totalLast6Months = monthlyTrend.rows.reduce((sum, r) => sum + Number(r.cost), 0);
+    const thisMonth = monthlyTrend.rows[monthlyTrend.rows.length - 1];
+
     return res.status(200).json({
-      totalIncome: income,
-      totalExpense: expense,
-      netPosition: income - expense,
-      totalLiabilities: Number(liabilityTotal.rows[0].total),
-      billsDueNext30Days: Number(upcomingBills.rows[0].total),
-      monthlyTrend: monthlyTrend.rows.map(r => ({ month: r.month, income: Number(r.income), expense: Number(r.expense) })),
-      categoryBreakdown: (() => {
-        const rows = categoryBreakdown.rows.map(r => ({ category: r.category, total: Number(r.total) }));
-        const top = rows.slice(0, 6);
-        const rest = rows.slice(6).reduce((sum, r) => sum + r.total, 0);
-        if (rest > 0) top.push({ category: "Other", total: rest });
-        return top;
-      })(),
+      totalMaintenanceCost6mo: totalLast6Months,
+      thisMonthCost: thisMonth ? Number(thisMonth.cost) : 0,
+      avgMonthlyCost: totalLast6Months / Math.max(1, monthlyTrend.rows.length),
+      topAsset: topAsset.rows[0] ? { assetId: topAsset.rows[0].asset_id, total: Number(topAsset.rows[0].total) } : null,
+      monthlyTrend: monthlyTrend.rows.map(r => ({ month: r.month, cost: Number(r.cost) })),
+      typeBreakdown: typeBreakdown.rows.map(r => ({ type: r.type, total: Number(r.total) })),
     });
   } catch (err) {
     console.error("finance summary error:", err);
