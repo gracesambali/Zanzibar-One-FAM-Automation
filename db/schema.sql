@@ -2031,3 +2031,14 @@ alter table work_orders add column if not exists supervisor_review_reason text;
 -- the same requisition's own comparison list.
 -- ============================================================
 create unique index if not exists idx_procurement_responses_requisition_vendor_unique on procurement_responses (requisition_id, vendor_name) where requisition_id is not null;
+
+-- ============================================================
+-- Requisition-to-asset cost linkage - a real, confirmed gap: a
+-- requisition's own real payment amount never counted toward any
+-- asset's tracked maintenance cost unless it became a brand-new
+-- asset itself. Matches work_orders.asset_id's own exact convention
+-- (plain text, the human-readable Asset ID, not a UUID) so both
+-- tables aggregate together directly with no join needed.
+-- ============================================================
+alter table requisitions add column if not exists linked_asset_id text;
+create index if not exists idx_requisitions_linked_asset on requisitions (linked_asset_id);

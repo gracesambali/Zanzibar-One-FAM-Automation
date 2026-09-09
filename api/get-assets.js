@@ -1174,6 +1174,7 @@ export default async function handler(req, res) {
         procurementReviewedBy: r.procurement_reviewed_by, procurementReviewedAt: r.procurement_reviewed_at,
         procurementNotes: r.procurement_notes, procurementRejectionReason: r.procurement_rejection_reason,
         chosenVendorId: r.chosen_vendor_id, chosenVendorName: r.chosen_vendor_name,
+        linkedAssetId: r.linked_asset_id || null,
         accountsApprovedBy: r.accounts_approved_by, accountsApprovedAt: r.accounts_approved_at,
         accountsNotes: r.accounts_notes, accountsRejectionReason: r.accounts_rejection_reason,
         paymentStatus: r.payment_status, paymentDate: r.payment_date, paymentReference: r.payment_reference,

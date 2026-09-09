@@ -179,7 +179,25 @@ export default async function handler(req, res) {
         };
       }));
       workOrders.sort((a, b) => new Date(b.created) - new Date(a.created));
-      return res.status(200).json({ workOrders });
+
+      // Real, paid requisition costs that are tied to an existing
+      // asset - not a new asset purchase (already counted as that
+      // asset's own acquisitionCost, not maintenance spend), and not
+      // counted anywhere else until now.
+      let requisitionCosts = [];
+      try {
+        const { query: pgQuery } = await import("../lib/postgresClient.js");
+        const reqResult = await pgQuery(
+          `select linked_asset_id, payment_amount_tzs from requisitions
+           where organization_id = $1 and payment_status = 'Paid' and is_asset = false and linked_asset_id is not null`,
+          [session.org]
+        );
+        requisitionCosts = reqResult.rows.map(r => ({ assetId: r.linked_asset_id, cost: Number(r.payment_amount_tzs) || 0 }));
+      } catch (err) {
+        console.error("work-orders GET: could not load requisition costs (non-fatal):", err.message);
+      }
+
+      return res.status(200).json({ workOrders, requisitionCosts });
     } catch (err) {
       console.error("work-orders GET error:", err);
       return res.status(500).json({ error: err.message });

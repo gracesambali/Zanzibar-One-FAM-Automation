@@ -1033,6 +1033,7 @@ async function createOneRequisition(a, requestedBy, organizationId) {
     quantity_requested: a.quantityRequested != null && a.quantityRequested !== "" ? Number(a.quantityRequested) : null,
     unit_of_measure: a.unitOfMeasure || null,
     is_asset: !!a.isAsset,
+    linked_asset_id: a.linkedAssetId || null,
     status: "Requested",
     building: a.building || null,
     facility: a.facility || null,
@@ -1077,6 +1078,7 @@ async function handleRequestProcurementForWorkOrder(req, res, requestedBy, organ
       itemDescription: itemDescription || workOrder.asset_name || `Parts/materials for ${woId}`,
       quantityRequested, unitOfMeasure, isAsset, notes,
       building: workOrder.building,
+      linkedAssetId: workOrder.asset_id || null,
     }, requestedBy, organizationId);
 
     await update("work_orders", workOrder.id, { linked_requisition_id: created.id, procurement_status: "Requested" });
@@ -1108,7 +1110,7 @@ async function handleEditRequisition(req, res, editedBy, editedByRole, organizat
     expectedDeliveryDate,
     inspectionNotes, quantityReceived,
     grnNumber, grnConditionNotes,
-    notes,
+    notes, linkedAssetId,
   } = req.body || {};
   if (!requisitionId) return res.status(400).json({ error: "requisitionId is required" });
 
@@ -1141,6 +1143,7 @@ async function handleEditRequisition(req, res, editedBy, editedByRole, organizat
     setIfChanged(quantityRequested, "quantity_requested", before.quantity_requested, "Quantity", true);
     setIfChanged(unitOfMeasure, "unit_of_measure", before.unit_of_measure, "Unit", false);
     setIfChanged(requestingDepartment, "requesting_department", before.requesting_department, "Department", false);
+    setIfChanged(linkedAssetId, "linked_asset_id", before.linked_asset_id, "Related Asset", false);
     if (isAsset !== undefined && !!isAsset !== before.is_asset) { fields.is_asset = !!isAsset; changes.push(`Is Asset: "${before.is_asset}" → "${!!isAsset}"`); }
     setIfChanged(chosenVendorId, "chosen_vendor_id", before.chosen_vendor_id, "Chosen Vendor", false);
     setIfChanged(procurementNotes, "procurement_notes", before.procurement_notes, "Procurement Notes", false);
