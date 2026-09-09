@@ -7214,9 +7214,9 @@ function renderFinanceShell() {
         ${currencySwitcherHtml('finance')}
       </div>
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px">
-        ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll', 'reports', 'invoices'].map(t => `
+        ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll', 'lifecycle', 'reports', 'invoices'].map(t => `
           <button onclick="switchFinanceSubTab('${t}')" id="finSubTab-${t}" style="padding:10px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:${financeSubTab===t?'var(--navy)':'var(--muted)'};border-bottom:2px solid ${financeSubTab===t?'var(--navy)':'transparent'}">
-            ${t.charAt(0).toUpperCase() + t.slice(1)}
+            ${t === 'lifecycle' ? 'Lifecycle & Replacement' : (t.charAt(0).toUpperCase() + t.slice(1))}
           </button>`).join('')}
       </div>
       <div id="finance-subtab-content"></div>
@@ -7243,6 +7243,7 @@ async function renderFinanceSubTab(tab) {
   if (tab === 'liabilities') return renderFinanceLiabilities();
   if (tab === 'vendors') return renderFinanceVendors();
   if (tab === 'payroll') return renderFinancePayroll();
+  if (tab === 'lifecycle') return renderFinanceLifecycle();
   if (tab === 'reports') return renderFinanceReports();
   if (tab === 'invoices') return renderFinanceInvoices();
 }
@@ -8062,6 +8063,142 @@ async function renderFinancePayroll() {
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
+}
+
+// --- Lifecycle & Replacement ---
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern - the shared,
+// already-cached cost summaries (loadAssetCostSummaries) is the
+// same real source the dashboard's own Cost Overview and each
+// asset's own Maintenance Cost panel already use, so this always
+// agrees with what those already show — no separate, drifting copy
+// of the same numbers.
+async function renderFinanceLifecycle() {
+  const el = document.getElementById('finance-subtab-content');
+  if (!el) return;
+
+  if (!TEMP_SHOW_COST_TO_ALL && !(currentUserPermissions && currentUserPermissions.viewCostAndDepreciation)) {
+    el.innerHTML = `<div style="padding:60px 24px;text-align:center">
+      <div style="font-size:32px;margin-bottom:12px">🔒</div>
+      <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:6px">Access Restricted</div>
+      <div style="font-size:13px;color:var(--muted)">Lifecycle and replacement data relies on cost and depreciation figures not visible to this role.</div>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
+
+  try {
+    const costSummaries = await loadAssetCostSummaries();
+    renderFinanceLifecycleFromData(costSummaries);
+  } catch (err) {
+    el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
+  }
+}
+
+function renderFinanceLifecycleFromData(costSummaries) {
+  const el = document.getElementById('finance-subtab-content');
+  if (!el) return;
+
+  // Only assets with a real acquisition cost on file make sense to
+  // compare against — without one, neither depreciation nor a real
+  // maintenance-cost ratio can be computed honestly.
+  const rows = assets.filter(a => a.acquisitionCost).map(a => {
+    const summary = costSummaries[a.id];
+    const maintCost = summary ? summary.total : 0;
+    const maintRatio = (maintCost / a.acquisitionCost) * 100;
+    const ageYears = a.acquisitionDate ? (Date.now() - new Date(a.acquisitionDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000) : null;
+    const lifespanUsedPct = (ageYears != null && a.lifespan) ? (ageYears / a.lifespan) * 100 : null;
+    const pastLifespan = a.fullyDepreciated === true || (lifespanUsedPct != null && lifespanUsedPct >= 100);
+
+    // Replacement priority combines two independent, real signals -
+    // whether the asset has used up its own expected working life,
+    // and whether keeping it running is costing a real, disproportionate
+    // amount relative to what it was worth to begin with. Same real
+    // 75%/50% thresholds already used for the color-coding on each
+    // asset's own Maintenance Cost panel, not new numbers invented
+    // for this view specifically.
+    let priority = 'none';
+    if (pastLifespan && maintRatio >= 50) priority = 'critical';
+    else if (pastLifespan || maintRatio >= 75) priority = 'high';
+    else if (maintRatio >= 50 || (lifespanUsedPct != null && lifespanUsedPct >= 80)) priority = 'medium';
+
+    return { a, maintCost, maintRatio, ageYears, lifespanUsedPct, pastLifespan, priority };
+  });
+
+  const priorityOrder = { critical: 0, high: 1, medium: 2, none: 3 };
+  rows.sort((x, y) => priorityOrder[x.priority] - priorityOrder[y.priority] || y.maintRatio - x.maintRatio);
+
+  const criticalCount = rows.filter(r => r.priority === 'critical').length;
+  const highCount = rows.filter(r => r.priority === 'high').length;
+  const pastLifespanCount = rows.filter(r => r.pastLifespan).length;
+  const flaggedReplacementCost = rows.filter(r => r.priority === 'critical' || r.priority === 'high').reduce((sum, r) => sum + r.a.acquisitionCost, 0);
+
+  const priorityStyle = {
+    critical: { bg: '#FEE2E2', color: '#991B1B', label: 'Critical' },
+    high: { bg: '#FEF3C7', color: '#92400E', label: 'High' },
+    medium: { bg: '#DBEAFE', color: '#1E40AF', label: 'Medium' },
+    none: { bg: '#F3F4F6', color: '#6B7280', label: '—' },
+  };
+
+  el.innerHTML = `
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px">Combines each asset's own real depreciation and real maintenance cost history — not a general financial statement, this is the view built to actually decide what to replace and when, backed by the numbers already tracked everywhere else in this app.</div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Critical Priority</div>
+        <div style="font-size:20px;font-weight:800;color:var(--red)">${criticalCount}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">Past expected lifespan AND high maintenance cost</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">High Priority</div>
+        <div style="font-size:20px;font-weight:800;color:var(--amber,#B45309)">${highCount}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">Past lifespan, or maintenance cost ≥75% of value</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Past Expected Lifespan</div>
+        <div style="font-size:20px;font-weight:800;color:var(--navy)">${pastLifespanCount}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">Fully depreciated under straight-line accounting</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Flagged Replacement Value</div>
+        <div style="font-size:20px;font-weight:800;color:var(--navy)">${formatCurrency(flaggedReplacementCost)}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">Original acquisition cost of Critical + High assets</div>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead><tr style="background:#F8FAFC;text-align:left">
+          <th style="padding:10px 12px">Asset</th>
+          <th style="padding:10px 12px;text-align:right">Acquisition Cost</th>
+          <th style="padding:10px 12px;text-align:right">Current Value</th>
+          <th style="padding:10px 12px;text-align:right">Maintenance Cost</th>
+          <th style="padding:10px 12px;text-align:right">Maint. Ratio</th>
+          <th style="padding:10px 12px">Age / Expected Life</th>
+          <th style="padding:10px 12px">Priority</th>
+        </tr></thead>
+        <tbody>
+          ${rows.length === 0 ? `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted)">No assets with an acquisition cost on file yet — this fills in as that's recorded.</td></tr>` :
+            rows.map(r => {
+              const ps = priorityStyle[r.priority];
+              return `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px">
+                  <div style="font-weight:600;color:var(--text)">${escapeHtml(r.a.name)}</div>
+                  <div style="font-size:11px;color:var(--muted)">${escapeHtml(r.a.id)}</div>
+                </td>
+                <td style="padding:10px 12px;text-align:right">${formatCurrency(r.a.acquisitionCost)}</td>
+                <td style="padding:10px 12px;text-align:right">${r.a.currentValue != null ? formatCurrency(r.a.currentValue) : '—'}</td>
+                <td style="padding:10px 12px;text-align:right">${formatCurrency(r.maintCost)}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:600;color:${r.maintRatio >= 75 ? 'var(--red)' : r.maintRatio >= 50 ? 'var(--amber,#B45309)' : 'var(--text)'}">${r.maintRatio.toFixed(0)}%</td>
+                <td style="padding:10px 12px">${r.ageYears != null ? r.ageYears.toFixed(1) + 'y' : '—'} / ${r.a.lifespan || '—'}y${r.pastLifespan ? ' <span style="color:var(--red);font-weight:600">(past)</span>' : ''}</td>
+                <td style="padding:10px 12px"><span style="font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:10px;background:${ps.bg};color:${ps.color}">${ps.label}</span></td>
+              </tr>`;
+            }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // --- Reports ---
