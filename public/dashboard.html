@@ -10519,8 +10519,8 @@ async function submitScanAssetBarcode() {
       const idx = assets.findIndex(a => a.recordId === data.recordId);
       if (idx !== -1) {
         try {
-          showDetail(idx);
           switchTab('assets');
+          showDetail(idx);
         } catch (openErr) {
           console.error('Failed to open asset after barcode scan:', openErr);
           alert(`Linked to ${data.assetId} — ${data.assetName}, but something went wrong opening it. Search for it in the register instead, and please report this.`);
@@ -10591,8 +10591,8 @@ async function submitLinkAssetBarcode(code, recordId) {
     const idx = assets.findIndex(a => a.recordId === recordId);
     if (idx !== -1) {
       try {
-        showDetail(idx);
         switchTab('assets');
+        showDetail(idx);
       } catch (openErr) {
         console.error('Failed to open asset after linking barcode:', openErr);
         alert('Barcode linked, but something went wrong opening the asset. Search for it in the register instead, and please report this.');
