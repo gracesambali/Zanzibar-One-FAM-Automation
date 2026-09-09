@@ -12784,6 +12784,7 @@ async function loadStaffList() {
   }
   return cachedStaffList;
 }
+TAB_PREFETCH_FETCHERS.staffList = loadStaffList;
 
 function closePlanModal() {
   const el = document.getElementById('planModalOverlay');
@@ -14617,20 +14618,53 @@ function closeAssetLinkModal() {
 // search the existing vendor list.
 let vendorListCache = []; // fetched once per modal open, filtered locally without refetching
 
+async function fetchSlaTargetsData() {
+  const resp = await fetch('/api/get-assets?slaTargets=true');
+  const data = await resp.json();
+  const targets = data.targets || [];
+  const order = ['OVERDUE', 'URGENT', 'UPCOMING'];
+  return order.map(u => targets.find(t => t.urgency === u)).filter(Boolean);
+}
+
+function renderSlaTargetsFromData(sorted) {
+  const el = document.getElementById('slaSettingsBody');
+  if (!el) return;
+  el.innerHTML = sorted.map(t => `
+    <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">${t.urgency}</div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Response (hours)</label>
+          <input id="sla_${t.urgency}_response" type="number" min="0" step="any" value="${t.responseHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Resolution (hours)</label>
+          <input id="sla_${t.urgency}_resolution" type="number" min="0" step="any" value="${t.resolutionHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </div>
+      </div>
+    </div>`).join('');
+}
+
 // Editing the actual promised SLA numbers — Business Owner/System
 // Admin only, confirmed by nature: this is a business policy
 // decision, not routine entry. Fetches the real current targets
 // first rather than assuming defaults, since they may already have
 // been edited by someone else.
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception, with the same real, deliberate care already applied
+// to BMS Notification Settings - this is a real, editable form, so
+// the background refresh only ever updates the cache quietly, never
+// re-rendering over targets someone may already be editing.
 async function openSLASettingsModal() {
   const overlay = document.createElement('div');
   overlay.id = 'slaSettingsOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const cached = tabPrefetchCache.slaTargets;
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">SLA Targets</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Response = how quickly staff acts after a request comes in. Resolution = how quickly it's actually finished. Both measured automatically from real work order activity — nothing to log separately.</div>
-      <div id="slaSettingsBody"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
+      <div id="slaSettingsBody">${cached ? '' : '<div style="font-size:12px;color:var(--muted)">Loading…</div>'}</div>
       <div id="sla_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
       <div style="display:flex;gap:8px;margin-top:14px">
         <button onclick="document.getElementById('slaSettingsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -14639,26 +14673,18 @@ async function openSLASettingsModal() {
     </div>`;
   document.body.appendChild(overlay);
 
+  if (cached) {
+    renderSlaTargetsFromData(cached.data);
+    fetchSlaTargetsData().then(sorted => {
+      tabPrefetchCache.slaTargets = { data: sorted, fetchedAt: Date.now() };
+    }).catch(err => console.error('Background SLA Targets refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/get-assets?slaTargets=true');
-    const data = await resp.json();
-    const targets = data.targets || [];
-    const order = ['OVERDUE', 'URGENT', 'UPCOMING'];
-    const sorted = order.map(u => targets.find(t => t.urgency === u)).filter(Boolean);
-    document.getElementById('slaSettingsBody').innerHTML = sorted.map(t => `
-      <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)">
-        <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">${t.urgency}</div>
-        <div style="display:flex;gap:10px">
-          <div style="flex:1">
-            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Response (hours)</label>
-            <input id="sla_${t.urgency}_response" type="number" min="0" step="any" value="${t.responseHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-          </div>
-          <div style="flex:1">
-            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Resolution (hours)</label>
-            <input id="sla_${t.urgency}_resolution" type="number" min="0" step="any" value="${t.resolutionHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-          </div>
-        </div>
-      </div>`).join('');
+    const sorted = await fetchSlaTargetsData();
+    tabPrefetchCache.slaTargets = { data: sorted, fetchedAt: Date.now() };
+    renderSlaTargetsFromData(sorted);
   } catch (err) {
     document.getElementById('slaSettingsBody').innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load current targets: ${err.message}</div>`;
   }
@@ -14698,6 +14724,7 @@ async function submitSLATargets() {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save targets');
+    tabPrefetchCache.slaTargets = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-save target values next time
     document.getElementById('slaSettingsOverlay')?.remove();
     renderWorkOrders();
   } catch (err) {
