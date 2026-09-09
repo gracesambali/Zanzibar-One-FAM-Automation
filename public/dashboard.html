@@ -2266,11 +2266,11 @@ function showDetail(idx) {
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
-    ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
-    ${canRequestProcurement ? `<button onclick="orderSparePart('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Order a Spare Part</button>` : ""}
+    ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
+    ${canRequestProcurement ? `<button onclick="orderSparePart('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Order a Spare Part</button>` : ""}
     ${canManage && a.needsTechnicalReview ? `<button onclick="markTechnicalReviewDone('${a.recordId}', ${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #92400E;border-radius:8px;background:#FEF3C7;color:#92400E;cursor:pointer">⚠ Mark Reviewed</button>` : ""}
-    ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
-    ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${a.name.replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
+    ${canManage ? `<button onclick="openRelocateForm('${a.recordId}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--amber);border-radius:8px;background:#fff;color:var(--amber);cursor:pointer">Relocate</button>` : ""}
+    ${canManage ? `<button onclick="decommissionAsset('${a.recordId}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Decommission</button>` : ""}
     <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.status}</span>
     <span class="badge ${critBadge(a.criticality)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${a.criticality}</span>
   </div></div>
@@ -10394,7 +10394,12 @@ async function submitCloseWoScan() {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Could not close this work order');
       closeCloseWoScanModal();
-      await renderWorkOrders();
+      try {
+        await renderWorkOrders();
+      } catch (refreshErr) {
+        console.error('Work order closed, but the list failed to refresh:', refreshErr);
+        alert('The work order was closed, but the list on screen may be out of date — refresh the page to see the current state.');
+      }
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.style.display = 'block';
@@ -10512,7 +10517,15 @@ async function submitScanAssetBarcode() {
     if (!data.needsLink) {
       closeScanAssetBarcodeModal();
       const idx = assets.findIndex(a => a.recordId === data.recordId);
-      if (idx !== -1) { showDetail(idx); switchTab('assets'); }
+      if (idx !== -1) {
+        try {
+          showDetail(idx);
+          switchTab('assets');
+        } catch (openErr) {
+          console.error('Failed to open asset after barcode scan:', openErr);
+          alert(`Linked to ${data.assetId} — ${data.assetName}, but something went wrong opening it. Search for it in the register instead, and please report this.`);
+        }
+      }
       else alert(`Linked to ${data.assetId} — ${data.assetName}, but couldn't open it directly. Search for it in the register.`);
       return;
     }
@@ -10576,7 +10589,15 @@ async function submitLinkAssetBarcode(code, recordId) {
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not link this barcode');
     document.getElementById('linkAssetBarcodeOverlay')?.remove();
     const idx = assets.findIndex(a => a.recordId === recordId);
-    if (idx !== -1) { showDetail(idx); switchTab('assets'); }
+    if (idx !== -1) {
+      try {
+        showDetail(idx);
+        switchTab('assets');
+      } catch (openErr) {
+        console.error('Failed to open asset after linking barcode:', openErr);
+        alert('Barcode linked, but something went wrong opening the asset. Search for it in the register instead, and please report this.');
+      }
+    }
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
