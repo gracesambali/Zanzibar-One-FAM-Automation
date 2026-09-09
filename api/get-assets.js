@@ -1194,6 +1194,43 @@ export default async function handler(req, res) {
     }
   }
 
+  if (req.query.requisitionResponses) {
+    try {
+      const { query: pgQuery, getById } = await import("../lib/postgresClient.js");
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+      const owner = await getById("requisitions", req.query.requisitionResponses).catch(() => null);
+      if (!owner || owner.organization_id !== session.org) return res.status(404).json({ error: "Requisition not found." });
+
+      const result = await pgQuery("select * from procurement_responses where requisition_id = $1", [req.query.requisitionResponses])
+        .catch(() => { throw new Error("Could not load vendor quotes"); });
+
+      const responses = await Promise.all(result.rows.map(async r => {
+        let attachmentUrl = null;
+        try {
+          attachmentUrl = await getSignedUrlSafe(r.proforma_attachment_url);
+        } catch (err) {
+          console.error("requisitionResponses read: could not sign attachment for", r.vendor_name, err.message);
+        }
+        return {
+          id: r.id,
+          vendorName: r.vendor_name || "",
+          attachmentUrl,
+          attachmentFilename: r.proforma_attachment_filename || null,
+          totalCost: r.total_cost_ai !== null ? Number(r.total_cost_ai) : null,
+          vatStatus: r.vat_status_ai || "",
+          summary: r.summary_ai || "",
+          chosen: !!r.chosen,
+        };
+      }));
+      responses.sort((a, b) => (a.totalCost ?? Infinity) - (b.totalCost ?? Infinity));
+
+      return res.status(200).json({ responses });
+    } catch (err) {
+      console.error("requisitionResponses read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   if (req.query.requisitionActivityLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");

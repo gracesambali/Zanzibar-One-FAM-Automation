@@ -2020,3 +2020,14 @@ alter table components add column if not exists target_refill_liters numeric;
 alter table work_orders add column if not exists closure_method text;
 alter table work_orders add column if not exists supervisor_review_status text;
 alter table work_orders add column if not exists supervisor_review_reason text;
+
+-- ============================================================
+-- AI-powered vendor quote comparison, extended to Requisitions -
+-- requested directly. procurement_responses already supported this
+-- (requisition_id was added earlier in anticipation, see above), but
+-- no uniqueness rule existed yet for the requisition side the way one
+-- already did for the work-order side - added here for the same real
+-- reason: prevent the same vendor being accidentally added twice to
+-- the same requisition's own comparison list.
+-- ============================================================
+create unique index if not exists idx_procurement_responses_requisition_vendor_unique on procurement_responses (requisition_id, vendor_name) where requisition_id is not null;

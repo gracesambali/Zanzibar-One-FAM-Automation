@@ -1924,13 +1924,17 @@ export default async function handler(req, res) {
       if (!isOverseer && session.r !== "procurement") {
         return res.status(403).json({ error: "Only Procurement can add a vendor quote." });
       }
-      const { woId, vendorName } = req.body;
-      if (!woId || !vendorName || !vendorName.trim()) {
-        return res.status(400).json({ error: "woId and vendorName are required" });
+      const { woId, requisitionId, vendorName } = req.body;
+      if ((!woId && !requisitionId) || !vendorName || !vendorName.trim()) {
+        return res.status(400).json({ error: "vendorName is required, along with either woId or requisitionId" });
       }
       try {
         const { insert } = await import("../lib/postgresClient.js");
-        const created = await insert("procurement_responses", { wo_id: woId, vendor_name: vendorName.trim(), chosen: false, organization_id: session.org });
+        const created = await insert("procurement_responses", {
+          wo_id: woId || null,
+          requisition_id: requisitionId || null,
+          vendor_name: vendorName.trim(), chosen: false, organization_id: session.org,
+        });
         return res.status(200).json({ success: true, responseId: created.id });
       } catch (err) {
         console.error("addProcurementResponse error:", err);
@@ -1997,13 +2001,14 @@ export default async function handler(req, res) {
       if (!isOverseer && session.r !== "procurement") {
         return res.status(403).json({ error: "Only Procurement can choose a vendor quote." });
       }
-      const { responseId, woId } = req.body;
-      if (!responseId || !woId) return res.status(400).json({ error: "responseId and woId are required" });
+      const { responseId, woId, requisitionId } = req.body;
+      if (!responseId || (!woId && !requisitionId)) return res.status(400).json({ error: "responseId is required, along with either woId or requisitionId" });
       try {
         const { query: pgQuery, update } = await import("../lib/postgresClient.js");
 
-        const listResult = await pgQuery("select * from procurement_responses where wo_id = $1", [woId])
-          .catch(() => { throw new Error("Could not look up existing quotes"); });
+        const listResult = woId
+          ? await pgQuery("select * from procurement_responses where wo_id = $1", [woId]).catch(() => { throw new Error("Could not look up existing quotes"); })
+          : await pgQuery("select * from procurement_responses where requisition_id = $1", [requisitionId]).catch(() => { throw new Error("Could not look up existing quotes"); });
         const others = listResult.rows.filter(r => r.id !== responseId && r.chosen);
 
         if (others.length > 0) {
@@ -2018,19 +2023,35 @@ export default async function handler(req, res) {
         await update("procurement_responses", responseId, { chosen: true })
           .catch(() => { throw new Error("Could not mark quote as chosen"); });
 
-        // Best-effort activity log on the actual work order — woId here
-        // is the plain-text "WO-..." value, not the internal row id, so
-        // it has to be looked up first. Not fatal if this part fails;
-        // the quote is already chosen either way.
-        try {
-          const woResult = await pgQuery("select id from work_orders where wo_id = $1 limit 1", [woId]).catch(() => null);
-          const woRecord = woResult && woResult.rows[0];
-          const chosenVendor = listResult.rows.find(r => r.id === responseId);
-          if (woRecord) {
-            await appendActivityLog(woRecord.id, `🏆 Vendor quote chosen: ${chosenVendor ? chosenVendor.vendor_name : responseId} — by ${session.u}`, session.u, "system");
+        const chosenVendor = listResult.rows.find(r => r.id === responseId);
+        if (woId) {
+          // Best-effort activity log on the actual work order - woId here
+          // is the plain-text "WO-..." value, not the internal row id, so
+          // it has to be looked up first. Not fatal if this part fails;
+          // the quote is already chosen either way.
+          try {
+            const woResult = await pgQuery("select id from work_orders where wo_id = $1 limit 1", [woId]).catch(() => null);
+            const woRecord = woResult && woResult.rows[0];
+            if (woRecord) {
+              await appendActivityLog(woRecord.id, `🏆 Vendor quote chosen: ${chosenVendor ? chosenVendor.vendor_name : responseId} — by ${session.u}`, session.u, "system");
+            }
+          } catch (logErr) {
+            console.error("chooseProcurementResponse activity log error:", logErr);
           }
-        } catch (logErr) {
-          console.error("chooseProcurementResponse activity log error:", logErr);
+        } else {
+          try {
+            const { getById, insert } = await import("../lib/postgresClient.js");
+            const requisition = await getById("requisitions", requisitionId).catch(() => null);
+            if (requisition) {
+              await insert("requisition_activity_log", {
+                action: "Vendor Quote Chosen",
+                details: `${requisition.requisition_number} — ${chosenVendor ? chosenVendor.vendor_name : responseId}`,
+                performed_by: session.u, organization_id: session.org,
+              }).catch(() => {});
+            }
+          } catch (logErr) {
+            console.error("chooseProcurementResponse (requisition) activity log error:", logErr);
+          }
         }
 
         return res.status(200).json({ success: true });
