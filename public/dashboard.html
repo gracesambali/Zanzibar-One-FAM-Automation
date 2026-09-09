@@ -10015,63 +10015,87 @@ async function loadInventoryYearTabs() {
   }
 }
 
+async function fetchInventorySnapshotData(year) {
+  const resp = await fetch(`/api/get-assets?inventorySnapshot=true&year=${year}`);
+  return resp.json();
+}
+
+function renderInventorySnapshotFromData(year, data) {
+  const container = document.getElementById('view-inventory');
+  const items = data.items || [];
+  const totalValue = items.reduce((sum, i) => sum + (i.unitCost != null ? i.unitCost * i.quantity : 0), 0);
+  container.innerHTML = `<div style="padding:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy)">Inventory — ${year}</div>
+        <div style="font-size:12px;color:var(--muted)">A fixed historical record${data.takenAt ? ', saved ' + new Date(data.takenAt).toLocaleDateString() : ''} — read-only, doesn't change as live stock does.</div>
+      </div>
+    </div>
+    <div id="inventoryYearTabs" style="display:flex;gap:6px;margin:16px 0;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:2px"></div>
+    <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
+      <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">Items</div></div>
+      ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Recorded Value</div></div>` : ''}
+    </div>
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
+      <table class="inv-table">
+        <thead><tr>
+          <th>Item</th>
+          <th>Category</th>
+          <th>Location</th>
+          <th style="text-align:right">Quantity</th>
+        </tr></thead>
+        <tbody>
+          ${items.length === 0 ? `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
+            items.map(i => `<tr>
+              <td>
+                <div class="item-name-cell">${escapeHtml(i.name)}</div>
+                <div class="item-meta-cell">${escapeHtml(i.itemCode)}</div>
+              </td>
+              <td>${escapeHtml(i.category||'—')}</td>
+              <td>${escapeHtml(i.location||'—')}</td>
+              <td class="item-qty-cell">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div id="inventoryActivityLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
+      <div id="inventoryActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>
+  </div>`;
+  loadInventoryYearTabs();
+  loadInventoryActivityLog();
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific year actually being viewed -
+// genuinely safe to cache indefinitely once fetched, since a fixed
+// historical record never changes the way live stock does.
 async function switchInventoryYearView(yearOrLive) {
   inventoryCurrentYearView = yearOrLive;
   if (yearOrLive === 'live') {
     renderInventoryTable();
     return;
   }
-  // A past year's data is genuinely different from the live table -
-  // no quantity-editing actions, no low-stock status, since it's a
-  // fixed historical record, not something still changing.
+
   const container = document.getElementById('view-inventory');
+  const cacheKey = String(yearOrLive);
+  const cached = tabPrefetchCache.inventorySnapshot && tabPrefetchCache.inventorySnapshot.key === cacheKey ? tabPrefetchCache.inventorySnapshot.data : null;
+
+  if (cached) {
+    renderInventorySnapshotFromData(yearOrLive, cached);
+    // Deliberately no background refetch here - a saved historical
+    // snapshot genuinely never changes, unlike everything else this
+    // pattern is used for, so a real, fresh fetch would just be
+    // wasted work confirming the exact same thing again.
+    return;
+  }
+
   container.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading ${yearOrLive}…</div>`;
   try {
-    const resp = await fetch(`/api/get-assets?inventorySnapshot=true&year=${yearOrLive}`);
-    const data = await resp.json();
-    const items = data.items || [];
-    const totalValue = items.reduce((sum, i) => sum + (i.unitCost != null ? i.unitCost * i.quantity : 0), 0);
-    container.innerHTML = `<div style="padding:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div>
-          <div style="font-size:18px;font-weight:700;color:var(--navy)">Inventory — ${yearOrLive}</div>
-          <div style="font-size:12px;color:var(--muted)">A fixed historical record${data.takenAt ? ', saved ' + new Date(data.takenAt).toLocaleDateString() : ''} — read-only, doesn't change as live stock does.</div>
-        </div>
-      </div>
-      <div id="inventoryYearTabs" style="display:flex;gap:6px;margin:16px 0;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:2px"></div>
-      <div style="display:flex;gap:16px;margin:20px 0;flex-wrap:wrap">
-        <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${items.length}</div><div class="summary-label">Items</div></div>
-        ${totalValue > 0 ? `<div class="summary-card"><div class="summary-val" style="color:var(--navy)">${formatCurrency(totalValue)}</div><div class="summary-label">Recorded Value</div></div>` : ''}
-      </div>
-      <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
-        <table class="inv-table">
-          <thead><tr>
-            <th>Item</th>
-            <th>Category</th>
-            <th>Location</th>
-            <th style="text-align:right">Quantity</th>
-          </tr></thead>
-          <tbody>
-            ${items.length === 0 ? `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No items recorded for this year.</td></tr>` :
-              items.map(i => `<tr>
-                <td>
-                  <div class="item-name-cell">${escapeHtml(i.name)}</div>
-                  <div class="item-meta-cell">${escapeHtml(i.itemCode)}</div>
-                </td>
-                <td>${escapeHtml(i.category||'—')}</td>
-                <td>${escapeHtml(i.location||'—')}</td>
-                <td class="item-qty-cell">${i.quantity} ${escapeHtml(i.unitOfMeasure||'')}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-      <div id="inventoryActivityLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:24px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
-        <div id="inventoryActivityLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
-      </div>
-    </div>`;
-    loadInventoryYearTabs();
-    loadInventoryActivityLog();
+    const data = await fetchInventorySnapshotData(yearOrLive);
+    tabPrefetchCache.inventorySnapshot = { key: cacheKey, data, fetchedAt: Date.now() };
+    renderInventorySnapshotFromData(yearOrLive, data);
   } catch (err) {
     container.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load ${yearOrLive}: ${err.message}</div>`;
   }
