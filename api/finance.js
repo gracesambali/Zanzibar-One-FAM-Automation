@@ -658,75 +658,64 @@ async function handleFinancePeriodReport(req, res, organizationId) {
   try {
     const { query } = await import("../lib/postgresClient.js");
 
-    const totals = await query(
-      `select type, coalesce(sum(amount), 0) as total from transactions
-       where organization_id = $1 and transaction_date >= $2 and transaction_date < $3
-       group by type`,
-      [organizationId, startStr, endStr]
-    );
-    const income = Number(totals.rows.find(r => r.type === "income")?.total || 0);
-    const expense = Number(totals.rows.find(r => r.type === "expense")?.total || 0);
-
-    const categoryBreakdown = await query(
-      `select coalesce(c.name, 'Uncategorized') as category, sum(t.amount) as total
-       from transactions t
-       left join transaction_categories c on c.id = t.category_id
-       where t.organization_id = $1 and t.type = 'expense'
-         and t.transaction_date >= $2 and t.transaction_date < $3
-       group by c.name
-       order by total desc`,
+    // Real work-order maintenance spend within this period - the same
+    // date already used to decide "when did this cost happen" (when
+    // it was actually entered, since that's the closest real signal
+    // FAM has, falling back to completion date if cost was somehow
+    // never separately edited).
+    const woSpend = await query(
+      `select coalesce(maintenance_type, 'Other') as type, asset_id, asset_name, building,
+              coalesce(cost_tzs, 0) as cost
+       from work_orders
+       where organization_id = $1 and cost_tzs is not null and cost_tzs > 0
+         and coalesce(cost_edited_date, completed_date) >= $2 and coalesce(cost_edited_date, completed_date) < $3`,
       [organizationId, startStr, endStr]
     );
 
-    const billsPaid = await query(
-      // Real bills actually paid during this window - inferred from
-      // the real transactions they generated (every bill payment
-      // writes a real expense transaction with this exact, reliable
-      // "(bill payment)" suffix, confirmed directly against the code
-      // that generates it), not the bill's own current
-      // next_due_date, which only ever reflects its NEXT due date,
-      // not history.
-      `select coalesce(sum(amount), 0) as total, count(*) as count
-       from transactions
-       where organization_id = $1 and type = 'expense' and description like '%(bill payment)'
-         and transaction_date >= $2 and transaction_date < $3`,
+    // Real, paid, linked requisition spend within this same period -
+    // the same real source already closing the gap for Cost Overview
+    // and Lifecycle & Replacement, counted here under the same real
+    // Procurement type as work-order-driven procurement spend.
+    const reqSpend = await query(
+      `select r.linked_asset_id as asset_id, r.building, coalesce(r.payment_amount_tzs, 0) as cost
+       from requisitions r
+       where r.organization_id = $1 and r.payment_status = 'Paid' and r.is_asset = false and r.linked_asset_id is not null
+         and r.payment_date >= $2 and r.payment_date < $3`,
       [organizationId, startStr, endStr]
     );
 
-    const payrollPaid = await query(
-      `select coalesce(sum(amount), 0) as total, count(*) as count
-       from transactions
-       where organization_id = $1 and type = 'expense' and description like 'Salary —%'
-         and transaction_date >= $2 and transaction_date < $3`,
-      [organizationId, startStr, endStr]
-    );
+    const byType = {};
+    const byAsset = {};
+    const byBuilding = {};
+    let total = 0;
 
-    const liabilityPayments = await query(
-      `select coalesce(sum(amount), 0) as total, count(*) as count
-       from transactions
-       where organization_id = $1 and type = 'expense' and description like 'Loan repayment%'
-         and transaction_date >= $2 and transaction_date < $3`,
-      [organizationId, startStr, endStr]
-    );
+    const addSpend = (type, assetId, assetName, building, cost) => {
+      if (!cost) return;
+      total += cost;
+      byType[type] = (byType[type] || 0) + cost;
+      if (assetId) {
+        if (!byAsset[assetId]) byAsset[assetId] = { assetId, assetName: assetName || assetId, total: 0 };
+        byAsset[assetId].total += cost;
+      }
+      if (building) byBuilding[building] = (byBuilding[building] || 0) + cost;
+    };
+
+    woSpend.rows.forEach(r => addSpend(r.type, r.asset_id, r.asset_name, r.building, Number(r.cost)));
+    reqSpend.rows.forEach(r => addSpend("Procurement", r.asset_id, null, r.building, Number(r.cost)));
+
+    const typeBreakdown = Object.entries(byType).map(([type, cost]) => ({ type, cost })).sort((a, b) => b.cost - a.cost);
+    const assetBreakdown = Object.values(byAsset).sort((a, b) => b.total - a.total).slice(0, 10);
+    const buildingBreakdown = Object.entries(byBuilding).map(([building, cost]) => ({ building, cost })).sort((a, b) => b.cost - a.cost);
 
     return res.status(200).json({
       periodType,
       label: range.label,
       startDate: startStr,
       endDate: range.end.toISOString().split("T")[0], // exclusive end, for the caller's own reference
-      totalIncome: income,
-      totalExpense: expense,
-      netPosition: income - expense,
-      categoryBreakdown: (() => {
-        const rows = categoryBreakdown.rows.map(r => ({ category: r.category, total: Number(r.total) }));
-        const top = rows.slice(0, 6);
-        const rest = rows.slice(6).reduce((sum, r) => sum + r.total, 0);
-        if (rest > 0) top.push({ category: "Other", total: rest });
-        return top;
-      })(),
-      billsPaid: { total: Number(billsPaid.rows[0].total), count: Number(billsPaid.rows[0].count) },
-      payrollPaid: { total: Number(payrollPaid.rows[0].total), count: Number(payrollPaid.rows[0].count) },
-      liabilityPayments: { total: Number(liabilityPayments.rows[0].total), count: Number(liabilityPayments.rows[0].count) },
+      totalMaintenanceCost: total,
+      typeBreakdown,
+      assetBreakdown,
+      buildingBreakdown,
     });
   } catch (err) {
     console.error("finance period report error:", err);
