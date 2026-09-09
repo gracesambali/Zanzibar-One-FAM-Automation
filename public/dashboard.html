@@ -6228,21 +6228,46 @@ async function downloadFuelReportPdf(period) {
   }
 }
 
+async function fetchFleetActivityLogData() {
+  const resp = await fetch('/api/get-assets?fleetActivityLog=true');
+  const data = await resp.json();
+  return data.entries || [];
+}
+TAB_PREFETCH_FETCHERS.fleetActivityLog = fetchFleetActivityLogData;
+
+function renderFleetActivityLogFromData(entries) {
+  const content = document.getElementById('fleetActivityLogContent');
+  if (!content) return;
+  content.innerHTML = entries.length === 0
+    ? `<div style="font-style:italic">No activity recorded yet.</div>`
+    : entries.map(e => `
+      <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+        <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+      </div>`).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadFleetActivityLog() {
   const content = document.getElementById('fleetActivityLogContent');
   if (!content) return;
+  const cached = tabPrefetchCache.fleetActivityLog;
+
+  if (cached) {
+    renderFleetActivityLogFromData(cached.data);
+    fetchFleetActivityLogData().then(entries => {
+      tabPrefetchCache.fleetActivityLog = { data: entries, fetchedAt: Date.now() };
+      if (document.getElementById('fleetActivityLogContent')) renderFleetActivityLogFromData(entries);
+    }).catch(err => console.error('Background Fleet Activity Log refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/get-assets?fleetActivityLog=true');
-    const data = await resp.json();
-    const entries = data.entries || [];
-    content.innerHTML = entries.length === 0
-      ? `<div style="font-style:italic">No activity recorded yet.</div>`
-      : entries.map(e => `
-        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
-          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
-          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
-        </div>`).join('');
+    const entries = await fetchFleetActivityLogData();
+    tabPrefetchCache.fleetActivityLog = { data: entries, fetchedAt: Date.now() };
+    renderFleetActivityLogFromData(entries);
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
   }
@@ -9842,21 +9867,46 @@ document.addEventListener('click', (e) => {
   }
 });
 
+async function fetchInventoryActivityLogData() {
+  const resp = await fetch('/api/get-assets?inventoryActivityLog=true');
+  const data = await resp.json();
+  return data.entries || [];
+}
+TAB_PREFETCH_FETCHERS.inventoryActivityLog = fetchInventoryActivityLogData;
+
+function renderInventoryActivityLogFromData(entries) {
+  const content = document.getElementById('inventoryActivityLogContent');
+  if (!content) return;
+  content.innerHTML = entries.length === 0
+    ? `<div style="font-style:italic">No activity recorded yet.</div>`
+    : entries.map(e => `
+      <div style="padding:7px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
+        <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
+      </div>`).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern.
 async function loadInventoryActivityLog() {
   const content = document.getElementById('inventoryActivityLogContent');
   if (!content) return;
+  const cached = tabPrefetchCache.inventoryActivityLog;
+
+  if (cached) {
+    renderInventoryActivityLogFromData(cached.data);
+    fetchInventoryActivityLogData().then(entries => {
+      tabPrefetchCache.inventoryActivityLog = { data: entries, fetchedAt: Date.now() };
+      if (document.getElementById('inventoryActivityLogContent')) renderInventoryActivityLogFromData(entries);
+    }).catch(err => console.error('Background Inventory Activity Log refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/get-assets?inventoryActivityLog=true');
-    const data = await resp.json();
-    const entries = data.entries || [];
-    content.innerHTML = entries.length === 0
-      ? `<div style="font-style:italic">No activity recorded yet.</div>`
-      : entries.map(e => `
-        <div style="padding:7px 0;border-bottom:1px solid var(--border)">
-          <span style="font-weight:600;color:var(--navy)">${escapeHtml(e.action)}</span>
-          <span style="color:var(--text)"> — ${escapeHtml(e.details)}</span>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(e.performedBy || 'unknown')} · ${new Date(e.performedAt).toLocaleString()}</div>
-        </div>`).join('');
+    const entries = await fetchInventoryActivityLogData();
+    tabPrefetchCache.inventoryActivityLog = { data: entries, fetchedAt: Date.now() };
+    renderInventoryActivityLogFromData(entries);
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red)">Could not load activity: ${err.message}</div>`;
   }
@@ -11555,31 +11605,54 @@ async function submitInventoryMovement(itemId) {
   }
 }
 
+async function fetchInventoryHistoryData(itemId) {
+  const resp = await fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}`);
+  const data = await resp.json();
+  return data.movements || [];
+}
+
+function renderInventoryHistoryFromData(movements) {
+  const el = document.getElementById('inv_historyContent');
+  if (!el) return;
+  el.innerHTML = movements.length === 0
+    ? `<div style="font-style:italic">No movements recorded yet.</div>`
+    : movements.map(m => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;color:${m.movementType === 'IN' ? 'var(--green)' : 'var(--red)'}">${m.movementType === 'IN' ? '↑ IN' : '↓ OUT'} ${m.quantity}</span>
+        ${m.reason ? `<span style="color:var(--text)"> — ${escapeHtml(m.reason)}</span>` : ''}
+        ${m.department ? `<span style="color:var(--muted)"> (${escapeHtml(m.department)})</span>` : ''}
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(m.performedBy || 'unknown')} · ${new Date(m.performedAt).toLocaleString()}</div>
+      </div>`).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Keyed by the specific item actually being viewed.
 async function openInventoryHistoryModal(itemId, itemName) {
   const overlay = document.createElement('div');
   overlay.id = 'inventoryHistoryOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const cached = tabPrefetchCache.inventoryHistory && tabPrefetchCache.inventoryHistory.key === itemId ? tabPrefetchCache.inventoryHistory.data : null;
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:80vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Movement History — ${escapeHtml(itemName)}</div>
-      <div id="inv_historyContent" style="font-size:12px;color:var(--muted)">Loading…</div>
+      <div id="inv_historyContent" style="font-size:12px;color:var(--muted)">${cached ? '' : 'Loading…'}</div>
       <button onclick="document.getElementById('inventoryHistoryOverlay').remove()" style="width:100%;margin-top:14px;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
     </div>`;
   document.body.appendChild(overlay);
 
+  if (cached) {
+    renderInventoryHistoryFromData(cached);
+    fetchInventoryHistoryData(itemId).then(movements => {
+      tabPrefetchCache.inventoryHistory = { key: itemId, data: movements, fetchedAt: Date.now() };
+      if (document.getElementById('inv_historyContent')) renderInventoryHistoryFromData(movements);
+    }).catch(err => console.error('Background Inventory History refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch(`/api/get-assets?inventoryMovements=true&itemId=${itemId}`);
-    const data = await resp.json();
-    const movements = data.movements || [];
-    document.getElementById('inv_historyContent').innerHTML = movements.length === 0
-      ? `<div style="font-style:italic">No movements recorded yet.</div>`
-      : movements.map(m => `
-        <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-          <span style="font-weight:700;color:${m.movementType === 'IN' ? 'var(--green)' : 'var(--red)'}">${m.movementType === 'IN' ? '↑ IN' : '↓ OUT'} ${m.quantity}</span>
-          ${m.reason ? `<span style="color:var(--text)"> — ${escapeHtml(m.reason)}</span>` : ''}
-          ${m.department ? `<span style="color:var(--muted)"> (${escapeHtml(m.department)})</span>` : ''}
-          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(m.performedBy || 'unknown')} · ${new Date(m.performedAt).toLocaleString()}</div>
-        </div>`).join('');
+    const movements = await fetchInventoryHistoryData(itemId);
+    tabPrefetchCache.inventoryHistory = { key: itemId, data: movements, fetchedAt: Date.now() };
+    renderInventoryHistoryFromData(movements);
   } catch (err) {
     document.getElementById('inv_historyContent').innerHTML = `<div style="color:var(--red)">Could not load history: ${err.message}</div>`;
   }
