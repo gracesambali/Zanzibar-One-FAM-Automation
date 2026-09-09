@@ -7214,7 +7214,7 @@ function renderFinanceShell() {
         ${currencySwitcherHtml('finance')}
       </div>
       <div style="display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px">
-        ${['overview', 'transactions', 'bills', 'liabilities', 'vendors', 'payroll', 'lifecycle', 'reports', 'invoices'].map(t => `
+        ${['overview', 'vendors', 'lifecycle', 'reports', 'export'].map(t => `
           <button onclick="switchFinanceSubTab('${t}')" id="finSubTab-${t}" style="padding:10px 16px;border:none;background:none;font-size:13px;font-weight:600;cursor:pointer;color:${financeSubTab===t?'var(--navy)':'var(--muted)'};border-bottom:2px solid ${financeSubTab===t?'var(--navy)':'transparent'}">
             ${t === 'lifecycle' ? 'Lifecycle & Replacement' : (t.charAt(0).toUpperCase() + t.slice(1))}
           </button>`).join('')}
@@ -7238,14 +7238,16 @@ async function renderFinanceSubTab(tab) {
   if (!el) return;
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
   if (tab === 'overview') return renderFinanceOverview();
-  if (tab === 'transactions') return renderFinanceTransactions();
-  if (tab === 'bills') return renderFinanceBills();
-  if (tab === 'liabilities') return renderFinanceLiabilities();
   if (tab === 'vendors') return renderFinanceVendors();
-  if (tab === 'payroll') return renderFinancePayroll();
   if (tab === 'lifecycle') return renderFinanceLifecycle();
   if (tab === 'reports') return renderFinanceReports();
-  if (tab === 'invoices') return renderFinanceInvoices();
+  if (tab === 'export') return renderFinanceExport();
+  // Confirmed directly: a stale or now-retired tab value (an
+  // already-open browser tab, or a value saved from before this
+  // change) should never silently leave the loading text stuck -
+  // falls back to the real, current default instead.
+  financeSubTab = 'overview';
+  return renderFinanceOverview();
 }
 
 // --- Overview ---
@@ -8168,6 +8170,21 @@ function renderFinanceLifecycleFromData(costSummaries) {
       </div>
     </div>
 
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">Assets by Replacement Priority</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">A real snapshot of the same breakdown shown above</div>
+      ${rows.length === 0 ? `<div style="padding:20px 0;text-align:center;color:var(--muted);font-size:12.5px">No assets with an acquisition cost on file yet.</div>` : `
+      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+        <canvas id="finance-lifecycle-donut" width="140" height="140"></canvas>
+        <div style="display:flex;flex-direction:column;gap:7px;font-size:12px">
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#DC2626;margin-right:6px"></span>Critical — <strong>${criticalCount}</strong></div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#D97706;margin-right:6px"></span>High — <strong>${highCount}</strong></div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563EB;margin-right:6px"></span>Medium — <strong>${rows.filter(r => r.priority === 'medium').length}</strong></div>
+          <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#9CA3AF;margin-right:6px"></span>None — <strong>${rows.filter(r => r.priority === 'none').length}</strong></div>
+        </div>
+      </div>`}
+    </div>
+
     <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead><tr style="background:#F8FAFC;text-align:left">
@@ -8199,6 +8216,120 @@ function renderFinanceLifecycleFromData(costSummaries) {
         </tbody>
       </table>
     </div>`;
+
+  const donutCanvas = document.getElementById('finance-lifecycle-donut');
+  const mediumCount = rows.filter(r => r.priority === 'medium').length;
+  const noneCount = rows.filter(r => r.priority === 'none').length;
+  const segments = [
+    { value: criticalCount, color: '#DC2626' },
+    { value: highCount, color: '#D97706' },
+    { value: mediumCount, color: '#2563EB' },
+    { value: noneCount, color: '#9CA3AF' },
+  ].filter(s => s.value > 0);
+  if (donutCanvas && segments.length > 0) drawDonut(donutCanvas, segments, 140);
+}
+
+// --- Export (historical bookkeeping data) ---
+
+// Confirmed directly: Transactions, Bills, Liabilities, Payroll, and
+// Invoices moved out of active use here now that a real accounting
+// platform (QuickBooks) is coming - none of this data is deleted,
+// every one of these tables and everything already recorded in them
+// stays fully intact in the database. This is the real, honest
+// replacement: a genuine way to get that real history out as an
+// actual file, not leaving it invisible with no way to reach it.
+function renderFinanceExport() {
+  const el = document.getElementById('finance-subtab-content');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Transactions, Bills, Liabilities, Payroll, and Invoices moved out of active day-to-day use here, now that a real accounting platform is on the way - nothing already recorded was deleted. Download any of it below as a real file to hand off or keep.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+      ${[
+        { key: 'transactions', label: 'Transactions' },
+        { key: 'bills', label: 'Bills' },
+        { key: 'liabilities', label: 'Liabilities' },
+        { key: 'payroll', label: 'Payroll' },
+        { key: 'invoices', label: 'Invoices' },
+      ].map(item => `
+        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
+          <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">${item.label}</div>
+          <button onclick="downloadFinanceHistoryCsv('${item.key}')" id="finexport-${item.key}" style="width:100%;padding:9px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">↓ Download CSV</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+const FINANCE_EXPORT_CONFIG = {
+  transactions: {
+    fetchParam: 'transactions',
+    dataKey: 'transactions',
+    columns: ['date', 'type', 'category', 'description', 'amount'],
+  },
+  bills: {
+    fetchParam: 'bills',
+    dataKey: 'bills',
+    columns: ['name', 'frequency', 'nextDueDate', 'amount', 'status'],
+  },
+  liabilities: {
+    fetchParam: 'liabilities',
+    dataKey: 'liabilities',
+    columns: ['lender', 'principal', 'remainingBalance', 'nextPaymentDate', 'status'],
+  },
+  payroll: {
+    fetchParam: 'payroll',
+    dataKey: 'payroll',
+    columns: ['employeeName', 'salaryAmount', 'paymentMethod', 'nextPayDate', 'status'],
+  },
+  invoices: {
+    fetchParam: 'invoices',
+    dataKey: 'invoices',
+    columns: ['invoiceNumber', 'clientName', 'issueDate', 'dueDate', 'total'],
+  },
+};
+
+// A cell value genuinely containing a comma, quote, or newline needs
+// real CSV quoting or it would silently corrupt the file's own column
+// structure - not just cosmetic escaping.
+function csvEscapeCell(value) {
+  const str = value == null ? '' : String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+async function downloadFinanceHistoryCsv(key) {
+  const btn = document.getElementById(`finexport-${key}`);
+  const config = FINANCE_EXPORT_CONFIG[key];
+  if (!config) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+
+  try {
+    const resp = await fetch(`/api/finance?${config.fetchParam}=true`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load this data');
+    const rows = data[config.dataKey] || [];
+
+    const header = config.columns.map(csvEscapeCell).join(',');
+    const body = rows.map(row => config.columns.map(col => csvEscapeCell(row[col])).join(',')).join('\n');
+    const csv = header + '\n' + body;
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${key}-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Could not download: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
 }
 
 // --- Reports ---
