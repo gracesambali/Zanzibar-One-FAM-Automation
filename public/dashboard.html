@@ -8358,9 +8358,11 @@ function renderFinanceReportsFromData(data) {
   const el = document.getElementById('finance-subtab-content');
   currentFinanceReportData = data; // cached so the Download button doesn't need a second fetch
 
-  const catColors = ['var(--navy)', 'var(--green)', 'var(--red)', 'var(--amber, #B45309)', '#7C3AED', '#0891B2', 'var(--muted)'];
-  const categoryBreakdown = data.categoryBreakdown || [];
-  const catTotal = categoryBreakdown.reduce((s, c) => s + c.total, 0);
+  const typeColors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Procurement: '#B45309', Other: '#6B7280' };
+  const typeBreakdown = data.typeBreakdown || [];
+  const assetBreakdown = data.assetBreakdown || [];
+  const buildingBreakdown = data.buildingBreakdown || [];
+  const buildingMax = Math.max(1, ...buildingBreakdown.map(b => b.cost));
 
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;flex-wrap:wrap">
@@ -8377,46 +8379,62 @@ function renderFinanceReportsFromData(data) {
       <button onclick="downloadFinanceReport()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">↓ Download</button>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
-      ${[
-        { label: 'Income', value: data.totalIncome, color: 'var(--green)' },
-        { label: 'Expense', value: data.totalExpense, color: 'var(--red)' },
-        { label: 'Net Position', value: data.netPosition, color: data.netPosition >= 0 ? 'var(--green)' : 'var(--red)' },
-      ].map(c => `
-        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
-          <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
-          <div style="font-size:20px;font-weight:800;color:${c.color}">${formatCurrency(c.value)}</div>
-        </div>`).join('')}
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Total Maintenance Cost — ${escapeHtml(data.label)}</div>
+      <div style="font-size:24px;font-weight:800;color:var(--navy)">${formatCurrency(data.totalMaintenanceCost)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Real work order and requisition spend recorded in this period — the same numbers behind Cost Overview and Lifecycle & Replacement</div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
-      ${[
-        { label: 'Bills Paid', data: data.billsPaid },
-        { label: 'Payroll Paid', data: data.payrollPaid },
-        { label: 'Loan Payments', data: data.liabilityPayments },
-      ].map(c => `
-        <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
-          <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">${c.label}</div>
-          <div style="font-size:16px;font-weight:700;color:var(--navy)">${formatCurrency(c.data.total)}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">${c.data.count} payment${c.data.count === 1 ? '' : 's'}</div>
-        </div>`).join('')}
+    <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">By Maintenance Type</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:14px">${escapeHtml(data.label)}</div>
+        ${typeBreakdown.length === 0 ? `<div style="padding:30px 0;text-align:center;color:var(--muted);font-size:12.5px">No maintenance cost recorded in this period.</div>` : `
+        <div style="display:flex;align-items:center;gap:16px">
+          <canvas id="finance-reports-donut" width="120" height="120"></canvas>
+          <div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px">
+            ${typeBreakdown.map(t => `<div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${typeColors[t.type]||'#6B7280'};margin-right:5px"></span>${escapeHtml(t.type)} <strong>${formatCurrency(t.cost)}</strong></div>`).join('')}
+          </div>
+        </div>`}
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">By Building</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:14px">${escapeHtml(data.label)}</div>
+        ${buildingBreakdown.length === 0 ? `<div style="padding:30px 0;text-align:center;color:var(--muted);font-size:12.5px">No building recorded against this period's spend.</div>` :
+          buildingBreakdown.map(b => `
+            <div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                <span style="color:var(--text)">${escapeHtml(b.building)}</span>
+                <span style="font-weight:600;color:var(--navy)">${formatCurrency(b.cost)}</span>
+              </div>
+              <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${(b.cost / buildingMax * 100)}%;background:var(--navy)"></div>
+              </div>
+            </div>`).join('')}
+      </div>
     </div>
 
     <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">Expense by Category</div>
-      ${categoryBreakdown.length === 0
-        ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No expenses recorded in this period.</div>`
-        : categoryBreakdown.map((c, i) => `
-          <div style="margin-bottom:10px">
-            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-              <span style="color:var(--text)">${escapeHtml(c.category)}</span>
-              <span style="font-weight:600;color:var(--navy)">${formatCurrency(c.total)}</span>
-            </div>
-            <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
-              <div style="height:100%;width:${catTotal > 0 ? (c.total / catTotal * 100) : 0}%;background:${catColors[i % catColors.length]}"></div>
-            </div>
-          </div>`).join('')}
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">Top Assets by Spend — ${escapeHtml(data.label)}</div>
+      ${assetBreakdown.length === 0 ? `<div style="font-size:12px;color:var(--muted);font-style:italic">No asset-level maintenance cost recorded in this period.</div>` : `
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead><tr style="text-align:left;border-bottom:1px solid var(--border)">
+          <th style="padding:6px 0;color:var(--muted);font-weight:600">Asset</th>
+          <th style="padding:6px 0;color:var(--muted);font-weight:600;text-align:right">Cost</th>
+        </tr></thead>
+        <tbody>
+          ${assetBreakdown.map(a => `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 0">${escapeHtml(a.assetId)} — ${escapeHtml(a.assetName)}</td>
+            <td style="padding:8px 0;text-align:right;font-weight:600;color:var(--navy)">${formatCurrency(a.total)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
     </div>`;
+
+  const donutCanvas = document.getElementById('finance-reports-donut');
+  const segments = typeBreakdown.filter(t => t.cost > 0).map(t => ({ value: t.cost, color: typeColors[t.type] || '#6B7280' }));
+  if (donutCanvas && segments.length > 0) drawDonut(donutCanvas, segments, 120);
 }
 
 // Confirmed directly, discussed and agreed in full: applies here too,
@@ -8456,13 +8474,21 @@ async function renderFinanceReports() {
 // print window with a "Download as PDF" button that calls the
 // browser's own print dialog, not a separate PDF library.
 function buildFinanceReportHtml(data) {
-  const categoryBreakdown = data.categoryBreakdown || [];
-  const breakdownRows = categoryBreakdown.length === 0
-    ? `<tr><td colspan="2" class="empty">No expenses recorded in this period.</td></tr>`
-    : categoryBreakdown.map(c => `<tr><td>${escapeHtml(c.category)}</td><td>${formatCurrency(c.total)}</td></tr>`).join('');
+  const typeBreakdown = data.typeBreakdown || [];
+  const assetBreakdown = data.assetBreakdown || [];
+  const buildingBreakdown = data.buildingBreakdown || [];
+  const typeRows = typeBreakdown.length === 0
+    ? `<tr><td colspan="2" class="empty">No maintenance cost recorded in this period.</td></tr>`
+    : typeBreakdown.map(t => `<tr><td>${escapeHtml(t.type)}</td><td>${formatCurrency(t.cost)}</td></tr>`).join('');
+  const assetRows = assetBreakdown.length === 0
+    ? `<tr><td colspan="2" class="empty">No asset-level maintenance cost recorded in this period.</td></tr>`
+    : assetBreakdown.map(a => `<tr><td>${escapeHtml(a.assetId)} — ${escapeHtml(a.assetName)}</td><td>${formatCurrency(a.total)}</td></tr>`).join('');
+  const buildingRows = buildingBreakdown.length === 0
+    ? `<tr><td colspan="2" class="empty">No building recorded against this period's spend.</td></tr>`
+    : buildingBreakdown.map(b => `<tr><td>${escapeHtml(b.building)}</td><td>${formatCurrency(b.cost)}</td></tr>`).join('');
 
   return `
-    <html><head><title>Finance Report — ${data.label} — ${CLIENT_CONFIG.clientName}</title>
+    <html><head><title>Maintenance Cost Report — ${data.label} — ${CLIENT_CONFIG.clientName}</title>
     <style>
       @page { size: A4; margin: 16mm; }
       body { font-family: Arial, sans-serif; padding: 0; color:#1A1A2E; font-size: 14px; max-width: 720px; margin: 0 auto; }
@@ -8488,27 +8514,34 @@ function buildFinanceReportHtml(data) {
       <div class="report-header">
         <img src="/logo.png" alt="${CLIENT_CONFIG.clientName}" onerror="this.style.display='none'">
         <div>
-          <h1>Finance Report</h1>
+          <h1>Maintenance Cost Report</h1>
           <div class="sub" style="margin-bottom:0">Prepared for ${CLIENT_CONFIG.clientName} · ${escapeHtml(data.label)}</div>
         </div>
       </div>
 
       <div class="kpi-row">
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.totalIncome)}</div><div class="kpi-label">Income</div></div>
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.totalExpense)}</div><div class="kpi-label">Expense</div></div>
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.netPosition)}</div><div class="kpi-label">Net Position</div></div>
-      </div>
-      <div class="kpi-row">
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.billsPaid.total)}</div><div class="kpi-label">Bills Paid (${data.billsPaid.count})</div></div>
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.payrollPaid.total)}</div><div class="kpi-label">Payroll Paid (${data.payrollPaid.count})</div></div>
-        <div class="kpi"><div class="kpi-val">${formatCurrency(data.liabilityPayments.total)}</div><div class="kpi-label">Loan Payments (${data.liabilityPayments.count})</div></div>
+        <div class="kpi"><div class="kpi-val">${formatCurrency(data.totalMaintenanceCost)}</div><div class="kpi-label">Total Maintenance Cost</div></div>
       </div>
 
-      <h2>Expense by Category</h2>
+      <h2>By Maintenance Type</h2>
       <table class="report-table">
         <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
-        <thead><tr><th>Category</th><th>Total</th></tr></thead>
-        <tbody>${breakdownRows}</tbody>
+        <thead><tr><th>Type</th><th>Cost</th></tr></thead>
+        <tbody>${typeRows}</tbody>
+      </table>
+
+      <h2>By Building</h2>
+      <table class="report-table">
+        <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
+        <thead><tr><th>Building</th><th>Cost</th></tr></thead>
+        <tbody>${buildingRows}</tbody>
+      </table>
+
+      <h2>Top Assets by Spend</h2>
+      <table class="report-table">
+        <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
+        <thead><tr><th>Asset</th><th>Cost</th></tr></thead>
+        <tbody>${assetRows}</tbody>
       </table>
     </body></html>
   `;
