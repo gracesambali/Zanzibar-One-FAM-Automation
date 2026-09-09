@@ -16868,6 +16868,16 @@ async function openRequisitionDetail(id) {
         </div>
         ${r.notes ? `<div style="padding:14px 24px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text)"><strong>Notes:</strong> ${escapeHtml(r.notes)}</div>` : ''}
 
+        <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:13px;font-weight:700;color:var(--navy)">Vendor Quotes</div>
+            ${(currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin') && r.status !== 'Cancelled'
+              ? `<button onclick="openAddRequisitionQuoteModal('${r.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">+ Add Vendor Quote</button>`
+              : ''}
+          </div>
+          <div id="requisitionVendorQuotesList" style="font-size:12px;color:var(--muted)">Loading…</div>
+        </div>
+
         <div style="padding:20px 24px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
             <div style="font-size:13px;font-weight:700;color:var(--navy)">Invoices & Documents</div>
@@ -16879,6 +16889,178 @@ async function openRequisitionDetail(id) {
         </div>
       </div>
     </div>`;
+  renderRequisitionVendorQuotes(r);
+}
+
+async function fetchRequisitionQuotesData(requisitionId) {
+  const resp = await fetch('/api/get-assets?requisitionResponses=' + encodeURIComponent(requisitionId));
+  const data = await resp.json();
+  return data.responses || [];
+}
+
+function renderRequisitionQuotesFromData(r, responses) {
+  const listEl = document.getElementById('requisitionVendorQuotesList');
+  if (!listEl) return;
+  const canManage = currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin';
+
+  if (responses.length === 0) {
+    listEl.innerHTML = `<div style="font-style:italic">No vendor quotes yet.</div>`;
+    return;
+  }
+
+  // Same real, already-proven "lowest bid" flag already used for work
+  // orders — only shown when there's more than one quote with an
+  // actual extracted cost to compare against.
+  const extractedCosts = responses.filter(resp => resp.totalCost != null).map(resp => resp.totalCost);
+  const lowestCost = extractedCosts.length > 1 ? Math.min(...extractedCosts) : null;
+
+  listEl.innerHTML = responses.map(resp => {
+    const isLowest = lowestCost !== null && resp.totalCost === lowestCost && !resp.chosen;
+    return `
+    <div style="border:1px solid ${resp.chosen ? 'var(--green)' : isLowest ? 'var(--navy)' : 'var(--border)'};background:${resp.chosen ? '#F0FDF4' : isLowest ? '#F0F5FC' : '#fff'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${resp.vendorName}${resp.chosen ? ' <span style="color:var(--green);font-weight:700">✓ Chosen</span>' : ''}${isLowest ? ' <span style="color:var(--navy);font-weight:700;font-size:11px">● Lowest bid</span>' : ''}</div>
+          ${resp.totalCost != null ? `<div style="font-size:15px;font-weight:700;color:var(--navy);margin-top:2px">${formatCurrency(resp.totalCost)}</div>` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">Cost not yet extracted — AI analysis may still be processing</div>`}
+          ${resp.vatStatus ? `<div style="font-size:11px;color:var(--muted)">${resp.vatStatus}</div>` : ''}
+          ${resp.summary ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px;max-width:420px">${resp.summary}</div>` : ''}
+          ${resp.attachmentUrl ? `<a href="${resp.attachmentUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--navy);text-decoration:underline">View proforma${resp.attachmentFilename ? ' — ' + resp.attachmentFilename : ''}</a>` : `<div style="font-size:11px;color:var(--muted);font-style:italic">No file attached yet</div>`}
+        </div>
+        ${canManage && r.status !== 'Cancelled' && !resp.chosen ? `<button onclick="chooseRequisitionQuote('${r.id}', '${resp.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Choose</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Confirmed directly, discussed and agreed in full: applies here too,
+// no exception. Same real, already-proven pattern already used for
+// work order vendor quotes.
+async function renderRequisitionVendorQuotes(r) {
+  const listEl = document.getElementById('requisitionVendorQuotesList');
+  if (!listEl) return;
+  const cacheKey = r.id;
+  const cached = tabPrefetchCache.requisitionQuotes && tabPrefetchCache.requisitionQuotes.key === cacheKey ? tabPrefetchCache.requisitionQuotes.data : null;
+
+  if (cached) {
+    renderRequisitionQuotesFromData(r, cached);
+    fetchRequisitionQuotesData(r.id).then(responses => {
+      tabPrefetchCache.requisitionQuotes = { key: cacheKey, data: responses, fetchedAt: Date.now() };
+      if (document.getElementById('requisitionVendorQuotesList') && currentRequisitionDetailId === r.id) renderRequisitionQuotesFromData(r, responses);
+    }).catch(err => console.error('Background Requisition Quotes refresh failed (non-fatal):', err.message));
+    return;
+  }
+
+  try {
+    const responses = await fetchRequisitionQuotesData(r.id);
+    tabPrefetchCache.requisitionQuotes = { key: cacheKey, data: responses, fetchedAt: Date.now() };
+    renderRequisitionQuotesFromData(r, responses);
+  } catch (err) {
+    listEl.innerHTML = `<div style="color:var(--red)">Could not load vendor quotes: ${err.message}</div>`;
+  }
+}
+
+async function openAddRequisitionQuoteModal(requisitionId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'addRequisitionQuoteOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
+
+  let vendorOptions = '';
+  try {
+    const vResp = await fetch('/api/work-orders?vendors=true');
+    const vData = await vResp.json();
+    vendorOptions = (vData.vendors || []).map(v => `<option value="${v.name}">`).join('');
+  } catch { /* datalist just stays empty if this fails — free text still works */ }
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Vendor Quote</div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor Name *</label>
+      <input id="arq_vendor" list="arq_vendor_list" placeholder="Pick an existing vendor or type a new one" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <datalist id="arq_vendor_list">${vendorOptions}</datalist>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Proforma Invoice</label>
+      <input id="arq_file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12.5px;margin-bottom:6px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Optional here — can be attached after, but the AI cost/VAT extraction only runs once a file's attached.</div>
+      <div id="arq_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('addRequisitionQuoteOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="arq_submit" onclick="submitAddRequisitionQuote('${requisitionId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Add Quote</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddRequisitionQuote(requisitionId) {
+  const vendorName = document.getElementById('arq_vendor').value.trim();
+  const file = document.getElementById('arq_file').files[0];
+  const errorBox = document.getElementById('arq_error');
+  const btn = document.getElementById('arq_submit');
+  errorBox.style.display = 'none';
+
+  if (!vendorName) { errorBox.textContent = 'Vendor name is required.'; errorBox.style.display = 'block'; return; }
+  if (file && file.size > 5 * 1024 * 1024) { errorBox.textContent = "File is larger than 5MB."; errorBox.style.display = 'block'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addProcurementResponse: true, requisitionId, vendorName }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not add vendor quote');
+
+    if (file) {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const uploadResp = await fetch('/api/work-orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uploadProcurementResponseAttachment: true,
+          responseId: data.responseId,
+          filename: file.name,
+          contentType: file.type || 'application/pdf',
+          fileBase64: base64,
+        }),
+      });
+      const uploadData = await uploadResp.json();
+      if (!uploadResp.ok || !uploadData.success) throw new Error(uploadData.error || 'Quote added, but the file upload failed — try attaching it again.');
+    }
+
+    document.getElementById('addRequisitionQuoteOverlay')?.remove();
+    tabPrefetchCache.requisitionQuotes = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
+    const r = requisitionsCache.find(x => x.id === requisitionId);
+    if (r) renderRequisitionVendorQuotes(r);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Add Quote';
+  }
+}
+
+async function chooseRequisitionQuote(requisitionId, responseId) {
+  if (!confirm('Choose this vendor as the winning quote?')) return;
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chooseProcurementResponse: true, responseId, requisitionId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not choose this quote');
+    tabPrefetchCache.requisitionQuotes = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
+    const r = requisitionsCache.find(x => x.id === requisitionId);
+    if (r) renderRequisitionVendorQuotes(r);
+  } catch (err) {
+    alert('Could not choose this quote: ' + err.message);
+  }
 }
 
 async function submitRequisitionStageAction(updates) {
