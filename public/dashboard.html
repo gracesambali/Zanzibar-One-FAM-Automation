@@ -1513,7 +1513,7 @@ function switchTab(tab) {
   if (tab === 'units' && currentUserRole === 'technician') {
     tab = 'workorders'; // same defense-in-depth principle — never trust hidden-button alone
   }
-  try { localStorage.setItem('fam_last_tab', tab); } catch {}
+  try { if (currentUsername) localStorage.setItem('fam_last_tab_' + currentUsername, tab); } catch {}
   ensureNavGroupExpandedFor(tab);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -19086,17 +19086,16 @@ async function loadAssetsAndInit() {
     }
 
     // TRA categories for the asset edit dropdown — cached the same way
-    // facilities are, since the edit form builds its HTML synchronously
-    // and can't wait on a fetch mid-render.
-    try {
-      const traResp = await fetch('/api/get-assets?traClasses=true');
+    // facilities are, but fire-and-forget: only actually needed once
+    // someone opens the asset edit form, not for the initial reveal
+    // itself, so this must never be a blocking, sequential round trip
+    // that delays showing the app.
+    fetch('/api/get-assets?traClasses=true').then(async traResp => {
       if (traResp.ok) {
         const traData = await traResp.json();
         traClassesCache = traData.classes || [];
       }
-    } catch (err) {
-      console.error('Could not load TRA classes at init:', err);
-    }
+    }).catch(err => console.error('Could not load TRA classes at init (non-fatal):', err));
 
     // Live exchange rates for the currency switcher — non-fatal if this
     // fails, since TZS (the actual stored currency) always still works
@@ -19124,7 +19123,7 @@ async function loadAssetsAndInit() {
     document.querySelector('.footer').style.display = '';
     let restoredTab = null;
     try {
-      const savedTab = localStorage.getItem('fam_last_tab');
+      const savedTab = currentUsername ? localStorage.getItem('fam_last_tab_' + currentUsername) : null;
       if (savedTab && document.getElementById('view-' + savedTab)) restoredTab = savedTab;
     } catch {}
     if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
