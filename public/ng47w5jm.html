@@ -187,7 +187,7 @@
     async function init() {
       try {
         const resp = await fetch('/api/get-assets');
-        if (resp.status === 401) { window.location.href = '/login'; return; }
+        if (resp.status === 401) { window.location.href = '/pk7x2m9q'; return; }
         const data = await resp.json();
         // Confirmed directly: the same real role set already granted
         // genuine inventory permission on the backend - a Business
@@ -208,7 +208,7 @@
         const logoutBtn = document.getElementById('logoutBtn');
         if (data.role !== 'pharmacy') {
           logoutBtn.textContent = 'Back to Dashboard';
-          logoutBtn.onclick = () => { window.location.href = '/dashboard'; };
+          logoutBtn.onclick = () => { window.location.href = '/mv48r1w3'; };
         }
         logoutBtn.style.display = '';
         document.getElementById('mainContent').classList.remove('hidden');
@@ -222,7 +222,7 @@
 
     async function logout() {
       await fetch('/api/login', { method: 'DELETE' });
-      window.location.href = '/login';
+      window.location.href = '/pk7x2m9q';
     }
 
     async function loadItems() {
