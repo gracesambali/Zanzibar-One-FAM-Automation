@@ -49,6 +49,21 @@
       <div class="sub" style="margin:0 0 6px">Optional — so we can tell you once it's actually fixed</div>
       <input id="reporterContact" type="text" placeholder="e.g. +255 7XX XXX XXX or you@email.com">
 
+      <div class="row2" id="facilityRow" style="display:none">
+        <div>
+          <label for="facilitySelect">Facility *</label>
+          <select id="facilitySelect" onchange="onFacilityChange()">
+            <option value="" disabled selected>Choose one…</option>
+          </select>
+        </div>
+        <div>
+          <label for="buildingSelect">Building *</label>
+          <select id="buildingSelect" disabled>
+            <option value="" selected>Choose a facility first…</option>
+          </select>
+        </div>
+      </div>
+
       <div class="row2">
         <div>
           <label for="floorSelect">Floor *</label>
@@ -162,7 +177,7 @@ document.getElementById('photoFile').addEventListener('change', handlePhotoSelec
 // stored location later, no fuzzy text matching needed. "Other" stays
 // available on both, since not every physical space necessarily has a
 // registered asset yet — this shouldn't block a genuine report.
-let locationData = { floors: [] };
+let locationData = { floors: [], facilities: [] };
 
 async function loadLocations() {
   if (!orgId) return;
@@ -170,15 +185,32 @@ async function loadLocations() {
   try {
     const resp = await fetch(`/api/report-issue?publicLocations=true&org=${encodeURIComponent(orgId)}`);
     const data = await resp.json();
-    locationData = data.floors ? data : { floors: [] };
+    locationData = { floors: data.floors || [], facilities: data.facilities || [] };
   } catch (err) {
-    locationData = { floors: [] };
+    locationData = { floors: [], facilities: [] };
   }
   floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
     ${locationData.floors.map(f => `<option value="${f.floor}">${f.floor}</option>`).join('')}
     <option value="__other__">Other (not listed)</option>`;
+
+  if (locationData.facilities.length > 0) {
+    document.getElementById('facilityRow').style.display = '';
+    const facilitySelect = document.getElementById('facilitySelect');
+    facilitySelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
+      ${locationData.facilities.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}`;
+  }
 }
 loadLocations();
+
+function onFacilityChange() {
+  const facilityId = document.getElementById('facilitySelect').value;
+  const buildingSelect = document.getElementById('buildingSelect');
+  const facility = locationData.facilities.find(f => f.id === facilityId);
+  const buildings = facility ? facility.buildings : [];
+  buildingSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
+    ${buildings.map(b => `<option value="${b}">${b}</option>`).join('')}`;
+  buildingSelect.disabled = false;
+}
 
 function onFloorChange() {
   const floorVal = document.getElementById('floorSelect').value;
@@ -226,12 +258,23 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
   const reporterName = document.getElementById('reporterName').value.trim();
   const reporterRole = document.getElementById('reporterRole').value.trim();
   const reporterContact = document.getElementById('reporterContact').value.trim();
+  const building = locationData.facilities.length > 0 ? document.getElementById('buildingSelect').value : null;
   const floor = getFloorValue();
   const roomZone = getRoomValue();
   const category = document.getElementById('category').value;
   const description = document.getElementById('description').value.trim();
   const photoFile = selectedPhotoFile;
 
+  if (locationData.facilities.length > 0 && !document.getElementById('facilitySelect').value) {
+    result.className = 'result error show';
+    result.textContent = 'Please choose a facility.';
+    return;
+  }
+  if (locationData.facilities.length > 0 && !building) {
+    result.className = 'result error show';
+    result.textContent = 'Please choose a building.';
+    return;
+  }
   if (!floor) {
     result.className = 'result error show';
     result.textContent = 'Please choose a floor (or select "Other" and type it in).';
@@ -258,7 +301,7 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/report-issue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ publicReportBreakdown: true, org: orgId, reporterName, reporterDepartment: reporterRole, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType }),
+      body: JSON.stringify({ publicReportBreakdown: true, org: orgId, reporterName, reporterDepartment: reporterRole, reporterContact, building, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType }),
     });
     const data = await resp.json();
 
@@ -272,6 +315,8 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
       document.getElementById('roomOther').style.display = 'none';
       document.getElementById('roomSelect').innerHTML = '<option value="" selected>Choose a floor first…</option>';
       document.getElementById('roomSelect').disabled = true;
+      document.getElementById('buildingSelect').innerHTML = '<option value="" selected>Choose a facility first…</option>';
+      document.getElementById('buildingSelect').disabled = true;
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';

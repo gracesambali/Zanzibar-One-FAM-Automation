@@ -836,7 +836,7 @@ async function handlePublicGetLocations(req, res) {
   if (!organizationId) return res.status(400).json({ error: "A real client link is required — this one is missing information." });
 
   try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
     const orgCheck = await pgQuery("select id from organizations where id = $1", [organizationId]);
     if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
 
@@ -855,7 +855,21 @@ async function handlePublicGetLocations(req, res) {
       rooms: Array.from(floorMap[floor]).sort(),
     }));
 
-    return res.status(200).json({ floors });
+    // Real, registered facilities and buildings - the same formal
+    // structure Manage Facilities and Level View already use
+    // internally, not the loose, ad-hoc text on individual assets.
+    const facilityRows = await pgListAllRecords("facilities", organizationId);
+    const buildingRows = await pgQuery("select * from facility_buildings where organization_id = $1", [organizationId]);
+    const buildingsByFacility = {};
+    for (const b of buildingRows.rows) {
+      if (!buildingsByFacility[b.facility_id]) buildingsByFacility[b.facility_id] = [];
+      buildingsByFacility[b.facility_id].push(b.building_name);
+    }
+    const facilities = facilityRows
+      .map(r => ({ id: r.id, name: r.name || "", buildings: buildingsByFacility[r.id] || [] }))
+      .filter(f => f.name);
+
+    return res.status(200).json({ floors, facilities });
   } catch (err) {
     console.error("handlePublicGetLocations error:", err);
     return res.status(500).json({ error: err.message });
@@ -863,7 +877,7 @@ async function handlePublicGetLocations(req, res) {
 }
 
 async function handlePublicReportBreakdown(req, res) {
-  const { org, reporterName, reporterDepartment, reporterContact, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  const { org, reporterName, reporterDepartment, reporterContact, building, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
   if (!org) return res.status(400).json({ error: "A real client link is required — this one is missing information." });
   if (!reporterName || !reporterName.trim()) return res.status(400).json({ error: "Your name is required." });
   if (!floor || !description || !category) {
@@ -873,13 +887,21 @@ async function handlePublicReportBreakdown(req, res) {
   const assignedRole = REPORT_CATEGORY_TO_ROLE[category] || "Admin";
 
   try {
-    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { query: pgQuery, listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
     const orgCheck = await pgQuery("select id from organizations where id = $1", [org]);
     if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
 
+    // Building is only required when this organization actually has
+    // real, registered facilities to choose from - an organization
+    // with none yet shouldn't be blocked from reporting at all.
+    const facilityRows = await pgListAllRecords("facilities", org).catch(() => []);
+    if (facilityRows.length > 0 && (!building || !building.trim())) {
+      return res.status(400).json({ error: "Please choose a facility and building." });
+    }
+
     const { woId, recordId } = await createReportedWorkOrder(
       reporterName.trim(), reporterDepartment ? reporterDepartment.trim() : "", reporterContact ? reporterContact.trim() : "",
-      floor, roomZone, description, assignedRole, null, null, org
+      floor, roomZone, description, assignedRole, building ? building.trim() : null, null, org
     );
 
     let photoFailed = false;
