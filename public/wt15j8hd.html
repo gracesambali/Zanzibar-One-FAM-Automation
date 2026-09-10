@@ -58,7 +58,7 @@
         </div>
         <div>
           <label for="buildingSelect">Building *</label>
-          <select id="buildingSelect" disabled>
+          <select id="buildingSelect" onchange="onBuildingChange()" disabled>
             <option value="" selected>Choose a facility first…</option>
           </select>
         </div>
@@ -189,15 +189,24 @@ async function loadLocations() {
   } catch (err) {
     locationData = { floors: [], facilities: [] };
   }
-  floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
-    ${locationData.floors.map(f => `<option value="${f.floor}">${f.floor}</option>`).join('')}
-    <option value="__other__">Other (not listed)</option>`;
 
   if (locationData.facilities.length > 0) {
+    // Confirmed directly: Floor now genuinely depends on Building, so
+    // it can't be populated yet at this point - starts disabled,
+    // waiting for a real building to be chosen first.
     document.getElementById('facilityRow').style.display = '';
     const facilitySelect = document.getElementById('facilitySelect');
     facilitySelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
       ${locationData.facilities.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}`;
+    floorSelect.innerHTML = `<option value="" selected>Choose a building first…</option>`;
+    floorSelect.disabled = true;
+  } else {
+    // No real facilities registered for this organization at all -
+    // the exact same, unchanged behavior as before this change.
+    floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
+      ${locationData.floors.map(f => `<option value="${f.floor}" data-label="${f.floor}">${f.floor}</option>`).join('')}
+      <option value="__other__">Other (not listed)</option>`;
+    floorSelect.disabled = false;
   }
 }
 loadLocations();
@@ -210,10 +219,47 @@ function onFacilityChange() {
   buildingSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
     ${buildings.map(b => `<option value="${b}">${b}</option>`).join('')}`;
   buildingSelect.disabled = false;
+
+  // Building just changed too, since Facility narrowed it - Floor's
+  // own real options are now stale until a real building is chosen.
+  document.getElementById('floorSelect').innerHTML = `<option value="" selected>Choose a building first…</option>`;
+  document.getElementById('floorSelect').disabled = true;
+  document.getElementById('roomSelect').innerHTML = `<option value="" selected>Choose a floor first…</option>`;
+  document.getElementById('roomSelect').disabled = true;
 }
 
-function onFloorChange() {
-  const floorVal = document.getElementById('floorSelect').value;
+async function onBuildingChange() {
+  const facilityId = document.getElementById('facilitySelect').value;
+  const building = document.getElementById('buildingSelect').value;
+  const floorSelect = document.getElementById('floorSelect');
+  const roomSelect = document.getElementById('roomSelect');
+  roomSelect.innerHTML = `<option value="" selected>Choose a floor first…</option>`;
+  roomSelect.disabled = true;
+
+  if (!building) {
+    floorSelect.innerHTML = `<option value="" selected>Choose a building first…</option>`;
+    floorSelect.disabled = true;
+    return;
+  }
+
+  floorSelect.innerHTML = `<option value="" disabled selected>Loading floors…</option>`;
+  floorSelect.disabled = true;
+  try {
+    const resp = await fetch(`/api/report-issue?publicBuildingFloors=true&org=${encodeURIComponent(orgId)}&facilityId=${encodeURIComponent(facilityId)}&building=${encodeURIComponent(building)}`);
+    const data = await resp.json();
+    const floors = data.floors || [];
+    floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option>
+      ${floors.map(f => `<option value="${f.id}" data-label="${f.label}">${f.label}</option>`).join('')}
+      <option value="__other__">Other (not listed)</option>`;
+  } catch (err) {
+    floorSelect.innerHTML = `<option value="" disabled selected>Choose one…</option><option value="__other__">Other (not listed)</option>`;
+  }
+  floorSelect.disabled = false;
+}
+
+async function onFloorChange() {
+  const floorSel = document.getElementById('floorSelect');
+  const floorVal = floorSel.value;
   const floorOther = document.getElementById('floorOther');
   const roomSelect = document.getElementById('roomSelect');
   const roomOther = document.getElementById('roomOther');
@@ -224,6 +270,25 @@ function onFloorChange() {
 
   if (floorVal === '__other__') {
     roomSelect.innerHTML = `<option value="" selected>—</option><option value="__other__">Other (not listed)</option>`;
+    roomSelect.disabled = false;
+    return;
+  }
+
+  if (locationData.facilities.length > 0) {
+    const facilityId = document.getElementById('facilitySelect').value;
+    const building = document.getElementById('buildingSelect').value;
+    roomSelect.innerHTML = `<option value="" disabled selected>Loading…</option>`;
+    roomSelect.disabled = true;
+    try {
+      const resp = await fetch(`/api/report-issue?publicFloorRooms=true&org=${encodeURIComponent(orgId)}&facilityId=${encodeURIComponent(facilityId)}&building=${encodeURIComponent(building)}&floorId=${encodeURIComponent(floorVal)}`);
+      const data = await resp.json();
+      const rooms = data.rooms || [];
+      roomSelect.innerHTML = `<option value="" selected>Choose one… (optional)</option>
+        ${rooms.map(r => `<option value="${r}">${r}</option>`).join('')}
+        <option value="__other__">Other (not listed)</option>`;
+    } catch (err) {
+      roomSelect.innerHTML = `<option value="" selected>Choose one… (optional)</option><option value="__other__">Other (not listed)</option>`;
+    }
     roomSelect.disabled = false;
     return;
   }
@@ -242,8 +307,10 @@ function onRoomChange() {
 }
 
 function getFloorValue() {
-  const sel = document.getElementById('floorSelect').value;
-  return sel === '__other__' ? document.getElementById('floorOther').value.trim() : sel;
+  const sel = document.getElementById('floorSelect');
+  if (sel.value === '__other__') return document.getElementById('floorOther').value.trim();
+  const opt = sel.options[sel.selectedIndex];
+  return opt ? (opt.getAttribute('data-label') || sel.value) : '';
 }
 function getRoomValue() {
   const sel = document.getElementById('roomSelect').value;
@@ -317,6 +384,10 @@ document.getElementById('reportForm').addEventListener('submit', async (e) => {
       document.getElementById('roomSelect').disabled = true;
       document.getElementById('buildingSelect').innerHTML = '<option value="" selected>Choose a facility first…</option>';
       document.getElementById('buildingSelect').disabled = true;
+      if (locationData.facilities.length > 0) {
+        document.getElementById('floorSelect').innerHTML = '<option value="" selected>Choose a building first…</option>';
+        document.getElementById('floorSelect').disabled = true;
+      }
     } else {
       result.className = 'result error show';
       result.textContent = data.error || 'Something went wrong. Please try again.';
