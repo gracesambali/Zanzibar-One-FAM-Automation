@@ -440,13 +440,14 @@ const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
 async function handleResolveOrgSlug(req, res) {
   const slug = req.query.slug;
   try {
-    const { getByColumn, getById } = await import("../lib/postgresClient.js");
-    // No slug at all resolves to the Master System itself - the
-    // real, existing default for a bare login with no client
-    // identified in the URL.
-    const org = slug && slug !== "master"
-      ? await getByColumn("organizations", "slug", slug).catch(() => null)
-      : await getById("organizations", MASTER_ORG_ID).catch(() => null);
+    const { getByColumn } = await import("../lib/postgresClient.js");
+    // Confirmed directly: no special-casing at all, including for
+    // Master System's own login - every organization, Master
+    // included, is looked up the exact same way, by its own real,
+    // opaque token. A bare login with no token, or an unrecognized
+    // one, is treated identically - never defaulting to revealing
+    // who any specific organization is.
+    const org = slug ? await getByColumn("organizations", "slug", slug).catch(() => null) : null;
     if (!org) return res.status(404).json({ error: "Unknown organization." });
 
     let logoUrl = null;
@@ -486,18 +487,16 @@ async function handleCreateClient(req, res) {
 
   try {
     const { insert, getByColumn } = await import("../lib/postgresClient.js");
+    const { randomBytes } = await import("crypto");
 
-    // A real, readable slug derived from the client name, not the raw
-    // uuid - confirmed directly as the point of this, so the login
-    // link itself is something worth handing to a real person. Falls
-    // back to appending a number on a genuine collision (two clients
-    // with the same or very similar name).
-    let baseSlug = clientName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "") || "client";
-    let slug = baseSlug;
-    let suffix = 2;
+    // A real, opaque, unguessable token - not derived from the client
+    // name at all. Requested directly: a link should never reveal
+    // which client it belongs to just by looking at it. Collision
+    // odds on a real, 12-character random token are astronomically
+    // low, but still checked and retried for genuine correctness.
+    let slug = randomBytes(9).toString("base64url");
     while (await getByColumn("organizations", "slug", slug).catch(() => null)) {
-      slug = `${baseSlug}${suffix}`;
-      suffix++;
+      slug = randomBytes(9).toString("base64url");
     }
 
     const newOrg = await insert("organizations", { name: clientName.trim(), slug });
