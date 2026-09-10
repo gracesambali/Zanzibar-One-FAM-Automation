@@ -967,31 +967,31 @@ async function handlePublicFloorRooms(req, res) {
 }
 
 async function handlePublicReportBreakdown(req, res) {
-  const { org, reporterName, reporterDepartment, reporterContact, building, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
+  const { org, reporterName, reporterDepartment, reporterContact, facility, building, floor, roomZone, category, description, photoBase64, photoFilename, photoContentType } = req.body || {};
   if (!org) return res.status(400).json({ error: "A real client link is required — this one is missing information." });
   if (!reporterName || !reporterName.trim()) return res.status(400).json({ error: "Your name is required." });
-  if (!floor || !description || !category) {
-    return res.status(400).json({ error: "The floor, a category, and a description are required" });
+  if (!facility || !facility.trim() || !building || !building.trim() || !floor || !description || !category) {
+    return res.status(400).json({ error: "The facility, building, floor, a category, and a description are required" });
   }
 
   const assignedRole = REPORT_CATEGORY_TO_ROLE[category] || "Admin";
 
   try {
-    const { query: pgQuery, listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
     const orgCheck = await pgQuery("select id from organizations where id = $1", [org]);
     if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
 
-    // Building is only required when this organization actually has
-    // real, registered facilities to choose from - an organization
-    // with none yet shouldn't be blocked from reporting at all.
-    const facilityRows = await pgListAllRecords("facilities", org).catch(() => []);
-    if (facilityRows.length > 0 && (!building || !building.trim())) {
-      return res.status(400).json({ error: "Please choose a facility and building." });
-    }
+    // Confirmed directly: Facility folded directly into the same,
+    // real building field already stored on the work order, since no
+    // separate column exists for it - both are always collected
+    // separately now, so facility is no longer safely implied by
+    // building alone the way it was when only a registered facility's
+    // own buildings could ever be chosen.
+    const combinedBuilding = facility.trim() === building.trim() ? building.trim() : `${facility.trim()} — ${building.trim()}`;
 
     const { woId, recordId } = await createReportedWorkOrder(
       reporterName.trim(), reporterDepartment ? reporterDepartment.trim() : "", reporterContact ? reporterContact.trim() : "",
-      floor, roomZone, description, assignedRole, building ? building.trim() : null, null, org
+      floor, roomZone, description, assignedRole, combinedBuilding, null, org
     );
 
     let photoFailed = false;
