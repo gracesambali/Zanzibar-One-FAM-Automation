@@ -367,7 +367,7 @@ button { font-family: inherit; cursor: pointer; }
 
 <div id="sidebarTooltip" class="sidebar-tooltip-box"></div>
 
-<div class="header">
+<div class="header" style="display:none;">
   <div class="header-left">
     <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
     <div>
@@ -410,7 +410,7 @@ button { font-family: inherit; cursor: pointer; }
 <button onclick="openScanAssetBarcodeModal()" title="Scan Asset Barcode or QR Code" style="position:fixed;bottom:24px;right:24px;width:56px;height:56px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.3);font-size:22px;cursor:pointer;z-index:400;display:flex;align-items:center;justify-content:center">🔍</button>
 
 <div class="main-layout">
-<div class="sidebar" id="sidebar">
+<div class="sidebar" id="sidebar" style="display:none;">
 <div class="sidebar-inner">
   <div class="sidebar-toggle-row">
     <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse/expand menu">
@@ -19117,8 +19117,10 @@ async function loadAssetsAndInit() {
     startWorkOrderChatPolling();
 
     if (loadingEl) loadingEl.style.display = 'none';
-    document.querySelector('.content').style.display = 'block';
+    document.querySelector('.header').style.display = '';
     applySimplifiedNavIfNeeded();
+    document.getElementById('sidebar').style.display = '';
+    document.querySelector('.content').style.display = 'block';
     let restoredTab = null;
     try {
       const savedTab = localStorage.getItem('fam_last_tab');
@@ -19138,6 +19140,11 @@ async function loadAssetsAndInit() {
         '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Could not load live data</div>' +
         '<div style="font-size:13px;color:var(--muted,#6B7280)">' + err.message + '</div></div>';
     }
+    // A real recovery path even on failure - without this, the header
+    // (and its own Log Out button) would stay invisible forever, and
+    // the person would be genuinely stuck with no way out.
+    const headerEl = document.querySelector('.header');
+    if (headerEl) headerEl.style.display = '';
     console.error(err);
   }
 }
