@@ -584,7 +584,7 @@ button { font-family: inherit; cursor: pointer; }
 </div>
 </div>
 
-<div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
+<div class="footer" style="display:none;">Gracing Ventures · BIM Information Management · Tanzania</div>
 
 <script>
 // ============================================================
@@ -19121,6 +19121,7 @@ async function loadAssetsAndInit() {
     applySimplifiedNavIfNeeded();
     document.getElementById('sidebar').style.display = '';
     document.querySelector('.content').style.display = 'block';
+    document.querySelector('.footer').style.display = '';
     let restoredTab = null;
     try {
       const savedTab = localStorage.getItem('fam_last_tab');
@@ -19145,6 +19146,8 @@ async function loadAssetsAndInit() {
     // the person would be genuinely stuck with no way out.
     const headerEl = document.querySelector('.header');
     if (headerEl) headerEl.style.display = '';
+    const footerEl = document.querySelector('.footer');
+    if (footerEl) footerEl.style.display = '';
     console.error(err);
   }
 }
