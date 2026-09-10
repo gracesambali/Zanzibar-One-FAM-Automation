@@ -29,18 +29,15 @@
   .error { margin-top:16px; padding:12px 14px; border-radius:8px; font-size:13px; background:#FDE8E6; color:#991B1B; display:none; }
   .error.show { display:block; }
   .footer { text-align:center; font-size:11px; color:#9CA3AF; margin-top:24px; }
-  .login-loading { text-align:center; padding:60px 20px; }
-  .login-loading .spin { width:32px; height:32px; border:3px solid #E2E6ED; border-top-color:#1A3566; border-radius:50%; margin:0 auto 14px; animation:spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-  <div id="loginLoading" class="login-loading">
-    <div class="spin"></div>
-    <div style="font-size:13px;color:#6B7280;">Loading…</div>
-  </div>
-  <div class="card" id="loginCard" style="display:none;">
-    <div class="logo-row">
+  <div class="card" id="loginCard">
+    <div id="logoRowLoading" style="text-align:center;margin-bottom:24px;">
+      <div style="width:32px;height:32px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto;animation:spin 0.8s linear infinite;"></div>
+    </div>
+    <div class="logo-row" id="logoRow" style="display:none;">
       <div class="logo"><img id="orgLogoImg" src="/logo.png" alt="GVC"></div>
       <div>
         <h1>Facility Asset Manager</h1>
@@ -83,8 +80,8 @@
 // else a session's own organization is determined.
 (async function resolveOrgSubtitle() {
   const subtitleEl = document.getElementById('orgSubtitle');
-  const loadingEl = document.getElementById('loginLoading');
-  const cardEl = document.getElementById('loginCard');
+  const logoLoadingEl = document.getElementById('logoRowLoading');
+  const logoRowEl = document.getElementById('logoRow');
   const slug = new URLSearchParams(window.location.search).get('org') || '';
   try {
     const resp = await fetch(`/api/login?resolveOrgSlug=true&slug=${encodeURIComponent(slug)}`);
@@ -105,8 +102,8 @@
   } catch (err) {
     subtitleEl.textContent = "Sign in to view your building's live data";
   } finally {
-    if (loadingEl) loadingEl.style.display = 'none';
-    if (cardEl) cardEl.style.display = '';
+    if (logoLoadingEl) logoLoadingEl.style.display = 'none';
+    if (logoRowEl) logoRowEl.style.display = '';
   }
 })();
 
