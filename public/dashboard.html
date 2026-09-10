@@ -1131,6 +1131,18 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// The one, single, correct way to redirect to login anywhere in this
+// app. Confirmed directly, a real, previously-reported bug: several
+// call sites used to redirect to a bare '/login', dropping the real
+// ?org= query string that tells the login page which specific client
+// it belongs to - landing on Master System's own generic login page
+// instead of the actual client's own. Always preserves the current
+// query string, so this can never happen again regardless of which
+// call site a session expiry is caught from.
+function redirectToLogin() {
+  window.location.href = '/login' + window.location.search;
+}
+
 // Shared by every uploaded document across the dashboard (unit
 // contracts, SLAs) — preview without leaving the page, and a real
 // download that works regardless of the file's actual origin.
@@ -2866,7 +2878,7 @@ async function submitRelocation(recordId) {
 
 async function fetchSensorMonitorData() {
   const [resp, catResp] = await Promise.all([fetch('/api/sensors'), fetch('/api/sensors?categories=true')]);
-  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  if (resp.status === 401) { redirectToLogin(); throw new Error('Redirecting to login'); }
   if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
   const data = await resp.json();
   const catData = await catResp.json();
@@ -2899,7 +2911,7 @@ async function renderSensorMonitor(isRefresh) {
       fetch('/api/sensors'),
       isRefresh ? Promise.resolve(null) : fetch('/api/sensors?categories=true'),
     ]);
-    if (resp.status === 401) { window.location.href = '/login'; return; }
+    if (resp.status === 401) { redirectToLogin(); return; }
     if (!resp.ok) throw new Error('Failed to load sensor data (' + resp.status + ')');
     const data = await resp.json();
     const sensors = data.sensors || [];
@@ -3727,7 +3739,7 @@ async function runSensorTest() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sensorId, value }),
     });
-    if (resp.status === 401) { window.location.href = '/login'; return; }
+    if (resp.status === 401) { redirectToLogin(); return; }
     const data = await resp.json();
 
     if (resp.ok && data.success && data.triggered) {
@@ -16812,7 +16824,7 @@ let lastWOSignature = null;
 
 async function fetchWorkOrdersData() {
   const resp = await fetch('/api/work-orders');
-  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  if (resp.status === 401) { redirectToLogin(); throw new Error('Redirecting to login'); }
   if (!resp.ok) throw new Error('Failed to load work orders (' + resp.status + ')');
   const data = await resp.json();
   return data.workOrders || [];
@@ -16884,7 +16896,7 @@ let requisitionsCache = [];
 
 async function fetchProcurementData() {
   const resp = await fetch('/api/get-assets?requisitions=true');
-  if (resp.status === 401) { window.location.href = '/login'; throw new Error('Redirecting to login'); }
+  if (resp.status === 401) { redirectToLogin(); throw new Error('Redirecting to login'); }
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.error || 'Failed to load requisitions');
   return data.requisitions || [];
@@ -18016,7 +18028,7 @@ async function runRealTest(urgency) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ assetId, urgency }),
     });
-    if (resp.status === 401) { window.location.href = '/login'; return; }
+    if (resp.status === 401) { redirectToLogin(); return; }
     const data = await resp.json();
 
     if (resp.ok && data.success) {
@@ -19029,7 +19041,7 @@ async function loadAssetsAndInit() {
       fetch('/api/get-assets?exchangeRates=true'),
     ]);
     if (assetsResp.status === 401) {
-      window.location.href = '/login' + window.location.search;
+      redirectToLogin();
       return;
     }
     if (!assetsResp.ok) throw new Error('Failed to load asset data (' + assetsResp.status + ')');
@@ -19216,7 +19228,7 @@ function startWorkOrderChatPolling() {
 
 async function logout() {
   await fetch('/api/login', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'logout'}) });
-  window.location.href = '/login';
+  redirectToLogin();
 }
 
 // Sidebar collapse state persists across sessions (real app, not a
