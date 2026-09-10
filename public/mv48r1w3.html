@@ -5131,7 +5131,7 @@ async function submitUnitDetailChat(unitId) {
 }
 
 function copyUnitPortalLink(unitId) {
-  const link = `${window.location.origin}/unit-portal?unit=${unitId}`;
+  const link = `${window.location.origin}/ym9b2wqz?unit=${unitId}`;
   navigator.clipboard.writeText(link).then(() => {
     alert('Portal link copied — send this directly to the tenant. No login needed on their end.');
   }).catch(() => {
@@ -9079,7 +9079,7 @@ function openMyReportBreakdownPage() {
 }
 
 function reportBreakdownUrl() {
-  return `${window.location.origin}/report?org=${encodeURIComponent(currentUserOrgId)}`;
+  return `${window.location.origin}/wt15j8hd?org=${encodeURIComponent(currentUserOrgId)}`;
 }
 function reportBreakdownQrUrl() {
   return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(reportBreakdownUrl())}`;
@@ -9127,7 +9127,7 @@ function renderStaffManagementTable() {
         <div onclick="renderStaffManagement('${c.id}','${(c.name || '').replace(/'/g,"\\'")}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);gap:10px;cursor:pointer" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='transparent'">
           <div>
             <div style="font-size:13px;font-weight:600;color:var(--navy)">${escapeHtml(c.name)}</div>
-            <div style="font-size:10.5px;color:var(--muted)">${escapeHtml(window.location.origin)}/login?org=${escapeHtml(c.slug || '')}</div>
+            <div style="font-size:10.5px;color:var(--muted)">${escapeHtml(window.location.origin)}/pk7x2m9q?org=${escapeHtml(c.slug || '')}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
             <div style="font-size:11.5px;color:var(--muted)">${c.activeUserCount} active user${c.activeUserCount === 1 ? '' : 's'}</div>
@@ -9550,7 +9550,7 @@ function openAddClientModal() {
 }
 
 async function copyClientLoginLink(slug) {
-  const url = `${window.location.origin}/login?org=${encodeURIComponent(slug)}`;
+  const url = `${window.location.origin}/pk7x2m9q?org=${encodeURIComponent(slug)}`;
   try {
     await navigator.clipboard.writeText(url);
     alert('Link copied.');
@@ -9718,7 +9718,7 @@ async function submitAddClient() {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not create client');
     document.getElementById('addClientOverlay')?.remove();
-    const loginUrl = `${window.location.origin}/login?org=${encodeURIComponent(data.client.slug)}`;
+    const loginUrl = `${window.location.origin}/pk7x2m9q?org=${encodeURIComponent(data.client.slug)}`;
     alert(`Client created. Their real login link:\n\n${loginUrl}`);
     tabPrefetchCache.staffmanagement = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-mutation data instantly from a cache
     renderStaffManagement();
