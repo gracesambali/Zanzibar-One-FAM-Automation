@@ -2056,3 +2056,16 @@ create index if not exists idx_requisitions_linked_asset on requisitions (linked
 -- ============================================================
 update organizations set slug = encode(gen_random_bytes(9), 'hex') where id = '73ae9f3b-bbef-4f4a-b3df-3cca81c49063' and slug is null;
 create unique index if not exists idx_organizations_slug_unique on organizations (slug) where slug is not null;
+
+-- ============================================================
+-- Re-slug every existing organization, clients included - the
+-- earlier migration in this same session only touched Master
+-- System's own row; any client onboarded before this point still has
+-- their old, readable, name-derived link until this runs too.
+-- Postgres evaluates gen_random_bytes() fresh for each row in an
+-- update, not once for the whole statement, so every organization
+-- genuinely gets its own, different token. Safe to run even if the
+-- earlier, Master-only migration already ran - this simply
+-- regenerates a fresh value for every row, including Master's again.
+-- ============================================================
+update organizations set slug = encode(gen_random_bytes(9), 'hex');

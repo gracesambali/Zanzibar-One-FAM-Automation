@@ -503,7 +503,7 @@ button { font-family: inherit; cursor: pointer; }
            single-page nav. Uses whatever session is already logged
            in - no separate pharmacy login required for a role that
            already has real inventory permission. -->
-      <button class="tab-btn nested" data-tab="pharmacyportal" data-label="Pharmacy" onclick="window.open('/pharmacy-portal', '_blank')" onmouseenter="showSidebarTooltip(this, 'Pharmacy')" onmouseleave="hideSidebarTooltip()">
+      <button class="tab-btn nested" data-tab="pharmacyportal" data-label="Pharmacy" onclick="window.open('/ng47w5jm', '_blank')" onmouseenter="showSidebarTooltip(this, 'Pharmacy')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M12 8v6M9 11h6"/></svg>
         <span class="tab-label">Pharmacy</span>
       </button>
@@ -1140,7 +1140,7 @@ function escapeHtml(s) {
 // query string, so this can never happen again regardless of which
 // call site a session expiry is caught from.
 function redirectToLogin() {
-  window.location.href = '/login' + window.location.search;
+  window.location.href = '/pk7x2m9q' + window.location.search;
 }
 
 // Shared by every uploaded document across the dashboard (unit
@@ -2273,7 +2273,7 @@ function showDetail(idx) {
   const canRequestProcurement = currentUserPermissions && currentUserPermissions.requestProcurement;
   const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/asset?id=' + a.id)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/qz9n36kf?id=' + a.id)}`;
 
   let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
@@ -4904,7 +4904,7 @@ function renderUnitDetailFromData(u) {
   const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
   const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
   const unitAssets = assets.filter(a => a.unit === u.name);
-  const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/unit-portal?unit=' + u.id)}`;
+  const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/ym9b2wqz?unit=' + u.id)}`;
 
   let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Management</button>
   <div class="wo-layout">
@@ -19055,7 +19055,7 @@ async function loadAssetsAndInit() {
     // to where they actually belong rather than showing a dashboard
     // built for roles that use it.
     if (currentUserRole === 'pharmacy') {
-      window.location.href = '/pharmacy-portal';
+      window.location.href = '/ng47w5jm';
       return;
     }
     currentUserPermissions = ROLE_PERMISSIONS[currentUserRole];

@@ -5,41 +5,31 @@
       "schedule": "0 6 * * *"
     }
   ],
-  "redirects": [
-    { "source": "/login.html", "destination": "/login", "permanent": true },
-    { "source": "/dashboard.html", "destination": "/dashboard", "permanent": true },
-    { "source": "/asset.html", "destination": "/asset", "permanent": true },
-    { "source": "/report.html", "destination": "/report", "permanent": true },
-    { "source": "/sensor-monitor.html", "destination": "/sensor-monitor", "permanent": true },
-    { "source": "/set-password.html", "destination": "/set-password", "permanent": true },
-    { "source": "/unit-portal.html", "destination": "/unit-portal", "permanent": true },
-    { "source": "/pharmacy-portal.html", "destination": "/pharmacy-portal", "permanent": true }
-  ],
   "rewrites": [
-    { "source": "/", "destination": "/login.html" },
-    { "source": "/login", "destination": "/login.html" },
-    { "source": "/dashboard", "destination": "/dashboard.html" },
-    { "source": "/asset", "destination": "/asset.html" },
-    { "source": "/report", "destination": "/report.html" },
-    { "source": "/sensor-monitor", "destination": "/sensor-monitor.html" },
-    { "source": "/set-password", "destination": "/set-password.html" },
-    { "source": "/unit-portal", "destination": "/unit-portal.html" },
-    { "source": "/pharmacy-portal", "destination": "/pharmacy-portal.html" }
+    { "source": "/", "destination": "/pk7x2m9q.html" },
+    { "source": "/pk7x2m9q", "destination": "/pk7x2m9q.html" },
+    { "source": "/mv48r1w3", "destination": "/mv48r1w3.html" },
+    { "source": "/qz9n36kf", "destination": "/qz9n36kf.html" },
+    { "source": "/wt15j8hd", "destination": "/wt15j8hd.html" },
+    { "source": "/kc624hty", "destination": "/kc624hty.html" },
+    { "source": "/fd8s17px", "destination": "/fd8s17px.html" },
+    { "source": "/ym9b2wqz", "destination": "/ym9b2wqz.html" },
+    { "source": "/ng47w5jm", "destination": "/ng47w5jm.html" }
   ],
   "headers": [
-    { "source": "/login", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/login.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/dashboard", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/dashboard.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/asset", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/asset.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/sensor-monitor", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/sensor-monitor.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/unit-portal", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/unit-portal.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/pharmacy-portal", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/pharmacy-portal.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/set-password", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
-    { "source": "/set-password.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+    { "source": "/pk7x2m9q", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/pk7x2m9q.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/mv48r1w3", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/mv48r1w3.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/qz9n36kf", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/qz9n36kf.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/kc624hty", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/kc624hty.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/ym9b2wqz", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/ym9b2wqz.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/ng47w5jm", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/ng47w5jm.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/fd8s17px", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/fd8s17px.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
   ]
 }
