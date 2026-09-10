@@ -824,6 +824,14 @@ export default async function handler(req, res) {
     return handlePublicGetLocations(req, res);
   }
 
+  if (req.method === "GET" && req.query.publicBuildingFloors === "true" && req.query.org && req.query.facilityId && req.query.building) {
+    return handlePublicBuildingFloors(req, res);
+  }
+
+  if (req.method === "GET" && req.query.publicFloorRooms === "true" && req.query.org && req.query.facilityId && req.query.building && req.query.floorId) {
+    return handlePublicFloorRooms(req, res);
+  }
+
   if (req.method === "POST" && req.body && req.body.publicReportBreakdown) {
     return handlePublicReportBreakdown(req, res);
   }
@@ -872,6 +880,88 @@ async function handlePublicGetLocations(req, res) {
     return res.status(200).json({ floors, facilities });
   } catch (err) {
     console.error("handlePublicGetLocations error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handlePublicBuildingFloors(req, res) {
+  const organizationId = req.query.org;
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const orgCheck = await pgQuery("select id from organizations where id = $1", [organizationId]);
+    if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
+
+    const registered = await pgQuery(
+      "select id, floor_id, floor_label from building_floors where organization_id = $1 and facility_id = $2 and building_name = $3 order by sort_order asc, floor_id asc",
+      [organizationId, req.query.facilityId, req.query.building]
+    );
+    if (registered.rows.length > 0) {
+      return res.status(200).json({
+        source: "registered",
+        floors: registered.rows.map(r => ({ id: r.floor_id, label: r.floor_label || r.floor_id })),
+      });
+    }
+
+    // Confirmed directly: nothing registered yet for this specific
+    // building - falls back to real, building-filtered asset data
+    // rather than the old, unlinked, org-wide list, so a floor from a
+    // different facility can never appear here regardless of which
+    // real source ends up being used.
+    const assetRows = await pgQuery(
+      "select distinct floor_level from components where organization_id = $1 and building = $2",
+      [organizationId, req.query.building]
+    );
+    const seen = new Set();
+    const floors = [];
+    assetRows.rows.forEach(r => {
+      const raw = r.floor_level || "";
+      const label = displayFloor(raw);
+      if (!label || seen.has(raw)) return;
+      seen.add(raw);
+      floors.push({ id: raw, label });
+    });
+    floors.sort((a, b) => a.label.localeCompare(b.label));
+
+    return res.status(200).json({ source: "asset-derived", floors });
+  } catch (err) {
+    console.error("handlePublicBuildingFloors error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handlePublicFloorRooms(req, res) {
+  const organizationId = req.query.org;
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const orgCheck = await pgQuery("select id from organizations where id = $1", [organizationId]);
+    if (orgCheck.rows.length === 0) return res.status(404).json({ error: "This link doesn't match a real client — check with your facility administrator." });
+
+    const registered = await pgQuery(
+      "select id, room_name from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 order by sort_order asc, room_name asc",
+      [organizationId, req.query.facilityId, req.query.building, req.query.floorId]
+    );
+    if (registered.rows.length > 0) {
+      return res.status(200).json({
+        source: "registered",
+        rooms: registered.rows.map(r => r.room_name),
+      });
+    }
+
+    // Same real fallback reasoning as handlePublicBuildingFloors -
+    // building- and floor-filtered asset data, never the old,
+    // unlinked, org-wide list.
+    const assetRows = await pgQuery(
+      "select distinct room_zone from components where organization_id = $1 and building = $2 and floor_level = $3",
+      [organizationId, req.query.building, req.query.floorId]
+    );
+    const rooms = assetRows.rows
+      .map(r => displayRoom(r.room_zone || ""))
+      .filter(Boolean)
+      .sort();
+
+    return res.status(200).json({ source: "asset-derived", rooms });
+  } catch (err) {
+    console.error("handlePublicFloorRooms error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
