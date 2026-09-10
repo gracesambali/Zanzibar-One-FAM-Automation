@@ -644,6 +644,28 @@ function computePeriodRange(periodType, offset) {
   return null;
 }
 
+// Confirmed directly, a real, active bug fixed here: both Overview
+// and Reports depended entirely on requisitions.linked_asset_id
+// existing, with no fallback - if that migration hasn't been run
+// yet, this single, optional, additive data source was taking down
+// the entire Finance dashboard and report, not just its own portion.
+// Checked once, genuinely, via information_schema rather than
+// assumed, so real work-order spend is never blocked by this.
+let linkedAssetIdColumnExistsCache = null;
+async function requisitionLinkedAssetIdExists(query) {
+  if (linkedAssetIdColumnExistsCache !== null) return linkedAssetIdColumnExistsCache;
+  try {
+    const result = await query(
+      `select 1 from information_schema.columns where table_name = 'requisitions' and column_name = 'linked_asset_id'`
+    );
+    linkedAssetIdColumnExistsCache = result.rows.length > 0;
+  } catch (err) {
+    console.error("requisitionLinkedAssetIdExists check failed (non-fatal, assuming not present):", err.message);
+    linkedAssetIdColumnExistsCache = false;
+  }
+  return linkedAssetIdColumnExistsCache;
+}
+
 async function handleFinancePeriodReport(req, res, organizationId) {
   const periodType = req.query.periodReport;
   const validTypes = ["weekly", "monthly", "quarterly", "semiannual", "annual"];
@@ -676,13 +698,14 @@ async function handleFinancePeriodReport(req, res, organizationId) {
     // the same real source already closing the gap for Cost Overview
     // and Lifecycle & Replacement, counted here under the same real
     // Procurement type as work-order-driven procurement spend.
-    const reqSpend = await query(
+    const hasLinkedAssetId = await requisitionLinkedAssetIdExists(query);
+    const reqSpend = hasLinkedAssetId ? await query(
       `select r.linked_asset_id as asset_id, r.building, coalesce(r.payment_amount_tzs, 0) as cost
        from requisitions r
        where r.organization_id = $1 and r.payment_status = 'Paid' and r.is_asset = false and r.linked_asset_id is not null
          and r.payment_date >= $2 and r.payment_date < $3`,
       [organizationId, startStr, endStr]
-    );
+    ) : { rows: [] };
 
     const byType = {};
     const byAsset = {};
@@ -732,6 +755,7 @@ async function handleFinanceSummary(req, res, organizationId) {
     // Replacement, and the rebuilt Reports - used consistently for
     // every card and chart below, rather than several separate
     // queries that could quietly drift out of sync with each other.
+    const hasLinkedAssetId = await requisitionLinkedAssetIdExists(query);
     const spendCte = `
       with all_spend as (
         select coalesce(maintenance_type, 'Other') as type, asset_id, asset_name,
@@ -739,12 +763,14 @@ async function handleFinanceSummary(req, res, organizationId) {
         from work_orders
         where organization_id = $1 and cost_tzs is not null and cost_tzs > 0
           and coalesce(cost_edited_date, completed_date) is not null
+        ${hasLinkedAssetId ? `
         union all
         select 'Procurement' as type, r.linked_asset_id as asset_id, null as asset_name,
                coalesce(r.payment_amount_tzs, 0) as cost, r.payment_date as spend_date
         from requisitions r
         where r.organization_id = $1 and r.payment_status = 'Paid' and r.is_asset = false
           and r.linked_asset_id is not null and r.payment_date is not null
+        ` : ""}
       )
     `;
 
