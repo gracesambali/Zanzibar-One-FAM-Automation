@@ -14289,6 +14289,24 @@ function renderFloorPlanImage(canManage) {
   const positionsByAsset = {};
   (floorPlanData.positions || []).forEach(p => { positionsByAsset[p.assetId] = p; });
 
+  // TEMPORARY DIAGNOSTIC — confirmed directly, added to investigate a
+  // real, reported, reproducible bug where other assets vanish after
+  // a reposition. Not a permanent feature — remove once the real
+  // cause is confirmed and fixed.
+  const missingAssetIds = floorAssets.filter(a => !positionsByAsset[a.id]).map(a => a.id);
+  const debugWrap = document.getElementById('floorPlanDebugWrap') || (() => {
+    const d = document.createElement('div');
+    d.id = 'floorPlanDebugWrap';
+    document.getElementById('floorPlanImageWrap')?.parentElement?.insertBefore(d, document.getElementById('floorPlanImageWrap'));
+    return d;
+  })();
+  debugWrap.style.cssText = 'background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#92400E;text-align:left';
+  debugWrap.innerHTML = `<strong>Temporary diagnostic (${displayFloor(floorPlanCurrentFloor)}):</strong>
+    Assets expected on this floor: ${floorAssets.length} ·
+    Positions returned by the server for this floor: ${(floorPlanData.positions || []).length} ·
+    Total position rows saved for this whole organization (any floor): ${floorPlanData.debugTotalOrgPositions ?? '—'}
+    ${missingAssetIds.length > 0 ? `<br>Missing (no position found): ${missingAssetIds.join(', ')}` : ''}`;
+
   const unplaced = canManage ? floorAssets.filter(a => !positionsByAsset[a.id]) : [];
 
   let dotsHtml = '';
