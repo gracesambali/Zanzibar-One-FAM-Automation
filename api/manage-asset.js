@@ -133,6 +133,8 @@ export default async function handler(req, res) {
     const action = (req.body && req.body.action) || "relocate";
     if (action === "savePosition") return handleSaveMarkerPosition(req, res, session.u, session.org);
     if (action === "uploadFloorPlan") return handleUploadFloorPlan(req, res, session.u, session.org);
+    if (action === "analyzeFloorPlanRooms") return handleAnalyzeFloorPlanRooms(req, res, session.org);
+    if (action === "confirmFloorRoomMapping") return handleConfirmFloorRoomMapping(req, res, session.u, session.org);
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u, session.org);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u, session.org);
     if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u, session.org);
@@ -2712,6 +2714,132 @@ async function handleUploadFloorPlan(req, res, uploadedBy, organizationId) {
     return res.status(200).json({ success: true, floor, uploadedBy });
   } catch (err) {
     console.error("handleUploadFloorPlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly, discussed and agreed: the real Phase 5 AI
+// detection pass - reads a floor's own real, uploaded drawing and
+// attempts to match what it finds to the same, already-real rooms
+// already defined for that floor in Level View. Re-analyzing
+// genuinely replaces every prior detection for this floor, confirmed
+// or not - a new drawing means the old mapping no longer applies
+// either, the same real principle already used for a relocated
+// asset's own old floor-plan position.
+async function handleAnalyzeFloorPlanRooms(req, res, organizationId) {
+  const { floor, facilityId, building } = req.body || {};
+  if (!floor || !facilityId || !building) {
+    return res.status(400).json({ error: "floor, facilityId, and building are all required" });
+  }
+
+  try {
+    const { getByColumn, query: pgQuery, update, insert } = await import("../lib/postgresClient.js");
+    const { detectFloorPlanRooms } = await import("../lib/floorPlanRoomDetection.js");
+
+    const planRow = await getByColumn("floor_plans", "floor", floor, organizationId).catch(() => null);
+    if (!planRow || !planRow.image_url) {
+      return res.status(400).json({ error: "This floor has no real, uploaded drawing yet - upload one first." });
+    }
+
+    const roomsResult = await pgQuery(
+      "select room_name from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4",
+      [organizationId, facilityId, building, floor]
+    );
+    const roomNames = roomsResult.rows.map(r => r.room_name);
+    if (roomNames.length === 0) {
+      return res.status(400).json({ error: "No real rooms are defined for this floor yet in Level View - define the real rooms there first." });
+    }
+
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+    const signedUrl = await getSignedUrlSafe(planRow.image_url);
+    if (!signedUrl) return res.status(500).json({ error: "Could not access the real, uploaded drawing." });
+
+    const imageResp = await fetch(signedUrl);
+    if (!imageResp.ok) return res.status(500).json({ error: "Could not download the real, uploaded drawing." });
+    const contentType = imageResp.headers.get("content-type") || "image/png";
+    const arrayBuffer = await imageResp.arrayBuffer();
+    const base64Image = Buffer.from(arrayBuffer).toString("base64");
+
+    const detections = await detectFloorPlanRooms(base64Image, contentType, roomNames);
+    if (detections === null) {
+      return res.status(500).json({ error: "Could not analyze this drawing right now - try again shortly." });
+    }
+
+    await pgQuery("delete from floor_room_detections where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4", [organizationId, facilityId, building, floor]);
+
+    const roomIdByName = {};
+    roomsResult.rows.forEach(r => { roomIdByName[r.room_name] = r.id; });
+    // Confirmed directly: the room list above only selected room_name,
+    // re-fetched here with real ids too, since the insert below needs
+    // the real room_id, not just the name it was matched against.
+    const roomsWithIds = await pgQuery(
+      "select id, room_name from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4",
+      [organizationId, facilityId, building, floor]
+    );
+    roomsWithIds.rows.forEach(r => { roomIdByName[r.room_name] = r.id; });
+
+    for (const d of detections) {
+      await insert("floor_room_detections", {
+        organization_id: organizationId, facility_id: facilityId, building_name: building, floor_id: floor,
+        room_id: d.matchedRoom ? roomIdByName[d.matchedRoom] || null : null,
+        detected_label: d.detectedLabel,
+        x_min: d.xMin, y_min: d.yMin, x_max: d.xMax, y_max: d.yMax,
+        confirmed: false,
+      });
+    }
+
+    await update("floor_plans", planRow.id, { room_mapping_status: detections.length > 0 ? "pending_review" : "none" }, organizationId);
+
+    return res.status(200).json({ success: true, detectionCount: detections.length });
+  } catch (err) {
+    console.error("handleAnalyzeFloorPlanRooms error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly, discussed and agreed: the real person's own
+// confirm/correct step - nothing from the AI pass above is ever used
+// for automatic placement until this runs. A dismissed detection is
+// removed entirely rather than kept around unconfirmed forever.
+async function handleConfirmFloorRoomMapping(req, res, confirmedBy, organizationId) {
+  const { floor, facilityId, building, mappings } = req.body || {};
+  if (!floor || !facilityId || !building || !Array.isArray(mappings)) {
+    return res.status(400).json({ error: "floor, facilityId, building, and mappings are all required" });
+  }
+
+  try {
+    const { getByColumn, getById, update, deleteById } = await import("../lib/postgresClient.js");
+
+    for (const m of mappings) {
+      if (!m.id) continue;
+      if (m.dismissed) {
+        // Confirmed directly: deleteById has no real organizationId
+        // scoping of its own, unlike update - a real, explicit
+        // ownership check first, so a mismatched or guessed id
+        // correctly does nothing rather than deleting a different
+        // organization's real detection row.
+        const existing = await getById("floor_room_detections", m.id).catch(() => null);
+        if (existing && existing.organization_id === organizationId) {
+          await deleteById("floor_room_detections", m.id).catch(() => {});
+        }
+      } else {
+        await update("floor_room_detections", m.id, {
+          room_id: m.roomId || null,
+          confirmed: true,
+          confirmed_by: confirmedBy,
+          confirmed_at: new Date().toISOString(),
+        }, organizationId).catch(() => {});
+      }
+    }
+
+    const planRow = await getByColumn("floor_plans", "floor", floor, organizationId).catch(() => null);
+    if (planRow) {
+      await update("floor_plans", planRow.id, { room_mapping_status: "confirmed" }, organizationId);
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleConfirmFloorRoomMapping error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

@@ -1359,6 +1359,13 @@ export default async function handler(req, res) {
     return handleGetFloorPlan(req, res, session.org);
   }
 
+  // Confirmed directly, discussed and agreed: the real, current AI
+  // room detections for a floor - what the real reviewer actually
+  // sees and acts on.
+  if (req.query.floorRoomDetections === "true" && req.query.floor && req.query.facilityId && req.query.building) {
+    return handleGetFloorRoomDetections(req, res, session.org);
+  }
+
   // API integration key retrieval — for setting up ERP/SAP connections.
   // Restricted to the same trust level as cost data (Business Owner /
   // System Admin), since this key unlocks external programmatic access.
@@ -2002,6 +2009,46 @@ async function handleGetFloorPlan(req, res, organizationId) {
     return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog });
   } catch (err) {
     console.error("handleGetFloorPlan error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Confirmed directly, discussed and agreed: the real, current room-
+// mapping status for this floor, plus every real detection from the
+// AI pass, joined with each matched room's own real name - a genuinely
+// readable review screen, not raw internal ids.
+async function handleGetFloorRoomDetections(req, res, organizationId) {
+  const { floor, facilityId, building } = req.query;
+  try {
+    const { getByColumn, query: pgQuery } = await import("../lib/postgresClient.js");
+    const planRow = await getByColumn("floor_plans", "floor", floor, organizationId).catch(() => null);
+    const roomMappingStatus = planRow ? (planRow.room_mapping_status || "none") : "none";
+
+    const result = await pgQuery(
+      `select d.id, d.room_id, d.detected_label, d.x_min, d.y_min, d.x_max, d.y_max, d.confirmed, r.room_name
+       from floor_room_detections d
+       left join building_rooms r on r.id = d.room_id
+       where d.organization_id = $1 and d.facility_id = $2 and d.building_name = $3 and d.floor_id = $4
+       order by d.created_at asc`,
+      [organizationId, facilityId, building, floor]
+    );
+
+    const roomsResult = await pgQuery(
+      "select id, room_name from building_rooms where organization_id = $1 and facility_id = $2 and building_name = $3 and floor_id = $4 order by room_name asc",
+      [organizationId, facilityId, building, floor]
+    );
+
+    return res.status(200).json({
+      roomMappingStatus,
+      detections: result.rows.map(r => ({
+        id: r.id, roomId: r.room_id, roomName: r.room_name, detectedLabel: r.detected_label,
+        xMin: Number(r.x_min), yMin: Number(r.y_min), xMax: Number(r.x_max), yMax: Number(r.y_max),
+        confirmed: r.confirmed,
+      })),
+      availableRooms: roomsResult.rows.map(r => ({ id: r.id, name: r.room_name })),
+    });
+  } catch (err) {
+    console.error("handleGetFloorRoomDetections error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
