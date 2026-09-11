@@ -1131,6 +1131,32 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Confirmed directly, requested for Asset Register and Work Orders:
+// the exact same real, Excel-style column-header filter pattern
+// already proven on Inventory. One, single, shared open/closed state
+// across every table on the page - only one popover open at a time,
+// closed by clicking anywhere outside a header.
+let openColumnFilterPopover = null; // { tableId, column } or null
+function toggleColumnFilterPopover(tableId, column, rerenderFn) {
+  if (openColumnFilterPopover && openColumnFilterPopover.tableId === tableId && openColumnFilterPopover.column === column) {
+    openColumnFilterPopover = null;
+  } else {
+    openColumnFilterPopover = { tableId, column };
+  }
+  rerenderFn();
+}
+function isColumnFilterPopoverOpen(tableId, column) {
+  return !!openColumnFilterPopover && openColumnFilterPopover.tableId === tableId && openColumnFilterPopover.column === column;
+}
+document.addEventListener('click', (e) => {
+  if (openColumnFilterPopover && !e.target.closest('th')) {
+    const wasTableId = openColumnFilterPopover.tableId;
+    openColumnFilterPopover = null;
+    if (wasTableId === 'assets' && document.getElementById('assetResultsContainer')) renderAssetResults();
+    else if (wasTableId === 'workorders' && document.getElementById('view-workorders')?.classList.contains('active')) renderWorkOrders();
+  }
+});
+
 // The one, single, correct way to redirect to login anywhere in this
 // app. Confirmed directly, a real, previously-reported bug: several
 // call sites used to redirect to a bare '/login', dropping the real
@@ -2049,114 +2075,19 @@ function renderAssets() {
     </div>`;
   }
 
-  // Search input uses renderAssetResults() ONLY — never renderAssets() —
-  // so typing never rebuilds this input itself. Rebuilding it mid-type
-  // is what caused the "type one letter, lose focus" bug: the browser
-  // can't keep a cursor position in a DOM node that just got destroyed
-  // and recreated.
+  // Confirmed directly, requested: search and TRA Class stay here as
+  // real, direct inputs - a free-text search doesn't fit a value-list
+  // popover, and the TRA Class filter was explicitly kept as-is,
+  // separate from every other filter, which now lives on the real
+  // table's own column headers below instead.
   html += `<div class="filter-row">
     <input type="text" id="assetSearchInput" class="search-input" placeholder="Search by asset ID, name, location, manufacturer…" value="${currentSearch}" oninput="currentSearch=this.value;renderAssetResults()">
-    <select class="filter-select" onchange="currentStatusFilter=this.value;renderAssets()">
-      <option value="All">All Status</option>
-      <option value="Good"${currentStatusFilter==='Good'?' selected':''}>Good</option>
-      <option value="Poor"${currentStatusFilter==='Poor'?' selected':''}>Poor</option>
-    </select>
-    <select class="filter-select" onchange="currentCriticalityFilter=this.value;renderAssets()">
-      <option value="All">All Critical Importance</option>
-      <option value="High"${currentCriticalityFilter==='High'?' selected':''}>High</option>
-      <option value="Low"${currentCriticalityFilter==='Low'?' selected':''}>Low</option>
-    </select>
-  </div>`;
-
-  // Confirmed directly: the remaining filters (sort, TRA class, and the
-  // full type/location hierarchy) were scattered across a second row,
-  // always visible whether or not anyone was using them. Consolidated
-  // here into one collapsible panel instead - same underlying filter
-  // state and cascading logic as before, just not permanently taking
-  // up screen space. The toggle button's own count reflects only
-  // what's actually active, so it's obvious at a glance even collapsed.
-  const otherFiltersActiveCount = [
-    currentSortBy !== 'default', currentTraClassFilter !== 'All',
-    currentNatureFilter !== 'All', currentMobilityFilter !== 'All', currentCategoryFilter !== 'All',
-    currentSystemFilter !== 'All', currentFloorFilter !== 'All', currentZoneFilter !== 'All', currentRoomFilter !== 'All',
-  ].filter(Boolean).length;
-
-  html += `<div style="margin-bottom:12px">
-    <button onclick="assetFiltersExpanded=!assetFiltersExpanded;renderAssets()" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid ${otherFiltersActiveCount>0?'var(--navy)':'var(--border)'};border-radius:8px;background:${otherFiltersActiveCount>0?'var(--navy-pale)':'#fff'};color:var(--navy);cursor:pointer">🔧 More Filters${otherFiltersActiveCount>0?` (${otherFiltersActiveCount})`:''} ${assetFiltersExpanded?'▾':'▸'}</button>
-  </div>`;
-
-  if (assetFiltersExpanded) {
-  html += `<div class="filter-row" style="margin-bottom:8px">
-    <select class="filter-select" onchange="currentSortBy=this.value;renderAssetResults()">
-      <option value="default"${currentSortBy==='default'?' selected':''}>Maintenance Cost Ratio</option>
-      <option value="costRatioDesc"${currentSortBy==='costRatioDesc'?' selected':''}>Highest first</option>
-      <option value="costRatioAsc"${currentSortBy==='costRatioAsc'?' selected':''}>Lowest first</option>
-    </select>
     ${canManageTra ? `<select class="filter-select" onchange="currentTraClassFilter=this.value;renderAssets()">
       <option value="All">All TRA Classes</option>
       <option value="__unset__"${currentTraClassFilter==='__unset__'?' selected':''}>— Not set —</option>
       ${traClassesCache.map(c => `<option value="${c.id}"${currentTraClassFilter===c.id?' selected':''}>${escapeHtml(c.label)}</option>`).join('')}
     </select>` : ''}
   </div>`;
-
-  // Full hierarchy + location filter row, in order: Nature -> Mobility -> Category
-  // -> System -> Floor -> Room/Zone. Each narrows the options in the next one.
-  // Hidden entirely if no assets have classification data yet (e.g. before backfill import).
-  const uniqueNatures = [...new Set(assets.map(a=>a.nature).filter(Boolean))];
-  if (uniqueNatures.length > 0) {
-    const filteredByNature = currentNatureFilter==="All" ? assets : assets.filter(a=>a.nature===currentNatureFilter);
-    const uniqueMobilities = [...new Set(filteredByNature.map(a=>a.mobility).filter(Boolean))];
-    const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
-    const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
-    const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
-    const uniqueSystemsInBranch = [...new Set(filteredByCat.map(a=>a.system).filter(Boolean))].sort();
-    const filteredBySystem = currentSystemFilter==="All" ? filteredByCat : filteredByCat.filter(a=>a.system===currentSystemFilter);
-    const uniqueFloors = [...new Set(filteredBySystem.map(a=>a.floor).filter(Boolean))]
-      .sort((a,b) => displayFloor(a).localeCompare(displayFloor(b), undefined, {numeric:true}));
-    const filteredByFloor = currentFloorFilter==="All" ? filteredBySystem : filteredBySystem.filter(a=>a.floor===currentFloorFilter);
-    const uniqueZones = [...new Set(filteredByFloor.map(a=>a.zone).filter(Boolean))].sort();
-    const filteredByZone = currentZoneFilter==="All" ? filteredByFloor : filteredByFloor.filter(a=>a.zone===currentZoneFilter);
-    const uniqueRooms = [...new Set(filteredByZone.map(a=>a.room).filter(Boolean))].sort();
-
-    html += `<div class="filter-row" style="gap:6px;flex-wrap:wrap">
-      <select class="filter-select" onchange="currentNatureFilter=this.value;currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
-        <option value="All">All Types</option>
-        ${uniqueNatures.map(n=>`<option value="${n}"${currentNatureFilter===n?' selected':''}>${n}</option>`).join('')}
-      </select>
-      ${currentNatureFilter==='Tangible' ? `<select class="filter-select" onchange="currentMobilityFilter=this.value;currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
-        <option value="All">All Mobility</option>
-        ${uniqueMobilities.map(m=>`<option value="${m}"${currentMobilityFilter===m?' selected':''}>${m}</option>`).join('')}
-      </select>` : ''}
-      <select class="filter-select" onchange="currentCategoryFilter=this.value;currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
-        <option value="All">All Categories</option>
-        ${uniqueCategories.map(c=>`<option value="${c}"${currentCategoryFilter===c?' selected':''}>${c}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="currentSystemFilter=this.value;currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
-        <option value="All">All Systems</option>
-        ${uniqueSystemsInBranch.map(s=>`<option value="${s}"${currentSystemFilter===s?' selected':''}>${s}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="currentFloorFilter=this.value;currentZoneFilter='All';currentRoomFilter='All';renderAssets()">
-        <option value="All">All Floors</option>
-        ${uniqueFloors.map(f=>`<option value="${f}"${currentFloorFilter===f?' selected':''}>${displayFloor(f)}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="currentZoneFilter=this.value;currentRoomFilter='All';renderAssets()">
-        <option value="All">All Zones</option>
-        ${uniqueZones.map(z=>`<option value="${z}"${currentZoneFilter===z?' selected':''}>${escapeHtml(z)}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="currentRoomFilter=this.value;renderAssets()">
-        <option value="All">All Rooms/Zones</option>
-        ${uniqueRooms.map(r=>`<option value="${r}"${currentRoomFilter===r?' selected':''}>${displayRoom(r)}</option>`).join('')}
-      </select>
-      ${otherFiltersActiveCount > 0 ? `<button class="filter-btn" onclick="currentSortBy='default';currentTraClassFilter='All';currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';renderAssets()" style="font-size:11px">✕ Clear All</button>` : ''}
-    </div>`;
-  } else {
-    // No classification data yet (pre-backfill) — still offer a plain System filter
-    // as buttons so System filtering works even before Nature/Category are populated.
-    html += `<div class="filters">`;
-    systems.forEach(c => { html += `<button class="filter-btn${currentSystemFilter===c?' active':''}" onclick="currentSystemFilter='${c}';renderAssets()">${c}</button>`; });
-    html += `</div>`;
-  }
-  }
 
   if (canManageTra) {
     html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
@@ -2209,42 +2140,132 @@ function renderAssets() {
 // rebuild. Never touches the search input, dropdowns, or filter chips,
 // so it can run continuously while someone is typing without breaking
 // focus.
+// Confirmed directly, requested: every filter that used to live in a
+// separate dropdown row now lives on the real table's own column
+// headers instead - the same real, Excel-style pattern already proven
+// on Inventory. Each setter below only ever calls renderAssetResults()
+// itself, never the heavier renderAssets() - matching the exact same
+// real principle the search input already relied on, so a filter
+// click never rebuilds (or loses focus in) the search box above it.
+function setAssetNatureFilter(v) { currentNatureFilter=v; currentMobilityFilter='All'; currentCategoryFilter='All'; currentSystemFilter='All'; currentFloorFilter='All'; currentZoneFilter='All'; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetMobilityFilter(v) { currentMobilityFilter=v; currentCategoryFilter='All'; currentSystemFilter='All'; currentFloorFilter='All'; currentZoneFilter='All'; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetCategoryFilter(v) { currentCategoryFilter=v; currentSystemFilter='All'; currentFloorFilter='All'; currentZoneFilter='All'; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetSystemFilter(v) { currentSystemFilter=v; currentFloorFilter='All'; currentZoneFilter='All'; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetFloorFilter(v) { currentFloorFilter=v; currentZoneFilter='All'; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetZoneFilter(v) { currentZoneFilter=v; currentRoomFilter='All'; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetRoomFilter(v) { currentRoomFilter=v; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetStatusFilter(v) { currentStatusFilter=v; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetCriticalityFilter(v) { currentCriticalityFilter=v; openColumnFilterPopover=null; renderAssetResults(); }
+function setAssetCostRatioSort(dir) { currentSortBy = dir === 'asc' ? 'costRatioAsc' : dir === 'desc' ? 'costRatioDesc' : 'default'; openColumnFilterPopover=null; renderAssetResults(); }
+
+// One, shared header-cell builder for every value-list filter column
+// on this table - the exact same real popover shape already proven on
+// Inventory, just parameterized per column here since Asset Register
+// has considerably more of them.
+function assetColumnFilterHeaderHtml(column, label, currentValue, options, setterName) {
+  const isActive = currentValue !== 'All';
+  const isOpen = isColumnFilterPopoverOpen('assets', column);
+  let popoverHtml = '';
+  if (isOpen) {
+    const optionsHtml = `<button onclick="${setterName}('All')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentValue==='All'?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer">All</button>` +
+      options.map(v => `<button onclick="${setterName}('${String(v).replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentValue===v?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(v)}</button>`).join('');
+    popoverHtml = `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:160px;max-height:220px;overflow-y:auto">${optionsHtml}</div>`;
+  }
+  return `<th style="padding:10px 12px;color:${isActive?'var(--navy)':'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none;white-space:nowrap" onclick="toggleColumnFilterPopover('assets','${column}',renderAssetResults)">${label} ▾${popoverHtml}</th>`;
+}
+
+// Renders ONLY the result count + asset list — called on every
+// keystroke in search, and by every column filter click. Never
+// touches the search input or the header row's own DOM identity
+// beyond re-rendering it fresh each time, so typing keeps focus and a
+// filter click never has to rebuild the summary cards above it.
 function renderAssetResults() {
   const filtered = getFilteredAssets();
   const container = document.getElementById('assetResultsContainer');
   if (!container) return;
   const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
 
-  let html = `<div class="result-count">Showing ${filtered.length} of ${assets.length} assets</div>`;
-  html += `<div class="asset-list">`;
-  filtered.forEach((a) => {
-    const idx = assets.indexOf(a);
-    const interval = calcMaintenanceInterval(a.lastService, a.nextService);
-    const intervalBlock = `
-      <div style="text-align:right;flex-shrink:0;min-width:90px">
-        <div style="font-size:11px;color:var(--muted)">Interval</div>
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${formatInterval(interval)}</div>
-      </div>`;
-    const valueBlock = canSeeCost ? `
-      <div style="text-align:right;flex-shrink:0;min-width:110px">
-        <div style="font-size:11px;color:var(--muted)">Current Value</div>
-        <div style="font-size:13px;font-weight:600;color:var(--navy)">${a.currentValue !== null && a.currentValue !== undefined ? formatCurrency(a.currentValue) : '—'}</div>
-        ${a.fullyDepreciated ? '<div style="font-size:10px;color:var(--muted)">fully depreciated</div>' : ''}
-      </div>` : '';
-    const costRatio = getMaintenanceCostRatio(a);
-    const costRatioBadge = (canSeeCost && costRatio !== null && costRatio >= 50)
-      ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${costRatio >= 75 ? '#FEE2E2' : '#FEF3C7'};color:${costRatio >= 75 ? '#991B1B' : '#92400E'}">⚠ ${Math.round(costRatio)}% of acquisition cost in maintenance</span>`
-      : '';
-    html += `<button class="asset-row" onclick="showDetail(${idx})">
-      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="asset-name">${a.name}</span><span class="asset-id">${a.id}</span>${a.needsTechnicalReview ? '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}${costRatioBadge}</div>
-      <div class="asset-meta">${displayRoom(a.room)} · ${a.manufacturer} ${a.model}</div>
-      <span class="asset-class">${a.category}</span></div>
-      ${valueBlock}
-      ${intervalBlock}
-      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0"><span class="badge ${statusBadge(a.status)}">${a.status}</span><span class="badge ${critBadge(a.criticality)}">${a.criticality}</span>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></button>`;
-  });
-  html += `</div>`;
+  // Same real cascading hierarchy already proven before this rebuild -
+  // each level's own real options narrow to only what's actually
+  // possible given everything already chosen above it, computed fresh
+  // against the full, real asset list every time (not the already-
+  // filtered result), so a column's own options never shrink just
+  // because a completely unrelated filter is also active.
+  const filteredByNature = currentNatureFilter==="All" ? assets : assets.filter(a=>a.nature===currentNatureFilter);
+  const filteredByMobility = currentMobilityFilter==="All" ? filteredByNature : filteredByNature.filter(a=>a.mobility===currentMobilityFilter);
+  const filteredByCat = currentCategoryFilter==="All" ? filteredByMobility : filteredByMobility.filter(a=>a.category===currentCategoryFilter);
+  const filteredBySystem = currentSystemFilter==="All" ? filteredByCat : filteredByCat.filter(a=>a.system===currentSystemFilter);
+  const filteredByFloor = currentFloorFilter==="All" ? filteredBySystem : filteredBySystem.filter(a=>a.floor===currentFloorFilter);
+  const filteredByZone = currentZoneFilter==="All" ? filteredByFloor : filteredByFloor.filter(a=>a.zone===currentZoneFilter);
+
+  const uniqueNatures = [...new Set(assets.map(a=>a.nature).filter(Boolean))];
+  const uniqueMobilities = [...new Set(filteredByNature.map(a=>a.mobility).filter(Boolean))];
+  const uniqueCategories = [...new Set(filteredByMobility.map(a=>a.category).filter(Boolean))];
+  const uniqueSystems = [...new Set(filteredByCat.map(a=>a.system).filter(Boolean))].sort();
+  const uniqueFloors = [...new Set(filteredBySystem.map(a=>a.floor).filter(Boolean))]
+    .sort((a,b) => displayFloor(a).localeCompare(displayFloor(b), undefined, {numeric:true}));
+  const uniqueZones = [...new Set(filteredByFloor.map(a=>a.zone).filter(Boolean))].sort();
+  const uniqueRooms = [...new Set(filteredByZone.map(a=>a.room).filter(Boolean))].sort();
+  const hasClassificationData = uniqueNatures.length > 0;
+
+  const sortArrow = currentSortBy === 'costRatioAsc' ? ' ↑' : currentSortBy === 'costRatioDesc' ? ' ↓' : '';
+  const costRatioPopoverOpen = isColumnFilterPopoverOpen('assets', 'costRatio');
+  const costRatioPopover = costRatioPopoverOpen ? `<div style="position:absolute;top:100%;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:140px">
+    <button onclick="setAssetCostRatioSort('desc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentSortBy==='costRatioDesc'?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer">Highest first</button>
+    <button onclick="setAssetCostRatioSort('asc')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentSortBy==='costRatioAsc'?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">Lowest first</button>
+    <button onclick="setAssetCostRatioSort(null)" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentSortBy==='default'?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">Default</button>
+  </div>` : '';
+
+  const anyOtherFilterActive = [currentNatureFilter, currentMobilityFilter, currentCategoryFilter, currentSystemFilter, currentFloorFilter, currentZoneFilter, currentRoomFilter, currentStatusFilter, currentCriticalityFilter].some(v => v !== 'All') || currentSortBy !== 'default';
+
+  let html = `<div class="result-count" style="display:flex;align-items:center;justify-content:space-between">
+    <span>Showing ${filtered.length} of ${assets.length} assets</span>
+    ${anyOtherFilterActive ? `<button onclick="currentNatureFilter='All';currentMobilityFilter='All';currentCategoryFilter='All';currentSystemFilter='All';currentFloorFilter='All';currentZoneFilter='All';currentRoomFilter='All';currentStatusFilter='All';currentCriticalityFilter='All';currentSortBy='default';renderAssetResults()" style="padding:4px 10px;font-size:11.5px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">✕ Clear filters</button>` : ''}
+  </div>`;
+
+  html += `<div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px;margin-top:8px">
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#F8FAFC;text-align:left">
+        <th style="padding:10px 12px;color:var(--muted);font-weight:600;white-space:nowrap">Asset</th>
+        ${hasClassificationData ? assetColumnFilterHeaderHtml('nature', 'Type', currentNatureFilter, uniqueNatures, 'setAssetNatureFilter') : ''}
+        ${hasClassificationData && currentNatureFilter==='Tangible' ? assetColumnFilterHeaderHtml('mobility', 'Mobility', currentMobilityFilter, uniqueMobilities, 'setAssetMobilityFilter') : ''}
+        ${hasClassificationData ? assetColumnFilterHeaderHtml('category', 'Category', currentCategoryFilter, uniqueCategories, 'setAssetCategoryFilter') : ''}
+        ${assetColumnFilterHeaderHtml('system', 'System', currentSystemFilter, uniqueSystems.length ? uniqueSystems : getSystemsInUse().map(s=>s.name), 'setAssetSystemFilter')}
+        ${hasClassificationData ? assetColumnFilterHeaderHtml('floor', 'Floor', currentFloorFilter, uniqueFloors.map(f=>displayFloor(f)), 'setAssetFloorFilter') : ''}
+        ${hasClassificationData ? assetColumnFilterHeaderHtml('zone', 'Zone', currentZoneFilter, uniqueZones, 'setAssetZoneFilter') : ''}
+        ${hasClassificationData ? assetColumnFilterHeaderHtml('room', 'Room', currentRoomFilter, uniqueRooms.map(r=>displayRoom(r)), 'setAssetRoomFilter') : ''}
+        ${assetColumnFilterHeaderHtml('status', 'Status', currentStatusFilter, ['Good','Poor'], 'setAssetStatusFilter')}
+        ${assetColumnFilterHeaderHtml('criticality', 'Criticality', currentCriticalityFilter, ['High','Low'], 'setAssetCriticalityFilter')}
+        ${canSeeCost ? `<th style="padding:10px 12px;text-align:right;color:${currentSortBy!=='default'?'var(--navy)':'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none;white-space:nowrap" onclick="toggleColumnFilterPopover('assets','costRatio',renderAssetResults)">Cost Ratio${sortArrow} ▾${costRatioPopover}</th>` : ''}
+        <th></th>
+      </tr></thead>
+      <tbody>
+        ${filtered.length === 0 ? `<tr><td colspan="12" style="padding:24px;text-align:center;color:var(--muted)">No assets match this filter.</td></tr>` :
+          filtered.map(a => {
+            const idx = assets.indexOf(a);
+            const costRatio = getMaintenanceCostRatio(a);
+            const costRatioColor = costRatio !== null && costRatio >= 75 ? 'var(--red)' : costRatio !== null && costRatio >= 50 ? 'var(--amber,#B45309)' : 'var(--text)';
+            return `<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="showDetail(${idx})">
+              <td style="padding:10px 12px">
+                <div style="font-weight:600;color:var(--text)">${escapeHtml(a.name)}${a.needsTechnicalReview ? ' <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Needs Review</span>' : ''}</div>
+                <div style="font-size:11px;color:var(--muted)">${escapeHtml(a.id)} · ${escapeHtml(a.manufacturer||'')} ${escapeHtml(a.model||'')}</div>
+              </td>
+              ${hasClassificationData ? `<td style="padding:10px 12px">${escapeHtml(a.nature||'—')}</td>` : ''}
+              ${hasClassificationData && currentNatureFilter==='Tangible' ? `<td style="padding:10px 12px">${escapeHtml(a.mobility||'—')}</td>` : ''}
+              ${hasClassificationData ? `<td style="padding:10px 12px">${escapeHtml(a.category||'—')}</td>` : ''}
+              <td style="padding:10px 12px">${escapeHtml(a.system||'—')}</td>
+              ${hasClassificationData ? `<td style="padding:10px 12px">${a.floor ? escapeHtml(displayFloor(a.floor)) : '—'}</td>` : ''}
+              ${hasClassificationData ? `<td style="padding:10px 12px">${escapeHtml(a.zone||'—')}</td>` : ''}
+              ${hasClassificationData ? `<td style="padding:10px 12px">${a.room ? escapeHtml(displayRoom(a.room)) : '—'}</td>` : ''}
+              <td style="padding:10px 12px"><span class="badge ${statusBadge(a.status)}">${escapeHtml(a.status)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${critBadge(a.criticality)}">${escapeHtml(a.criticality)}</span></td>
+              ${canSeeCost ? `<td style="padding:10px 12px;text-align:right;font-weight:600;color:${costRatioColor}">${costRatio !== null ? costRatio.toFixed(0)+'%' : '—'}</td>` : ''}
+              <td style="padding:10px 12px;text-align:right;color:var(--muted)">›</td>
+            </tr>`;
+          }).join('')}
+      </tbody>
+    </table>
+  </div>`;
   container.innerHTML = html;
 }
 
@@ -16935,11 +16956,118 @@ async function buildWorkOrdersHtml(orders) {
       html += `<div style="text-align:center;padding:40px 20px;color:var(--muted);font-style:italic">No work orders yet — these are created automatically the moment a real maintenance alert fires.</div>`;
     } else {
       const staff = await loadStaffList();
-      html += `<div class="asset-list">${orders.map(o => renderWORowHtml(o, staff)).join('')}</div>`;
+      lastWOStaffForTable = staff;
+      html += `<div id="woTableContainer"></div>`;
+      allWorkOrdersForTable = orders;
     }
   }
 
   return html;
+}
+
+// Confirmed directly, requested: the same real, Excel-style column-
+// header filter pattern as Asset Register and Inventory, replacing
+// what used to be an unfiltered, scroll-through-everything list -
+// genuinely new filtering capability, since none existed here before.
+let woTableFilters = { system: 'All', maintType: 'All', urgency: 'All', status: 'All', technician: 'All' };
+let allWorkOrdersForTable = [];
+let lastWOStaffForTable = [];
+
+function setWOTableFilter(key, value) {
+  woTableFilters[key] = value;
+  openColumnFilterPopover = null;
+  renderWorkOrdersTable();
+}
+
+function clearWOTableFilters() {
+  woTableFilters = { system: 'All', maintType: 'All', urgency: 'All', status: 'All', technician: 'All' };
+  openColumnFilterPopover = null;
+  renderWorkOrdersTable();
+}
+
+function woColumnFilterHeaderHtml(column, label, currentValue, options, filterKey) {
+  const isActive = currentValue !== 'All';
+  const isOpen = isColumnFilterPopoverOpen('workorders', column);
+  let popoverHtml = '';
+  if (isOpen) {
+    const optionsHtml = `<button onclick="setWOTableFilter('${filterKey}','All')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentValue==='All'?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer">All</button>` +
+      options.map(v => `<button onclick="setWOTableFilter('${filterKey}','${String(v).replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentValue===v?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(v)}</button>`).join('');
+    popoverHtml = `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:160px;max-height:220px;overflow-y:auto">${optionsHtml}</div>`;
+  }
+  return `<th style="padding:10px 12px;color:${isActive?'var(--navy)':'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none;white-space:nowrap" onclick="toggleColumnFilterPopover('workorders','${column}',renderWorkOrdersTable)">${label} ▾${popoverHtml}</th>`;
+}
+
+// Renders ONLY the table itself, called on every filter click - never
+// rebuilds the summary cards or Test Tools panel above it, matching
+// the exact same real principle Asset Register's own table already
+// uses.
+function renderWorkOrdersTable() {
+  const container = document.getElementById('woTableContainer');
+  if (!container) return;
+  const orders = allWorkOrdersForTable;
+  const staff = lastWOStaffForTable;
+
+  const filtered = orders.filter(o => {
+    if (woTableFilters.system !== 'All' && o.system !== woTableFilters.system) return false;
+    if (woTableFilters.maintType !== 'All' && (o.maintenanceType || '—') !== woTableFilters.maintType) return false;
+    if (woTableFilters.urgency !== 'All' && o.urgency !== woTableFilters.urgency) return false;
+    if (woTableFilters.status !== 'All' && o.status !== woTableFilters.status) return false;
+    if (woTableFilters.technician !== 'All') {
+      const label = o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned';
+      if (label !== woTableFilters.technician) return false;
+    }
+    return true;
+  }).slice().sort((a, b) => new Date(b.created) - new Date(a.created));
+
+  const uniqueSystems = [...new Set(orders.map(o => o.system).filter(Boolean))].sort();
+  const uniqueMaintTypes = [...new Set(orders.map(o => o.maintenanceType || '—'))].sort();
+  const uniqueUrgencies = [...new Set(orders.map(o => o.urgency).filter(Boolean))];
+  const uniqueStatuses = [...new Set(orders.map(o => o.status).filter(Boolean))];
+  const uniqueTechnicians = [...new Set(orders.map(o => o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned'))].sort();
+
+  const anyFilterActive = Object.values(woTableFilters).some(v => v !== 'All');
+
+  let html = `<div class="result-count" style="display:flex;align-items:center;justify-content:space-between">
+    <span>Showing ${filtered.length} of ${orders.length} work orders</span>
+    ${anyFilterActive ? `<button onclick="clearWOTableFilters()" style="padding:4px 10px;font-size:11.5px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer">✕ Clear filters</button>` : ''}
+  </div>`;
+
+  html += `<div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:10px;margin-top:8px">
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#F8FAFC;text-align:left">
+        <th style="padding:10px 12px;color:var(--muted);font-weight:600;white-space:nowrap">Work Order</th>
+        ${woColumnFilterHeaderHtml('system', 'System', woTableFilters.system, uniqueSystems, 'system')}
+        ${woColumnFilterHeaderHtml('maintType', 'Type', woTableFilters.maintType, uniqueMaintTypes, 'maintType')}
+        ${woColumnFilterHeaderHtml('urgency', 'Urgency', woTableFilters.urgency, uniqueUrgencies, 'urgency')}
+        ${woColumnFilterHeaderHtml('status', 'Status', woTableFilters.status, uniqueStatuses, 'status')}
+        ${woColumnFilterHeaderHtml('technician', 'Technician', woTableFilters.technician, uniqueTechnicians, 'technician')}
+        <th style="padding:10px 12px;color:var(--muted);font-weight:600;white-space:nowrap">Created</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        ${filtered.length === 0 ? `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No work orders match this filter.</td></tr>` :
+          filtered.map(o => {
+            const procStatus = o.procurementStatus || 'None';
+            const techLabel = o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned';
+            const unread = getWOUnreadCount(o);
+            return `<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="showWorkOrderDetail('${o.id}')">
+              <td style="padding:10px 12px">
+                <div style="font-weight:600;color:var(--text)">${escapeHtml(o.assetName)}${unread > 0 ? ` <span class="wo-row-unread-dot" title="Unread chat">${unread > 9 ? '9+' : unread}</span>` : ''}${procStatus !== 'None' ? ` <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">🛒 ${escapeHtml(procStatusLabel(procStatus))}</span>` : ''}</div>
+                <div style="font-size:11px;color:var(--muted)">${escapeHtml(o.woId)} · ${escapeHtml(o.location||'—')}</div>
+              </td>
+              <td style="padding:10px 12px">${escapeHtml(o.system||'—')}</td>
+              <td style="padding:10px 12px">${escapeHtml(o.maintenanceType||'—')}</td>
+              <td style="padding:10px 12px"><span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${escapeHtml(o.urgency)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${escapeHtml(o.status)}</span></td>
+              <td style="padding:10px 12px">${escapeHtml(techLabel)}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</td>
+              <td style="padding:10px 12px;white-space:nowrap;color:var(--muted)">${new Date(o.created).toLocaleDateString()}</td>
+              <td style="padding:10px 12px;text-align:right;color:var(--muted)">›</td>
+            </tr>`;
+          }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+  container.innerHTML = html;
 }
 
 // Tracks the last-seen work order data so the background poll (below)
@@ -16967,6 +17095,7 @@ async function renderWorkOrdersFromData(orders) {
   lastWOSignature = JSON.stringify(orders);
   refreshBuildingSwitcherOptions();
   container.innerHTML = await buildWorkOrdersHtml(filterByBuilding(orders));
+  if (document.getElementById('woTableContainer')) renderWorkOrdersTable();
 }
 
 // Confirmed directly, discussed and agreed in full: applies here too,
