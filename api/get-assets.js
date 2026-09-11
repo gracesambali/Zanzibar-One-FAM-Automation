@@ -1990,6 +1990,7 @@ async function handleGetFloorPlan(req, res, organizationId) {
     }
     const uploadedBy = planRow ? planRow.uploaded_by : null;
     const uploadDate = planRow ? planRow.uploaded_date : null;
+    const roomMappingStatus = planRow ? (planRow.room_mapping_status || "none") : "none";
     // Original sent this as a raw JSON string, not a parsed array — the
     // frontend parses it itself. jsonb comes back already-parsed from
     // Postgres, so it's re-stringified here to match exactly.
@@ -2006,7 +2007,7 @@ async function handleGetFloorPlan(req, res, organizationId) {
       }));
     }
 
-    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog });
+    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog, roomMappingStatus });
   } catch (err) {
     console.error("handleGetFloorPlan error:", err);
     return res.status(500).json({ error: err.message });

@@ -14296,6 +14296,7 @@ async function renderFloorPlan() {
     </div>
     ${canManage ? `<button id="floorPlanPlacementBtn" class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
     ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
+    ${canManage ? `<span id="floorPlanRoomMappingBtn"></span>` : ''}
     ${DIGITAL_TWIN_CAN_MANAGE() ? `<button class="filter-btn" onclick="openDigitalTwinSettingsModal()">🎥 Digital Twin</button>` : ''}
   </div>
   <div id="floorPlanUploadPanel" style="display:none;background:#F0F4FA;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
@@ -14384,6 +14385,7 @@ TAB_PREFETCH_FETCHERS.floorplan = async () => {
 
 function renderFloorPlanImage(canManage) {
   const wrap = document.getElementById('floorPlanImageWrap');
+  updateFloorPlanRoomMappingBtn();
   if (!floorPlanData || !floorPlanData.imageUrl) {
     wrap.innerHTML = `<div style="padding:60px 20px;max-width:480px;margin:0 auto">
       <div style="font-size:14px;font-weight:600;color:var(--navy);margin-bottom:8px">No floor plan image uploaded for ${displayFloor(floorPlanCurrentFloor)} yet</div>
@@ -14454,6 +14456,159 @@ function renderFloorPlanImage(canManage) {
     }
     sidebar += `</div>`;
     wrap.insertAdjacentHTML('beforeend', sidebar);
+  }
+}
+
+// Confirmed directly, discussed and agreed: keeps the real Phase 5
+// trigger in sync with the real, current state of this floor's own
+// mapping - nothing shown at all for the conceptual placeholder
+// image, since there's genuinely nothing real for the AI to detect
+// on it.
+function updateFloorPlanRoomMappingBtn() {
+  const btnWrap = document.getElementById('floorPlanRoomMappingBtn');
+  if (!btnWrap) return;
+  if (!floorPlanData || !floorPlanData.imageUrl || floorPlanData.isDefaultImage) {
+    btnWrap.innerHTML = '';
+    return;
+  }
+  const status = floorPlanData.roomMappingStatus || 'none';
+  if (status === 'pending_review') {
+    btnWrap.innerHTML = `<button class="filter-btn" style="background:#FEF3C7;border-color:#F59E0B;color:#92400E" onclick="openFloorRoomMappingReview()">⚠ Review Detected Rooms</button>`;
+  } else if (status === 'confirmed') {
+    btnWrap.innerHTML = `<button class="filter-btn" onclick="openFloorRoomMappingReview()">✓ Rooms Mapped — Review</button>`;
+  } else {
+    btnWrap.innerHTML = `<button class="filter-btn" onclick="triggerFloorPlanRoomAnalysis()">🤖 Analyze Rooms</button>`;
+  }
+}
+
+async function triggerFloorPlanRoomAnalysis() {
+  const facilityId = currentFacilityFilter;
+  const building = currentBuildingFilter;
+  if (!facilityId || facilityId === '__all__' || !building || building === '__all__') {
+    alert('Choose a specific facility and building first — Analyze Rooms needs to know exactly which real rooms this floor should match against.');
+    return;
+  }
+
+  const btnWrap = document.getElementById('floorPlanRoomMappingBtn');
+  if (btnWrap) btnWrap.innerHTML = `<button class="filter-btn" disabled>Analyzing…</button>`;
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'analyzeFloorPlanRooms', floor: floorPlanCurrentFloor, facilityId, building }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not analyze this drawing');
+
+    floorPlanData.roomMappingStatus = data.detectionCount > 0 ? 'pending_review' : 'none';
+    updateFloorPlanRoomMappingBtn();
+    if (data.detectionCount > 0) {
+      openFloorRoomMappingReview();
+    } else {
+      alert('No real, distinct room regions could be confidently detected on this drawing.');
+    }
+  } catch (err) {
+    alert('Could not analyze: ' + err.message);
+    updateFloorPlanRoomMappingBtn();
+  }
+}
+
+async function openFloorRoomMappingReview() {
+  const facilityId = currentFacilityFilter;
+  const building = currentBuildingFilter;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'floorRoomMappingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:900px;max-width:95vw;max-height:90vh;overflow-y:auto">
+      <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">Review Detected Rooms — ${escapeHtml(displayFloor(floorPlanCurrentFloor))}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Confirm or correct each real, detected region below. Nothing here is used to place assets automatically until you confirm it.</div>
+      <div id="frm_body"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
+      <div id="frm_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button onclick="document.getElementById('floorRoomMappingOverlay').remove()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer">Close</button>
+        <button onclick="triggerFloorPlanRoomAnalysis();document.getElementById('floorRoomMappingOverlay').remove()" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer">Re-analyze</button>
+        <button id="frm_submit" onclick="submitFloorRoomMapping('${floorPlanCurrentFloor}','${facilityId}','${building}')" style="flex:2;padding:10px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Confirm Mapping</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch(`/api/get-assets?floorRoomDetections=true&floor=${encodeURIComponent(floorPlanCurrentFloor)}&facilityId=${encodeURIComponent(facilityId)}&building=${encodeURIComponent(building)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load detections');
+    renderFloorRoomMappingReviewBody(data);
+  } catch (err) {
+    document.getElementById('frm_body').innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderFloorRoomMappingReviewBody(data) {
+  const body = document.getElementById('frm_body');
+  if (!body) return;
+  const { detections, availableRooms } = data;
+
+  if (!detections || detections.length === 0) {
+    body.innerHTML = `<div style="font-size:12.5px;color:var(--muted);font-style:italic">No real, detected regions to review right now.</div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <div style="position:relative;width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+      <img src="${floorPlanData.imageUrl}" style="width:100%;display:block" onerror="this.style.display='none'">
+      ${detections.map((d, i) => `
+        <div style="position:absolute;left:${d.xMin}%;top:${d.yMin}%;width:${d.xMax - d.xMin}%;height:${d.yMax - d.yMin}%;border:2px solid ${d.roomId ? '#16a34a' : '#F59E0B'};background:${d.roomId ? 'rgba(22,163,74,0.12)' : 'rgba(245,158,11,0.15)'};display:flex;align-items:flex-start;justify-content:flex-start">
+          <span style="background:${d.roomId ? '#16a34a' : '#F59E0B'};color:#fff;font-size:10px;font-weight:700;padding:1px 5px">${i + 1}</span>
+        </div>`).join('')}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${detections.map((d, i) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
+          <span style="background:${d.roomId ? '#16a34a' : '#F59E0B'};color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0">${i + 1}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;color:var(--muted)">Detected: ${escapeHtml(d.detectedLabel || '(no readable label)')}</div>
+          </div>
+          <select id="frm_room_${d.id}" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+            <option value="">— No match / dismiss —</option>
+            ${availableRooms.map(r => `<option value="${r.id}" ${d.roomId === r.id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function submitFloorRoomMapping(floor, facilityId, building) {
+  const errorBox = document.getElementById('frm_error');
+  const btn = document.getElementById('frm_submit');
+  errorBox.style.display = 'none';
+
+  const selects = document.querySelectorAll('[id^="frm_room_"]');
+  const mappings = [...selects].map(sel => {
+    const id = sel.id.replace('frm_room_', '');
+    const roomId = sel.value;
+    return roomId ? { id, roomId } : { id, dismissed: true };
+  });
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'confirmFloorRoomMapping', floor, facilityId, building, mappings }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save this mapping');
+
+    floorPlanData.roomMappingStatus = 'confirmed';
+    updateFloorPlanRoomMappingBtn();
+    document.getElementById('floorRoomMappingOverlay')?.remove();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Confirm Mapping';
   }
 }
 
