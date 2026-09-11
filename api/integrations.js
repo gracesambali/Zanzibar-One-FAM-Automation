@@ -44,15 +44,19 @@ const PROVIDERS = {
   },
   matterport: {
     label: "Matterport",
-    // Confirmed directly, discussed and agreed: whether Matterport's
-    // own API genuinely supports this same, standard, self-serve
-    // OAuth pattern (rather than a different kind of account
-    // relationship) has not been confirmed with Matterport directly
-    // yet - left unconfigured on purpose until that's actually known,
-    // rather than guessed at.
-    authUrl: null,
-    tokenUrl: null,
-    scope: null,
+    // Confirmed directly against Matterport's own developer
+    // documentation: these are their real, correct OAuth endpoints -
+    // but access itself is invitation-only, gated behind a real
+    // Developer Tools Production License and a Commercial Partnership
+    // Agreement with Matterport directly, not open, standard self-
+    // serve registration the way QuickBooks or Zoho are. Wiring in
+    // the real URLs doesn't unlock access on its own - this still
+    // correctly reports "not set up yet" until real credentials from
+    // that actual approval process exist in the environment.
+    authUrl: "https://authn.matterport.com/oauth/authorize",
+    tokenUrl: "https://api.matterport.com/api/oauth/token",
+    scope: "ViewDetails ViewPublic",
+    tokenAuthMethod: "body_params",
     clientIdEnv: "MATTERPORT_CLIENT_ID",
     clientSecretEnv: "MATTERPORT_CLIENT_SECRET",
   },
@@ -193,13 +197,26 @@ async function handleCallback(req, res, session) {
 
   try {
     const redirectUri = `${appUrl}/api/integrations?callback=${provider}`;
+    const bodyParams = { grant_type: "authorization_code", code, redirect_uri: redirectUri };
+    const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+
+    // Confirmed directly against each provider's own documentation:
+    // QuickBooks and Zoho both authenticate this exchange via a Basic
+    // Auth header; Matterport's own real token endpoint instead
+    // requires client_id/client_secret as real body parameters. Kept
+    // as a real, per-provider choice rather than assuming every
+    // provider works the same way.
+    if (cfg.tokenAuthMethod === "body_params") {
+      bodyParams.client_id = process.env[cfg.clientIdEnv];
+      bodyParams.client_secret = process.env[cfg.clientSecretEnv];
+    } else {
+      headers.Authorization = `Basic ${Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString("base64")}`;
+    }
+
     const tokenResp = await fetch(cfg.tokenUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString("base64")}`,
-      },
-      body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+      headers,
+      body: new URLSearchParams(bodyParams),
     });
     const tokenData = await tokenResp.json();
     if (!tokenResp.ok || !tokenData.access_token) {
