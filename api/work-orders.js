@@ -107,6 +107,25 @@ export default async function handler(req, res) {
     return handleGetVendors(req, res, session.org);
   }
 
+  // Confirmed directly, requested: the real, current closure-review
+  // setting for this organization, readable by anyone with an active
+  // session - the closure UI itself needs to know whether a gate
+  // applies before it can act correctly, not just the settings screen
+  // that edits it.
+  if (req.method === "GET" && req.query.closureReviewSettings === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery("select settings from organizations where id = $1", [session.org]);
+      const settings = (result.rows[0] && result.rows[0].settings && result.rows[0].settings.workOrderClosureReview) || {
+        enabled: false, maintenanceTypes: [], highCriticalityAssets: false, minCostThreshold: null,
+      };
+      return res.status(200).json({ settings });
+    } catch (err) {
+      console.error("get closureReviewSettings error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Vendor quotes for one work order — the actual "compare and choose
   // the lowest bidder" data. Scoped by WO ID via filterByFormula rather
   // than fetching everything, since this table will grow with every
@@ -330,6 +349,39 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("updateSLATargets error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Confirmed directly, discussed and agreed in full before
+    // building: whether closing a Work Order requires a supervisor's
+    // review first is a real, per-client preference, not a universal
+    // rule - off by default for every organization, since mandatory
+    // review-before-close is the exception in real practice, not the
+    // default. A client turns this on themselves, for whichever real
+    // conditions they choose (maintenance type, asset criticality,
+    // cost threshold), rather than needing a code change or a new
+    // deploy for their own preference.
+    if (req.body && req.body.updateClosureReviewSettings) {
+      if (!can(session.r, "manageUsers")) {
+        return res.status(403).json({ error: "Not permitted to update this setting." });
+      }
+      const { enabled, maintenanceTypes, highCriticalityAssets, minCostThreshold } = req.body;
+      try {
+        const { query: pgQuery } = await import("../lib/postgresClient.js");
+        const settingsValue = {
+          enabled: !!enabled,
+          maintenanceTypes: Array.isArray(maintenanceTypes) ? maintenanceTypes : [],
+          highCriticalityAssets: !!highCriticalityAssets,
+          minCostThreshold: (minCostThreshold != null && minCostThreshold !== '') ? Number(minCostThreshold) : null,
+        };
+        await pgQuery(
+          "update organizations set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{workOrderClosureReview}', $1::jsonb) where id = $2",
+          [JSON.stringify(settingsValue), session.org]
+        );
+        return res.status(200).json({ success: true, settings: settingsValue });
+      } catch (err) {
+        console.error("updateClosureReviewSettings error:", err);
         return res.status(500).json({ error: err.message });
       }
     }
@@ -2415,6 +2467,39 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 // A work order with no linked asset at all has nothing physical to
 // scan, and is deliberately rejected here - it still closes through
 // the existing Ready for Review / Approve path instead.
+// Confirmed directly, requested: the real, shared gate-check logic -
+// used identically by both the scan-closure path and the manual
+// status-change path, so neither can drift from the other. A work
+// order requires review if the gate is genuinely enabled for this
+// organization, AND at least one of its own real, chosen conditions
+// actually matches - its own maintenance type, the asset's own real
+// criticality, or its own real, already-known cost. Cost is often
+// still unknown at closure time in this workflow (entered separately,
+// sometimes afterward) - the cost condition simply doesn't fire when
+// there's nothing real to check yet, rather than guessing.
+async function shouldRequireClosureReview(organizationId, maintenanceType, assetRecordId, cost) {
+  try {
+    const { query: pgQuery, getById } = await import("../lib/postgresClient.js");
+    const result = await pgQuery("select settings from organizations where id = $1", [organizationId]);
+    const settings = (result.rows[0] && result.rows[0].settings && result.rows[0].settings.workOrderClosureReview) || null;
+    if (!settings || !settings.enabled) return false;
+
+    if (Array.isArray(settings.maintenanceTypes) && settings.maintenanceTypes.includes(maintenanceType)) return true;
+
+    if (settings.highCriticalityAssets && assetRecordId) {
+      const asset = await getById("components", assetRecordId).catch(() => null);
+      if (asset && asset.criticality === "High") return true;
+    }
+
+    if (settings.minCostThreshold != null && typeof cost === "number" && cost >= settings.minCostThreshold) return true;
+
+    return false;
+  } catch (err) {
+    console.error("shouldRequireClosureReview error (defaulting to no gate):", err.message);
+    return false;
+  }
+}
+
 async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizationId) {
   const { recordId, scannedCode, note } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
@@ -2453,7 +2538,14 @@ async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizat
       await insert("asset_barcode_links", { code, asset_record_id: targetAsset.id, linked_by: closedByUsername, organization_id: organizationId });
     }
 
-    await update("work_orders", recordId, {
+    const requiresReview = await shouldRequireClosureReview(organizationId, woData.maintenance_type, woData.asset_id, woData.cost_tzs);
+
+    await update("work_orders", recordId, requiresReview ? {
+      status: "Ready for Review",
+      closed_by: closedByUsername,
+      closure_method: "scan",
+      closure_rejection_reason: null,
+    } : {
       status: "Completed",
       completed_date: new Date().toISOString(),
       closed_by: closedByUsername,
@@ -2461,18 +2553,30 @@ async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizat
       closure_rejection_reason: null,
     }).catch(() => { throw new Error("Could not close this work order"); });
 
-    if (woData.asset_id) await advanceAssetNextService(woData.asset_id);
-    if (woData.reporter_contact) await sendSatisfactionRequest(woData.reporter_contact, recordId, woData.asset_name || "the reported issue");
+    if (!requiresReview) {
+      if (woData.asset_id) await advanceAssetNextService(woData.asset_id);
+      if (woData.reporter_contact) await sendSatisfactionRequest(woData.reporter_contact, recordId, woData.asset_name || "the reported issue");
+    }
 
     // Confirmed directly: the routed role is notified after the fact,
     // with a real, one-tap way to reopen it if something looks wrong
     // - mirroring the exact, already-proven pattern already used for
-    // the original reporter's own satisfaction check.
+    // the original reporter's own satisfaction check. When the real,
+    // per-client gate applies instead, this becomes a genuine review
+    // request rather than a passive "reopen if wrong" notice, since
+    // the work isn't actually closed yet at all in that case.
     if (woData.assigned_role) {
-      await notifyRoutedRoleOfScanClosure(woData.assigned_role, woData.asset_name || "the reported issue", woData.wo_id, recordId, closedByUsername, organizationId).catch(err => console.error("notifyRoutedRoleOfScanClosure failed (non-fatal):", err.message));
+      if (requiresReview) {
+        await notifyRoutedRoleOfReviewNeeded(woData.assigned_role, woData.asset_name || "the reported issue", woData.wo_id, recordId, closedByUsername, organizationId).catch(err => console.error("notifyRoutedRoleOfReviewNeeded failed (non-fatal):", err.message));
+      } else {
+        await notifyRoutedRoleOfScanClosure(woData.assigned_role, woData.asset_name || "the reported issue", woData.wo_id, recordId, closedByUsername, organizationId).catch(err => console.error("notifyRoutedRoleOfScanClosure failed (non-fatal):", err.message));
+      }
     }
 
-    await appendActivityLog(recordId, `📷 Closed via barcode scan by ${closedByUsername} — proof of presence confirmed at ${woData.asset_name || "the equipment"}${note ? `. Note: ${note}` : ""}`, closedByUsername, "system");
+    await appendActivityLog(recordId, requiresReview
+      ? `📷 Scanned by ${closedByUsername} — proof of presence confirmed at ${woData.asset_name || "the equipment"}, sent for review${note ? `. Note: ${note}` : ""}`
+      : `📷 Closed via barcode scan by ${closedByUsername} — proof of presence confirmed at ${woData.asset_name || "the equipment"}${note ? `. Note: ${note}` : ""}`,
+      closedByUsername, "system");
 
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -2540,6 +2644,71 @@ async function notifyRoutedRoleOfScanClosure(assignedRole, assetName, woId, reco
       }).catch(err => console.error("notifyRoutedRoleOfScanClosure sms error:", err));
     } catch (err) {
       console.error("notifyRoutedRoleOfScanClosure sms error:", err);
+    }
+  }
+}
+
+// Confirmed directly, requested: a real review request, used when
+// this organization's own real, chosen closure-review conditions
+// actually apply - genuinely different from notifyRoutedRoleOfScanClosure
+// above, since that one is a passive "reopen if wrong" notice for
+// something already closed, and this one is a real, active request:
+// nothing is closed yet until someone reviews it. Links to the
+// real, already-built in-app Approve/Send Back actions rather than a
+// new one-tap email mechanism, since those already require a real
+// session to act on safely.
+async function notifyRoutedRoleOfReviewNeeded(assignedRole, assetName, woId, recordId, closedByUsername, organizationId) {
+  const routedLoginRole = ASSIGNED_ROLE_TO_LOGIN_ROLE[assignedRole];
+  const directory = await getAllStaffDirectory(organizationId);
+  const recipients = directory.filter(e => e.role === routedLoginRole || e.role === "business_owner" || e.role === "system_admin");
+
+  const appUrl = process.env.APP_BASE_URL || "https://zanzibar-one-fam-automation.vercel.app";
+  const reviewLink = `${appUrl}/mv48r1w3?wo=${recordId}`;
+
+  const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
+  const toList = recipients.map(e => e.email).filter(Boolean);
+  if (toList.length > 0) {
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+        <div style="background:#B45309;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Ready for Review</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px">${assetName} — ${woId}</div>
+        </div>
+        <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+          <p style="margin:0 0 10px;color:#1A1A2E;font-size:14px;line-height:1.6">Confirmed on-site by ${closedByUsername}, scanning the equipment's own tag — this work order needs your review before it can be marked Closed.</p>
+          <a href="${reviewLink}" style="background:#B45309;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">Review this work order</a>
+        </div>
+      </div>`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${process.env.ALERT_FROM_EMAIL}>`,
+        to: toList,
+        subject: `Ready for Review — ${assetName} (${woId})`,
+        html,
+      }),
+    }).catch(err => console.error("notifyRoutedRoleOfReviewNeeded email error:", err));
+  }
+
+  const phones = [...new Set(recipients.map(e => e.phone).filter(Boolean))];
+  if (phones.length > 0) {
+    try {
+      const smsMessage = sanitizeForSmsWO(`${woId} ${assetName} ready for your review (scan-confirmed by ${closedByUsername}). ${reviewLink}`).slice(0, 300);
+      const auth = Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64");
+      await fetch("https://apisms.beem.africa/v1/send", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_addr: process.env.BEEM_SENDER_ID || "INFO",
+          schedule_time: "",
+          encoding: 0,
+          message: smsMessage,
+          recipients: phones.map((phone, i) => ({ recipient_id: i + 1, dest_addr: phone })),
+        }),
+      }).catch(err => console.error("notifyRoutedRoleOfReviewNeeded sms error:", err));
+    } catch (err) {
+      console.error("notifyRoutedRoleOfReviewNeeded sms error:", err);
     }
   }
 }
