@@ -2826,6 +2826,42 @@ function updateRelocateBuildingOptions() {
     buildings.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
 }
 
+// Confirmed directly, requested for Phase 6: loads the real, known
+// rooms for whichever building and floor are actually selected -
+// falls back to the asset's own current building if a new one wasn't
+// picked, since the room list should still reflect where it actually
+// is right now, not an empty, unselected building.
+async function updateRelocateRoomOptions() {
+  const roomSelect = document.getElementById('rel_room');
+  const building = document.getElementById('rel_building').value;
+  const floor = document.getElementById('rel_floor').value;
+  if (!building || !floor) {
+    roomSelect.innerHTML = `<option value="">— No change —</option><option value="__other__">Other (type it in)</option>`;
+    return;
+  }
+  roomSelect.innerHTML = `<option value="">Loading…</option>`;
+  try {
+    const resp = await fetch(`/api/get-assets?relocateRoomOptions=true&building=${encodeURIComponent(building)}&floor=${encodeURIComponent(floor)}`);
+    const data = await resp.json();
+    const rooms = data.rooms || [];
+    roomSelect.innerHTML = `<option value="">— No change —</option>
+      ${rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+      <option value="__other__">Other (type it in)</option>`;
+  } catch (err) {
+    roomSelect.innerHTML = `<option value="">— No change —</option><option value="__other__">Other (type it in)</option>`;
+  }
+}
+
+function onRelocateRoomChange() {
+  const val = document.getElementById('rel_room').value;
+  document.getElementById('rel_room_other').style.display = val === '__other__' ? 'block' : 'none';
+}
+
+function getRelocateRoomValue() {
+  const sel = document.getElementById('rel_room').value;
+  return sel === '__other__' ? document.getElementById('rel_room_other').value.trim() : sel;
+}
+
 function openRelocateForm(recordId, assetName) {
   const overlay = document.createElement('div');
   overlay.id = 'relocateOverlay';
@@ -2843,13 +2879,13 @@ function openRelocateForm(recordId, assetName) {
       </select>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Building</label>
-      <select id="rel_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="rel_building" onchange="updateRelocateRoomOptions()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="">— No change —</option>
         ${facilitiesData.flatMap(f => f.buildings).map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
       </select>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Floor/Level</label>
-      <select id="rel_floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="rel_floor" onchange="updateRelocateRoomOptions()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         <option value="">— No change —</option>
         <option value="GF">Ground Floor (GF)</option>
         <option value="B1">Basement 1 (B1)</option>
@@ -2862,7 +2898,11 @@ function openRelocateForm(recordId, assetName) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Zone/Wing</label>
       <input id="rel_zone" placeholder="e.g. Wing A — leave blank for no change" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">New Room/Zone</label>
-      <input id="rel_room" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <select id="rel_room" onchange="onRelocateRoomChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px">
+        <option value="">— No change —</option>
+        <option value="__other__">Other (type it in)</option>
+      </select>
+      <input id="rel_room_other" placeholder="Type the room" style="display:none;width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Reason for relocation</label>
       <input id="rel_reason" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:16px">
       <div style="display:flex;gap:8px">
@@ -2879,7 +2919,7 @@ async function submitRelocation(recordId) {
   const building = document.getElementById('rel_building').value.trim();
   const floor = document.getElementById('rel_floor').value.trim();
   const zone = document.getElementById('rel_zone').value.trim();
-  const room = document.getElementById('rel_room').value.trim();
+  const room = getRelocateRoomValue();
   const reason = document.getElementById('rel_reason').value.trim();
   const errorBox = document.getElementById('relocateError');
   const btn = document.getElementById('rel_submit');

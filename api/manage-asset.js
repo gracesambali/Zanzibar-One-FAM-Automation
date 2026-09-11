@@ -2164,9 +2164,18 @@ async function handleDecommission(req, res, decommissionedBy, organizationId) {
     // zero rows rather than someone else's real asset.
     if (!result) return res.status(404).json({ error: "Asset not found." });
 
-    const current = await getById("components", recordId).catch(() => null);
-    if (current) {
-      const assetId = current.asset_id || "";
+    const currentAsset = await getById("components", recordId).catch(() => null);
+    if (currentAsset) {
+      const assetId = currentAsset.asset_id || "";
+      // Confirmed directly, discussed and agreed: a decommissioned
+      // asset's own real floor-plan position is cleared too, matching
+      // the exact same real principle Relocate already follows - not
+      // just invisible because decommissioned assets already get
+      // filtered out everywhere else, genuinely removed.
+      if (assetId) {
+        const { query: pgQuery } = await import("../lib/postgresClient.js");
+        await pgQuery("delete from asset_positions where asset_id = $1 and organization_id = $2", [assetId, organizationId]).catch(() => {});
+      }
       await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy, organizationId);
     }
 
@@ -2222,6 +2231,53 @@ async function handleRelocate(req, res, relocatedBy, organizationId) {
     // wrong spot on the wrong drawing.
     if (newFloor && newFloor !== oldFloor) {
       await pgQuery("delete from asset_positions where asset_id = $1 and organization_id = $2", [assetId, organizationId]);
+    }
+
+    // Confirmed directly, discussed and agreed in full: Phase 6 - when
+    // relocating into a specific real room, and that room's own floor
+    // has a real, confirmed AI mapping, place the asset on the floor
+    // plan automatically instead of leaving it unplaced. Falls back
+    // to the existing, unchanged behavior (left unplaced, requiring
+    // manual placement) the instant any part of this isn't real and
+    // confirmed - no mapping for this floor at all, no matching real
+    // room, or the room doesn't correspond to an already-known one.
+    if (newRoom) {
+      const effectiveFloor = newFloor || oldFloor;
+      const effectiveBuilding = newBuilding || oldBuilding;
+
+      const { getByColumn } = await import("../lib/postgresClient.js");
+      const planRow = await getByColumn("floor_plans", "floor", effectiveFloor, organizationId).catch(() => null);
+      if (planRow && (planRow.room_mapping_status || "none") === "confirmed") {
+        const detectionResult = await pgQuery(
+          `select d.x_min, d.y_min, d.x_max, d.y_max
+           from floor_room_detections d
+           join building_rooms r on r.id = d.room_id
+           where d.organization_id = $1 and d.building_name = $2 and d.floor_id = $3 and d.confirmed = true and r.room_name = $4
+           limit 1`,
+          [organizationId, effectiveBuilding, effectiveFloor, newRoom]
+        );
+        if (detectionResult.rows.length > 0) {
+          const box = detectionResult.rows[0];
+          // A real point genuinely within the room's own real,
+          // confirmed box - offset randomly within the middle 60% of
+          // it (never right at an edge, where it could visually read
+          // as belonging to a neighboring room instead) so several
+          // real assets placed into the same real room don't all
+          // stack on the exact same pixel.
+          const xMin = Number(box.x_min), xMax = Number(box.x_max);
+          const yMin = Number(box.y_min), yMax = Number(box.y_max);
+          const xPad = (xMax - xMin) * 0.2, yPad = (yMax - yMin) * 0.2;
+          const placedX = xMin + xPad + Math.random() * (xMax - xMin - 2 * xPad);
+          const placedY = yMin + yPad + Math.random() * (yMax - yMin - 2 * yPad);
+
+          await pgQuery(
+            `insert into asset_positions (asset_id, floor, x_pct, y_pct, organization_id)
+             values ($1, $2, $3, $4, $5)
+             on conflict (asset_id) do update set floor = $2, x_pct = $3, y_pct = $4, organization_id = $5`,
+            [assetId, effectiveFloor, placedX.toFixed(1), placedY.toFixed(1), organizationId]
+          );
+        }
+      }
     }
 
     await insert("relocation_log", {

@@ -396,6 +396,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // Confirmed directly, requested for Phase 6: the real, known rooms
+  // for Relocate's own room dropdown - scoped by building and floor
+  // alone, since the frontend doesn't have a real facility id readily
+  // available here, matching the exact same simplification already
+  // used in handleRelocate's own real lookup.
+  if (req.query.relocateRoomOptions === "true" && req.query.building && req.query.floor) {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        "select distinct room_name from building_rooms where organization_id = $1 and building_name = $2 and floor_id = $3 order by room_name asc",
+        [session.org, req.query.building, req.query.floor]
+      );
+      return res.status(200).json({ rooms: result.rows.map(r => r.room_name) });
+    } catch (err) {
+      console.error("relocateRoomOptions read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Real building interior capture, confirmed directly - one per
   // building. Returns null cleanly when none exists yet, so the
   // frontend can just show the plain 2D Floor Plan with no toggle,
