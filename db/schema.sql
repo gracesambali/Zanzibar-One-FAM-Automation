@@ -352,7 +352,14 @@ create table floor_plans (
   image_url       text,
   uploaded_by     text,
   uploaded_date   timestamptz,
-  activity_log    jsonb not null default '[]'
+  activity_log    jsonb not null default '[]',
+  -- Confirmed directly, discussed and agreed: where this floor
+  -- actually stands in the real Phase 5 pipeline - 'none' (no
+  -- drawing, or a drawing with no AI detection run yet),
+  -- 'pending_review' (detected, waiting on a real person to confirm
+  -- or correct it), 'confirmed' (reviewed - Relocate can place
+  -- automatically on this floor now).
+  room_mapping_status text not null default 'none'
 );
 
 -- ------------------------------------------------------------
@@ -499,6 +506,37 @@ create table integration_activity_log (
   created_at        timestamptz not null default now()
 );
 create index idx_integration_activity_log_org on integration_activity_log (organization_id, created_at desc);
+
+-- Confirmed directly, discussed and agreed in full: Phase 5, AI
+-- Room/Zone Detection - one real row per region an AI pass detected
+-- on a floor's own, real, uploaded drawing, matched to the same,
+-- already-real rooms/zones already defined in Level View. A bounding
+-- box (the same x/y percentage coordinate system asset_positions
+-- already uses) rather than a full polygon, since the real, actual
+-- need this serves is giving Relocate a reasonable placement point to
+-- use automatically - not pixel-perfect boundary detection nobody
+-- asked for. Nothing here is ever used for automatic placement while
+-- unconfirmed - confirmed stays false until a real person actually
+-- reviews it, once per floor, not once per asset.
+create table floor_room_detections (
+  id                uuid primary key default gen_random_uuid(),
+  organization_id   uuid not null references organizations(id),
+  facility_id       uuid not null,
+  building_name     text not null,
+  floor_id          text not null,
+  room_id           uuid, -- references building_rooms.id once matched; null until a person matches or dismisses it
+  zone_id           uuid, -- references building_zones.id, for a zone-level (not room-level) detected region
+  detected_label    text, -- whatever text the AI pass actually read on the drawing itself, kept for the real person reviewing to compare against
+  x_min             numeric not null,
+  y_min             numeric not null,
+  x_max             numeric not null,
+  y_max             numeric not null,
+  confirmed         boolean not null default false,
+  confirmed_by      text,
+  confirmed_at      timestamptz,
+  created_at        timestamptz not null default now()
+);
+create index idx_floor_room_detections_lookup on floor_room_detections (organization_id, facility_id, building_name, floor_id);
 
 -- Fixed, known id (not a random gen_random_uuid()) specifically so
 -- every table below can reference the exact same row as a column
