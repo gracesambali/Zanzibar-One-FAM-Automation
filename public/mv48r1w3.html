@@ -534,6 +534,15 @@ button { font-family: inherit; cursor: pointer; }
     <span class="tab-label">Client Management</span>
   </button>
 
+  <!-- Confirmed directly, discussed and agreed: same hard gate as
+       Client Management right above it - a client connects their own
+       accounts here directly, GVC never touches or holds their
+       credentials. -->
+  <button class="tab-btn" data-tab="integrations" data-label="Integrations" id="integrationsNavBtn" onclick="switchTab('integrations')" onmouseenter="showSidebarTooltip(this, 'Integrations')" onmouseleave="hideSidebarTooltip()" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    <span class="tab-label">Integrations</span>
+  </button>
+
   <!-- Confirmed directly: Technician keeps the exact same flat list
        as before - no nesting, no groups, just these three - so this
        is a genuinely separate, standalone set of buttons rather than
@@ -578,6 +587,7 @@ button { font-family: inherit; cursor: pointer; }
 
   <div id="view-inventory" class="view"></div>
   <div id="view-staffmanagement" class="view"></div>
+  <div id="view-integrations" class="view"></div>
   <div id="view-annualplanning" class="view"></div>
   <div id="view-fleetrequests" class="view"></div>
   <div id="view-finance" class="view"></div>
@@ -1483,6 +1493,7 @@ function applySimplifiedNavIfNeeded() {
   const holdingsGroup = document.getElementById('holdingsGroup');
   const unitsBtn = document.getElementById('unitsNavBtn');
   const staffManagementBtn = document.getElementById('staffManagementNavBtn');
+  const integrationsBtn = document.getElementById('integrationsNavBtn');
   const financeBtn = document.getElementById('financeNavBtn');
 
   if (isTechnician) {
@@ -1492,6 +1503,7 @@ function applySimplifiedNavIfNeeded() {
     if (holdingsGroup) holdingsGroup.style.display = 'none';
     if (unitsBtn) unitsBtn.style.display = 'none';
     if (staffManagementBtn) staffManagementBtn.style.display = 'none';
+    if (integrationsBtn) integrationsBtn.style.display = 'none';
     if (financeBtn) financeBtn.style.display = 'none';
     return;
   }
@@ -1510,6 +1522,7 @@ function applySimplifiedNavIfNeeded() {
   // permission, not just softly discouraged. Matches exactly what the
   // backend itself enforces on the actual create/list actions.
   if (staffManagementBtn) staffManagementBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers) ? '' : 'none';
+  if (integrationsBtn) integrationsBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers) ? '' : 'none';
   // Matches api/finance.js's own FINANCE_ROLES exactly - a hidden
   // button here is a UX nicety, not the real gate; the backend
   // enforces this independently either way.
@@ -1582,6 +1595,7 @@ function switchTab(tab) {
   if(tab==='inventory') renderInventory();
   if(tab==='procurement') renderProcurement();
   if(tab==='staffmanagement') renderStaffManagement();
+  if(tab==='integrations') renderIntegrations();
   if(tab==='annualplanning') renderAnnualPlanning();
   if(tab==='fleetrequests') renderFleetRequests();
   if(tab==='finance') renderFinance();
@@ -7153,6 +7167,89 @@ function renderStaffManagementFromData(bundle) {
 // no exception. Same real, already-proven pattern - keyed by which
 // client is actually being viewed, so switching between clients never
 // shows the wrong one's cached staff list.
+// Confirmed directly, discussed and agreed: the real Integrations
+// tab - one card per real provider, each showing its own real,
+// current connection status. A client connects their own account
+// directly through this; GVC never touches or holds their
+// credentials at any point. Adding a future provider is a config
+// entry on the backend, not new architecture here.
+async function renderIntegrations() {
+  const container = document.getElementById('view-integrations');
+  if (!container) return;
+
+  // A real OAuth approval or decline lands back here with a real
+  // result in the URL - shown once, then cleared, so it never
+  // reappears on a later, unrelated visit to this tab.
+  const params = new URLSearchParams(window.location.search);
+  const integrationResult = params.get('integrationResult');
+  let resultBanner = '';
+  if (integrationResult) {
+    const provider = params.get('provider') || '';
+    const message = params.get('message');
+    const ok = integrationResult === 'success';
+    resultBanner = `<div style="background:${ok ? '#DCFCE7' : 'var(--red-bg)'};color:${ok ? '#166534' : 'var(--red)'};padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:13px">
+      ${ok ? `✓ Connected successfully.` : `Could not connect${provider ? ' to ' + escapeHtml(provider) : ''}.${message ? ' ' + escapeHtml(message) : ''}`}
+    </div>`;
+    const cleanUrl = window.location.pathname;
+    window.history.replaceState({}, '', cleanUrl);
+  }
+
+  container.innerHTML = `
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Connect your own accounts directly - we never see or hold your credentials for any of these.</div>
+    ${resultBanner}
+    <div id="integrationsCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">
+      <div style="font-size:12px;color:var(--muted)">Loading…</div>
+    </div>`;
+
+  try {
+    const resp = await fetch('/api/integrations?list=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load integrations');
+    renderIntegrationsCards(data.providers || []);
+  } catch (err) {
+    document.getElementById('integrationsCardsWrap').innerHTML = `<div style="font-size:12.5px;color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderIntegrationsCards(providers) {
+  const wrap = document.getElementById('integrationsCardsWrap');
+  if (!wrap) return;
+
+  wrap.innerHTML = providers.map(p => {
+    let statusLabel, statusColor;
+    if (p.connected) { statusLabel = `Connected${p.accountName ? ' — ' + escapeHtml(p.accountName) : ''}`; statusColor = 'var(--green)'; }
+    else if (!p.configured) { statusLabel = 'Not set up yet'; statusColor = 'var(--muted)'; }
+    else { statusLabel = 'Not connected'; statusColor = 'var(--muted)'; }
+
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">${escapeHtml(p.label)}</div>
+      <div style="font-size:12px;color:${statusColor};margin-bottom:4px">${statusLabel}</div>
+      ${p.connected && p.connectedBy ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Connected by ${escapeHtml(p.connectedBy)}${p.connectedAt ? ' on ' + new Date(p.connectedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : '<div style="margin-bottom:12px"></div>'}
+      ${p.connected
+        ? `<button onclick="disconnectIntegration('${p.provider}','${escapeHtml(p.label).replace(/'/g,"\\'")}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Disconnect</button>`
+        : p.configured
+          ? `<a href="/api/integrations?connect=${p.provider}" style="display:inline-block;padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;text-decoration:none;cursor:pointer">Connect</a>`
+          : `<button disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#F7F8FA;color:var(--muted);cursor:not-allowed">Connect</button>`}
+    </div>`;
+  }).join('');
+}
+
+async function disconnectIntegration(provider, label) {
+  if (!confirm(`Disconnect ${label}? You'll need to reconnect to use it again.`)) return;
+  try {
+    const resp = await fetch('/api/integrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'disconnect', provider }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not disconnect');
+    renderIntegrations();
+  } catch (err) {
+    alert('Could not disconnect: ' + err.message);
+  }
+}
+
 async function renderStaffManagement(targetOrgId, targetOrgName) {
   viewingClientOrgId = targetOrgId || null;
   viewingClientName = targetOrgName || '';

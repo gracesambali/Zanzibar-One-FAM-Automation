@@ -463,6 +463,43 @@ create table organizations (
   settings     jsonb not null default '{}'
 );
 
+-- Confirmed directly, discussed and agreed: the real, reusable
+-- Integrations framework - one connection table serving every real
+-- provider (QuickBooks, Zoho Books, Matterport, and whatever a client
+-- brings later), built once rather than per-client. A client connects
+-- their own account directly through this - GVC never touches or
+-- holds their credentials. One real row per organization+provider
+-- pair; reconnecting replaces it rather than accumulating stale rows.
+create table integration_connections (
+  id                   uuid primary key default gen_random_uuid(),
+  organization_id      uuid not null references organizations(id),
+  provider             text not null, -- 'quickbooks' | 'zoho_books' | 'matterport' | future providers
+  status               text not null default 'active', -- 'active' | 'expired' | 'revoked' | 'error'
+  access_token         text,
+  refresh_token        text,
+  token_expires_at     timestamptz,
+  scope                text,
+  provider_account_id  text, -- the external company/account id this connection is tied to
+  provider_account_name text, -- a real, human-readable label for display (e.g. the QuickBooks company name)
+  connected_by         text not null,
+  connected_at         timestamptz not null default now(),
+  last_synced_at       timestamptz,
+  last_error           text,
+  metadata             jsonb not null default '{}' -- real, provider-specific extras that don't earn their own column
+);
+create unique index idx_integration_connections_org_provider on integration_connections (organization_id, provider);
+
+create table integration_activity_log (
+  id                uuid primary key default gen_random_uuid(),
+  organization_id   uuid not null references organizations(id),
+  provider          text not null,
+  event             text not null, -- 'connected' | 'disconnected' | 'sync' | 'error'
+  detail            text,
+  actor             text, -- who triggered it; null for an automated sync
+  created_at        timestamptz not null default now()
+);
+create index idx_integration_activity_log_org on integration_activity_log (organization_id, created_at desc);
+
 -- Fixed, known id (not a random gen_random_uuid()) specifically so
 -- every table below can reference the exact same row as a column
 -- default - every existing and future row is automatically tagged as
