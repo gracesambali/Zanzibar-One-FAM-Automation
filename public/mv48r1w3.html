@@ -1386,6 +1386,18 @@ function filterByBuilding(items) {
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 
+// Confirmed directly, requested: a work order's own status is now
+// genuinely just Open or Closed wherever it's shown - In Progress no
+// longer exists as a distinct concept, folded into Open here. Ready
+// for Review keeps its own real, separate label, since it's a
+// genuine supervisor-approval state, not part of what was asked to
+// simplify - it just isn't "Open" or "Closed" either.
+function woStatusDisplay(status) {
+  if (status === 'Completed') return { label: 'Closed', badgeClass: 'badge-good' };
+  if (status === 'Ready for Review') return { label: 'Ready for Review', badgeClass: 'badge-warning' };
+  return { label: 'Open', badgeClass: 'badge-overdue' };
+}
+
 // A plain total-duration line, deliberately separate from SLA — this
 // is just "how long has this actually been open," with no target
 // attached, no Met/Breached judgment. Phrased differently for an open
@@ -1705,15 +1717,15 @@ function renderDashboard() {
   html += `<div class="dash-grid-4">`;
 
   // Work Orders Summary — live from dashboardWorkOrders
-  const woOpen = dashWOs.filter(w => w.status === 'Open').length;
-  const woInProgress = dashWOs.filter(w => w.status === 'In Progress').length;
-  const woOverdue = dashWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+  const woOpen = dashWOs.filter(w => w.status === 'Open' || w.status === 'In Progress').length;
+  const woReadyForReview = dashWOs.filter(w => w.status === 'Ready for Review').length;
+  const woOverdue = dashWOs.filter(w => w.status !== 'Completed' && w.urgency === 'OVERDUE').length;
   const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
   const woCompletedYTD = dashWOs.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
     <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">${woOpen}</div><div class="wo-box-label">Open</div></div>
-    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">${woInProgress}</div><div class="wo-box-label">In Progress</div></div>
+    <div class="wo-box" style="background:var(--amber-bg)"><div class="wo-box-val" style="color:var(--amber)">${woReadyForReview}</div><div class="wo-box-label">Ready for Review</div></div>
     <div class="wo-box" style="background:var(--red-bg)"><div class="wo-box-val" style="color:var(--red)">${woOverdue}</div><div class="wo-box-label">Overdue</div></div>
     <div class="wo-box" style="background:var(--green-bg)"><div class="wo-box-val" style="color:var(--green)">${woCompletedYTD}</div><div class="wo-box-label">Completed YTD</div></div>
   </div><a class="view-link" href="#" onclick="switchTab('workorders');return false;">View all work orders →</a></div>`;
@@ -14914,7 +14926,7 @@ async function showWorkOrderDetail(recordId) {
   const container = document.getElementById('view-workorders');
   const procStatus = o.procurementStatus || 'None';
   const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
-  const statusClass = o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue';
+  const woStatus = woStatusDisplay(o.status);
 
   let html = `<button class="back-btn" onclick="renderWorkOrders()">← Back to Work Orders</button>
   <div class="wo-layout">
@@ -14923,7 +14935,7 @@ async function showWorkOrderDetail(recordId) {
     <div class="detail-header">
       <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <span class="badge ${statusClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.status}</span>
+        <span class="badge ${woStatus.badgeClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${woStatus.label}</span>
         <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
@@ -14983,10 +14995,9 @@ async function showWorkOrderDetail(recordId) {
         ${o.status !== 'Completed' && o.assetId ? `
           <button onclick="openCloseWorkOrderScanModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📷 Close Work Order</button>
         ` : o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
-          <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
-          <option value="In Progress" ${o.status==='In Progress'?'selected':''}>In Progress</option>
+          <option value="Open" ${o.status==='Open' || o.status==='In Progress'?'selected':''}>Open</option>
           <option value="Ready for Review" ${o.status==='Ready for Review'?'selected':''}>Ready for Review</option>
-        </select>` : `<span class="badge badge-good">Completed</span>`}
+        </select>` : `<span class="badge badge-good">Closed</span>`}
         ${o.status === 'Ready for Review' && currentUserPermissions && currentUserPermissions.reviewWorkOrderClosure ? `
           <button onclick="approveWorkOrderClosure('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer">✓ Approve & Close</button>
           <button onclick="rejectWorkOrderClosurePrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Send Back</button>
@@ -16616,15 +16627,15 @@ function renderWORowHtml(o, staff) {
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         ${getWOUnreadCount(o) > 0 ? `<span class="wo-row-unread-dot" title="Unread chat">${getWOUnreadCount(o) > 9 ? '9+' : getWOUnreadCount(o)}</span>` : ''}
         <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
-        <span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${o.status}</span>
+        <span class="badge ${woStatusDisplay(o.status).badgeClass}">${woStatusDisplay(o.status).label}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
     </button>`;
 }
 
 async function buildWorkOrdersHtml(orders) {
-  const open = orders.filter(o => o.status === 'Open').length;
-  const inProgress = orders.filter(o => o.status === 'In Progress').length;
+  const open = orders.filter(o => o.status === 'Open' || o.status === 'In Progress').length;
+  const readyForReview = orders.filter(o => o.status === 'Ready for Review').length;
   const completed = orders.filter(o => o.status === 'Completed').length;
 
   const isSimplified = currentUserPermissions && currentUserPermissions.simplifiedNav;
@@ -16820,8 +16831,8 @@ async function buildWorkOrdersHtml(orders) {
     html += `<div class="summary-grid">
     <div class="summary-card"><div class="summary-val" style="color:var(--navy)">${orders.length}</div><div class="summary-label">Total Work Orders</div></div>
     <div class="summary-card"><div class="summary-val" style="color:var(--red)">${open}</div><div class="summary-label">Open</div></div>
-    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${inProgress}</div><div class="summary-label">In Progress</div></div>
-    <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Completed</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--amber)">${readyForReview}</div><div class="summary-label">Ready for Review</div></div>
+    <div class="summary-card"><div class="summary-val" style="color:var(--green)">${completed}</div><div class="summary-label">Closed</div></div>
   </div>`;
 
     if (orders.length === 0) {
@@ -16883,7 +16894,7 @@ function renderWorkOrdersTable() {
     if (woTableFilters.system !== 'All' && o.system !== woTableFilters.system) return false;
     if (woTableFilters.maintType !== 'All' && (o.maintenanceType || '—') !== woTableFilters.maintType) return false;
     if (woTableFilters.urgency !== 'All' && o.urgency !== woTableFilters.urgency) return false;
-    if (woTableFilters.status !== 'All' && o.status !== woTableFilters.status) return false;
+    if (woTableFilters.status !== 'All' && woStatusDisplay(o.status).label !== woTableFilters.status) return false;
     if (woTableFilters.technician !== 'All') {
       const label = o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned';
       if (label !== woTableFilters.technician) return false;
@@ -16894,7 +16905,7 @@ function renderWorkOrdersTable() {
   const uniqueSystems = [...new Set(orders.map(o => o.system).filter(Boolean))].sort();
   const uniqueMaintTypes = [...new Set(orders.map(o => o.maintenanceType || '—'))].sort();
   const uniqueUrgencies = [...new Set(orders.map(o => o.urgency).filter(Boolean))];
-  const uniqueStatuses = [...new Set(orders.map(o => o.status).filter(Boolean))];
+  const uniqueStatuses = [...new Set(orders.map(o => woStatusDisplay(o.status).label))];
   const uniqueTechnicians = [...new Set(orders.map(o => o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned'))].sort();
 
   const anyFilterActive = Object.values(woTableFilters).some(v => v !== 'All');
@@ -16930,7 +16941,7 @@ function renderWorkOrdersTable() {
               <td style="padding:10px 12px">${escapeHtml(o.system||'—')}</td>
               <td style="padding:10px 12px">${escapeHtml(o.maintenanceType||'—')}</td>
               <td style="padding:10px 12px"><span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${escapeHtml(o.urgency)}</span></td>
-              <td style="padding:10px 12px"><span class="badge ${o.status === 'Completed' ? 'badge-good' : o.status === 'In Progress' ? 'badge-warning' : 'badge-overdue'}">${escapeHtml(o.status)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${woStatusDisplay(o.status).badgeClass}">${escapeHtml(woStatusDisplay(o.status).label)}</span></td>
               <td style="padding:10px 12px">${escapeHtml(techLabel)}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</td>
               <td style="padding:10px 12px;white-space:nowrap;color:var(--muted)">${new Date(o.created).toLocaleDateString()}</td>
               <td style="padding:10px 12px;text-align:right;color:var(--muted)">›</td>
@@ -18572,7 +18583,6 @@ function buildPeriodReportHtml(data, title, periodLabel) {
       <div class="kpi-row">
         <div class="kpi"><div class="kpi-val">${ws.completed || 0}</div><div class="kpi-label">Completed</div></div>
         <div class="kpi"><div class="kpi-val">${ws.open || 0}</div><div class="kpi-label">Open</div></div>
-        <div class="kpi"><div class="kpi-val">${ws.inProgress || 0}</div><div class="kpi-label">In Progress</div></div>
         <div class="kpi"><div class="kpi-val">${ws.readyForReview || 0}</div><div class="kpi-label">Ready for Review</div></div>
         <div class="kpi"><div class="kpi-val">${ws.overdue || 0}</div><div class="kpi-label">Overdue</div></div>
         <div class="kpi"><div class="kpi-val">${ws.urgent || 0}</div><div class="kpi-label">Urgent</div></div>
@@ -18640,7 +18650,6 @@ function buildReportExportRows(data) {
   rows.push(['Work Orders Summary']);
   rows.push(['Completed', ws.completed || 0]);
   rows.push(['Open', ws.open || 0]);
-  rows.push(['In Progress', ws.inProgress || 0]);
   rows.push(['Ready for Review', ws.readyForReview || 0]);
   rows.push(['Overdue', ws.overdue || 0]);
   rows.push(['Urgent', ws.urgent || 0]);

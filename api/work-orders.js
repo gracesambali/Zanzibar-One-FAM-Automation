@@ -2393,7 +2393,7 @@ async function handleRejectClosure(req, res, rejectedByUsername) {
 
   try {
     const { update } = await import("../lib/postgresClient.js");
-    await update("work_orders", recordId, { status: "In Progress", closure_rejection_reason: reason })
+    await update("work_orders", recordId, { status: "Open", closure_rejection_reason: reason })
       .catch(() => { throw new Error("Could not reject closure"); });
 
     await appendActivityLog(recordId, `❌ Work sent back by ${rejectedByUsername} — ${reason}`, rejectedByUsername, "system");
@@ -3067,8 +3067,8 @@ async function handleMaintenanceReport(req, res, organizationId) {
     });
 
     const summary = {
-      total: workOrders.length, open: workOrders.filter(w => w.status === "Open").length,
-      inProgress: workOrders.filter(w => w.status === "In Progress").length,
+      total: workOrders.length, open: workOrders.filter(w => w.status === "Open" || w.status === "In Progress").length,
+      readyForReview: workOrders.filter(w => w.status === "Ready for Review").length,
       completed: workOrders.filter(w => w.status === "Completed").length,
       costByMaintenanceType: costByType,
       totalCostRecorded: Object.values(costByType).reduce((a,b) => a+b, 0),
