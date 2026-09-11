@@ -1999,7 +1999,14 @@ async function handleGetFloorPlan(req, res, organizationId) {
       }));
     }
 
-    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog });
+    // TEMPORARY DIAGNOSTIC — confirmed directly, added to investigate a
+    // real, reported, reproducible bug (other assets vanishing after a
+    // reposition). Not a permanent feature — remove once the real
+    // cause is confirmed and fixed.
+    const totalOrgPositionsResult = await pgQuery("select count(*) as c from asset_positions where organization_id = $1", [organizationId]).catch(() => null);
+    const debugTotalOrgPositions = totalOrgPositionsResult ? Number(totalOrgPositionsResult.rows[0].c) : null;
+
+    return res.status(200).json({ floor, imageUrl, positions, uploadedBy, uploadDate, activityLog, debugTotalOrgPositions, debugThisFloorPositionCount: positions.length });
   } catch (err) {
     console.error("handleGetFloorPlan error:", err);
     return res.status(500).json({ error: err.message });
