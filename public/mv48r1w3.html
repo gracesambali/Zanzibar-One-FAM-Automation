@@ -14318,7 +14318,7 @@ function renderFloorPlanImage(canManage) {
           <span style="width:8px;height:8px;border-radius:50%;background:${statusDotColor(a.status)}"></span>
           <span style="font-size:11px;color:var(--text)">${escapeHtml(a.status || '—')}${a.criticality ? ' · ' + escapeHtml(a.criticality) + ' criticality' : ''}</span>
         </div>
-        <button onclick="showDetail(${idx});switchTab('assets')" style="width:100%;padding:7px;border:1px solid var(--navy);border-radius:7px;background:var(--navy);color:#fff;font-size:11.5px;font-weight:600;cursor:pointer">View in Asset Register →</button>
+        <button onclick="switchTab('assets');showDetail(${idx})" style="width:100%;padding:7px;border:1px solid var(--navy);border-radius:7px;background:var(--navy);color:#fff;font-size:11.5px;font-weight:600;cursor:pointer">View in Asset Register →</button>
       </div>`;
     }
   });
