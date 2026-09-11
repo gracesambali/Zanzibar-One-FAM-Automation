@@ -13950,6 +13950,14 @@ let floorPlanData = null; // { floor, imageUrl, positions }
 let floorPlanPlacementMode = false;
 let floorPlanSelectedAssetId = null;
 let floorPlanPreviewAssetId = null;
+// Confirmed directly, a real race condition found while investigating
+// a reported bug: a background refresh that started before a drag-
+// move (or a new marker placement) completes can still resolve
+// afterward, carrying stale, pre-move data with no way to know it's
+// now out of date. Tracks the real time of the most recent local
+// save, so a background fetch that started before that save can
+// recognize its own data predates it and skip applying it.
+let floorPlanLastLocalSaveAt = 0;
 
 function statusDotColor(status) {
   if (status === "Good") return "#16a34a";
@@ -14173,12 +14181,13 @@ async function renderFloorPlan() {
       ${uniqueFloors.map(f => `<option value="${f}"${f===floorPlanCurrentFloor?' selected':''}>${displayFloor(f)}</option>`).join('')}
     </select>
     <div id="floorPlanTwinToggle"></div>
+    <span id="floorPlanLockBadge" style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${floorPlanPlacementMode ? '#DBEAFE' : '#F3F4F6'};color:${floorPlanPlacementMode ? '#1E40AF' : 'var(--muted)'}">${floorPlanPlacementMode ? '🔓 Open for Relocation' : '🔒 Locked'}</span>
     <div style="display:flex;gap:12px;font-size:12px;color:var(--muted);margin-left:auto">
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:4px"></span>Good</span>
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d97706;margin-right:4px"></span>Poor</span>
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:4px"></span>Critical</span>
     </div>
-    ${canManage ? `<button class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
+    ${canManage ? `<button id="floorPlanPlacementBtn" class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
     ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
     ${DIGITAL_TWIN_CAN_MANAGE() ? `<button class="filter-btn" onclick="openDigitalTwinSettingsModal()">🎥 Digital Twin</button>` : ''}
   </div>
@@ -14238,7 +14247,13 @@ async function renderFloorPlan() {
     // who's genuinely moved on to a different floor, filter, or tab
     // while it was still in flight.
     if (cached) {
+      const fetchStartedAt = Date.now();
       fetchFloorPlanDataForFloor(floorPlanCurrentFloor).then(freshData => {
+        // A real, local save (a drag-move or a new marker placement)
+        // that happened after this fetch started means this fetch's
+        // own data already predates it - applying it now would
+        // silently revert the just-saved, more current change.
+        if (floorPlanLastLocalSaveAt > fetchStartedAt) return;
         tabPrefetchCache.floorplan = { data: { key: cacheKey, data: freshData }, fetchedAt: Date.now() };
         if (document.getElementById('view-floorplan')?.classList.contains('active')
             && `${floorPlanCurrentFloor}|${currentBuildingFilter}|${currentFacilityFilter}` === cacheKey
@@ -16608,6 +16623,17 @@ function toggleFloorPlanPlacementMode() {
   floorPlanPlacementMode = !floorPlanPlacementMode;
   floorPlanSelectedAssetId = null;
   floorPlanPreviewAssetId = null;
+  const badge = document.getElementById('floorPlanLockBadge');
+  if (badge) {
+    badge.style.background = floorPlanPlacementMode ? '#DBEAFE' : '#F3F4F6';
+    badge.style.color = floorPlanPlacementMode ? '#1E40AF' : 'var(--muted)';
+    badge.textContent = floorPlanPlacementMode ? '🔓 Open for Relocation' : '🔒 Locked';
+  }
+  const btn = document.getElementById('floorPlanPlacementBtn');
+  if (btn) {
+    btn.classList.toggle('active', floorPlanPlacementMode);
+    btn.textContent = floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers';
+  }
   renderFloorPlanImage(true);
 }
 
@@ -16628,6 +16654,7 @@ async function handleFloorPlanClick(event) {
     // Refresh positions from server so the new dot appears immediately
     const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
     floorPlanData = await resp.json();
+    floorPlanLastLocalSaveAt = Date.now();
     renderFloorPlanImage(true);
   } catch (err) {
     alert('Could not save marker position: ' + err.message);
@@ -16714,6 +16741,7 @@ async function onDotDragEnd(event) {
     });
     const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
     floorPlanData = await resp.json();
+    floorPlanLastLocalSaveAt = Date.now();
     renderFloorPlanImage(true);
   } catch (err) {
     alert('Could not save the new position: ' + err.message);
