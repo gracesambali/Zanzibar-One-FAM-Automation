@@ -2111,8 +2111,7 @@ async function buildPeriodReport(req, res, days, organizationId) {
       }, 0),
       workOrderStatus: {
         completed: allWorkOrders.filter(r => r.status === "Completed" && r.completed_date && new Date(r.completed_date) >= cutoff).length,
-        open: allWorkOrders.filter(r => r.status === "Open").length,
-        inProgress: allWorkOrders.filter(r => r.status === "In Progress").length,
+        open: allWorkOrders.filter(r => r.status === "Open" || r.status === "In Progress").length,
         readyForReview: allWorkOrders.filter(r => r.status === "Ready for Review").length,
         overdue: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "OVERDUE").length,
         urgent: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "URGENT").length,
