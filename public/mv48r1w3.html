@@ -14130,11 +14130,21 @@ async function fetchFloorPlanDataForFloor(floor) {
   // drawing with no saved positions yet, assets correctly show as
   // "unplaced" instead, prompting you to place them for real via
   // Place Markers mode.
-  if (data.isDefaultImage && (!data.positions || data.positions.length === 0)) {
-    const defaults = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floor);
-    if (defaults.length > 0) {
-      data.positions = defaults;
-      data.isDefaultPositions = true;
+  // Confirmed directly, a real, confirmed bug found while investigating
+  // a reported case: this used to be all-or-nothing, keyed off whether
+  // ANY real position existed for the whole floor - the moment even one
+  // real position was saved, every other asset silently lost its
+  // conceptual placeholder position too, even though it still had no
+  // real position of its own. Merged per-asset instead: a real, saved
+  // position always wins for that specific asset; the conceptual
+  // placeholder correctly still fills in for every other asset that
+  // doesn't have a real one yet, regardless of how many others do.
+  if (data.isDefaultImage) {
+    const realPositionAssetIds = new Set((data.positions || []).map(p => p.assetId));
+    const fillIns = DEFAULT_ASSET_POSITIONS.filter(p => p.floor === floor && !realPositionAssetIds.has(p.assetId));
+    if (fillIns.length > 0) {
+      data.positions = [...(data.positions || []), ...fillIns];
+      data.isDefaultPositions = data.positions.length === fillIns.length; // true only when every position shown is still a placeholder, none real yet
     }
   }
   return data;
@@ -14288,24 +14298,6 @@ function renderFloorPlanImage(canManage) {
   const floorAssets = assets.filter(a => a.floor === floorPlanCurrentFloor);
   const positionsByAsset = {};
   (floorPlanData.positions || []).forEach(p => { positionsByAsset[p.assetId] = p; });
-
-  // TEMPORARY DIAGNOSTIC — confirmed directly, added to investigate a
-  // real, reported, reproducible bug where other assets vanish after
-  // a reposition. Not a permanent feature — remove once the real
-  // cause is confirmed and fixed.
-  const missingAssetIds = floorAssets.filter(a => !positionsByAsset[a.id]).map(a => a.id);
-  const debugWrap = document.getElementById('floorPlanDebugWrap') || (() => {
-    const d = document.createElement('div');
-    d.id = 'floorPlanDebugWrap';
-    document.getElementById('floorPlanImageWrap')?.parentElement?.insertBefore(d, document.getElementById('floorPlanImageWrap'));
-    return d;
-  })();
-  debugWrap.style.cssText = 'background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#92400E;text-align:left';
-  debugWrap.innerHTML = `<strong>Temporary diagnostic (${displayFloor(floorPlanCurrentFloor)}):</strong>
-    Assets expected on this floor: ${floorAssets.length} ·
-    Positions returned by the server for this floor: ${(floorPlanData.positions || []).length} ·
-    Total position rows saved for this whole organization (any floor): ${floorPlanData.debugTotalOrgPositions ?? '—'}
-    ${missingAssetIds.length > 0 ? `<br>Missing (no position found): ${missingAssetIds.join(', ')}` : ''}`;
 
   const unplaced = canManage ? floorAssets.filter(a => !positionsByAsset[a.id]) : [];
 
@@ -16670,8 +16662,7 @@ async function handleFloorPlanClick(event) {
     });
     floorPlanSelectedAssetId = null;
     // Refresh positions from server so the new dot appears immediately
-    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
-    floorPlanData = await resp.json();
+    floorPlanData = await fetchFloorPlanDataForFloor(floorPlanCurrentFloor);
     floorPlanLastLocalSaveAt = Date.now();
     renderFloorPlanImage(true);
   } catch (err) {
@@ -16757,8 +16748,7 @@ async function onDotDragEnd(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'savePosition', assetId, floor: floorPlanCurrentFloor, x: newX, y: newY }),
     });
-    const resp = await fetch('/api/get-assets?floorplan=' + encodeURIComponent(floorPlanCurrentFloor));
-    floorPlanData = await resp.json();
+    floorPlanData = await fetchFloorPlanDataForFloor(floorPlanCurrentFloor);
     floorPlanLastLocalSaveAt = Date.now();
     renderFloorPlanImage(true);
   } catch (err) {
