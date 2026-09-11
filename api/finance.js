@@ -822,11 +822,11 @@ async function handleFinanceSummary(req, res, organizationId) {
 
 // ---------------------------------------------------------------
 // Vendor spend — confirmed directly as the real goal: make it easy
-// to see total spend against a specific vendor. Sums directly against
-// the real, unified transactions ledger, since every real expense -
-// whether entered directly or generated from a bill/liability payment
-// - already carries the same vendor_id there. One clean sum per
-// vendor, not three separate aggregations across different shapes.
+// to see total spend against a specific vendor. Sums against real,
+// chosen vendor quotes in procurement_responses - the same real
+// mechanism already shared by both work-order and requisition
+// procurement (Session 308) - not the retired transactions ledger,
+// which no longer reflects real, current spend.
 // ---------------------------------------------------------------
 
 async function handleVendorSpend(req, res, organizationId) {
@@ -834,11 +834,11 @@ async function handleVendorSpend(req, res, organizationId) {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
       `select v.id, v.vendor_name, v.email, v.phone,
-              coalesce(sum(t.amount) filter (where t.type = 'expense'), 0) as total_spend,
-              count(t.id) filter (where t.type = 'expense') as transaction_count,
-              max(t.transaction_date) filter (where t.type = 'expense') as last_transaction_date
+              coalesce(sum(pr.total_cost_ai) filter (where pr.chosen = true), 0) as total_spend,
+              count(pr.id) filter (where pr.chosen = true) as transaction_count,
+              max(pr.created_at) filter (where pr.chosen = true) as last_transaction_date
        from vendors v
-       left join transactions t on t.vendor_id = v.id and t.organization_id = $1
+       left join procurement_responses pr on pr.vendor_name = v.vendor_name and pr.organization_id = $1
        where v.active = true and v.organization_id = $1
        group by v.id, v.vendor_name, v.email, v.phone
        order by total_spend desc, v.vendor_name asc`,

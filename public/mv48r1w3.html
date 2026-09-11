@@ -5206,6 +5206,25 @@ function scrollToAssetTrackingLog() {
 // on this page won't need an Excel export, so there's no reason to
 // pay for loading the library until it's actually asked for.
 let sheetJsLoadPromise = null;
+let jsPdfLoadPromise = null;
+function ensureJsPdfLoaded() {
+  if (window.jspdf) return Promise.resolve();
+  if (jsPdfLoadPromise) return jsPdfLoadPromise;
+  jsPdfLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    script.onload = () => {
+      const tableScript = document.createElement('script');
+      tableScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+      tableScript.onload = resolve;
+      tableScript.onerror = () => reject(new Error('Could not load the PDF export library — check your connection and try again.'));
+      document.head.appendChild(tableScript);
+    };
+    script.onerror = () => reject(new Error('Could not load the PDF export library — check your connection and try again.'));
+    document.head.appendChild(script);
+  });
+  return jsPdfLoadPromise;
+}
 let barcodeScannerLoadPromise = null;
 function ensureBarcodeScannerLoaded() {
   if (window.Html5Qrcode) return Promise.resolve();
@@ -8105,10 +8124,11 @@ async function renderFinanceLifecycle() {
   }
 }
 
-function renderFinanceLifecycleFromData(costSummaries) {
-  const el = document.getElementById('finance-subtab-content');
-  if (!el) return;
-
+// Confirmed directly, genuinely shared: both Lifecycle & Replacement
+// and the Export tab's Replacement Planning download need this exact
+// same computation - kept as one, real, shared function rather than
+// two copies that could quietly drift apart from each other.
+function computeAssetLifecyclePriorities(costSummaries) {
   // Only assets with a real acquisition cost on file make sense to
   // compare against — without one, neither depreciation nor a real
   // maintenance-cost ratio can be computed honestly.
@@ -8137,6 +8157,14 @@ function renderFinanceLifecycleFromData(costSummaries) {
 
   const priorityOrder = { critical: 0, high: 1, medium: 2, none: 3 };
   rows.sort((x, y) => priorityOrder[x.priority] - priorityOrder[y.priority] || y.maintRatio - x.maintRatio);
+  return rows;
+}
+
+function renderFinanceLifecycleFromData(costSummaries) {
+  const el = document.getElementById('finance-subtab-content');
+  if (!el) return;
+
+  const rows = computeAssetLifecyclePriorities(costSummaries);
 
   const criticalCount = rows.filter(r => r.priority === 'critical').length;
   const highCount = rows.filter(r => r.priority === 'high').length;
@@ -8248,49 +8276,24 @@ function renderFinanceExport() {
   const el = document.getElementById('finance-subtab-content');
   if (!el) return;
   el.innerHTML = `
-    <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Transactions, Bills, Liabilities, Payroll, and Invoices moved out of active day-to-day use here, now that a real accounting platform is on the way - nothing already recorded was deleted. Download any of it below as a real file to hand off or keep.</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Download the real, current numbers already shown elsewhere in Finance — maintenance cost, vendor spend, replacement priority, and each asset's own lifecycle values — as a real file, in either format.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
       ${[
-        { key: 'transactions', label: 'Transactions' },
-        { key: 'bills', label: 'Bills' },
-        { key: 'liabilities', label: 'Liabilities' },
-        { key: 'payroll', label: 'Payroll' },
-        { key: 'invoices', label: 'Invoices' },
+        { key: 'maintenanceCost', label: 'Maintenance Cost Overview', sub: 'Monthly trend and spend by type, last 6 months' },
+        { key: 'vendorSpend', label: 'Vendor Spend', sub: 'Real, chosen-quote spend per vendor' },
+        { key: 'replacementPlanning', label: 'Replacement Planning', sub: "Every asset's own real priority" },
+        { key: 'assetLifecycle', label: 'Asset Lifecycle Values', sub: 'Acquisition cost, current value, depreciation' },
       ].map(item => `
         <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
-          <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">${item.label}</div>
-          <button onclick="downloadFinanceHistoryCsv('${item.key}')" id="finexport-${item.key}" style="width:100%;padding:9px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12.5px;cursor:pointer">↓ Download CSV</button>
+          <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">${item.label}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${item.sub}</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="downloadFinanceExport('${item.key}','csv')" id="finexport-${item.key}-csv" style="flex:1;padding:8px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:12px;cursor:pointer">↓ CSV</button>
+            <button onclick="downloadFinanceExport('${item.key}','pdf')" id="finexport-${item.key}-pdf" style="flex:1;padding:8px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:12px;cursor:pointer">↓ PDF</button>
+          </div>
         </div>`).join('')}
     </div>`;
 }
-
-const FINANCE_EXPORT_CONFIG = {
-  transactions: {
-    fetchParam: 'transactions',
-    dataKey: 'transactions',
-    columns: ['date', 'type', 'category', 'description', 'amount'],
-  },
-  bills: {
-    fetchParam: 'bills',
-    dataKey: 'bills',
-    columns: ['name', 'frequency', 'nextDueDate', 'amount', 'status'],
-  },
-  liabilities: {
-    fetchParam: 'liabilities',
-    dataKey: 'liabilities',
-    columns: ['lender', 'principal', 'remainingBalance', 'nextPaymentDate', 'status'],
-  },
-  payroll: {
-    fetchParam: 'payroll',
-    dataKey: 'payroll',
-    columns: ['employeeName', 'salaryAmount', 'paymentMethod', 'nextPayDate', 'status'],
-  },
-  invoices: {
-    fetchParam: 'invoices',
-    dataKey: 'invoices',
-    columns: ['invoiceNumber', 'clientName', 'issueDate', 'dueDate', 'total'],
-  },
-};
 
 // A cell value genuinely containing a comma, quote, or newline needs
 // real CSV quoting or it would silently corrupt the file's own column
@@ -8303,33 +8306,157 @@ function csvEscapeCell(value) {
   return str;
 }
 
-async function downloadFinanceHistoryCsv(key) {
-  const btn = document.getElementById(`finexport-${key}`);
-  const config = FINANCE_EXPORT_CONFIG[key];
-  if (!config) return;
+// Confirmed directly: each export is a real title plus one or more
+// real sections (a table with its own header and rows) - Maintenance
+// Cost Overview genuinely needs more than one table (a monthly trend
+// and a type breakdown), while the others are a single real table.
+// One shared shape for both the CSV writer and the PDF writer below,
+// so neither can drift from what the other actually produces.
+async function buildMaintenanceCostExportSections() {
+  const resp = await fetch('/api/finance?summary=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load maintenance cost data');
+  return {
+    title: 'Maintenance Cost Overview',
+    summaryLines: [
+      `Total (last 6 months): ${formatCurrency(data.totalMaintenanceCost6mo)}`,
+      `This month: ${formatCurrency(data.thisMonthCost)}`,
+      `Average monthly: ${formatCurrency(data.avgMonthlyCost)}`,
+      data.topAsset ? `Highest-cost asset: ${data.topAsset.assetId} — ${formatCurrency(data.topAsset.total)}` : 'Highest-cost asset: —',
+    ],
+    sections: [
+      { name: 'Monthly Trend', columns: ['Month', 'Cost'], currencyColumns: [1], rows: (data.monthlyTrend || []).map(r => [r.month, r.cost]) },
+      { name: 'Cost by Maintenance Type', columns: ['Type', 'Total'], currencyColumns: [1], rows: (data.typeBreakdown || []).map(r => [r.type, r.total]) },
+    ],
+  };
+}
+
+async function buildVendorSpendExportSections() {
+  const resp = await fetch('/api/finance?vendorSpend=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load vendor spend data');
+  const vendors = (data.vendors || []).filter(v => v.totalSpend > 0);
+  return {
+    title: 'Vendor Spend',
+    summaryLines: [],
+    sections: [
+      { name: null, columns: ['Vendor', 'Total Spend', 'Chosen Quotes', 'Last Activity'], currencyColumns: [1], rows: vendors.map(v => [v.name, v.totalSpend, v.transactionCount, v.lastTransactionDate ? v.lastTransactionDate.split('T')[0] : '—']) },
+    ],
+  };
+}
+
+async function buildReplacementPlanningExportSections() {
+  const costSummaries = await loadAssetCostSummaries();
+  const rows = computeAssetLifecyclePriorities(costSummaries);
+  return {
+    title: 'Replacement Planning',
+    summaryLines: [],
+    sections: [
+      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Cost', 'Current Value', 'Maintenance Cost', 'Maintenance Ratio %', 'Age (Years)', 'Past Expected Lifespan', 'Priority'],
+        currencyColumns: [2, 3, 4],
+        rows: rows.map(r => [r.a.id, r.a.name, r.a.acquisitionCost, r.a.currentValue ?? '—', r.maintCost, r.maintRatio.toFixed(0), r.ageYears != null ? r.ageYears.toFixed(1) : '—', r.pastLifespan ? 'Yes' : 'No', r.priority]) },
+    ],
+  };
+}
+
+function buildAssetLifecycleExportSections() {
+  const rows = assets.filter(a => a.acquisitionCost);
+  return {
+    title: 'Asset Lifecycle Values',
+    summaryLines: [],
+    sections: [
+      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Date', 'Acquisition Cost', 'Current Value', 'Annual Depreciation', 'Fully Depreciated', 'Expected Lifespan (Years)'],
+        currencyColumns: [3, 4, 5],
+        rows: rows.map(a => [a.id, a.name, a.acquisitionDate ? a.acquisitionDate.split('T')[0] : '—', a.acquisitionCost, a.currentValue ?? '—', a.annualDepreciation ?? '—', a.fullyDepreciated ? 'Yes' : 'No', a.lifespan ?? '—']) },
+    ],
+  };
+}
+
+const FINANCE_EXPORT_BUILDERS = {
+  maintenanceCost: buildMaintenanceCostExportSections,
+  vendorSpend: buildVendorSpendExportSections,
+  replacementPlanning: buildReplacementPlanningExportSections,
+  assetLifecycle: buildAssetLifecycleExportSections,
+};
+
+function exportSectionsToCsv(data) {
+  const lines = [];
+  data.summaryLines.forEach(l => lines.push(csvEscapeCell(l)));
+  if (data.summaryLines.length > 0) lines.push('');
+  data.sections.forEach((section, idx) => {
+    if (section.name) { lines.push(csvEscapeCell(section.name)); }
+    lines.push(section.columns.map(csvEscapeCell).join(','));
+    section.rows.forEach(row => lines.push(row.map(csvEscapeCell).join(',')));
+    if (idx < data.sections.length - 1) lines.push('');
+  });
+  return lines.join('\n');
+}
+
+async function exportSectionsToPdf(data) {
+  await ensureJsPdfLoaded();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(16);
+  doc.text(data.title, 14, 18);
+  doc.setFontSize(10);
+  doc.setTextColor(100);
+  doc.text(currentUserOrgName || APP_BRAND_NAME, 14, 25);
+
+  let y = 32;
+  if (data.summaryLines.length > 0) {
+    doc.setFontSize(10);
+    doc.setTextColor(20);
+    data.summaryLines.forEach(line => { doc.text(line, 14, y); y += 6; });
+    y += 4;
+  }
+
+  data.sections.forEach(section => {
+    if (section.name) {
+      doc.setFontSize(12);
+      doc.setTextColor(20);
+      doc.text(section.name, 14, y);
+      y += 6;
+    }
+    doc.autoTable({
+      startY: y,
+      head: [section.columns],
+      body: section.rows.map(row => row.map((cell, i) => ((section.currencyColumns || []).includes(i) && typeof cell === 'number') ? formatCurrency(cell) : String(cell))),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [26, 53, 102] },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 12;
+  });
+
+  return doc;
+}
+
+async function downloadFinanceExport(key, format) {
+  const btn = document.getElementById(`finexport-${key}-${format}`);
+  const builder = FINANCE_EXPORT_BUILDERS[key];
+  if (!builder) return;
   const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Preparing…';
 
   try {
-    const resp = await fetch(`/api/finance?${config.fetchParam}=true`);
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load this data');
-    const rows = data[config.dataKey] || [];
-
-    const header = config.columns.map(csvEscapeCell).join(',');
-    const body = rows.map(row => config.columns.map(col => csvEscapeCell(row[col])).join(',')).join('\n');
-    const csv = header + '\n' + body;
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${key}-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const data = await builder();
+    const dateStr = new Date().toISOString().split('T')[0];
+    if (format === 'csv') {
+      const csv = exportSectionsToCsv(data);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${key}-${dateStr}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      const doc = await exportSectionsToPdf(data);
+      doc.save(`${key}-${dateStr}.pdf`);
+    }
   } catch (err) {
     alert(`Could not download: ${err.message}`);
   } finally {
