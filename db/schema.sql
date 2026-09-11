@@ -459,7 +459,8 @@ create index idx_planned_maintenance_documents_plan on planned_maintenance_docum
 create table organizations (
   id           uuid primary key default gen_random_uuid(),
   name         text not null,
-  created_at   timestamptz not null default now()
+  created_at   timestamptz not null default now(),
+  settings     jsonb not null default '{}'
 );
 
 -- Fixed, known id (not a random gen_random_uuid()) specifically so

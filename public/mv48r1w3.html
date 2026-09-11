@@ -15248,6 +15248,95 @@ async function submitSLATargets() {
   }
 }
 
+// Confirmed directly, discussed and agreed in full before building:
+// whether Work Order closure requires a supervisor's review first is
+// a real, per-client preference - off by default, since mandatory
+// review-before-close is the exception in real practice, not the
+// default. A client turns this on themselves here, for whichever
+// real conditions they choose, rather than needing a code change.
+const CLOSURE_REVIEW_MAINT_TYPES = ['Preventive', 'Corrective', 'Inspection', 'Procurement'];
+
+async function openClosureReviewSettingsModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'closureReviewSettingsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Work Order Closure Review</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">By default, closing a work order is immediate and self-service — the routed role is still always notified once it happens. Turn this on to require their review first, for whichever real conditions you choose below, before it counts as Closed.</div>
+      <div id="crs_body"><div style="font-size:12px;color:var(--muted)">Loading…</div></div>
+      <div id="crs_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button onclick="document.getElementById('closureReviewSettingsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="crs_submit" onclick="submitClosureReviewSettings()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const resp = await fetch('/api/work-orders?closureReviewSettings=true');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load current settings');
+    renderClosureReviewSettingsForm(data.settings);
+  } catch (err) {
+    document.getElementById('crs_body').innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load current settings: ${err.message}</div>`;
+  }
+}
+
+function renderClosureReviewSettingsForm(settings) {
+  const body = document.getElementById('crs_body');
+  if (!body) return;
+  body.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" id="crs_enabled" ${settings.enabled ? 'checked' : ''} onchange="document.getElementById('crs_conditions').style.display=this.checked?'block':'none'">
+      <span style="font-size:13px;font-weight:600;color:var(--navy)">Require review before closure</span>
+    </label>
+    <div id="crs_conditions" style="display:${settings.enabled ? 'block' : 'none'};padding-top:10px">
+      <div style="font-size:11.5px;font-weight:600;color:var(--navy);margin-bottom:6px">Require review when the work order is…</div>
+      ${CLOSURE_REVIEW_MAINT_TYPES.map(t => `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+          <input type="checkbox" class="crs_maint_type" value="${t}" ${(settings.maintenanceTypes || []).includes(t) ? 'checked' : ''}>
+          <span style="font-size:12.5px;color:var(--text)">${t}</span>
+        </label>`).join('')}
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+        <input type="checkbox" id="crs_high_crit" ${settings.highCriticalityAssets ? 'checked' : ''}>
+        <span style="font-size:12.5px;color:var(--text)">The linked asset is High criticality</span>
+      </label>
+      <div style="margin-top:10px">
+        <label style="font-size:11.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Cost is at or above (leave blank to skip)</label>
+        <input id="crs_min_cost" type="number" min="0" value="${settings.minCostThreshold != null ? settings.minCostThreshold : ''}" placeholder="e.g. 500000" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+      </div>
+    </div>`;
+}
+
+async function submitClosureReviewSettings() {
+  const errorBox = document.getElementById('crs_error');
+  const btn = document.getElementById('crs_submit');
+  errorBox.style.display = 'none';
+
+  const enabled = document.getElementById('crs_enabled').checked;
+  const maintenanceTypes = [...document.querySelectorAll('.crs_maint_type')].filter(c => c.checked).map(c => c.value);
+  const highCriticalityAssets = document.getElementById('crs_high_crit').checked;
+  const minCostValue = document.getElementById('crs_min_cost').value;
+  const minCostThreshold = minCostValue !== '' ? Number(minCostValue) : null;
+
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updateClosureReviewSettings: true, enabled, maintenanceTypes, highCriticalityAssets, minCostThreshold }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save this setting');
+    document.getElementById('closureReviewSettingsOverlay')?.remove();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
 async function openManageVendorsModal() {
   const overlay = document.createElement('div');
   overlay.id = 'vendorModalOverlay';
@@ -16673,6 +16762,13 @@ async function buildWorkOrdersHtml(orders) {
         <div style="font-size:11.5px;color:var(--muted)">What you're actually promising, per urgency tier — shown as a badge on every work order once it's measurable.</div>
       </div>
       <button onclick="openSLASettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit SLA Targets</button>
+    </div>
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">Closure Review</div>
+        <div style="font-size:11.5px;color:var(--muted)">Off by default — closure is immediate and self-service. Turn on to require the routed role's review first, for whichever conditions you choose.</div>
+      </div>
+      <button onclick="openClosureReviewSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit Closure Review</button>
     </div>`;
   }
 
@@ -19277,7 +19373,22 @@ async function loadAssetsAndInit() {
       const savedTab = currentUsername ? localStorage.getItem('fam_last_tab_' + currentUsername) : null;
       if (savedTab && document.getElementById('view-' + savedTab)) restoredTab = savedTab;
     } catch {}
-    if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
+    // Confirmed directly, requested: a real, working deep link into a
+    // specific work order - the review-request notification links
+    // here (?wo=<id>), and without this check that link would
+    // silently just open the regular dashboard, never actually
+    // landing on the real work order it was sent about. Takes
+    // priority over the normal tab-restoration logic, and only
+    // applies once - removed from the URL immediately after use, so
+    // it doesn't keep re-triggering on a later, unrelated navigation.
+    const deepLinkWoId = new URLSearchParams(window.location.search).get('wo');
+    if (deepLinkWoId) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+      switchTab('workorders');
+      await renderWorkOrders(); // switchTab fires this internally but doesn't await it - awaited explicitly here so lastWorkOrders is genuinely populated before opening the specific one below
+      showWorkOrderDetail(deepLinkWoId);
+    } else if (currentUserPermissions && currentUserPermissions.simplifiedNav) {
       switchTab('workorders');
     } else if (restoredTab) {
       switchTab(restoredTab);
