@@ -7262,7 +7262,10 @@ function renderIntegrationsCards(providers) {
     else { statusLabel = 'Not connected'; statusColor = 'var(--muted)'; }
 
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">${escapeHtml(p.label)}</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div style="width:36px;height:36px;border-radius:8px;background:${p.color || 'var(--navy)'};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${escapeHtml(p.abbr || p.label.slice(0,2).toUpperCase())}</div>
+        <div style="font-size:14px;font-weight:700;color:var(--navy)">${escapeHtml(p.label)}</div>
+      </div>
       <div style="font-size:12px;color:${statusColor};margin-bottom:4px">${statusLabel}</div>
       ${p.connected && p.connectedBy ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Connected by ${escapeHtml(p.connectedBy)}${p.connectedAt ? ' on ' + new Date(p.connectedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : '<div style="margin-bottom:12px"></div>'}
       ${p.connected

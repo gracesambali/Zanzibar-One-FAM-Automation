@@ -27,6 +27,8 @@ import { can } from "../lib/roles.js";
 const PROVIDERS = {
   quickbooks: {
     label: "QuickBooks",
+    abbr: "QB",
+    color: "#2CA01C",
     authUrl: "https://appcenter.intuit.com/connect/oauth2",
     tokenUrl: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
     scope: "com.intuit.quickbooks.accounting",
@@ -35,6 +37,8 @@ const PROVIDERS = {
   },
   zoho_books: {
     label: "Zoho Books",
+    abbr: "ZB",
+    color: "#226DB4",
     authUrl: "https://accounts.zoho.com/oauth/v2/auth",
     tokenUrl: "https://accounts.zoho.com/oauth/v2/token",
     scope: "ZohoBooks.fullaccess.all",
@@ -44,6 +48,8 @@ const PROVIDERS = {
   },
   matterport: {
     label: "Matterport",
+    abbr: "MP",
+    color: "#1A1A2E",
     // Confirmed directly against Matterport's own developer
     // documentation: these are their real, correct OAuth endpoints -
     // but access itself is invitation-only, gated behind a real
@@ -62,6 +68,8 @@ const PROVIDERS = {
   },
   xero: {
     label: "Xero",
+    abbr: "XE",
+    color: "#13B5EA",
     // Confirmed directly against Xero's own developer documentation:
     // real, correct OAuth endpoints - a real, visible provision for
     // when a client brings this one, no real credentials registered
@@ -74,6 +82,8 @@ const PROVIDERS = {
   },
   sage: {
     label: "Sage",
+    abbr: "SG",
+    color: "#00DC00",
     // Confirmed directly against Sage's own developer documentation
     // (Business Cloud Accounting, the current v3.1 API): real,
     // correct OAuth endpoints, its token exchange using real body
@@ -163,6 +173,8 @@ async function handleListConnections(req, res, organizationId) {
       return {
         provider: key,
         label: cfg.label,
+        abbr: cfg.abbr,
+        color: cfg.color,
         configured: providerConfigured(key),
         connected: !!(row && row.status === "active"),
         status: row ? row.status : null,
