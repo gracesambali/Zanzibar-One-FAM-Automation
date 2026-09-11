@@ -8144,6 +8144,22 @@ async function renderFinanceLifecycle() {
     return;
   }
 
+  // Confirmed directly, requested: fixed the real, reported delay and
+  // "loading cycling" here - every visit used to show Loading… and
+  // re-fetch everything from scratch, even when a real, already-
+  // populated cache already existed from a previous load (this same
+  // cache is shared with Asset Register and other Finance sub-tabs).
+  // Same, already-proven cache-first pattern already used elsewhere
+  // in this app - instant render from what's already known, then a
+  // quiet, un-flashed refresh in the background.
+  if (assetCostSummaryCache && Object.keys(assetCostSummaryCache).length > 0) {
+    renderFinanceLifecycleFromData(assetCostSummaryCache);
+    loadAssetCostSummaries().then(fresh => {
+      if (document.getElementById('finance-subtab-content') && financeSubTab === 'lifecycle') renderFinanceLifecycleFromData(fresh);
+    }).catch(err => console.error('Background Lifecycle refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   el.innerHTML = `<div style="padding:24px;font-size:12px;color:var(--muted)">Loading…</div>`;
 
   try {
