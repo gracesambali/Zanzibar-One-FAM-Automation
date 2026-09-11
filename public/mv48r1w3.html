@@ -17110,6 +17110,8 @@ async function renderWorkOrders() {
     await renderWorkOrdersFromData(cached.data);
     fetchWorkOrdersData().then(async orders => {
       tabPrefetchCache.workorders = { data: orders, fetchedAt: Date.now() };
+      const signature = JSON.stringify(orders);
+      if (signature === lastWOSignature) return; // nothing actually changed — leave the screen exactly as it is, no flicker
       if (document.getElementById('view-workorders')?.classList.contains('active')) {
         await renderWorkOrdersFromData(orders);
       }
