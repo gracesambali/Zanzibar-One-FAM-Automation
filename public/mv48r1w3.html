@@ -7404,7 +7404,9 @@ async function renderFinanceOverview() {
   try {
     const data = await fetchFinanceOverviewData();
     tabPrefetchCache.financeOverview = { data, fetchedAt: Date.now() };
-    renderFinanceOverviewFromData(data);
+    if (financeSubTab === 'overview' && document.getElementById('view-finance')?.classList.contains('active')) {
+      renderFinanceOverviewFromData(data);
+    }
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -7974,7 +7976,9 @@ async function renderFinanceVendors() {
   try {
     const vendors = await fetchFinanceVendorsData();
     tabPrefetchCache.financeVendorsSpend = { data: vendors, fetchedAt: Date.now() };
-    renderFinanceVendorsFromData(vendors);
+    if (financeSubTab === 'vendors' && document.getElementById('view-finance')?.classList.contains('active')) {
+      renderFinanceVendorsFromData(vendors);
+    }
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -8164,7 +8168,9 @@ async function renderFinanceLifecycle() {
 
   try {
     const costSummaries = await loadAssetCostSummaries();
-    renderFinanceLifecycleFromData(costSummaries);
+    if (financeSubTab === 'lifecycle' && document.getElementById('view-finance')?.classList.contains('active')) {
+      renderFinanceLifecycleFromData(costSummaries);
+    }
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
@@ -8642,7 +8648,10 @@ async function renderFinanceReports() {
   try {
     const data = await fetchFinanceReportData(currentReportPeriod, currentReportOffset);
     tabPrefetchCache.financeReports = { data: { key: cacheKey, data }, fetchedAt: Date.now() };
-    renderFinanceReportsFromData(data);
+    if (financeSubTab === 'reports' && document.getElementById('view-finance')?.classList.contains('active')
+        && `${currentReportPeriod}|${currentReportOffset}` === cacheKey) {
+      renderFinanceReportsFromData(data);
+    }
   } catch (err) {
     el.innerHTML = `<div style="padding:24px;color:var(--red);font-size:13px">Could not load: ${err.message}</div>`;
   }
