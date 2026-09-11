@@ -60,6 +60,34 @@ const PROVIDERS = {
     clientIdEnv: "MATTERPORT_CLIENT_ID",
     clientSecretEnv: "MATTERPORT_CLIENT_SECRET",
   },
+  xero: {
+    label: "Xero",
+    // Confirmed directly against Xero's own developer documentation:
+    // real, correct OAuth endpoints - a real, visible provision for
+    // when a client brings this one, no real credentials registered
+    // yet, so this correctly still reports "not set up yet".
+    authUrl: "https://login.xero.com/identity/connect/authorize",
+    tokenUrl: "https://identity.xero.com/connect/token",
+    scope: "accounting.transactions accounting.contacts accounting.settings offline_access",
+    clientIdEnv: "XERO_CLIENT_ID",
+    clientSecretEnv: "XERO_CLIENT_SECRET",
+  },
+  sage: {
+    label: "Sage",
+    // Confirmed directly against Sage's own developer documentation
+    // (Business Cloud Accounting, the current v3.1 API): real,
+    // correct OAuth endpoints, its token exchange using real body
+    // parameters rather than a Basic Auth header, same as
+    // Matterport's own real method above. A real, visible provision
+    // for when a client brings this one - no real credentials
+    // registered yet, correctly still reporting "not set up yet".
+    authUrl: "https://www.sageone.com/oauth2/auth/central",
+    tokenUrl: "https://oauth.accounting.sage.com/token",
+    scope: "full_access",
+    tokenAuthMethod: "body_params",
+    clientIdEnv: "SAGE_CLIENT_ID",
+    clientSecretEnv: "SAGE_CLIENT_SECRET",
+  },
 };
 
 function providerConfigured(key) {
