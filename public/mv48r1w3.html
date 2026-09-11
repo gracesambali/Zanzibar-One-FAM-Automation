@@ -2322,9 +2322,17 @@ function showDetail(idx) {
   </div>
   <div class="detail-grid">`;
 
+  // Confirmed directly, requested: a real, reliable way to check
+  // whether a room/zone value is a registered tenant unit, regardless
+  // of whether Tenant Management has ever actually been visited yet -
+  // reads from the same real, background-prefetched cache every other
+  // tab already relies on, falling back to whatever's already loaded.
+  const cachedUnits = (tabPrefetchCache.units && tabPrefetchCache.units.data) || lastUnits || [];
+  const matchedUnit = cachedUnits.find(u => u.name === a.room || u.name === a.zone);
+
   const fields = [
     ["Floor/Level", displayFloor(a.floor) || "—"],
-    ["Room/Zone", displayRoom(a.room) || "—"],
+    ["Room/Zone", `${displayRoom(a.room) || "—"}${matchedUnit ? ` <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">🏠 Tenant Unit</span>` : ''}`],
     ["System", a.system || "—"],
     ["Barcode", a.barcode || "—"],
     ["Manufacturer", a.manufacturer],
@@ -2354,19 +2362,11 @@ function showDetail(idx) {
   }
   html += `<div class="lifecycle-bar-wrap"><div class="lifecycle-bar-label">Lifecycle Position</div><div class="lifecycle-track"><div class="lifecycle-fill" style="width:${pct}%;background:${barColor(pct)}"></div></div><div class="lifecycle-range"><span>Installed ${a.installDate}</span><span>Expected end-of-life ${eol}</span></div></div>`;
 
-  // Tenant Unit — same access rule as the Units tab itself (everyone
-  // except Technician). Independent of Room/Zone; shows here so
-  // tagging an asset to its unit doesn't require leaving the asset's
-  // own page.
-  if (currentUserRole !== 'technician') {
-    html += `<div style="padding:16px 24px;border-top:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">Tenant Unit</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:13px;color:${a.unit ? 'var(--text)' : 'var(--muted)'}">${a.unit || 'Not assigned to a unit'}</span>
-        <button onclick="openAssignUnitModal('${a.recordId}', '${a.building || ''}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${a.unit ? 'Change' : 'Assign'}</button>
-      </div>
-    </div>`;
-  }
+  // Confirmed directly, requested: the separate Tenant Unit row is
+  // removed from Asset Info entirely - a room's tenant-unit status now
+  // shows directly on the Room/Zone field itself instead (see above),
+  // derived automatically rather than requiring a separate, manual
+  // assignment step.
 
   // Maintenance Cost Summary — direct totals first (the actual TZS
   // spent, by type), with the acquisition-cost comparison as a small
@@ -4924,7 +4924,7 @@ function renderUnitDetailFromData(u) {
 
   const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
   const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
-  const unitAssets = assets.filter(a => a.unit === u.name);
+  const unitAssets = assets.filter(a => a.room === u.name || a.zone === u.name);
   const unitQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/ym9b2wqz?unit=' + u.id)}`;
 
   let html = `<button class="back-btn" onclick="renderUnits()">← Back to Tenant Management</button>
@@ -5029,13 +5029,10 @@ function renderUnitDetailFromData(u) {
     </div>
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-size:12px;font-weight:700;color:var(--navy)">Assets (${unitAssets.length})</div>
-        <button onclick="openManageUnitAssetsModal('${u.id}', '${u.name}', '${u.building}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Manage Assets</button>
-      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Assets (${unitAssets.length})</div>
       ${unitAssets.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:6px">
         ${unitAssets.map(a => `<span style="font-size:11px;padding:3px 9px;border-radius:10px;background:#F7F8FA;color:var(--text)">${a.id} — ${a.name}</span>`).join('')}
-      </div>` : `<div style="font-size:12.5px;color:var(--muted);font-style:italic">No assets assigned yet.</div>`}
+      </div>` : `<div style="font-size:12.5px;color:var(--muted);font-style:italic">No assets tagged to this unit yet — set an asset's Room/Zone to "${u.name}" in Asset Register and it will appear here automatically.</div>`}
     </div>
 
     <div style="padding:20px 24px">
@@ -12291,7 +12288,7 @@ function renderUnitsFromData(allUnits) {
   const leaseColors = { Occupied: ['#DCFCE7','#166534'], Vacant: ['#F3F4F6','#6B7280'], 'Notice Given': ['#FEF3C7','#92400E'] };
 
   html += `<div class="asset-list">` + units.map(u => {
-    const unitAssetCount = assets.filter(a => a.unit === u.name).length;
+    const unitAssetCount = assets.filter(a => a.room === u.name || a.zone === u.name).length;
     const lc = leaseColors[u.leaseStatus] || ['#F3F4F6','#6B7280'];
     return `<button class="asset-row" onclick="showUnitDetail('${u.id}')" style="text-align:left">
       <div style="flex:1;min-width:0">
@@ -12338,86 +12335,10 @@ async function renderUnits() {
   }
 }
 
-function openManageUnitAssetsModal(unitId, unitName, building) {
-  const overlay = document.createElement('div');
-  overlay.id = 'manageUnitAssetsOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
-
-  // Every asset in this unit's building — whether already assigned to
-  // this unit, unassigned entirely, or (shown but flagged) assigned to
-  // a different unit, since picking it here would move it.
-  const buildingAssets = assets.filter(a => a.building === building);
-
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Manage Assets — ${unitName}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Check every asset that belongs to this unit. Assets already in a different unit are flagged — checking them moves them here.</div>
-      <div id="mua_list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
-        ${buildingAssets.length === 0 ? `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No assets tagged to ${building} yet.</div>` : buildingAssets.map(a => `
-          <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer">
-            <input type="checkbox" class="mua-check" value="${a.recordId}" ${a.unit === unitName ? 'checked' : ''} style="flex-shrink:0">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:12.5px;font-weight:600;color:var(--text)">${a.id} — ${a.name}</div>
-              ${a.unit && a.unit !== unitName ? `<div style="font-size:10.5px;color:#92400E">Currently in: ${a.unit}</div>` : ''}
-            </div>
-          </label>`).join('')}
-      </div>
-      <div id="mua_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
-        <button onclick="document.getElementById('manageUnitAssetsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
-        <button id="mua_submit" onclick="submitManageUnitAssets('${unitId}', '${unitName}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-async function submitManageUnitAssets(unitId, unitName) {
-  const btn = document.getElementById('mua_submit');
-  const errorBox = document.getElementById('mua_error');
-  errorBox.style.display = 'none';
-  btn.disabled = true; btn.textContent = 'Saving…';
-
-  // Only touch assets whose checked-state actually needs to change —
-  // no need to re-write ones already correctly assigned or already
-  // correctly unassigned.
-  const checkboxes = [...document.querySelectorAll('.mua-check')];
-  const toAssign = checkboxes.filter(c => c.checked).map(c => c.value);
-  const toClear = checkboxes.filter(c => !c.checked).map(c => c.value)
-    .filter(recordId => { const a = assets.find(x => x.recordId === recordId); return a && a.unit === unitName; });
-
-  try {
-    for (const recordId of toAssign) {
-      const a = assets.find(x => x.recordId === recordId);
-      if (a && a.unit === unitName) continue; // already correct, skip
-      const assetLabel = a ? `${a.id} — ${a.name}` : recordId;
-      const resp = await fetch('/api/work-orders', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignAssetToUnit: true, assetRecordId: recordId, unitName, unitId, assetLabel }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update an asset');
-      if (a) a.unit = unitName;
-    }
-    for (const recordId of toClear) {
-      const a0 = assets.find(x => x.recordId === recordId);
-      const assetLabel = a0 ? `${a0.id} — ${a0.name}` : recordId;
-      const resp = await fetch('/api/work-orders', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignAssetToUnit: true, assetRecordId: recordId, unitName: '', unitId, assetLabel }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update an asset');
-      const a = assets.find(x => x.recordId === recordId);
-      if (a) a.unit = '';
-    }
-    document.getElementById('manageUnitAssetsOverlay')?.remove();
-    renderUnits();
-  } catch (err) {
-    errorBox.textContent = err.message;
-    errorBox.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Save';
-  }
-}
+// Confirmed directly, requested: the separate, manual bulk-
+// assignment modal was removed entirely - unit membership is now
+// automatic, derived from Room/Zone, so there's nothing left to
+// manually assign here.
 
 function openEditUnitModal(unitId) {
   const u = lastUnits.find(x => x.id === unitId);
@@ -12997,59 +12918,10 @@ async function submitAddUnit() {
   }
 }
 
-async function openAssignUnitModal(assetRecordId, building) {
-  const overlay = document.createElement('div');
-  overlay.id = 'assignUnitOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Assign to a Unit</div>
-      <div id="au_pick_list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px"><div style="padding:16px;font-size:12px;color:var(--muted)">Loading units in ${building || 'this building'}…</div></div>
-      <button onclick="submitAssignUnit('${assetRecordId}', '')" style="width:100%;margin-bottom:8px;padding:9px;border:1px dashed var(--border);border-radius:8px;background:#fff;color:var(--muted);font-weight:600;font-size:12.5px;cursor:pointer">Clear Assignment</button>
-      <button onclick="document.getElementById('assignUnitOverlay').remove()" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  try {
-    const resp = await fetch('/api/get-assets?units=true');
-    const data = await resp.json();
-    const matches = (data.units || []).filter(u => u.building === building);
-    const listEl = document.getElementById('au_pick_list');
-    if (!listEl) return;
-    if (matches.length === 0) {
-      listEl.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--muted);text-align:center">No units set up in ${building || 'this building'} yet — add one from the Tenant Management tab first.</div>`;
-      return;
-    }
-    listEl.innerHTML = matches.map(u => `
-      <button onclick="submitAssignUnit('${assetRecordId}', '${u.name}', '${u.id}')" style="display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${u.name}</div>
-        <div style="font-size:11px;color:var(--muted)">${u.unitType || ''}${u.tenantName ? ' — ' + u.tenantName : ''}</div>
-      </button>`).join('');
-  } catch (err) {
-    const listEl = document.getElementById('au_pick_list');
-    if (listEl) listEl.innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">Could not load units: ${err.message}</div>`;
-  }
-}
-
-async function submitAssignUnit(assetRecordId, unitName, unitId) {
-  try {
-    const asset = assets.find(a => a.recordId === assetRecordId);
-    const assetLabel = asset ? `${asset.id} — ${asset.name}` : assetRecordId;
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assignAssetToUnit: true, assetRecordId, unitName, unitId, assetLabel }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not assign unit');
-    if (asset) asset.unit = unitName;
-    document.getElementById('assignUnitOverlay')?.remove();
-    const idx = assets.findIndex(a => a.recordId === assetRecordId);
-    if (idx >= 0) showDetail(idx);
-  } catch (err) {
-    alert('Could not assign unit: ' + err.message);
-  }
-}
+// Confirmed directly, requested: the separate, manual per-asset
+// unit-assignment modal was removed entirely - unit membership is
+// now automatic, derived from Room/Zone, so there's no longer a
+// separate assignment step to perform here.
 
 async function fetchPlannedMaintenanceData() {
   const resp = await fetch('/api/get-assets?plannedmaintenance=true');
