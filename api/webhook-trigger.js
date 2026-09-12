@@ -15,6 +15,20 @@
 //    - Sender matched against `users.email` in Postgres
 //      - matched     -> real row in work_orders (source: 'email'), auto-reply
 //      - unmatched   -> admin gets a notification email, nothing created
+//    - Routing (institution-naming-proof): admin is ALWAYS notified,
+//      since it's the one role guaranteed to exist and mean the same thing
+//      regardless of how a given client labels its hierarchy (Estate
+//      Manager, Project Manager, etc. all still map to a fixed role key
+//      underneath). Keyword matching against subject+body ADDITIONALLY
+//      suggests a specialist role (electrical_engineer, mechanical_engineer,
+//      biomedical, property_manager) when confident; that role's users get
+//      notified too, and assigned_role is pre-filled as a suggestion for a
+//      human to confirm — never auto-closed, always still visible to admin.
+//    - Multi-issue emails: not auto-split into multiple work orders (too
+//      easy to mis-split or mis-categorize). One WO per email; if keyword
+//      matches hit 2+ different role categories, the notes are flagged
+//      "[Possible multiple issues reported]" so whoever triages knows to
+//      consider splitting it manually.
 //
 // Both paths follow the same "SAME cadence rules" spirit as before: the
 // maintenance-alert half is 100% original code, untouched.
@@ -24,6 +38,52 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
+
+// Keyword -> role map for auto-suggesting assigned_role on email-sourced
+// work orders. Keys must match the exact role values stored in `users.role`.
+// Best-effort only — always backstopped by admin notification.
+const ROLE_KEYWORDS = {
+  electrical_engineer: [
+    "electric", "electrical", "wiring", "socket", "switch", "power outage",
+    "circuit", "breaker", "fuse", "generator", "voltage", "shock", "cable",
+    "lighting", "light bulb", "transformer",
+  ],
+  mechanical_engineer: [
+    "ac ", "a/c", "air condition", "hvac", "pump", "plumbing", "pipe",
+    "leak", "water leak", "boiler", "elevator", "lift", "compressor",
+    "motor", "fan", "duct", "toilet", "drainage", "blocked drain",
+  ],
+  biomedical: [
+    "biomedical", "infusion", "ventilator", "medical device", "defibrillator",
+    "autoclave", "x-ray", "xray", "ultrasound", "dialysis", "sterilizer",
+    "incubator", "patient monitor", "anesthesia",
+  ],
+  property_manager: [
+    "building", "estate", "premises", "grounds", "fence", "gate",
+    "parking", "garden", "cleaning", "pest", "security guard", "lock",
+  ],
+};
+
+// Scans text for keyword hits per role. Returns the top role if it has a
+// clear lead, plus whether 2+ distinct roles matched (possible multi-issue).
+function guessAssignedRole(text) {
+  const lower = text.toLowerCase();
+  const scores = {};
+  for (const [role, keywords] of Object.entries(ROLE_KEYWORDS)) {
+    const count = keywords.reduce((n, kw) => n + (lower.includes(kw) ? 1 : 0), 0);
+    if (count > 0) scores[role] = count;
+  }
+  const matchedRoles = Object.keys(scores);
+  const sorted = matchedRoles.sort((a, b) => scores[b] - scores[a]);
+  const top = sorted[0];
+  const topIsClearLead = top && (sorted.length === 1 || scores[top] > scores[sorted[1]]);
+
+  return {
+    suggestedRole: topIsClearLead ? top : null,
+    multiIssueLikely: matchedRoles.length >= 2,
+    matchedRoles,
+  };
+}
 
 export default async function handler(req, res) {
   // --- ROUTE: Resend inbound email webhook (breakdown-by-email) ---
@@ -144,12 +204,12 @@ async function handleResendEmailWebhook(req, res) {
 
     if (!user || user.active === false) {
       const adminResult = await pgQuery(
-        "select email from users where role = 'system_admin' and (active is distinct from false)"
+        "select email from users where role = 'admin' and (active is distinct from false)"
       ).catch(() => null);
       const adminEmails = (adminResult?.rows || []).map((r) => r.email).filter(Boolean);
 
       if (adminEmails.length === 0) {
-        console.error("No system_admin users found to notify of unrecognized sender:", fromEmail);
+        console.error("No admin users found to notify of unrecognized sender:", fromEmail);
       } else {
         await Promise.all(
           adminEmails.map((adminEmail) =>
@@ -161,7 +221,7 @@ async function handleResendEmailWebhook(req, res) {
           )
         );
       }
-      return res.status(200).json({ triggered: false, reason: "Unrecognized sender, system_admin notified" });
+      return res.status(200).json({ triggered: false, reason: "Unrecognized sender, admin notified" });
     }
 
     // --- Fetch full email body now that sender is trusted ---
@@ -175,22 +235,63 @@ async function handleResendEmailWebhook(req, res) {
     const fullEmail = await emailResp.json();
     const bodyText = fullEmail.text || fullEmail.html || "(no body content)";
 
+    // --- Keyword-based role suggestion (best effort, admin always backstops it) ---
+    const { suggestedRole, multiIssueLikely, matchedRoles } = guessAssignedRole(`${subject} ${bodyText}`);
+
+    let notes = `[Reported by email: ${subject}]\n\n${bodyText}`;
+    if (multiIssueLikely) {
+      notes = `[Possible multiple issues reported — review before splitting into separate work orders]\n\n${notes}`;
+    }
+
     // --- Create the real work order ---
     const woId = `WO-${Date.now()}`;
     const { insert } = await import("../lib/postgresClient.js");
     const created = await insert("work_orders", {
       wo_id: woId,
       status: "Open",
-      notes: `[Reported by email: ${subject}]\n\n${bodyText}`,
+      notes,
       reporter_contact: user.display_name || fromEmail,
       organization_id: user.organization_id || null,
       source: "email",
       source_email_id: emailId,
       created: new Date().toISOString(),
+      assigned_role: suggestedRole || null,
+      assigned_role_set_by: suggestedRole ? "system_auto_suggested" : null,
+      assignment_status: suggestedRole ? "Suggested" : "Unassigned",
       activity_log: JSON.stringify([
-        { text: "🆕 Work order opened — reported by email", by: fromEmail, at: new Date().toISOString() },
+        {
+          text: suggestedRole
+            ? `🆕 Work order opened — reported by email, auto-suggested to ${suggestedRole}`
+            : "🆕 Work order opened — reported by email, needs manual triage",
+          by: fromEmail,
+          at: new Date().toISOString(),
+        },
       ]),
     });
+
+    // --- Notify: admin ALWAYS, plus the suggested role's users if any ---
+    const { query: pgQueryNotify } = await import("../lib/postgresClient.js");
+    const rolesToNotify = suggestedRole ? ["admin", suggestedRole] : ["admin"];
+    const notifyResult = await pgQueryNotify(
+      `select distinct email from users where role = any($1) and (active is distinct from false) and email is not null`,
+      [rolesToNotify]
+    ).catch(() => null);
+    const notifyEmails = (notifyResult?.rows || []).map((r) => r.email).filter(Boolean);
+
+    const notifySubject = `New Work Order ${woId}${suggestedRole ? ` — suggested: ${suggestedRole}` : " — needs triage"}: ${subject}`;
+    const notifyBody = [
+      `A new work order was created from an email report.`,
+      ``,
+      `Work Order: ${woId}`,
+      `Reported by: ${user.display_name || fromEmail}`,
+      `Suggested role: ${suggestedRole || "none — please triage manually"}`,
+      multiIssueLikely ? `⚠️ Possible multiple issues in this report (matched: ${matchedRoles.join(", ")}) — consider splitting.` : null,
+      ``,
+      `Subject: ${subject}`,
+      `Details: ${bodyText}`,
+    ].filter(Boolean).join("\n");
+
+    await Promise.all(notifyEmails.map((addr) => sendPlainEmail(addr, notifySubject, notifyBody)));
 
     // --- Auto-reply confirmation to the reporter ---
     await sendPlainEmail(
@@ -199,7 +300,16 @@ async function handleResendEmailWebhook(req, res) {
       `Thanks ${user.display_name || ""} — this has been logged as Work Order ${woId} and routed to the team.`
     );
 
-    return res.status(200).json({ triggered: true, type: "email_workorder", workOrder: woId, reportedBy: fromEmail, recordId: created?.id });
+    return res.status(200).json({
+      triggered: true,
+      type: "email_workorder",
+      workOrder: woId,
+      reportedBy: fromEmail,
+      suggestedRole,
+      multiIssueLikely,
+      notified: notifyEmails,
+      recordId: created?.id,
+    });
   } catch (err) {
     console.error("Resend email webhook error:", err);
     return res.status(500).json({ error: err.message });
