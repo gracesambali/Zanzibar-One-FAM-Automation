@@ -143,6 +143,14 @@ still shows the normal back button.
 A Replacement Report (sorted soonest-first, each item labeled "planned" or
 "estimated") is available via `GET /api/get-assets?replacementReport=true`.
 
+## Asset detail sharing
+
+Each asset's detail page has two small icons top-left, next to its name —
+download the QR code, and copy a shareable link — both pointing at the same
+real public info page (`/qz9n36kf?id=<assetId>`) the QR code itself
+encodes. The old per-asset XLSX/CSV/PDF download ribbon at the bottom of
+the page was removed entirely.
+
 ## Disposal tracking
 
 Assets can have a `Disposed Date` and `Disposal Notes` set from their edit

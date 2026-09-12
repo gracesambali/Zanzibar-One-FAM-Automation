@@ -2334,7 +2334,12 @@ function showDetail(idx) {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/qz9n36kf?id=' + a.id)}`;
 
   let html = `<button class="back-btn" onclick="${famCalendarReturnPending ? 'returnToFamCalendar()' : 'renderAssets()'}">${famCalendarReturnPending ? '← Back to Calendar' : '← Back to Asset Register'}</button>
-  <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
+  <div class="detail-panel"><div class="detail-header"><div>
+  <div style="display:flex;gap:6px;margin-bottom:8px">
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" title="Download QR Code" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0">⬇</button>
+    <button onclick="copyAssetShareLink('${a.id}')" title="Copy shareable link" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0">🔗</button>
+  </div>
+  <div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
@@ -2455,15 +2460,6 @@ function showDetail(idx) {
       ${a.documentsUploadedBy ? `<div style="font-size:10.5px;color:var(--muted)">Last uploaded by ${a.documentsUploadedBy}${a.documentsUploadedDate ? ' · ' + new Date(a.documentsUploadedDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : ''}
     ` : `<div style="font-size:12px;color:var(--muted)">No documents uploaded yet — e.g. Fire Safety Certificate, OSHA Compliance Licence, or any real compliance paperwork for this asset.</div>`}
     <div id="docUploadStatus_${a.recordId}" style="font-size:11px;margin-top:6px"></div>
-  </div>`;
-
-  // Per-asset download options
-  html += `<div style="display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--border)">
-    <span style="font-size:11px;color:var(--muted);align-self:center">Download this asset:</span>
-    <button onclick="exportSingleAssetFormat('${a.id}','xlsx')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">XLSX</button>
-    <button onclick="exportSingleAssetFormat('${a.id}','csv')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">CSV</button>
-    <button onclick="exportSingleAssetFormat('${a.id}','pdf')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">PDF</button>
-    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">↓ QR Code</button>
   </div>`;
 
   // Audit trail — edit history
@@ -18932,8 +18928,18 @@ function exportAssetRegisterCSV() {
   exportAssetsXLSX(assets, "Asset_Register");
 }
 
-function exportSingleAssetXLSX(assetId) {
-  exportSingleAssetFormat(assetId, 'xlsx');
+// Shares that same real, public-facing asset page the QR code already
+// encodes - one real, stable link, not a new URL scheme invented for
+// this. Same copy-to-clipboard pattern already used for the Report a
+// Breakdown link elsewhere in the app.
+async function copyAssetShareLink(assetId) {
+  const link = `${window.location.origin}/qz9n36kf?id=${assetId}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    alert('Link copied.');
+  } catch (err) {
+    alert('Could not copy — here is the link:\n' + link);
+  }
 }
 
 // Cross-origin <a download> links often just navigate instead of downloading
@@ -19061,62 +19067,6 @@ async function downloadQrCode(qrUrl, idText, filenameBase) {
     alert('Could not create label: ' + err.message);
   }
 }
-
-function exportSingleAssetFormat(assetId, format) {
-  const asset = assets.find(a => a.id === assetId);
-  if (!asset) { alert("Asset not found."); return; }
-
-  if (format === 'xlsx') {
-    exportAssetsXLSX([asset], `Asset_${assetId}`);
-    return;
-  }
-
-  if (format === 'csv') {
-    const canManageTra = ['procurement', 'system_admin', 'business_owner'].includes(currentUserRole);
-    const headers = ['Asset ID','Name','System','Category','Floor','Room','Manufacturer','Model','Install Date','Status','Critical Importance','Last Service','Next Service Due'];
-    const row = [asset.id, asset.name, asset.system, asset.category, asset.floor, asset.room, asset.manufacturer, asset.model, asset.installDate, asset.status, asset.criticality, asset.lastService, asset.nextService];
-    if (canManageTra) {
-      headers.push('Acquisition Cost (TZS)', 'Current Value (TZS)', 'TRA Class', 'TRA Value (TZS)');
-      row.push(asset.acquisitionCost ?? '', asset.currentValue ?? '', asset.traClassName || '', asset.traValue ?? '');
-    }
-    const csv = headers.join(',') + '\n' + row.map(v => `"${v||''}"`).join(',');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${assetId}.csv`;
-    a.click();
-    return;
-  }
-
-  if (format === 'pdf') {
-    const win = window.open('', '_blank');
-    win.document.write(`
-      <html><head><title>${asset.id} — ${asset.name}</title>
-      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1A1A2E}h1{color:${getClientBrandColor()};font-size:20px}
-      table{width:100%;border-collapse:collapse;margin-top:16px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      td:first-child{font-weight:600;color:#6B7280;width:200px}</style></head><body>
-      <h1>${asset.name} (${asset.id})</h1>
-      <table>
-        <tr><td>System</td><td>${asset.system||'—'}</td></tr>
-        <tr><td>Category</td><td>${asset.category||'—'}</td></tr>
-        <tr><td>Floor/Level</td><td>${asset.floor||'—'}</td></tr>
-        <tr><td>Room/Zone</td><td>${asset.room||'—'}</td></tr>
-        <tr><td>Manufacturer</td><td>${asset.manufacturer||'—'}</td></tr>
-        <tr><td>Model</td><td>${asset.model||'—'}</td></tr>
-        <tr><td>Install Date</td><td>${asset.installDate||'—'}</td></tr>
-        <tr><td>Status</td><td>${asset.status||'—'}</td></tr>
-        <tr><td>Critical Importance</td><td>${asset.criticality||'—'}</td></tr>
-        <tr><td>Last Service</td><td>${asset.lastService||'—'}</td></tr>
-        <tr><td>Next Service Due</td><td>${asset.nextService||'—'}</td></tr>
-      </table>
-      <script>window.print()<\/script>
-      </body></html>
-    `);
-    win.document.close();
-    return;
-  }
-}
-
 
 function printMaintenancePlan(windowDays) {
   const cutoff = new Date();
