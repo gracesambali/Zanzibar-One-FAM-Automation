@@ -2335,9 +2335,15 @@ function showDetail(idx) {
 
   let html = `<button class="back-btn" onclick="${famCalendarReturnPending ? 'returnToFamCalendar()' : 'renderAssets()'}">${famCalendarReturnPending ? '← Back to Calendar' : '← Back to Asset Register'}</button>
   <div class="detail-panel"><div class="detail-header"><div>
-  <div style="display:flex;gap:6px;margin-bottom:8px">
-    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" title="Download QR Code" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0">⬇</button>
-    <button onclick="copyAssetShareLink('${a.id}')" title="Copy shareable link" style="width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0">🔗</button>
+  <div style="display:flex;gap:10px;margin-bottom:8px">
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" title="Download QR Code" style="display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;padding:4px 8px">
+      <span style="font-size:13px;line-height:1">⬇</span>
+      <span style="font-size:9px;color:var(--muted);font-weight:600">QR Code</span>
+    </button>
+    <button onclick="copyAssetShareLink('${a.id}')" title="Copy shareable link" style="display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;padding:4px 8px">
+      <span style="font-size:13px;line-height:1">🔗</span>
+      <span style="font-size:9px;color:var(--muted);font-weight:600">Share Link</span>
+    </button>
   </div>
   <div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
