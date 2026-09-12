@@ -211,13 +211,22 @@ async function handleResendEmailWebhook(req, res) {
       if (adminEmails.length === 0) {
         console.error("No admin users found to notify of unrecognized sender:", fromEmail);
       } else {
+        const html = renderEmailCard({
+          badge: "Unrecognized Sender",
+          badgeColor: "#d97706",
+          title: "Breakdown report from an unknown address",
+          bodyHtml: `
+            <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">An email was sent to the breakdown-reporting inbox from an address not found in the system. No work order was created.</p>
+            ${renderDetailTable([
+              ["From", escapeHtml(fromRaw)],
+              ["Subject", escapeHtml(subject)],
+              ["Email ID", escapeHtml(emailId || "")],
+            ])}
+          `,
+        });
         await Promise.all(
           adminEmails.map((adminEmail) =>
-            sendPlainEmail(
-              adminEmail,
-              `Unrecognized breakdown-report sender: ${fromEmail}`,
-              `An email was sent to the breakdown inbox from an unrecognized address.\n\nFrom: ${fromRaw}\nSubject: ${subject}\nEmail ID: ${emailId}\n\nNo work order was created.`
-            )
+            sendHtmlEmail(adminEmail, `Unrecognized breakdown-report sender: ${fromEmail}`, html)
           )
         );
       }
@@ -279,26 +288,42 @@ async function handleResendEmailWebhook(req, res) {
     const notifyEmails = (notifyResult?.rows || []).map((r) => r.email).filter(Boolean);
 
     const notifySubject = `New Work Order ${woId}${suggestedRole ? ` — suggested: ${suggestedRole}` : " — needs triage"}: ${subject}`;
-    const notifyBody = [
-      `A new work order was created from an email report.`,
-      ``,
-      `Work Order: ${woId}`,
-      `Reported by: ${user.display_name || fromEmail}`,
-      `Suggested role: ${suggestedRole || "none — please triage manually"}`,
-      multiIssueLikely ? `⚠️ Possible multiple issues in this report (matched: ${matchedRoles.join(", ")}) — consider splitting.` : null,
-      ``,
-      `Subject: ${subject}`,
-      `Details: ${bodyText}`,
-    ].filter(Boolean).join("\n");
+    const notifyHtml = renderEmailCard({
+      badge: suggestedRole ? "New Work Order — Suggested Assignment" : "New Work Order — Needs Triage",
+      badgeColor: multiIssueLikely ? "#d97706" : "#1A3566",
+      title: woId,
+      bodyHtml: `
+        ${renderDetailTable([
+          ["Reported by", escapeHtml(user.display_name || fromEmail)],
+          ["Suggested role", suggestedRole ? escapeHtml(suggestedRole) : "None — please triage manually"],
+          ["Subject", escapeHtml(subject)],
+        ])}
+        ${multiIssueLikely ? `
+          <p style="margin:16px 0 0;padding:10px 12px;background:#FEF3C7;border-left:4px solid #d97706;border-radius:4px;color:#7c4a03;font-size:13px;line-height:1.5">
+            <strong>⚠️ Possible multiple issues reported</strong> (matched: ${matchedRoles.map(escapeHtml).join(", ")}) — consider splitting into separate work orders.
+          </p>` : ""}
+        <p style="margin:18px 0 6px;color:#1A1A2E;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em">Details</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6;white-space:pre-wrap">${escapeHtml(bodyText)}</p>
+      `,
+    });
 
-    await Promise.all(notifyEmails.map((addr) => sendPlainEmail(addr, notifySubject, notifyBody)));
+    await Promise.all(notifyEmails.map((addr) => sendHtmlEmail(addr, notifySubject, notifyHtml)));
 
     // --- Auto-reply confirmation to the reporter ---
-    await sendPlainEmail(
-      fromEmail,
-      `Received: ${subject} (Work Order ${woId})`,
-      `Thanks ${user.display_name || ""} — this has been logged as Work Order ${woId} and routed to the team.`
-    );
+    const confirmationHtml = renderEmailCard({
+      badge: "Work Order Confirmation",
+      badgeColor: "#1A3566",
+      title: woId,
+      bodyHtml: `
+        <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">Dear ${escapeHtml(user.display_name || "Sir/Madam")},</p>
+        <p style="margin:0 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">Thank you for reporting this issue. It has been logged as <strong>Work Order ${woId}</strong> and routed to our team for action.</p>
+        ${renderDetailTable([["Subject", escapeHtml(subject)]])}
+        <p style="margin:16px 0 12px;color:#1A1A2E;font-size:14px;line-height:1.6">We will keep you updated on the progress.</p>
+        <p style="margin:0;color:#1A1A2E;font-size:14px;line-height:1.6">Regards,<br/><strong>Facility Asset Management</strong></p>
+      `,
+    });
+
+    await sendHtmlEmail(fromEmail, `Received: ${subject} (Work Order ${woId})`, confirmationHtml);
 
     return res.status(200).json({
       triggered: true,
@@ -369,8 +394,8 @@ function extractEmailAddress(fromHeader) {
   return (match ? match[1] : fromHeader).trim().toLowerCase();
 }
 
-async function sendPlainEmail(to, subject, text) {
-  if (!to) { console.error("sendPlainEmail: no recipient configured"); return; }
+async function sendHtmlEmail(to, subject, html) {
+  if (!to) { console.error("sendHtmlEmail: no recipient configured"); return; }
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -378,13 +403,51 @@ async function sendPlainEmail(to, subject, text) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.WORKORDER_FROM_EMAIL || process.env.ALERT_FROM_EMAIL}>`,
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management"} <${process.env.WORKORDER_FROM_EMAIL || process.env.ALERT_FROM_EMAIL}>`,
       to: [to],
       subject,
-      text,
+      html,
+      text: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
     }),
   });
-  if (!resp.ok) console.error("Resend error (plain email):", await resp.text());
+  if (!resp.ok) console.error("Resend error (html email):", await resp.text());
+}
+
+// Shared branded card wrapper, matching the maintenance-alert email style.
+function renderEmailCard({ badge, badgeColor, title, bodyHtml }) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:${badgeColor};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">${badge}</div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">${title}</div>
+      </div>
+      <div style="border:1px solid #E2E6ED;border-top:none;border-radius:0 0 8px 8px;padding:20px">
+        ${bodyHtml}
+      </div>
+    </div>`;
+}
+
+// Simple two-column label/value table for scannable details in an email.
+function renderDetailTable(rows) {
+  const tr = rows
+    .map(
+      ([label, value]) => `
+      <tr>
+        <td style="padding:6px 10px 6px 0;color:#5A6472;font-size:13px;font-weight:700;white-space:nowrap;vertical-align:top">${label}</td>
+        <td style="padding:6px 0;color:#1A1A2E;font-size:14px;vertical-align:top">${value}</td>
+      </tr>`
+    )
+    .join("");
+  return `<table style="width:100%;border-collapse:collapse;margin:4px 0 0">${tr}</table>`;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // ============================================================
