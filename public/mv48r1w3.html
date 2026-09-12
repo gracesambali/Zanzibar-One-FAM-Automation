@@ -3038,22 +3038,7 @@ async function renderSensorMonitorFromData(sensors, categories, isRefresh) {
         </div>
       </div>`;
 
-      const toolHtml = `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Sensor Test Tool</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Pick a sensor and enter a test reading. If the value falls outside its target range, a real email + SMS fires and a real Work Order opens — the same as a genuine sensor breach. A value within range is just recorded, no alert.</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="sensorTestSelect" onchange="updateSensorTestHint()" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;min-width:220px">
-            ${sensors.map(s => `<option value="${s.sensorId}" data-target="${(s.targetRange || 'not set').replace(/"/g, '&quot;')}" data-unit="${s.latestUnit || ''}">${s.sensorType}: ${s.sensorId} (${s.assetName})</option>`).join('')}
-          </select>
-          <input id="sensorTestValue" type="number" step="0.1" placeholder="Value" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:100px">
-          <button onclick="runSensorTest()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Run Test</button>
-        </div>
-        <div id="sensorTestHint" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
-        <div id="sensorTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
-      </div>
-      <div id="sensorListArea"></div>`;
-      container.innerHTML = headerHtml + toolHtml;
-      updateSensorTestHint();
+      container.innerHTML = headerHtml + `<div id="sensorListArea"></div>`;
     }
 
     const inRange = sensors.filter(s => s.withinRange === true).length;
@@ -3793,57 +3778,6 @@ async function saveSensorEdit(recordId) {
     showSensorDetail(recordId);
   } catch (err) {
     alert('Could not save: ' + err.message);
-  }
-}
-
-function updateSensorTestHint() {
-  const select = document.getElementById('sensorTestSelect');
-  const hint = document.getElementById('sensorTestHint');
-  if (!select || !hint) return;
-  const opt = select.options[select.selectedIndex];
-  const target = opt ? opt.dataset.target : '';
-  const unit = opt ? opt.dataset.unit : '';
-  hint.textContent = `Target range: ${target}${unit ? ' ' + unit : ''}`;
-}
-
-async function runSensorTest() {
-  const select = document.getElementById('sensorTestSelect');
-  const valueInput = document.getElementById('sensorTestValue');
-  const resultBox = document.getElementById('sensorTestResult');
-  const sensorId = select.value;
-  const value = valueInput.value;
-
-  if (!sensorId) { alert('No sensors available to test.'); return; }
-  if (value === '') { alert('Enter a test value first.'); return; }
-
-  resultBox.style.display = 'block';
-  resultBox.style.color = 'var(--muted)';
-  resultBox.textContent = `Testing ${sensorId} with value ${value}…`;
-
-  try {
-    const resp = await fetch('/api/sensors', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sensorId, value }),
-    });
-    if (resp.status === 401) { redirectToLogin(); return; }
-    const data = await resp.json();
-
-    if (resp.ok && data.success && data.triggered) {
-      resultBox.style.color = 'var(--red)';
-      resultBox.innerHTML = `⚠ ALERT TRIGGERED — ${data.sensorType} reading ${data.value}${data.unit} for ${data.assetName} (target: ${data.targetRange}) · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderSensorMonitor(true);
-    } else if (resp.ok && data.success) {
-      resultBox.style.color = 'var(--green)';
-      resultBox.textContent = `✓ Reading recorded (${data.value}${data.unit}, target: ${data.targetRange}) — ${data.reason}`;
-      renderSensorMonitor(true);
-    } else {
-      resultBox.style.color = 'var(--red)';
-      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
-    }
-  } catch (err) {
-    resultBox.style.color = 'var(--red)';
-    resultBox.textContent = '✗ Network error: ' + err.message;
   }
 }
 
@@ -17134,18 +17068,6 @@ async function buildWorkOrdersHtml(orders) {
   let html = '';
 
   if (!isSimplified) {
-    html += `<div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px">
-    <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">Test Tools</div>
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Runs the REAL alert pipeline against a test asset — sets a real due date, sends real email/SMS, writes to the real Alert Log. Only use with a dedicated test record (e.g. "TEST-001"), never a real asset.</div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input id="testAssetId" value="TEST-001" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;width:120px">
-      <button onclick="runRealTest('OVERDUE')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--red);color:#fff;cursor:pointer">Test Overdue</button>
-      <button onclick="runRealTest('URGENT')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--amber);color:#fff;cursor:pointer">Test Urgent</button>
-      <button onclick="runRealTest('UPCOMING')" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--blue);color:#fff;cursor:pointer">Test Upcoming</button>
-    </div>
-    <div id="testResult" style="margin-top:10px;font-size:12px;display:none"></div>
-  </div>`;
-  }
 
   if (currentUserRole === 'procurement' || currentUserRole === 'business_owner' || currentUserRole === 'system_admin') {
     html += `<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -18649,38 +18571,6 @@ async function bulkCloseWorkOrders() {
   } catch (err) {
     alert('Could not close selected work orders: ' + err.message);
     renderWorkOrders();
-  }
-}
-
-async function runRealTest(urgency) {
-  const assetId = document.getElementById('testAssetId').value.trim();
-  const resultBox = document.getElementById('testResult');
-  if (!assetId) { alert('Enter a test Asset ID first.'); return; }
-
-  resultBox.style.display = 'block';
-  resultBox.style.color = 'var(--muted)';
-  resultBox.textContent = `Running real ${urgency} test on ${assetId}…`;
-
-  try {
-    const resp = await fetch('/api/run-real-test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assetId, urgency }),
-    });
-    if (resp.status === 401) { redirectToLogin(); return; }
-    const data = await resp.json();
-
-    if (resp.ok && data.success) {
-      resultBox.style.color = 'var(--green)';
-      resultBox.innerHTML = `✓ Due date set to ${data.dueDateSet} · Email: ${data.email} · SMS: ${data.sms} · Alert Log: ${data.alertLogWritten === true ? 'written' : data.alertLogWritten} · Work Order: ${data.workOrder}`;
-      renderWorkOrders(); // refresh so the new/updated work order shows immediately
-    } else {
-      resultBox.style.color = 'var(--red)';
-      resultBox.textContent = '✗ ' + (data.error || 'Test failed');
-    }
-  } catch (err) {
-    resultBox.style.color = 'var(--red)';
-    resultBox.textContent = '✗ Network error: ' + err.message;
   }
 }
 
