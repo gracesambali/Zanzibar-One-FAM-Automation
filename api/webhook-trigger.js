@@ -143,12 +143,25 @@ async function handleResendEmailWebhook(req, res) {
     const user = userResult && userResult.rows[0] ? userResult.rows[0] : null;
 
     if (!user || user.active === false) {
-      await sendPlainEmail(
-        process.env.ADMIN_NOTIFY_EMAIL,
-        `Unrecognized breakdown-report sender: ${fromEmail}`,
-        `An email was sent to the breakdown inbox from an unrecognized address.\n\nFrom: ${fromRaw}\nSubject: ${subject}\nEmail ID: ${emailId}\n\nNo work order was created.`
-      );
-      return res.status(200).json({ triggered: false, reason: "Unrecognized sender, admin notified" });
+      const adminResult = await pgQuery(
+        "select email from users where role = 'system_admin' and (active is distinct from false)"
+      ).catch(() => null);
+      const adminEmails = (adminResult?.rows || []).map((r) => r.email).filter(Boolean);
+
+      if (adminEmails.length === 0) {
+        console.error("No system_admin users found to notify of unrecognized sender:", fromEmail);
+      } else {
+        await Promise.all(
+          adminEmails.map((adminEmail) =>
+            sendPlainEmail(
+              adminEmail,
+              `Unrecognized breakdown-report sender: ${fromEmail}`,
+              `An email was sent to the breakdown inbox from an unrecognized address.\n\nFrom: ${fromRaw}\nSubject: ${subject}\nEmail ID: ${emailId}\n\nNo work order was created.`
+            )
+          )
+        );
+      }
+      return res.status(200).json({ triggered: false, reason: "Unrecognized sender, system_admin notified" });
     }
 
     // --- Fetch full email body now that sender is trusted ---
