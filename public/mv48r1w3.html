@@ -2488,10 +2488,35 @@ function renderAssetEditLogFromData(data) {
     el.textContent = 'No edits recorded yet.';
     return;
   }
+  // Same avatar convention already used for the logged-in user's own
+  // badge in the header — a real photo when one's on file, otherwise a
+  // colored circle with initials, never a blank space.
+  const avatarColors = ['#F0A93E','#7C3AED','#0EA5E9','#EC4899','#14B8A6','#F97316','#22C55E'];
+  const colorForName = (name) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return avatarColors[Math.abs(hash) % avatarColors.length];
+  };
+  const initialsFor = (name) => {
+    const words = (name || '?').trim().split(/\s+/);
+    return words.length > 1 ? (words[0][0] + words[words.length - 1][0]).toUpperCase() : name.slice(0, 2).toUpperCase();
+  };
+
   el.innerHTML = data.entries.map(e => {
     const dt = new Date(e.timestamp);
     const dateStr = dt.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) + ', ' + dt.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><strong>${e.field}</strong> changed from "${e.oldValue}" to "${e.newValue}" — by <strong>${e.editedBy}</strong> at ${dateStr}</div>`;
+    const name = e.editedByDisplayName || e.editedBy || 'Unknown';
+    const avatar = e.editedByPhotoUrl
+      ? `<img src="${e.editedByPhotoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentElement.textContent='${initialsFor(name)}'">`
+      : initialsFor(name);
+    return `<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+      <div style="width:30px;height:30px;border-radius:50%;background:${colorForName(name)};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;overflow:hidden">${avatar}</div>
+      <div style="flex:1;min-width:0;background:#F0F1F4;border-radius:12px;border-top-left-radius:4px;padding:8px 12px">
+        <div style="font-size:12px;font-weight:700;color:var(--navy)">${escapeHtml(name)}</div>
+        <div style="font-size:12.5px;color:var(--text);margin-top:2px;line-height:1.4">changed <strong>${escapeHtml(e.field)}</strong> from "${escapeHtml(e.oldValue)}" to "${escapeHtml(e.newValue)}"</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px">${dateStr}</div>
+      </div>
+    </div>`;
   }).join('');
 }
 

@@ -2027,16 +2027,43 @@ async function handleEditLog(req, res, organizationId) {
   const assetId = req.query.id;
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
     const result = await pgQuery(
       "select * from edit_log where asset_id = $1 and organization_id = $2 order by timestamp desc",
       [assetId, organizationId]
     );
-    const entries = result.rows.map(r => ({
-      field: r.field_changed || "",
-      oldValue: r.old_value || "",
-      newValue: r.new_value || "",
-      editedBy: r.edited_by || "",
-      timestamp: r.timestamp || "",
+
+    // One real lookup for every distinct editor on this asset's history,
+    // not a query per row — same batching principle already used for
+    // compliance documents. edited_by is a username, not guaranteed to
+    // still be an active account (someone deactivated later still has
+    // real, valid history), so this is a left-join-style lookup: a
+    // missing match just falls back to initials with no photo.
+    const usernames = [...new Set(result.rows.map(r => r.edited_by).filter(Boolean))];
+    let usersByUsername = {};
+    if (usernames.length > 0) {
+      const usersResult = await pgQuery(
+        "select username, display_name, photo_url from users where organization_id = $1 and username = any($2)",
+        [organizationId, usernames]
+      );
+      usersByUsername = Object.fromEntries(usersResult.rows.map(u => [u.username, u]));
+    }
+
+    const entries = await Promise.all(result.rows.map(async r => {
+      const editor = usersByUsername[r.edited_by];
+      let editedByPhotoUrl = null;
+      if (editor?.photo_url) {
+        editedByPhotoUrl = await getSignedUrlSafe(editor.photo_url).catch(() => null);
+      }
+      return {
+        field: r.field_changed || "",
+        oldValue: r.old_value || "",
+        newValue: r.new_value || "",
+        editedBy: r.edited_by || "",
+        editedByDisplayName: editor?.display_name || r.edited_by || "",
+        editedByPhotoUrl,
+        timestamp: r.timestamp || "",
+      };
     }));
     return res.status(200).json({ entries });
   } catch (err) {

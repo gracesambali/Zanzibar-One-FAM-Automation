@@ -145,11 +145,21 @@ A Replacement Report (sorted soonest-first, each item labeled "planned" or
 
 ## Asset detail sharing
 
-Each asset's detail page has two small icons top-left, next to its name —
-download the QR code, and copy a shareable link — both pointing at the same
-real public info page (`/qz9n36kf?id=<assetId>`) the QR code itself
-encodes. The old per-asset XLSX/CSV/PDF download ribbon at the bottom of
-the page was removed entirely.
+Each asset's detail page has two small buttons in the action row next to
+Edit and Schedule Inspection — download the QR code, and copy a shareable
+link — both pointing at the same real public info page
+(`/qz9n36kf?id=<assetId>`) the QR code itself encodes. The old per-asset
+XLSX/CSV/PDF download ribbon at the bottom of the page was removed
+entirely.
+
+## Asset Edit History
+
+Shown as an activity-feed style list (real photo or colored initials per
+person, same avatar convention as the header) rather than plain text
+lines — each entry shows who changed what, from what value to what, and
+when. Falls back to initials when someone has no photo on file or is no
+longer an active account; their real edit history is still shown either
+way.
 
 ## Disposal tracking
 
