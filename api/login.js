@@ -107,6 +107,9 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "listClients") {
     return handleListClients(req, res);
   }
+  if (req.body && req.body.action === "markOnboardingSeen") {
+    return handleMarkOnboardingSeen(req, res);
+  }
 
   const { username, password } = req.body || {};
 
@@ -619,6 +622,24 @@ async function handleListClients(req, res) {
     return res.status(200).json({ clients });
   } catch (err) {
     console.error("listClients error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleMarkOnboardingSeen(req, res) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: "Not logged in." });
+  setSessionCookie(res, session.u, session.r, session.org);
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    await pgQuery(
+      "update users set has_seen_onboarding = true where username = $1",
+      [session.u]
+    );
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("markOnboardingSeen error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

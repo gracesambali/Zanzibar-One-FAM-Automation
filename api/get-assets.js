@@ -1491,7 +1491,7 @@ export default async function handler(req, res) {
       console.error("system_catalog read error (non-fatal, frontend falls back to its own list):", err.message);
     }
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", financeEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor, systemCatalog });
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", hasSeenOnboarding: staffEntry?.hasSeenOnboarding ?? true, financeEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor, systemCatalog });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });

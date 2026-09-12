@@ -702,6 +702,7 @@ let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let financeEnabled = true; // filled in after login by loadAssetsAndInit() from the real organization setting
 let currentUserOrgId = ""; // filled in after login by loadAssetsAndInit(), from the verified session
+let famHasSeenOnboarding = true; // filled in by loadAssetsAndInit(); false only means "genuinely this user's first login"
 const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
 let currentUsername = ""; // the actual login identity chat participation is checked against — never the display name
 
@@ -1648,7 +1649,10 @@ function renderDashboard() {
   } else if (currentFacilityFilter !== '__all__') {
     scopeLabel = `${currentFacilityFilter} — All Buildings`;
   }
-  html += `<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:12px">📍 Viewing: ${scopeLabel}</div>`;
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+    <div style="font-size:13px;font-weight:600;color:var(--navy)">📍 Viewing: ${scopeLabel}</div>
+    <button onclick="startFamOnboardingTour()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧭 How to use FAM</button>
+  </div>`;
 
   // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
   html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
@@ -19575,6 +19579,7 @@ async function loadAssetsAndInit() {
     const data = await assetsResp.json();
     assets = data.assets || [];
     currentUserRole = data.role || "technician";
+    famHasSeenOnboarding = data.hasSeenOnboarding !== false; // defaults true if the field is ever missing, never forces a tour on someone unexpectedly
     // Defense in depth, same principle already used elsewhere in this
     // app — Pharmacy is meant to only ever reach its own standalone
     // portal. If this role somehow lands here directly (a bookmark, a
@@ -19654,6 +19659,12 @@ async function loadAssetsAndInit() {
     updateWOUnreadBadges();
     startWorkOrderChatPolling();
     mountFamChatbotWidget();
+    if (!famHasSeenOnboarding) {
+      // Deliberately deferred a beat so the dashboard has actually
+      // rendered and its real elements exist in the DOM before the
+      // tour tries to find and highlight them.
+      setTimeout(startFamOnboardingTour, 400);
+    }
 
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.header').style.display = '';
@@ -19816,6 +19827,132 @@ async function sendFamChatbotMessage() {
   } catch (err) {
     document.getElementById('famChatbotThinking')?.remove();
     appendFamChatbotBubble('✗ Network error: ' + err.message, false);
+  }
+}
+
+// "How to use FAM" onboarding tour — spotlight-style walkthrough shown
+// automatically only on a person's genuine first login (has_seen_onboarding
+// tracked server-side, per account, not per-browser — a new phone or a
+// cleared cache should never re-trigger it, and a shared computer with a
+// different login should still get it for THAT account's first time).
+// Always re-launchable afterward from the Dashboard tab.
+//
+// Steps target real, stable elements (sidebar nav buttons, the chatbot
+// widget, the facility switcher) via selectors that already exist for
+// other reasons — never invented just for this. A step whose target
+// isn't present or visible for this particular role/screen is silently
+// skipped rather than shown pointing at nothing, so the same step list
+// naturally adapts across every role without separate copies per role.
+const FAM_ONBOARDING_STEPS = [
+  { selector: '.sidebar', title: 'Your navigation', text: 'Everything in FAM lives here on the left — switch between Dashboard, Work Orders, Assets, and everything else your role can see.' },
+  { selector: '#facilitySwitcher', title: 'Facility & Building switcher', text: 'Scope the whole dashboard to one facility or building at a time. Set to "All" to see everything at once.' },
+  { selector: '[data-tab="workorders"]', title: 'Work Orders', text: 'Every reported issue and scheduled task lands here — from staff, tenants, email reports, and automatic sensor alerts alike.' },
+  { selector: '[data-tab="sensors"]', title: 'BMS', text: 'Live sensor readings from your monitored equipment — a reading outside its target range opens a real work order automatically.' },
+  { selector: '[data-tab="procurement"]', title: 'Procurement', text: 'Request and track spare parts and supplies needed for maintenance work.' },
+  { selector: '#integrationsNavBtn', title: 'Integrations', text: 'Connect FAM to accounting, ERP, or 3D-capture tools you already use — QuickBooks, SAP, Matterport, and more.' },
+  { selector: '#famChatbotToggle', title: 'Ask about FAM', text: "Stuck on how something works? Ask right here, anytime. If it can't answer, it'll connect you straight to your admin." },
+];
+
+function findVisibleElement(selector) {
+  const candidates = document.querySelectorAll(selector);
+  for (const el of candidates) {
+    if (el.offsetParent !== null) return el; // skips hidden (display:none) or not-yet-rendered matches
+  }
+  return null;
+}
+
+let famTourStepIndex = 0;
+let famTourVisibleSteps = [];
+
+function startFamOnboardingTour() {
+  famTourVisibleSteps = FAM_ONBOARDING_STEPS.filter(s => findVisibleElement(s.selector));
+  if (famTourVisibleSteps.length === 0) return; // nothing real to point at right now — don't show an empty tour
+  famTourStepIndex = 0;
+
+  if (!document.getElementById('famTourOverlay')) {
+    const overlay = document.createElement('div');
+    overlay.id = 'famTourOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9500;pointer-events:none';
+    overlay.innerHTML = `
+      <div id="famTourDim" style="position:absolute;inset:0;background:rgba(15,20,35,0.55);pointer-events:auto"></div>
+      <div id="famTourHighlightBox" style="position:absolute;border:3px solid var(--navy);border-radius:8px;box-shadow:0 0 0 4000px rgba(15,20,35,0.55);transition:all 0.25s ease;pointer-events:none"></div>
+      <div id="famTourCard" style="position:absolute;max-width:280px;background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.3);padding:16px;pointer-events:auto;font-size:12.5px">
+        <div id="famTourCardTitle" style="font-weight:700;color:var(--navy);margin-bottom:6px;font-size:14px"></div>
+        <div id="famTourCardText" style="color:var(--navy);line-height:1.5;margin-bottom:12px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span onclick="skipFamOnboardingTour()" style="color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline">Skip</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span id="famTourStepCount" style="font-size:11px;color:var(--muted)"></span>
+            <button onclick="advanceFamOnboardingTour()" id="famTourNextBtn" style="padding:7px 14px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Next</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    // The dim background itself is NOT a skip button — clicking it does
+    // nothing, deliberately, so an accidental tap outside the highlighted
+    // area doesn't lose the person's place partway through.
+  }
+  document.getElementById('famTourOverlay').style.display = 'block';
+  renderFamTourStep();
+}
+
+function renderFamTourStep() {
+  const step = famTourVisibleSteps[famTourStepIndex];
+  const target = findVisibleElement(step.selector);
+  if (!target) { advanceFamOnboardingTour(); return; } // element vanished between steps (e.g. a tab re-render) — move on rather than get stuck
+
+  const rect = target.getBoundingClientRect();
+  const pad = 6;
+  const box = document.getElementById('famTourHighlightBox');
+  box.style.top = (rect.top - pad) + 'px';
+  box.style.left = (rect.left - pad) + 'px';
+  box.style.width = (rect.width + pad * 2) + 'px';
+  box.style.height = (rect.height + pad * 2) + 'px';
+
+  const card = document.getElementById('famTourCard');
+  document.getElementById('famTourCardTitle').textContent = step.title;
+  document.getElementById('famTourCardText').textContent = step.text;
+  document.getElementById('famTourStepCount').textContent = `${famTourStepIndex + 1} of ${famTourVisibleSteps.length}`;
+  document.getElementById('famTourNextBtn').textContent = famTourStepIndex === famTourVisibleSteps.length - 1 ? 'Done' : 'Next';
+
+  // Position the card beside the highlighted element, flipping to
+  // whichever side actually has room rather than running off-screen.
+  const cardWidth = 280;
+  let left = rect.right + 16;
+  if (left + cardWidth > window.innerWidth - 12) left = Math.max(12, rect.left - cardWidth - 16);
+  let top = Math.max(12, Math.min(rect.top, window.innerHeight - 180));
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function advanceFamOnboardingTour() {
+  famTourStepIndex++;
+  if (famTourStepIndex >= famTourVisibleSteps.length) {
+    finishFamOnboardingTour();
+    return;
+  }
+  renderFamTourStep();
+}
+
+function skipFamOnboardingTour() {
+  finishFamOnboardingTour();
+}
+
+async function finishFamOnboardingTour() {
+  const overlay = document.getElementById('famTourOverlay');
+  if (overlay) overlay.style.display = 'none';
+  if (famHasSeenOnboarding) return; // relaunched manually from Dashboard — nothing to mark
+  famHasSeenOnboarding = true;
+  try {
+    await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'markOnboardingSeen' }),
+    });
+  } catch (err) {
+    console.error('Could not save onboarding-seen state (non-fatal):', err.message);
   }
 }
 
