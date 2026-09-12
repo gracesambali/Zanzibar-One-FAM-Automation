@@ -17100,6 +17100,10 @@ async function buildWorkOrdersHtml(orders) {
     </div>`;
   }
 
+  } // closes `if (!isSimplified) {` at the top of this function — this
+    // brace was accidentally deleted along with the removed Test Tools
+    // block, which used to be the last thing inside it; restored here.
+
   if (isSimplified) {
     // Procurement-type work orders (spare parts ordered directly from
     // an asset, no breakdown involved) are deliberately excluded from
