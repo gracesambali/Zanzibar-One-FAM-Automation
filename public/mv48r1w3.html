@@ -19746,7 +19746,7 @@ function mountFamChatbotWidget() {
 
   const wrap = document.createElement('div');
   wrap.id = 'famChatbotWrap';
-  wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9000;font-family:inherit';
+  wrap.style.cssText = 'position:fixed;bottom:92px;right:24px;z-index:9000;font-family:inherit'; // stacked above the Scan Barcode/QR button (bottom:24px;right:24px;56px tall) rather than sitting on top of it
   wrap.innerHTML = `
     <button id="famChatbotToggle" onclick="toggleFamChatbot()" style="width:52px;height:52px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center">💬</button>
     <div id="famChatbotPanel" style="display:none;position:absolute;bottom:64px;right:0;width:320px;max-height:440px;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.2);display:none;flex-direction:column;overflow:hidden">
@@ -19850,9 +19850,8 @@ async function sendFamChatbotMessage() {
 const FAM_ONBOARDING_STEPS = [
   { selector: '.sidebar', title: 'Your navigation', text: 'Everything in FAM lives here on the left — switch between Dashboard, Work Orders, Assets, and everything else your role can see.' },
   { selector: '#facilitySwitcher', title: 'Facility & Building switcher', text: 'Scope the whole dashboard to one facility or building at a time. Set to "All" to see everything at once.' },
-  { selector: '[data-tab="workorders"]', title: 'Work Orders', text: 'Every reported issue and scheduled task lands here — from staff, tenants, email reports, and automatic sensor alerts alike.' },
-  { selector: '[data-tab="sensors"]', title: 'BMS', text: 'Live sensor readings from your monitored equipment — a reading outside its target range opens a real work order automatically.' },
-  { selector: '[data-tab="procurement"]', title: 'Procurement', text: 'Request and track spare parts and supplies needed for maintenance work.' },
+  { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, BMS, Maintenance, Level View, Procurement, and more.' },
+  { selector: '#holdingsGroupHeader', title: 'Holdings', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
   { selector: '#integrationsNavBtn', title: 'Integrations', text: 'Connect FAM to accounting, ERP, or 3D-capture tools you already use — QuickBooks, SAP, Matterport, and more.' },
   { selector: '#famChatbotToggle', title: 'Ask about FAM', text: "Stuck on how something works? Ask right here, anytime. If it can't answer, it'll connect you straight to your admin." },
 ];
@@ -19905,6 +19904,14 @@ function renderFamTourStep() {
   const target = findVisibleElement(step.selector);
   if (!target) { advanceFamOnboardingTour(); return; } // element vanished between steps (e.g. a tab re-render) — move on rather than get stuck
 
+  // Scroll FIRST, instantly (not smooth) — measuring the target's
+  // position before scrolling was the real cause of the highlight box
+  // landing on the wrong spot: a smooth scroll happening AFTER the
+  // measurement meant the box stayed put while the page kept moving
+  // underneath it, so it visually settled over whatever else ended up
+  // at those old coordinates.
+  target.scrollIntoView({ block: 'center', behavior: 'auto' });
+
   const rect = target.getBoundingClientRect();
   const pad = 6;
   const box = document.getElementById('famTourHighlightBox');
@@ -19927,8 +19934,6 @@ function renderFamTourStep() {
   let top = Math.max(12, Math.min(rect.top, window.innerHeight - 180));
   card.style.left = left + 'px';
   card.style.top = top + 'px';
-
-  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 function advanceFamOnboardingTour() {
