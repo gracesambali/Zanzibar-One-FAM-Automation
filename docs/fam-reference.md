@@ -154,13 +154,15 @@ depreciation, and TRA Class.
 
 Four downloads: Maintenance Cost Overview, Vendor Spend, Replacement
 Planning, and Asset Lifecycle Values. The latter two are per-asset exports
-and can be filtered to specific assets via a multi-select above the
-download buttons (leave nothing selected to include every asset) — the
-other two are aggregate/vendor tables, not per-asset, so the filter doesn't
-apply to them. Replacement Planning is filtered to assets genuinely in
-their last year of calculated life, or with a real manually-set
-Replacement Date regardless of how far out that is; it shows both the
-calculated End of Life Date and any manual Replacement Date side by side.
+and can be filtered before downloading using 5 real dropdowns — System,
+Category, Status, Criticality, TRA Class — the same filters already used
+on Asset Register, rather than picking assets individually one at a time.
+Leaving all 5 at "All" includes every asset. Doesn't apply to Maintenance
+Cost Overview or Vendor Spend, which are aggregate/vendor tables, not
+per-asset. Replacement Planning is filtered to assets genuinely in their
+last year of calculated life, or with a real manually-set Replacement Date
+regardless of how far out that is; it shows both the calculated End of
+Life Date and any manual Replacement Date side by side.
 
 ## "How to use FAM" onboarding tour
 

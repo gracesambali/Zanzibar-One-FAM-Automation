@@ -8605,21 +8605,43 @@ function renderFinanceLifecycleFromData(costSummaries) {
 function renderFinanceExport() {
   const el = document.getElementById('finance-subtab-content');
   if (!el) return;
+  const uniqueSystems = getSystemsInUse().map(s => s.name);
+  const uniqueCategories = [...new Set(assets.map(a => a.category).filter(Boolean))];
+
   el.innerHTML = `
     <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Download the real, current numbers already shown elsewhere in Finance — maintenance cost, vendor spend, replacement priority, and each asset's own lifecycle values — as a real file, in either format.</div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
-      <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:6px">Filter Replacement Planning / Asset Lifecycle Values by asset</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Leave nothing selected to download every asset. Doesn't apply to Maintenance Cost or Vendor Spend, which aren't per-asset.</div>
-      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
-        <select id="financeExportAssetSelect" multiple size="5" style="flex:1;min-width:220px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
-          ${assets.map(a => `<option value="${a.id}">${escapeHtml(a.id)} — ${escapeHtml(a.name)}</option>`).join('')}
+      <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:6px">Filter Replacement Planning / Asset Lifecycle Values</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">The same real filters already used on Asset Register — leave any at "All" to include every value for that one. Doesn't apply to Maintenance Cost or Vendor Spend, which aren't per-asset.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+        <select id="financeExportFilter_system" class="filter-select" onchange="applyFinanceExportFilters()">
+          <option value="All">All Systems</option>
+          ${uniqueSystems.map(s => `<option value="${escapeHtml(s)}"${financeExportFilters.system===s?' selected':''}>${escapeHtml(s)}</option>`).join('')}
         </select>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button onclick="applyFinanceExportAssetFilter()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Apply</button>
-          <button onclick="clearFinanceExportAssetFilter()" style="padding:8px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Clear</button>
-        </div>
+        <select id="financeExportFilter_category" class="filter-select" onchange="applyFinanceExportFilters()">
+          <option value="All">All Categories</option>
+          ${uniqueCategories.map(c => `<option value="${escapeHtml(c)}"${financeExportFilters.category===c?' selected':''}>${escapeHtml(c)}</option>`).join('')}
+        </select>
+        <select id="financeExportFilter_status" class="filter-select" onchange="applyFinanceExportFilters()">
+          <option value="All">All Status</option>
+          <option value="Good"${financeExportFilters.status==='Good'?' selected':''}>Good</option>
+          <option value="Poor"${financeExportFilters.status==='Poor'?' selected':''}>Poor</option>
+        </select>
+        <select id="financeExportFilter_criticality" class="filter-select" onchange="applyFinanceExportFilters()">
+          <option value="All">All Criticality</option>
+          <option value="High"${financeExportFilters.criticality==='High'?' selected':''}>High</option>
+          <option value="Low"${financeExportFilters.criticality==='Low'?' selected':''}>Low</option>
+        </select>
+        <select id="financeExportFilter_traClass" class="filter-select" onchange="applyFinanceExportFilters()">
+          <option value="All">All TRA Classes</option>
+          <option value="__unset__"${financeExportFilters.traClass==='__unset__'?' selected':''}>— Not set —</option>
+          ${traClassesCache.map(c => `<option value="${c.id}"${financeExportFilters.traClass===c.id?' selected':''}>${escapeHtml(c.label)}</option>`).join('')}
+        </select>
       </div>
-      <div id="financeExportFilterStatus" style="font-size:11.5px;color:var(--navy);margin-top:8px;font-weight:600">${financeExportAssetFilter && financeExportAssetFilter.size > 0 ? `Filtered to ${financeExportAssetFilter.size} asset${financeExportAssetFilter.size!==1?'s':''}` : 'No filter — downloads include every asset'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div id="financeExportFilterStatus" style="font-size:11.5px;color:var(--navy);font-weight:600">${financeExportFilterSummary()}</div>
+        <span onclick="clearFinanceExportFilters()" style="font-size:11.5px;color:var(--muted);cursor:pointer;text-decoration:underline">Clear all</span>
+      </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
       ${[
@@ -8637,32 +8659,45 @@ function renderFinanceExport() {
           </div>
         </div>`).join('')}
     </div>`;
-
-  // Re-select whatever was already chosen, so switching sub-tabs and
-  // coming back (or downloading CSV then PDF right after) doesn't
-  // silently forget the filter someone just set.
-  if (financeExportAssetFilter && financeExportAssetFilter.size > 0) {
-    const select = document.getElementById('financeExportAssetSelect');
-    if (select) Array.from(select.options).forEach(opt => { opt.selected = financeExportAssetFilter.has(opt.value); });
-  }
 }
 
-let financeExportAssetFilter = null; // null/empty Set = no filter, every asset included
+// Five real, familiar filters — the same ones already used on Asset
+// Register — rather than an unwieldy checkbox-per-asset list, which
+// stops being usable at all once there are more than a handful of
+// assets. "All" means that dimension doesn't narrow anything down.
+let financeExportFilters = { system: 'All', category: 'All', status: 'All', criticality: 'All', traClass: 'All' };
 
-function applyFinanceExportAssetFilter() {
-  const select = document.getElementById('financeExportAssetSelect');
-  const selected = Array.from(select.selectedOptions).map(o => o.value);
-  financeExportAssetFilter = selected.length > 0 ? new Set(selected) : null;
+function applyFinanceExportFilters() {
+  financeExportFilters = {
+    system: document.getElementById('financeExportFilter_system').value,
+    category: document.getElementById('financeExportFilter_category').value,
+    status: document.getElementById('financeExportFilter_status').value,
+    criticality: document.getElementById('financeExportFilter_criticality').value,
+    traClass: document.getElementById('financeExportFilter_traClass').value,
+  };
   const status = document.getElementById('financeExportFilterStatus');
-  if (status) status.textContent = financeExportAssetFilter ? `Filtered to ${financeExportAssetFilter.size} asset${financeExportAssetFilter.size!==1?'s':''}` : 'No filter — downloads include every asset';
+  if (status) status.textContent = financeExportFilterSummary();
 }
 
-function clearFinanceExportAssetFilter() {
-  financeExportAssetFilter = null;
-  const select = document.getElementById('financeExportAssetSelect');
-  if (select) Array.from(select.options).forEach(opt => { opt.selected = false; });
-  const status = document.getElementById('financeExportFilterStatus');
-  if (status) status.textContent = 'No filter — downloads include every asset';
+function clearFinanceExportFilters() {
+  financeExportFilters = { system: 'All', category: 'All', status: 'All', criticality: 'All', traClass: 'All' };
+  renderFinanceExport();
+}
+
+function financeExportFilterSummary() {
+  const active = Object.entries(financeExportFilters).filter(([, v]) => v !== 'All');
+  if (active.length === 0) return 'No filter — downloads include every asset';
+  return `Filtered by ${active.length} criterion${active.length!==1?'ia':''} — matching ${assetsMatchingFinanceExportFilters().length} asset${assetsMatchingFinanceExportFilters().length!==1?'s':''}`;
+}
+
+function assetsMatchingFinanceExportFilters() {
+  return assets.filter(a =>
+    (financeExportFilters.system === 'All' || a.system === financeExportFilters.system) &&
+    (financeExportFilters.category === 'All' || a.category === financeExportFilters.category) &&
+    (financeExportFilters.status === 'All' || a.status === financeExportFilters.status) &&
+    (financeExportFilters.criticality === 'All' || a.criticality === financeExportFilters.criticality) &&
+    (financeExportFilters.traClass === 'All' || (financeExportFilters.traClass === '__unset__' ? !a.traClassId : a.traClassId === financeExportFilters.traClass))
+  );
 }
 
 
@@ -8725,7 +8760,7 @@ async function buildReplacementPlanningExportSections() {
   // how far out that is, since that's a deliberate plan someone made on
   // purpose, not something to hide just because it's further away.
   const rows = allRows.filter(r => (r.remainingYears != null && r.remainingYears <= 1) || r.a.replacementDate)
-    .filter(r => !financeExportAssetFilter || financeExportAssetFilter.size === 0 || financeExportAssetFilter.has(r.a.id));
+    .filter(r => assetsMatchingFinanceExportFilters().some(m => m.id === r.a.id));
   return {
     title: 'Replacement Planning',
     summaryLines: [],
@@ -8744,10 +8779,8 @@ async function buildReplacementPlanningExportSections() {
 }
 
 function buildAssetLifecycleExportSections() {
-  let rows = assets.filter(a => a.acquisitionCost);
-  if (financeExportAssetFilter && financeExportAssetFilter.size > 0) {
-    rows = rows.filter(a => financeExportAssetFilter.has(a.id));
-  }
+  const filtered = assetsMatchingFinanceExportFilters();
+  const rows = assets.filter(a => a.acquisitionCost && filtered.some(m => m.id === a.id));
   return {
     title: 'Asset Lifecycle Values',
     summaryLines: [],
