@@ -19823,6 +19823,13 @@ function startWorkOrderChatPolling() {
         const container = document.getElementById('view-workorders');
         if (container) {
           container.innerHTML = await buildWorkOrdersHtml(orders);
+          // buildWorkOrdersHtml() only lays down an empty #woTableContainer
+          // placeholder — the real table rows are filled in by a separate
+          // call, same as renderWorkOrdersFromData() already does. Missing
+          // this call was the real, root cause of the Work Orders table
+          // silently going blank every ~45s whenever data changed while
+          // someone was already sitting on the tab.
+          if (document.getElementById('woTableContainer')) renderWorkOrdersTable();
           window.scrollTo(0, scrollY);
         }
       }
