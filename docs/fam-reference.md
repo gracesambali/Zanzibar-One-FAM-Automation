@@ -117,13 +117,16 @@ ERP/SAP systems can also connect via a documented REST + API-key pattern (see
 ## "How to use FAM" onboarding tour
 
 A spotlight-style walkthrough highlighting the sidebar, the Facility/Building
-switcher, the Operations and Holdings nav groups, Integrations, and the
-chatbot widget. Shown automatically only on a person's genuine first login
-(tracked per account via `users.has_seen_onboarding`, not per-browser —
-clearing a cache or using a new device never re-triggers it for the same
-account). Always re-launchable afterward via the "🧭 How to use FAM" button on
-the Dashboard tab. Steps for elements a given role can't see (e.g.
-Integrations, for most roles) are silently skipped rather than shown.
+switcher, the Operations and Holdings nav groups, Integrations, Work Order
+column filters (e.g. Urgency — this step auto-switches to the Work Orders tab
+first, since that table doesn't exist in the page until that tab is opened),
+the Scan Barcode/QR button, and the chatbot widget. Shown automatically only
+on a person's genuine first login (tracked per account via
+`users.has_seen_onboarding`, not per-browser — clearing a cache or using a new
+device never re-triggers it for the same account). Always re-launchable
+afterward via the "🧭 How to use FAM" button on the Dashboard tab. Steps for
+elements a given role can't see (e.g. Integrations, for most roles) are
+silently skipped rather than shown.
 
 ## Escalation / chatbot behavior
 

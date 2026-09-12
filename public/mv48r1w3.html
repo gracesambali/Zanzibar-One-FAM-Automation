@@ -17305,7 +17305,7 @@ function woColumnFilterHeaderHtml(column, label, currentValue, options, filterKe
       options.map(v => `<button onclick="setWOTableFilter('${filterKey}','${String(v).replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:${currentValue===v?'var(--navy-pale)':'none'};font-size:12px;cursor:pointer;border-top:1px solid var(--border)">${escapeHtml(v)}</button>`).join('');
     popoverHtml = `<div style="position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:20;min-width:160px;max-height:220px;overflow-y:auto">${optionsHtml}</div>`;
   }
-  return `<th style="padding:10px 12px;color:${isActive?'var(--navy)':'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none;white-space:nowrap" onclick="toggleColumnFilterPopover('workorders','${column}',renderWorkOrdersTable)">${label} ▾${popoverHtml}</th>`;
+  return `<th id="woFilterHeader-${column}" style="padding:10px 12px;color:${isActive?'var(--navy)':'var(--muted)'};font-weight:600;cursor:pointer;position:relative;user-select:none;white-space:nowrap" onclick="toggleColumnFilterPopover('workorders','${column}',renderWorkOrdersTable)">${label} ▾${popoverHtml}</th>`;
 }
 
 // Renders ONLY the table itself, called on every filter click - never
@@ -19853,6 +19853,18 @@ const FAM_ONBOARDING_STEPS = [
   { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, BMS, Maintenance, Level View, Procurement, and more.' },
   { selector: '#holdingsGroupHeader', title: 'Holdings', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
   { selector: '#integrationsNavBtn', title: 'Integrations', text: 'Connect FAM to accounting, ERP, or 3D-capture tools you already use — QuickBooks, SAP, Matterport, and more.' },
+  {
+    // The urgency filter only exists once the Work Orders table has
+    // actually rendered — it isn't in the DOM at all from Dashboard,
+    // unlike sidebar buttons which are always present just hidden/
+    // collapsed. beforeShow navigates there first and this step waits
+    // for the real element to appear before highlighting it.
+    selector: '#woFilterHeader-urgency',
+    title: 'Filter your work orders',
+    text: 'Click any column header — like Urgency — to filter the table down to exactly what you need.',
+    beforeShow: () => switchTab('workorders'),
+  },
+  { selector: 'button[onclick="openScanAssetBarcodeModal()"]', title: 'Scan Barcode / QR', text: "Scan any asset's barcode or QR code to jump straight to its record — from anywhere in FAM." },
   { selector: '#famChatbotToggle', title: 'Ask about FAM', text: "Stuck on how something works? Ask right here, anytime. If it can't answer, it'll connect you straight to your admin." },
 ];
 
@@ -19868,7 +19880,11 @@ let famTourStepIndex = 0;
 let famTourVisibleSteps = [];
 
 function startFamOnboardingTour() {
-  famTourVisibleSteps = FAM_ONBOARDING_STEPS.filter(s => findVisibleElement(s.selector));
+  // Steps with a beforeShow action (e.g. navigating to a different tab
+  // first) are kept even though their target isn't in the DOM yet —
+  // only steps with NO such action get dropped here for being invisible
+  // right now, since those have no other way to ever become visible.
+  famTourVisibleSteps = FAM_ONBOARDING_STEPS.filter(s => s.beforeShow || findVisibleElement(s.selector));
   if (famTourVisibleSteps.length === 0) return; // nothing real to point at right now — don't show an empty tour
   famTourStepIndex = 0;
 
@@ -19899,10 +19915,23 @@ function startFamOnboardingTour() {
   renderFamTourStep();
 }
 
-function renderFamTourStep() {
+async function renderFamTourStep() {
   const step = famTourVisibleSteps[famTourStepIndex];
-  const target = findVisibleElement(step.selector);
-  if (!target) { advanceFamOnboardingTour(); return; } // element vanished between steps (e.g. a tab re-render) — move on rather than get stuck
+  let target = findVisibleElement(step.selector);
+
+  if (!target && step.beforeShow) {
+    // e.g. switching to the Work Orders tab so its table (and the
+    // filter header inside it) actually exists in the DOM — this
+    // table is never present at all until that tab has been opened,
+    // unlike sidebar buttons which are always there just hidden.
+    try { await step.beforeShow(); } catch (err) { console.error('Tour step beforeShow failed (non-fatal):', err.message); }
+    for (let attempt = 0; attempt < 10 && !target; attempt++) {
+      await new Promise(r => setTimeout(r, 150));
+      target = findVisibleElement(step.selector);
+    }
+  }
+
+  if (!target) { advanceFamOnboardingTour(); return; } // never appeared (or a step re-render moved it) — move on rather than get stuck
 
   // Scroll FIRST, instantly (not smooth) — measuring the target's
   // position before scrolling was the real cause of the highlight box
