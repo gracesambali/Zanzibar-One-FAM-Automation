@@ -2337,14 +2337,8 @@ function showDetail(idx) {
   <div class="detail-panel"><div class="detail-header"><div>
   <div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" title="Download QR Code" style="display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;padding:4px 8px">
-      <span style="font-size:13px;line-height:1">⬇</span>
-      <span style="font-size:9px;color:var(--muted);font-weight:600">QR Code</span>
-    </button>
-    <button onclick="copyAssetShareLink('${a.id}')" title="Copy shareable link" style="display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;padding:4px 8px">
-      <span style="font-size:13px;line-height:1">🔗</span>
-      <span style="font-size:9px;color:var(--muted);font-weight:600">Share Link</span>
-    </button>
+    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ QR Code</button>
+    <button onclick="copyAssetShareLink('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔗 Share Link</button>
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
     ${canRequestProcurement ? `<button onclick="orderSparePart('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Order a Spare Part</button>` : ""}
