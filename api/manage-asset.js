@@ -2307,7 +2307,7 @@ async function handleRelocate(req, res, relocatedBy, organizationId) {
 const EDITABLE_FIELDS = [
   "Name", "System", "Asset Nature", "Mobility", "Asset Category",
   "Floor/Level", "Zone", "Room/Zone", "Manufacturer", "Model", "Install Date",
-  "Warranty Expiry Date", "Replacement Date",
+  "Warranty Expiry Date", "Replacement Date", "Disposed Date", "Disposal Notes",
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
   "Status", "Criticality", "Note", "TRA Class",
@@ -2319,6 +2319,7 @@ const EDITABLE_FIELD_COLUMNS = {
   "Asset Category": "asset_category", "Floor/Level": "floor_level", "Zone": "zone", "Room/Zone": "room_zone",
   "Manufacturer": "manufacturer", "Model": "model", "Install Date": "install_date",
   "Warranty Expiry Date": "warranty_expiry_date", "Replacement Date": "replacement_date",
+  "Disposed Date": "disposed_date", "Disposal Notes": "disposal_notes",
   "Expected Lifespan (Years)": "expected_lifespan_years",
   "Generator Rated Consumption (L/h)": "generator_rated_consumption_lph",
   "Generator Tank Capacity (L)": "generator_tank_capacity_liters",
@@ -2548,8 +2549,13 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
     // A changed replacement date re-arms the 6-month-out alert - without
     // this, pushing a replacement further out (or bringing it forward)
     // would silently keep the old "already alerted" state and the real,
-    // new date would never get its own notification.
-    if ("replacement_date" in updateFields) {
+    // new date would never get its own notification. Install Date and
+    // Expected Lifespan also re-arm it: when no manual replacement_date
+    // is set, the alert falls back to the CALCULATED end-of-life date
+    // (install_date + lifespan) — changing either of those changes that
+    // calculated date too, so the same one-time-per-date guarantee needs
+    // to apply here as well, not just to the manual field.
+    if ("replacement_date" in updateFields || "install_date" in updateFields || "expected_lifespan_years" in updateFields) {
       updateFields.replacement_alert_sent = false;
     }
 

@@ -120,10 +120,15 @@ Renamed from Maintenance because that tab mostly duplicated Dashboard's own
 Upcoming Maintenance panel. Calendar is a real month-view pulling in every
 date FAM actually tracks:
 - **Scheduled maintenance** — each asset's `next_service_due`
-- **Replacement planning** — each asset's `replacement_date` (new field; an
-  email alert to `admin` fires automatically once, 6 months before this
-  date, and re-arms if the date is edited to a new value — same alert
-  pipeline as warranty expiry)
+- **Replacement planning** — each asset's own `replacement_date` if set
+  (a real, deliberate plan). If not set, falls back to FAM's own
+  **calculated end-of-life** (Install Date + Expected Lifespan), shown once
+  it's within its last year and clearly labeled "(estimated)" so it's never
+  confused with a real plan. This same effective-date logic (manual date, or
+  calculated fallback once in the last year of life) is shared identically
+  by the Calendar, the 6-month email alert, and the Replacement Report —
+  kept as one shared concept rather than three places that could quietly
+  disagree about when an asset is actually coming up for replacement.
 - **Planned Maintenance** — each project's target start/end dates
 - **Annual Planning** — anchored to the 1st of that item's planned fiscal
   quarter, since Annual Planning only tracks year+quarter, never a real
@@ -135,8 +140,27 @@ destination shows a "← Back to Calendar" button instead of its normal back
 button, but only when reached that way — navigating there any other way
 still shows the normal back button.
 
-A Replacement Report (sorted list, soonest first) is also available via
-`GET /api/get-assets?replacementReport=true`.
+A Replacement Report (sorted soonest-first, each item labeled "planned" or
+"estimated") is available via `GET /api/get-assets?replacementReport=true`.
+
+## Disposal tracking
+
+Assets can have a `Disposed Date` and `Disposal Notes` set from their edit
+form (right under Replacement Date). Shown in the Finance → Export →
+Asset Lifecycle Values download alongside acquisition cost, current value,
+depreciation, and TRA Class.
+
+## Finance → Export
+
+Four downloads: Maintenance Cost Overview, Vendor Spend, Replacement
+Planning, and Asset Lifecycle Values. The latter two are per-asset exports
+and can be filtered to specific assets via a multi-select above the
+download buttons (leave nothing selected to include every asset) — the
+other two are aggregate/vendor tables, not per-asset, so the filter doesn't
+apply to them. Replacement Planning is filtered to assets genuinely in
+their last year of calculated life, or with a real manually-set
+Replacement Date regardless of how far out that is; it shows both the
+calculated End of Life Date and any manual Replacement Date side by side.
 
 ## "How to use FAM" onboarding tour
 

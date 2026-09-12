@@ -75,18 +75,33 @@ export default async function handler(req, res) {
       }
 
       // Replacement date check — independent of both warranty and
-      // maintenance-due logic. Fires once, 6 months (182 days) out from
-      // the real replacement_date on file, then stays quiet for that
-      // asset until the date itself changes (handleEditAsset resets the
-      // flag when it does) — a real one-time alert per date, not a
-      // repeating countdown nagging every day for six months straight.
-      if (f.replacement_date && !f.replacement_alert_sent) {
-        const daysUntilReplacement = daysBetween(new Date(), new Date(f.replacement_date));
+      // maintenance-due logic. Uses a real, manually-set replacement_date
+      // when one exists; otherwise falls back to the CALCULATED
+      // end-of-life date (install_date + expected lifespan years), so an
+      // asset nobody has manually scheduled a replacement for still gets
+      // a real, honest heads-up based on FAM's own lifecycle math rather
+      // than staying silent until someone happens to set a date by hand.
+      // Fires once, 6 months (182 days) out from whichever date applies,
+      // then stays quiet until that date itself changes (handleEditAsset
+      // resets the flag whenever replacement_date, install_date, or
+      // expected_lifespan_years change) — a real one-time alert per
+      // date, not a repeating countdown nagging every day for 6 months.
+      let effectiveReplacementDate = f.replacement_date || null;
+      let replacementDateIsEstimated = false;
+      if (!effectiveReplacementDate && f.install_date && f.expected_lifespan_years) {
+        const installDateObj = new Date(f.install_date);
+        const calculatedEol = new Date(installDateObj);
+        calculatedEol.setFullYear(calculatedEol.getFullYear() + Number(f.expected_lifespan_years));
+        effectiveReplacementDate = calculatedEol.toISOString().split("T")[0];
+        replacementDateIsEstimated = true;
+      }
+      if (effectiveReplacementDate && !f.replacement_alert_sent) {
+        const daysUntilReplacement = daysBetween(new Date(), new Date(effectiveReplacementDate));
         if (daysUntilReplacement <= 182) {
           replacementItems.push({
             id: f.id, assetId: f.asset_id || "", name: f.name || "",
-            replacementDate: f.replacement_date, daysLeft: daysUntilReplacement,
-            overdue: daysUntilReplacement < 0,
+            replacementDate: effectiveReplacementDate, daysLeft: daysUntilReplacement,
+            overdue: daysUntilReplacement < 0, estimated: replacementDateIsEstimated,
           });
         }
       }
@@ -331,10 +346,11 @@ async function sendDigestEmail(items, warrantyItems, replacementItems) {
   const replacementRows = replacementItems.map(r => {
     const color = r.overdue ? "#dc2626" : "#7c3aed";
     const timing = r.overdue ? `${Math.abs(r.daysLeft)} days past due` : `In ${r.daysLeft} days`;
+    const sourceLabel = r.estimated ? " (estimated)" : "";
     return `<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${r.assetId}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${r.name}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${r.replacementDate}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${r.replacementDate}${sourceLabel}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${timing}</span></td>
     </tr>`;
   }).join("");

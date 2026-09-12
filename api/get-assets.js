@@ -61,29 +61,52 @@ export default async function handler(req, res) {
     }
   }
 
-  // Replacement Report — every asset with a real replacement date on
-  // file, soonest first. The same field also feeds the Calendar and
-  // the 6-month-out email alert in check-maintenance.js; this endpoint
-  // just presents it as a sorted list rather than day-by-day.
+  // Replacement Report — every asset either with a real, manually-set
+  // replacement date, OR calculated to be within its last year of
+  // expected lifespan (install_date + expected_lifespan_years), soonest
+  // first. The same effective-date logic also drives the Calendar and
+  // the 6-month-out email alert in check-maintenance.js — kept
+  // consistent everywhere rather than three places quietly disagreeing
+  // about when an asset is actually "coming up for replacement."
   if (req.query.replacementReport === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
       const result = await pgQuery(
-        `select asset_id, name, system, room_zone, floor_level, replacement_date
+        `select asset_id, name, system, room_zone, floor_level,
+                replacement_date, install_date, expected_lifespan_years
          from components
-         where organization_id = $1 and replacement_date is not null
-         order by replacement_date asc`,
+         where organization_id = $1
+           and (
+             replacement_date is not null
+             or (install_date is not null and expected_lifespan_years is not null)
+           )`,
         [session.org]
       );
       const items = result.rows.map(r => {
-        const days = Math.round((new Date(r.replacement_date) - new Date()) / 86400000);
+        let effectiveDate = r.replacement_date;
+        let source = "planned";
+        if (!effectiveDate && r.install_date && r.expected_lifespan_years) {
+          const eol = new Date(r.install_date);
+          eol.setFullYear(eol.getFullYear() + Number(r.expected_lifespan_years));
+          effectiveDate = eol.toISOString().split("T")[0];
+          source = "estimated";
+        }
+        if (!effectiveDate) return null;
+        const daysUntil = Math.round((new Date(effectiveDate) - new Date()) / 86400000);
         return {
           assetId: r.asset_id, name: r.name, system: r.system || "",
           location: r.room_zone || r.floor_level || "",
-          replacementDate: r.replacement_date,
-          daysUntil: days,
+          replacementDate: effectiveDate, daysUntil, source,
         };
-      });
+      })
+        // A real, deliberately planned date is shown regardless of how
+        // far out it is - someone set it on purpose. A CALCULATED
+        // estimate only earns a place here once it's genuinely in its
+        // last year of life; showing every asset's theoretical eventual
+        // end-of-life date, decades out in some cases, would bury the
+        // ones that actually need attention now under noise.
+        .filter(item => item && (item.source === "planned" || item.daysUntil <= 365))
+        .sort((a, b) => new Date(a.replacementDate) - new Date(b.replacementDate));
       return res.status(200).json({ items });
     } catch (err) {
       console.error("replacementReport read error:", err);
@@ -1657,6 +1680,8 @@ async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
     lastService: row.last_service || "",
     nextService: row.next_service_due || "",
     replacementDate: row.replacement_date || "",
+    disposedDate: row.disposed_date || "",
+    disposalNotes: row.disposal_notes || "",
     lifespan: Number(row.expected_lifespan_years) || 15,
     note: row.note || undefined,
     active: row.active !== false,
@@ -1986,6 +2011,8 @@ async function handlePublicQuickview(req, res) {
       lastService: row.last_service || "",
       nextService: row.next_service_due || "",
       replacementDate: row.replacement_date || "",
+    disposedDate: row.disposed_date || "",
+    disposalNotes: row.disposal_notes || "",
       checklist,
       history,
       organizationId: row.organization_id || "",

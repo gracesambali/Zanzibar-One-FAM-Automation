@@ -2638,7 +2638,14 @@ function openEditForm(idx) {
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Replacement Date</label>
       <input id="ea_replacementdate" type="date" value="${a.replacementDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Shows on the Calendar; an email alert fires automatically once this is 6 months away.</div>
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Shows on the Calendar; an email alert fires automatically 6 months before this date. Leave blank to use FAM's own calculated estimate instead (Install Date + Expected Lifespan) once that's within its last year.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Disposed Date</label>
+      <input id="ea_disposeddate" type="date" value="${a.disposedDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Leave blank while the asset is still in service</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Disposal Notes</label>
+      <input id="ea_disposalnotes" value="${(a.disposalNotes||'').replace(/"/g,'&quot;')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
@@ -2750,6 +2757,8 @@ async function submitAssetEdit(recordId) {
     "Install Date": document.getElementById('ea_installdate').value,
     "Warranty Expiry Date": document.getElementById('ea_warranty').value,
     "Replacement Date": document.getElementById('ea_replacementdate').value,
+    "Disposed Date": document.getElementById('ea_disposeddate').value,
+    "Disposal Notes": document.getElementById('ea_disposalnotes').value.trim(),
     "Status": document.getElementById('ea_status').value,
     "Criticality": document.getElementById('ea_criticality').value,
     "Note": document.getElementById('ea_note').value.trim(),
@@ -4051,6 +4060,21 @@ function buildFamCalendarDayMap(plans, annualItems, annualYear) {
     }
     if (a.replacementDate) {
       addItem(a.replacementDate, { type: 'Replacement Planning', label: a.name, sub: `${a.id} · ${a.system || '—'}`, go: () => goToFamCalendarAsset(idx) });
+    } else if (a.installDate && a.lifespan) {
+      // No real, manually-set replacement date on this one — fall back
+      // to FAM's own calculated end-of-life (install date + expected
+      // lifespan), same effective-date logic used by the 6-month email
+      // alert and the Replacement Report, so the Calendar never silently
+      // stays quiet about an asset just because nobody's set a date by
+      // hand yet. Only surfaced once it's genuinely within its last
+      // year of life — a calculated date decades out would just be
+      // noise on every single asset's install anniversary.
+      const eol = new Date(a.installDate);
+      eol.setFullYear(eol.getFullYear() + Number(a.lifespan));
+      const daysToEol = Math.round((eol - new Date()) / 86400000);
+      if (daysToEol <= 365) {
+        addItem(eol.toISOString().split('T')[0], { type: 'Replacement Planning (estimated)', label: a.name, sub: `${a.id} · ${a.system || '—'} · based on expected lifespan`, go: () => goToFamCalendarAsset(idx) });
+      }
     }
   });
 
@@ -8433,6 +8457,19 @@ function computeAssetLifecyclePriorities(costSummaries) {
     const lifespanUsedPct = (ageYears != null && a.lifespan) ? (ageYears / a.lifespan) * 100 : null;
     const pastLifespan = a.fullyDepreciated === true || (lifespanUsedPct != null && lifespanUsedPct >= 100);
 
+    // The real, calculated end-of-life date — install date + expected
+    // lifespan — same formula used by the Calendar and the 6-month
+    // email alert, kept consistent here rather than a second, silently
+    // different version of "when is this due."
+    let endOfLifeDate = null;
+    let remainingYears = null;
+    if (a.acquisitionDate && a.lifespan) {
+      const eol = new Date(a.acquisitionDate);
+      eol.setFullYear(eol.getFullYear() + Number(a.lifespan));
+      endOfLifeDate = eol;
+      remainingYears = (eol.getTime() - Date.now()) / (365.25 * 24 * 60 * 60 * 1000);
+    }
+
     // Replacement priority combines two independent, real signals -
     // whether the asset has used up its own expected working life,
     // and whether keeping it running is costing a real, disproportionate
@@ -8445,7 +8482,7 @@ function computeAssetLifecyclePriorities(costSummaries) {
     else if (pastLifespan || maintRatio >= 75) priority = 'high';
     else if (maintRatio >= 50 || (lifespanUsedPct != null && lifespanUsedPct >= 80)) priority = 'medium';
 
-    return { a, maintCost, maintRatio, ageYears, lifespanUsedPct, pastLifespan, priority };
+    return { a, maintCost, maintRatio, ageYears, lifespanUsedPct, pastLifespan, priority, endOfLifeDate, remainingYears };
   });
 
   const priorityOrder = { critical: 0, high: 1, medium: 2, none: 3 };
@@ -8570,12 +8607,26 @@ function renderFinanceExport() {
   if (!el) return;
   el.innerHTML = `
     <div style="font-size:12.5px;color:var(--muted);margin-bottom:18px">Download the real, current numbers already shown elsewhere in Finance — maintenance cost, vendor spend, replacement priority, and each asset's own lifecycle values — as a real file, in either format.</div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:6px">Filter Replacement Planning / Asset Lifecycle Values by asset</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Leave nothing selected to download every asset. Doesn't apply to Maintenance Cost or Vendor Spend, which aren't per-asset.</div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+        <select id="financeExportAssetSelect" multiple size="5" style="flex:1;min-width:220px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+          ${assets.map(a => `<option value="${a.id}">${escapeHtml(a.id)} — ${escapeHtml(a.name)}</option>`).join('')}
+        </select>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button onclick="applyFinanceExportAssetFilter()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Apply</button>
+          <button onclick="clearFinanceExportAssetFilter()" style="padding:8px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Clear</button>
+        </div>
+      </div>
+      <div id="financeExportFilterStatus" style="font-size:11.5px;color:var(--navy);margin-top:8px;font-weight:600">${financeExportAssetFilter && financeExportAssetFilter.size > 0 ? `Filtered to ${financeExportAssetFilter.size} asset${financeExportAssetFilter.size!==1?'s':''}` : 'No filter — downloads include every asset'}</div>
+    </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
       ${[
         { key: 'maintenanceCost', label: 'Maintenance Cost Overview', sub: 'Monthly trend and spend by type, last 6 months' },
         { key: 'vendorSpend', label: 'Vendor Spend', sub: 'Real, chosen-quote spend per vendor' },
-        { key: 'replacementPlanning', label: 'Replacement Planning', sub: "Every asset's own real priority" },
-        { key: 'assetLifecycle', label: 'Asset Lifecycle Values', sub: 'Acquisition cost, current value, depreciation' },
+        { key: 'replacementPlanning', label: 'Replacement Planning', sub: "Assets in their last year of life, or with a real planned date" },
+        { key: 'assetLifecycle', label: 'Asset Lifecycle Values', sub: 'Acquisition, current value, depreciation, TRA class, disposal' },
       ].map(item => `
         <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px">
           <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">${item.label}</div>
@@ -8586,7 +8637,34 @@ function renderFinanceExport() {
           </div>
         </div>`).join('')}
     </div>`;
+
+  // Re-select whatever was already chosen, so switching sub-tabs and
+  // coming back (or downloading CSV then PDF right after) doesn't
+  // silently forget the filter someone just set.
+  if (financeExportAssetFilter && financeExportAssetFilter.size > 0) {
+    const select = document.getElementById('financeExportAssetSelect');
+    if (select) Array.from(select.options).forEach(opt => { opt.selected = financeExportAssetFilter.has(opt.value); });
+  }
 }
+
+let financeExportAssetFilter = null; // null/empty Set = no filter, every asset included
+
+function applyFinanceExportAssetFilter() {
+  const select = document.getElementById('financeExportAssetSelect');
+  const selected = Array.from(select.selectedOptions).map(o => o.value);
+  financeExportAssetFilter = selected.length > 0 ? new Set(selected) : null;
+  const status = document.getElementById('financeExportFilterStatus');
+  if (status) status.textContent = financeExportAssetFilter ? `Filtered to ${financeExportAssetFilter.size} asset${financeExportAssetFilter.size!==1?'s':''}` : 'No filter — downloads include every asset';
+}
+
+function clearFinanceExportAssetFilter() {
+  financeExportAssetFilter = null;
+  const select = document.getElementById('financeExportAssetSelect');
+  if (select) Array.from(select.options).forEach(opt => { opt.selected = false; });
+  const status = document.getElementById('financeExportFilterStatus');
+  if (status) status.textContent = 'No filter — downloads include every asset';
+}
+
 
 // A cell value genuinely containing a comma, quote, or newline needs
 // real CSV quoting or it would silently corrupt the file's own column
@@ -8640,27 +8718,47 @@ async function buildVendorSpendExportSections() {
 
 async function buildReplacementPlanningExportSections() {
   const costSummaries = await loadAssetCostSummaries();
-  const rows = computeAssetLifecyclePriorities(costSummaries);
+  const allRows = computeAssetLifecyclePriorities(costSummaries);
+  // Filtered to assets actually coming up for replacement — either
+  // genuinely in their last year of expected life (remainingYears <= 1),
+  // or with a real, manually-set Replacement Date on file regardless of
+  // how far out that is, since that's a deliberate plan someone made on
+  // purpose, not something to hide just because it's further away.
+  const rows = allRows.filter(r => (r.remainingYears != null && r.remainingYears <= 1) || r.a.replacementDate)
+    .filter(r => !financeExportAssetFilter || financeExportAssetFilter.size === 0 || financeExportAssetFilter.has(r.a.id));
   return {
     title: 'Replacement Planning',
     summaryLines: [],
     sections: [
-      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Cost', 'Current Value', 'Maintenance Cost', 'Maintenance Ratio %', 'Age (Years)', 'Past Expected Lifespan', 'Priority'],
+      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Cost', 'Current Value', 'Maintenance Cost', 'Maintenance Ratio %', 'Age (Years)', 'End of Life Date (Calculated)', 'Manual Replacement Date', 'Priority'],
         currencyColumns: [2, 3, 4],
-        rows: rows.map(r => [r.a.id, r.a.name, r.a.acquisitionCost, r.a.currentValue ?? '—', r.maintCost, r.maintRatio.toFixed(0), r.ageYears != null ? r.ageYears.toFixed(1) : '—', r.pastLifespan ? 'Yes' : 'No', r.priority]) },
+        rows: rows.map(r => [
+          r.a.id, r.a.name, r.a.acquisitionCost, r.a.currentValue ?? '—', r.maintCost, r.maintRatio.toFixed(0),
+          r.ageYears != null ? r.ageYears.toFixed(1) : '—',
+          r.endOfLifeDate ? r.endOfLifeDate.toISOString().split('T')[0] : '—',
+          r.a.replacementDate || '—',
+          r.priority,
+        ]) },
     ],
   };
 }
 
 function buildAssetLifecycleExportSections() {
-  const rows = assets.filter(a => a.acquisitionCost);
+  let rows = assets.filter(a => a.acquisitionCost);
+  if (financeExportAssetFilter && financeExportAssetFilter.size > 0) {
+    rows = rows.filter(a => financeExportAssetFilter.has(a.id));
+  }
   return {
     title: 'Asset Lifecycle Values',
     summaryLines: [],
     sections: [
-      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Date', 'Acquisition Cost', 'Current Value', 'Annual Depreciation', 'Fully Depreciated', 'Expected Lifespan (Years)'],
+      { name: null, columns: ['Asset ID', 'Asset Name', 'Acquisition Date', 'Acquisition Cost', 'Current Value', 'Annual Depreciation', 'Fully Depreciated', 'Expected Lifespan (Years)', 'TRA Class', 'Disposed Date', 'Disposal Notes'],
         currencyColumns: [3, 4, 5],
-        rows: rows.map(a => [a.id, a.name, a.acquisitionDate ? a.acquisitionDate.split('T')[0] : '—', a.acquisitionCost, a.currentValue ?? '—', a.annualDepreciation ?? '—', a.fullyDepreciated ? 'Yes' : 'No', a.lifespan ?? '—']) },
+        rows: rows.map(a => [
+          a.id, a.name, a.acquisitionDate ? a.acquisitionDate.split('T')[0] : '—', a.acquisitionCost,
+          a.currentValue ?? '—', a.annualDepreciation ?? '—', a.fullyDepreciated ? 'Yes' : 'No', a.lifespan ?? '—',
+          a.traClassName || '— Not set —', a.disposedDate || '—', a.disposalNotes || '—',
+        ]) },
     ],
   };
 }
