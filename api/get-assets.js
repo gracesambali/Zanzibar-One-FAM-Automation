@@ -61,6 +61,36 @@ export default async function handler(req, res) {
     }
   }
 
+  // Replacement Report — every asset with a real replacement date on
+  // file, soonest first. The same field also feeds the Calendar and
+  // the 6-month-out email alert in check-maintenance.js; this endpoint
+  // just presents it as a sorted list rather than day-by-day.
+  if (req.query.replacementReport === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const result = await pgQuery(
+        `select asset_id, name, system, room_zone, floor_level, replacement_date
+         from components
+         where organization_id = $1 and replacement_date is not null
+         order by replacement_date asc`,
+        [session.org]
+      );
+      const items = result.rows.map(r => {
+        const days = Math.round((new Date(r.replacement_date) - new Date()) / 86400000);
+        return {
+          assetId: r.asset_id, name: r.name, system: r.system || "",
+          location: r.room_zone || r.floor_level || "",
+          replacementDate: r.replacement_date,
+          daysUntil: days,
+        };
+      });
+      return res.status(200).json({ items });
+    } catch (err) {
+      console.error("replacementReport read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm DATABASE_URL actually works once set
   // in Vercel — restricted to Business Owner/System Admin since this
   // is infrastructure testing, not something day-to-day staff need.
@@ -1626,6 +1656,7 @@ async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
     criticality: row.criticality || "Low", // High / Low
     lastService: row.last_service || "",
     nextService: row.next_service_due || "",
+    replacementDate: row.replacement_date || "",
     lifespan: Number(row.expected_lifespan_years) || 15,
     note: row.note || undefined,
     active: row.active !== false,
@@ -1954,6 +1985,7 @@ async function handlePublicQuickview(req, res) {
       lifespan: Number(row.expected_lifespan_years) || 15,
       lastService: row.last_service || "",
       nextService: row.next_service_due || "",
+      replacementDate: row.replacement_date || "",
       checklist,
       history,
       organizationId: row.organization_id || "",

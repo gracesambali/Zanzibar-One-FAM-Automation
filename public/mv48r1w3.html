@@ -446,9 +446,9 @@ button { font-family: inherit; cursor: pointer; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
         <span class="tab-label">Systems</span>
       </button>
-      <button class="tab-btn nested" data-tab="maintenance" data-label="Maintenance" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Maintenance')" onmouseleave="hideSidebarTooltip()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-        <span class="tab-label">Maintenance</span>
+      <button class="tab-btn nested" data-tab="maintenance" data-label="Calendar" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Calendar')" onmouseleave="hideSidebarTooltip()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span class="tab-label">Calendar</span>
       </button>
       <button class="tab-btn nested" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
@@ -1571,6 +1571,13 @@ function ensureNavGroupExpandedFor(tab) {
 const SIMPLIFIED_NAV_ALLOWED_TABS = ['workorders', 'levelview', 'floorplan'];
 
 function switchTab(tab) {
+  // Only Asset Register and Planned Maintenance ever show a "Back to
+  // Calendar" button — navigating anywhere else means that context is
+  // over, so the next time either of those IS reached, it should show
+  // its own normal back button again, not a stale "Back to Calendar."
+  if (famCalendarReturnPending && !['assets', 'plannedmaintenance', 'maintenance', 'annualplanning'].includes(tab)) {
+    famCalendarReturnPending = false;
+  }
   if (currentUserPermissions && currentUserPermissions.simplifiedNav && !SIMPLIFIED_NAV_ALLOWED_TABS.includes(tab)) {
     tab = 'workorders'; // defense in depth — the nav buttons are hidden too, but never trust that alone
   }
@@ -2326,7 +2333,7 @@ function showDetail(idx) {
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/qz9n36kf?id=' + a.id)}`;
 
-  let html = `<button class="back-btn" onclick="renderAssets()">← Back to Asset Register</button>
+  let html = `<button class="back-btn" onclick="${famCalendarReturnPending ? 'returnToFamCalendar()' : 'renderAssets()'}">${famCalendarReturnPending ? '← Back to Calendar' : '← Back to Asset Register'}</button>
   <div class="detail-panel"><div class="detail-header"><div><div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
@@ -2629,6 +2636,10 @@ function openEditForm(idx) {
       <input id="ea_warranty" type="date" value="${a.warrantyExpiryDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Leave blank if no manufacturer warranty applies</div>
 
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Replacement Date</label>
+      <input id="ea_replacementdate" type="date" value="${a.replacementDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Shows on the Calendar; an email alert fires automatically once this is 6 months away.</div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Status</label>
           <select id="ea_status" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
@@ -2738,6 +2749,7 @@ async function submitAssetEdit(recordId) {
     "Model": document.getElementById('ea_model').value.trim(),
     "Install Date": document.getElementById('ea_installdate').value,
     "Warranty Expiry Date": document.getElementById('ea_warranty').value,
+    "Replacement Date": document.getElementById('ea_replacementdate').value,
     "Status": document.getElementById('ea_status').value,
     "Criticality": document.getElementById('ea_criticality').value,
     "Note": document.getElementById('ea_note').value.trim(),
@@ -3979,82 +3991,187 @@ async function refreshSystemCatalog() {
   }
 }
 
-function renderMaintenance() {
-  let html = `<div class="dash-grid">`;
+// Calendar — replaces the old Maintenance subtab, which mostly
+// duplicated Dashboard's own Upcoming Maintenance panel and had
+// nothing genuinely its own. Discussed and agreed directly: this
+// should instead be a real calendar pulling in EVERY real date FAM
+// tracks, not just scheduled maintenance - so it's the one place that
+// actually answers "what's coming up," rather than three different
+// partial answers spread across separate tabs.
+//
+// Real sources, as they actually exist today:
+//   - Scheduled maintenance: each asset's own next_service_due (a
+//     real, exact day)
+//   - Replacement planning: each asset's own replacement_date (also
+//     a real, exact day - new field, same alert pipeline as warranty)
+//   - Planned Maintenance: each project's real targetStartDate/
+//     targetEndDate
+//   - Annual Planning: NOT a real day - only a fiscal year + quarter.
+//     Anchored to the 1st of that quarter and labeled honestly as a
+//     quarter, never presented as if it were a precise date.
+let famCalendarViewDate = new Date();
+let famCalendarDayMap = null; // built once per render, reused for day-click lookups
+let famCalendarReturnPending = false; // true only when the person reached an asset/plan detail BY clicking a calendar day
 
-  // Upcoming schedule timeline — live from real assets' Next Service Due
-  html += `<div class="dash-panel"><div class="dash-panel-title">Upcoming Maintenance Schedule (Next 30 Days)</div><div class="timeline" style="position:static">`;
-  const urgencyColor = (a) => {
-    const d = daysUntil(a.nextService);
-    if (d < 0) return 'var(--red)';
-    if (d <= 3) return 'var(--amber)';
-    return 'var(--green)';
+async function renderMaintenance() {
+  const container = document.getElementById('view-maintenance');
+  container.innerHTML = `<div style="padding:24px;color:var(--muted);font-size:12px">Loading…</div>`;
+
+  // Read from whatever's already prefetched rather than assuming the
+  // person has visited Planned Maintenance / Annual Planning tabs
+  // first - those tabs' own "lastPlans"/cache globals are only filled
+  // in once actually rendered, which Calendar can't rely on.
+  const plans = tabPrefetchCache.plannedmaintenance?.data
+    || await fetchPlannedMaintenanceData().catch(() => []);
+  // Annual Planning is role-gated (Procurement/System Admin/Business
+  // Owner only) - __ACCESS_RESTRICTED__ for anyone else is expected,
+  // not an error; those items just don't show for other roles.
+  const annualBundle = tabPrefetchCache.annualplanning?.data
+    || await fetchAnnualPlanningData().catch(() => null);
+  const annualItems = annualBundle?.itemsData?.items || [];
+  const annualYear = annualBundle?.year || new Date().getFullYear();
+
+  famCalendarDayMap = buildFamCalendarDayMap(plans, annualItems, annualYear);
+  renderFamCalendarMonth();
+}
+
+const FAM_CALENDAR_QUARTER_ANCHOR = { Q1: '01-01', Q2: '04-01', Q3: '07-01', Q4: '10-01' };
+
+function buildFamCalendarDayMap(plans, annualItems, annualYear) {
+  const map = {};
+  const addItem = (dateStr, item) => {
+    if (!dateStr) return;
+    const key = dateStr.slice(0, 10); // tolerate a full ISO timestamp or a plain date
+    (map[key] = map[key] || []).push(item);
   };
-  const schedule = assets
-    .filter(a => {
-      const d = daysUntil(a.nextService);
-      return a.nextService && d <= 30;
-    })
-    .sort((a, b) => new Date(a.nextService) - new Date(b.nextService))
-    .slice(0, 10);
 
-  if (schedule.length === 0) {
-    html += `<div style="font-size:13px;color:var(--muted);padding:12px 0">Nothing scheduled in the next 30 days.</div>`;
-  } else {
-    schedule.forEach(a => {
-      const d = daysUntil(a.nextService);
-      const dateLabel = new Date(a.nextService).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-      const status = d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? 'Due today' : `in ${d}d`;
-      const loc = displayRoom(a.room) || displayFloor(a.floor) || '—';
-      html += `<div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:8px;height:8px;border-radius:50%;background:${urgencyColor(a)};margin-top:6px;flex-shrink:0"></div><div><div style="font-size:12.5px;font-weight:600">${a.name} <span style="font-weight:400;color:var(--muted)">— ${dateLabel} (${status})</span></div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">${loc} · ${a.system || '—'} · ${a.id}</div></div></div>`;
+  assets.forEach((a, idx) => {
+    if (a.nextService) {
+      addItem(a.nextService, { type: 'Scheduled Maintenance', label: a.name, sub: `${a.id} · ${a.system || '—'}`, go: () => goToFamCalendarAsset(idx) });
+    }
+    if (a.replacementDate) {
+      addItem(a.replacementDate, { type: 'Replacement Planning', label: a.name, sub: `${a.id} · ${a.system || '—'}`, go: () => goToFamCalendarAsset(idx) });
+    }
+  });
+
+  plans.forEach(p => {
+    if (p.targetStartDate) {
+      addItem(p.targetStartDate, { type: 'Planned Maintenance — Start', label: p.title, sub: p.planId, go: () => goToFamCalendarPlan(p.recordId) });
+    }
+    if (p.targetEndDate) {
+      addItem(p.targetEndDate, { type: 'Planned Maintenance — Target End', label: p.title, sub: p.planId, go: () => goToFamCalendarPlan(p.recordId) });
+    }
+  });
+
+  annualItems.forEach(item => {
+    const anchor = FAM_CALENDAR_QUARTER_ANCHOR[item.plannedQuarter];
+    if (!anchor) return;
+    addItem(`${annualYear}-${anchor}`, {
+      type: `Annual Planning — ${item.plannedQuarter} FY${annualYear} (quarter, not an exact date)`,
+      label: item.itemDescription, sub: item.category || '—',
+      go: () => { famCalendarReturnPending = true; switchTab('annualplanning'); },
     });
+  });
+
+  return map;
+}
+
+function goToFamCalendarAsset(idx) {
+  famCalendarReturnPending = true;
+  switchTab('assets');
+  showDetail(idx);
+}
+
+function goToFamCalendarPlan(recordId) {
+  famCalendarReturnPending = true;
+  switchTab('plannedmaintenance');
+  showPlanDetail(recordId);
+}
+
+function returnToFamCalendar() {
+  famCalendarReturnPending = false;
+  switchTab('maintenance');
+}
+
+function changeFamCalendarMonth(delta) {
+  famCalendarViewDate = new Date(famCalendarViewDate.getFullYear(), famCalendarViewDate.getMonth() + delta, 1);
+  renderFamCalendarMonth();
+}
+
+function goToFamCalendarToday() {
+  famCalendarViewDate = new Date();
+  renderFamCalendarMonth();
+}
+
+function renderFamCalendarMonth() {
+  const container = document.getElementById('view-maintenance');
+  const year = famCalendarViewDate.getFullYear();
+  const month = famCalendarViewDate.getMonth();
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const firstOfMonth = new Date(year, month, 1);
+  // Monday-start week, matching the en-GB date formatting already used
+  // throughout the rest of the app.
+  const startOffset = (firstOfMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  let html = `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div style="font-size:16px;font-weight:700;color:var(--navy)">${monthNames[month]} ${year}</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="changeFamCalendarMonth(-1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px">‹</button>
+        <button onclick="goToFamCalendarToday()" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:12px;font-weight:600">Today</button>
+        <button onclick="changeFamCalendarMonth(1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px">›</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `<div style="background:#F7F8FA;padding:8px 4px;text-align:center;font-size:11px;font-weight:700;color:var(--muted)">${d}</div>`).join('')}`;
+
+  for (let i = 0; i < startOffset; i++) {
+    html += `<div style="background:#fff;min-height:64px"></div>`;
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const items = famCalendarDayMap[dateStr] || [];
+    const isToday = dateStr === todayStr;
+    html += `<div onclick="${items.length ? `openFamCalendarDay('${dateStr}')` : ''}" style="background:#fff;min-height:64px;padding:6px;cursor:${items.length ? 'pointer' : 'default'};${isToday ? 'box-shadow:inset 0 0 0 2px var(--navy)' : ''}">
+      <div style="font-size:12px;font-weight:${isToday ? '700' : '500'};color:${isToday ? 'var(--navy)' : 'var(--muted)'}">${day}</div>
+      ${items.length ? `<div style="margin-top:4px;font-size:10px;font-weight:700;color:#fff;background:var(--navy);border-radius:10px;padding:1px 6px;display:inline-block">${items.length}</div>` : ''}
+    </div>`;
   }
   html += `</div></div>`;
+  container.innerHTML = html;
+}
 
-  // Maintenance Frequency by System — the real average service interval
-  // per system, computed from each asset's actual Maintenance Interval
-  // (Days), not the old fabricated "Quarterly/Annual" labels.
-  html += `<div class="dash-panel"><div class="dash-panel-title">Maintenance Frequency by System</div>`;
-  const sysIntervals = {};
-  assets.forEach(a => {
-    if (!a.system) return;
-    (sysIntervals[a.system] = sysIntervals[a.system] || []).push(a.maintenanceIntervalDays || 90);
-  });
-  const freqLabel = (days) => {
-    if (days <= 10) return `~${Math.round(days)}d (Weekly)`;
-    if (days <= 35) return `~${Math.round(days)}d (Monthly)`;
-    if (days <= 100) return `~${Math.round(days)}d (Quarterly)`;
-    if (days <= 200) return `~${Math.round(days)}d (Semi-Annual)`;
-    return `~${Math.round(days)}d (Annual)`;
-  };
-  const sysColors2 = ['var(--red)','#F97316','var(--navy)','var(--amber)','var(--blue)','var(--teal)','var(--purple)','var(--pink)','#9CA3AF','var(--gold)'];
-  const maxInterval = Math.max(1, ...Object.values(sysIntervals).map(arr => arr.reduce((a,b)=>a+b,0)/arr.length));
-  Object.keys(sysIntervals).sort((a,b) => sysIntervals[a].length - sysIntervals[b].length).forEach((sysName, i) => {
-    const arr = sysIntervals[sysName];
-    const avgDays = arr.reduce((a,b)=>a+b,0) / arr.length;
-    // Shorter interval = more frequent = visually more "urgent", so
-    // the bar fills inversely to the interval length.
-    const pct = 100 - ((avgDays / maxInterval) * 80);
-    html += `<div class="freq-row"><div class="freq-label">${sysName}</div><div class="freq-track"><div class="freq-fill" style="width:${pct}%;background:${sysColors2[i % sysColors2.length]}">${freqLabel(avgDays)}</div></div></div>`;
-  });
-  html += `</div>`;
+function openFamCalendarDay(dateStr) {
+  const container = document.getElementById('view-maintenance');
+  const items = (famCalendarDayMap && famCalendarDayMap[dateStr]) || [];
+  const dateLabel = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-  html += `</div>`;
+  // Real onclick handlers can't be embedded as strings safely for
+  // closures like these (asset index, record id) - stashed on window
+  // by index and referenced from the button instead.
+  window.__famCalendarDayActions = items.map(item => item.go);
 
-  // Work Order Flow — conceptual, not yet functional
-  html += `<div class="dash-panel" style="margin-top:14px"><div class="dash-panel-title">Work Order Communication Flow — Live</div>
-    <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.6">This is how an alert actually moves from detection to resolution — this is the real, live behavior of the system, not a proposal.</div>
-    <div class="wo-flow">
-      <div class="wo-flow-step"><div class="wo-flow-num">1</div><div class="wo-flow-body"><div class="wo-flow-title">Maintenance due within 7 days (or overdue)</div><div class="wo-flow-desc">System detects the due date, sends the first real alert, and opens a Work Order automatically.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">2</div><div class="wo-flow-body"><div class="wo-flow-title">Reminder every 5 days while still open</div><div class="wo-flow-desc">If the Work Order hasn't been marked Completed, a reminder repeats every 5 days — referencing the same open Work Order, not creating a new one each time.</div><span class="wo-flow-channel chan-sms">SMS</span><span class="wo-flow-channel chan-email">Email</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">3</div><div class="wo-flow-body"><div class="wo-flow-title">Staff can also report an issue directly</div><div class="wo-flow-desc">Anyone can report a breakdown from the public homepage (no login) — this opens a Work Order the same way, tagged REPORTED, with the reporter's name attached.</div><span class="wo-flow-channel chan-system">No Login Needed</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">4</div><div class="wo-flow-body"><div class="wo-flow-title">Technician updates status in the dashboard</div><div class="wo-flow-desc">Open → In Progress → Completed, updated directly from the Work Orders tab.</div><span class="wo-flow-channel chan-system">System Update</span></div></div>
-      <div class="wo-flow-step"><div class="wo-flow-num">5</div><div class="wo-flow-body"><div class="wo-flow-title">Marking Completed stops the reminders</div><div class="wo-flow-desc">Once Status is Completed, no further reminders fire for that issue, and a real Certificate of Maintenance becomes available to generate.</div><span class="wo-flow-channel chan-system">Automatic</span></div></div>
+  let html = `<button class="back-btn" onclick="renderFamCalendarMonth()">← Back to Calendar</button>
+  <div class="detail-panel">
+    <div class="detail-header"><div><div class="detail-title">${dateLabel}</div><div class="detail-sub">${items.length} item${items.length!==1?'s':''} due</div></div></div>
+    <div style="padding:8px 24px 20px">
+      ${items.map((item, i) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);gap:12px">
+          <div style="min-width:0">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.02em">${escapeHtml(item.type)}</div>
+            <div style="font-size:13.5px;font-weight:600;color:var(--navy)">${escapeHtml(item.label)}</div>
+            <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(item.sub || '')}</div>
+          </div>
+          <button onclick="window.__famCalendarDayActions[${i}]()" style="padding:8px 14px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer;flex-shrink:0">Go to →</button>
+        </div>`).join('')}
     </div>
   </div>`;
-
-  document.getElementById('view-maintenance').innerHTML = html;
+  container.innerHTML = html;
 }
+
 
 // A real floor's position in a building, for sorting - basements
 // sort below ground (B2 lower than B1), levels sort ascending.
@@ -13215,7 +13332,7 @@ function showPlanDetail(recordId) {
   const totalPlanned = p.budgetItems.reduce((s,i) => s + (Number(i.plannedCost)||0), 0);
   const totalActual = p.budgetItems.reduce((s,i) => s + (Number(i.actualCost)||0), 0);
 
-  let html = `<button class="back-btn" onclick="renderPlannedMaintenance()">← Back to Planned Maintenance</button>
+  let html = `<button class="back-btn" onclick="${famCalendarReturnPending ? 'returnToFamCalendar()' : 'renderPlannedMaintenance()'}">${famCalendarReturnPending ? '← Back to Calendar' : '← Back to Planned Maintenance'}</button>
   <div class="detail-panel">
     <div class="detail-header">
       <div><div class="detail-title">${p.title}</div><div class="detail-sub">${p.planId}</div></div>
@@ -19864,12 +19981,12 @@ const FAM_ONBOARDING_STEPS = [
     beforeShow: () => switchTab('workorders'),
   },
   {
-    // Same reasoning as the Work Order filter step above — Maintenance
+    // Same reasoning as the Work Order filter step above — Calendar
     // lives inside the collapsed Operations group, so it isn't visible
     // from Dashboard until that tab is actually opened.
     selector: '[data-tab="maintenance"]',
-    title: 'Maintenance',
-    text: 'Scheduled maintenance for your assets, tracked by due date.',
+    title: 'Calendar',
+    text: 'Every real date FAM tracks in one place — scheduled maintenance, replacement planning, Planned Maintenance projects, and Annual Planning. Click any day to see what\'s due and jump straight to it.',
     beforeShow: () => switchTab('maintenance'),
   },
   { selector: 'button[onclick="openScanAssetBarcodeModal()"]', title: 'Scan Barcode / QR', text: "Scan any asset's barcode or QR code to jump straight to its record — from anywhere in FAM." },

@@ -2307,7 +2307,7 @@ async function handleRelocate(req, res, relocatedBy, organizationId) {
 const EDITABLE_FIELDS = [
   "Name", "System", "Asset Nature", "Mobility", "Asset Category",
   "Floor/Level", "Zone", "Room/Zone", "Manufacturer", "Model", "Install Date",
-  "Warranty Expiry Date",
+  "Warranty Expiry Date", "Replacement Date",
   "Expected Lifespan (Years)", "Maintenance Interval (Days)",
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
   "Status", "Criticality", "Note", "TRA Class",
@@ -2318,7 +2318,8 @@ const EDITABLE_FIELD_COLUMNS = {
   "Name": "name", "System": "system", "Asset Nature": "asset_nature", "Mobility": "mobility",
   "Asset Category": "asset_category", "Floor/Level": "floor_level", "Zone": "zone", "Room/Zone": "room_zone",
   "Manufacturer": "manufacturer", "Model": "model", "Install Date": "install_date",
-  "Warranty Expiry Date": "warranty_expiry_date", "Expected Lifespan (Years)": "expected_lifespan_years",
+  "Warranty Expiry Date": "warranty_expiry_date", "Replacement Date": "replacement_date",
+  "Expected Lifespan (Years)": "expected_lifespan_years",
   "Generator Rated Consumption (L/h)": "generator_rated_consumption_lph",
   "Generator Tank Capacity (L)": "generator_tank_capacity_liters",
   "Fuel Price (TZS/L)": "fuel_price_per_liter_tzs",
@@ -2542,6 +2543,14 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
         message: nameplatePhotoBase64 ? "Nameplate photo saved." : "No changes detected",
         ...(nameplateWarning ? { warning: nameplateWarning } : {}),
       });
+    }
+
+    // A changed replacement date re-arms the 6-month-out alert - without
+    // this, pushing a replacement further out (or bringing it forward)
+    // would silently keep the old "already alerted" state and the real,
+    // new date would never get its own notification.
+    if ("replacement_date" in updateFields) {
+      updateFields.replacement_alert_sent = false;
     }
 
     // If any field that affects depreciation just changed, recalculate

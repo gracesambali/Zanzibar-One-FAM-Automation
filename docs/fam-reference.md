@@ -114,6 +114,30 @@ Two different patterns exist, and they work differently:
 ERP/SAP systems can also connect via a documented REST + API-key pattern (see
 `ERP-INTEGRATION-GUIDE.md`) independent of the OAuth tiles above.
 
+## Calendar (formerly "Maintenance")
+
+Renamed from Maintenance because that tab mostly duplicated Dashboard's own
+Upcoming Maintenance panel. Calendar is a real month-view pulling in every
+date FAM actually tracks:
+- **Scheduled maintenance** — each asset's `next_service_due`
+- **Replacement planning** — each asset's `replacement_date` (new field; an
+  email alert to `admin` fires automatically once, 6 months before this
+  date, and re-arms if the date is edited to a new value — same alert
+  pipeline as warranty expiry)
+- **Planned Maintenance** — each project's target start/end dates
+- **Annual Planning** — anchored to the 1st of that item's planned fiscal
+  quarter, since Annual Planning only tracks year+quarter, never a real
+  day; labeled honestly as a quarter, not presented as an exact date
+
+Clicking a day shows everything due that day with a "Go to →" button per
+item, which jumps straight to the real asset or plan record. That
+destination shows a "← Back to Calendar" button instead of its normal back
+button, but only when reached that way — navigating there any other way
+still shows the normal back button.
+
+A Replacement Report (sorted list, soonest first) is also available via
+`GET /api/get-assets?replacementReport=true`.
+
 ## "How to use FAM" onboarding tour
 
 A spotlight-style walkthrough covering: the Facility/Building switcher,

@@ -57,6 +57,7 @@ export default async function handler(req, res) {
     // Breakdowns reported via /report still send immediately (that's in report-issue.js).
     const digestItems = [];
     const warrantyItems = []; // separate from maintenance alerts — same email, own section
+    const replacementItems = []; // same principle — assets crossing the 6-month-to-replacement mark
 
     for (const f of records) {
       // Warranty expiry check — independent of the maintenance due-date
@@ -69,6 +70,23 @@ export default async function handler(req, res) {
             assetId: f.asset_id || "", name: f.name || "",
             expiryDate: warrantyDate, daysLeft: warrantyDaysLeft,
             expired: warrantyDaysLeft < 0,
+          });
+        }
+      }
+
+      // Replacement date check — independent of both warranty and
+      // maintenance-due logic. Fires once, 6 months (182 days) out from
+      // the real replacement_date on file, then stays quiet for that
+      // asset until the date itself changes (handleEditAsset resets the
+      // flag when it does) — a real one-time alert per date, not a
+      // repeating countdown nagging every day for six months straight.
+      if (f.replacement_date && !f.replacement_alert_sent) {
+        const daysUntilReplacement = daysBetween(new Date(), new Date(f.replacement_date));
+        if (daysUntilReplacement <= 182) {
+          replacementItems.push({
+            id: f.id, assetId: f.asset_id || "", name: f.name || "",
+            replacementDate: f.replacement_date, daysLeft: daysUntilReplacement,
+            overdue: daysUntilReplacement < 0,
           });
         }
       }
@@ -125,9 +143,10 @@ export default async function handler(req, res) {
     }
 
     // Send ONE combined email + ONE combined SMS for all items today —
-    // maintenance alerts and warranty expiries together, still one message.
-    if (digestItems.length > 0 || warrantyItems.length > 0) {
-      await sendDigestEmail(digestItems, warrantyItems);
+    // maintenance alerts, warranty expiries, and replacement notices
+    // together, still one message.
+    if (digestItems.length > 0 || warrantyItems.length > 0 || replacementItems.length > 0) {
+      await sendDigestEmail(digestItems, warrantyItems, replacementItems);
       if (digestItems.length > 0) await sendDigestSms(digestItems);
 
       // Update "Last Alert Sent" on each affected Component record —
@@ -135,6 +154,18 @@ export default async function handler(req, res) {
       // stale while emails were actually being delivered.
       const now = new Date().toISOString();
       await Promise.all(digestItems.map(item => updateComponentLastAlertSent(item.f, now)));
+
+      // Mark each replacement notice as sent so it doesn't repeat daily
+      // for the next six months — same one-time-per-date principle as
+      // everything else here.
+      if (replacementItems.length > 0) {
+        const { update: pgUpdate } = await import("../lib/postgresClient.js");
+        await Promise.all(replacementItems.map(r =>
+          pgUpdate("components", r.id, { replacement_alert_sent: true }).catch(e =>
+            console.error("Failed to mark replacement_alert_sent for", r.assetId, e.message)
+          )
+        ));
+      }
     }
 
     // 24-hour escalation — any work order still Open/In Progress more
@@ -260,8 +291,9 @@ async function updateReminderTimestamp(recordId) {
 // ---------------------------------------------------------------------
 
 // Sends ONE email containing all items for today — not per-asset.
-async function sendDigestEmail(items, warrantyItems) {
+async function sendDigestEmail(items, warrantyItems, replacementItems) {
   warrantyItems = warrantyItems || [];
+  replacementItems = replacementItems || [];
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
   if (toList.length === 0) { console.error("No ALERT_TO_EMAIL recipients configured"); return; }
 
@@ -270,7 +302,7 @@ async function sendDigestEmail(items, warrantyItems) {
   const urgentCount = items.filter(i => i.urgency === "URGENT").length;
   const upcomingCount = items.filter(i => i.urgency === "UPCOMING").length;
   const reminderCount = items.filter(i => i.type === "reminder").length;
-  const totalItems = items.length + warrantyItems.length;
+  const totalItems = items.length + warrantyItems.length + replacementItems.length;
 
   const itemRows = items.map(i => {
     const color = i.urgency === "OVERDUE" ? "#dc2626" : i.urgency === "URGENT" ? "#d97706" : "#1A3566";
@@ -292,6 +324,17 @@ async function sendDigestEmail(items, warrantyItems) {
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${w.assetId}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${w.name}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${w.expiryDate}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${timing}</span></td>
+    </tr>`;
+  }).join("");
+
+  const replacementRows = replacementItems.map(r => {
+    const color = r.overdue ? "#dc2626" : "#7c3aed";
+    const timing = r.overdue ? `${Math.abs(r.daysLeft)} days past due` : `In ${r.daysLeft} days`;
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;font-family:monospace">${r.assetId}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${r.name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px">${r.replacementDate}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px"><span style="color:${color};font-weight:600">${timing}</span></td>
     </tr>`;
   }).join("");
@@ -327,13 +370,26 @@ async function sendDigestEmail(items, warrantyItems) {
         </tr></thead>
         <tbody>${warrantyRows}</tbody>
       </table>` : ''}
+      ${replacementItems.length > 0 ? `
+      <p style="font-size:14px;line-height:1.6;font-weight:700;margin-bottom:6px">🔄 Replacement Planning — 6 Months Out (${replacementItems.length})</p>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
+        <thead><tr style="background:#f7f8fa">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">ID</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Name</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Replacement Date</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Timing</th>
+        </tr></thead>
+        <tbody>${replacementRows}</tbody>
+      </table>` : ''}
       <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${fromName}</p>
     </div>
     <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:14px">Sent automatically by ${fromName}</div>
   </div>`;
 
-  const subject = `${fromName} — Daily Digest: ${totalItems} item${totalItems!==1?"s":""} (${overdueCount ? overdueCount+" overdue" : "none overdue"}${warrantyItems.length ? `, ${warrantyItems.length} warranty` : ""})`;
-  const plaintext = items.map(i => i.message).join("\n") + (warrantyItems.length ? "\n\nWARRANTY:\n" + warrantyItems.map(w => `${w.assetId} ${w.name} — ${w.expired ? "EXPIRED" : "expires"} ${w.expiryDate}`).join("\n") : "");
+  const subject = `${fromName} — Daily Digest: ${totalItems} item${totalItems!==1?"s":""} (${overdueCount ? overdueCount+" overdue" : "none overdue"}${warrantyItems.length ? `, ${warrantyItems.length} warranty` : ""}${replacementItems.length ? `, ${replacementItems.length} replacement` : ""})`;
+  const plaintext = items.map(i => i.message).join("\n")
+    + (warrantyItems.length ? "\n\nWARRANTY:\n" + warrantyItems.map(w => `${w.assetId} ${w.name} — ${w.expired ? "EXPIRED" : "expires"} ${w.expiryDate}`).join("\n") : "")
+    + (replacementItems.length ? "\n\nREPLACEMENT PLANNING:\n" + replacementItems.map(r => `${r.assetId} ${r.name} — replacement due ${r.replacementDate}${r.overdue ? " (past due)" : ""}`).join("\n") : "");
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
