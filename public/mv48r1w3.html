@@ -19653,6 +19653,7 @@ async function loadAssetsAndInit() {
     }
     updateWOUnreadBadges();
     startWorkOrderChatPolling();
+    mountFamChatbotWidget();
 
     if (loadingEl) loadingEl.style.display = 'none';
     document.querySelector('.header').style.display = '';
@@ -19718,9 +19719,108 @@ async function loadAssetsAndInit() {
 // hand (no re-fetch, no "Loading…" flash) and restores scroll position
 // afterward, rather than the previous behavior of unconditionally
 // rebuilding the whole view from scratch every 45 seconds.
+// In-app "Ask about FAM" chatbot widget — a small floating button in the
+// corner, available on every screen once logged in. Answers only from
+// docs/fam-reference.md via api/chatbot.js; when it can't answer, shows
+// real Email/Call buttons to the org's own admin contact.
+let famChatbotMounted = false;
+let famChatHistory = [];
+function mountFamChatbotWidget() {
+  if (famChatbotMounted) return;
+  famChatbotMounted = true;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'famChatbotWrap';
+  wrap.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9000;font-family:inherit';
+  wrap.innerHTML = `
+    <button id="famChatbotToggle" onclick="toggleFamChatbot()" style="width:52px;height:52px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center">💬</button>
+    <div id="famChatbotPanel" style="display:none;position:absolute;bottom:64px;right:0;width:320px;max-height:440px;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.2);display:none;flex-direction:column;overflow:hidden">
+      <div style="background:var(--navy);color:#fff;padding:12px 14px;font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center">
+        <span>Ask about FAM</span>
+        <span onclick="toggleFamChatbot()" style="cursor:pointer;font-size:16px;opacity:0.8">✕</span>
+      </div>
+      <div id="famChatbotMessages" style="flex:1;overflow-y:auto;padding:12px;font-size:12.5px;display:flex;flex-direction:column;gap:10px;min-height:180px;max-height:300px">
+        <div style="color:var(--muted);font-size:12px">Ask a question about how FAM works — reporting issues, work orders, integrations, and so on.</div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding:8px;display:flex;gap:6px">
+        <input id="famChatbotInput" onkeydown="if(event.key==='Enter')sendFamChatbotMessage()" placeholder="Type a question…" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="sendFamChatbotMessage()" style="padding:8px 12px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Send</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+function toggleFamChatbot() {
+  const panel = document.getElementById('famChatbotPanel');
+  if (!panel) return;
+  const isOpen = panel.style.display === 'flex';
+  panel.style.display = isOpen ? 'none' : 'flex';
+  if (!isOpen) document.getElementById('famChatbotInput')?.focus();
+}
+
+function appendFamChatbotBubble(text, fromUser, escalation) {
+  const messagesEl = document.getElementById('famChatbotMessages');
+  if (!messagesEl) return;
+  const bubble = document.createElement('div');
+  bubble.style.cssText = `align-self:${fromUser ? 'flex-end' : 'flex-start'};max-width:85%;padding:8px 11px;border-radius:10px;background:${fromUser ? 'var(--navy)' : '#F1F3F7'};color:${fromUser ? '#fff' : 'var(--navy)'};white-space:pre-wrap;line-height:1.4`;
+  bubble.textContent = text;
+  messagesEl.appendChild(bubble);
+
+  if (escalation) {
+    const escBox = document.createElement('div');
+    escBox.style.cssText = 'align-self:flex-start;display:flex;gap:6px;flex-wrap:wrap;margin-top:-2px';
+    if (escalation.email) {
+      escBox.innerHTML += `<a href="mailto:${escalation.email}?subject=${encodeURIComponent('FAM question')}" style="padding:6px 10px;border:1px solid var(--navy);border-radius:7px;font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">✉ Email ${escapeHtml(escalation.displayName)}</a>`;
+    }
+    if (escalation.phone) {
+      escBox.innerHTML += `<a href="tel:${escalation.phone}" style="padding:6px 10px;border:1px solid var(--navy);border-radius:7px;font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">📞 Call ${escapeHtml(escalation.displayName)}</a>`;
+    }
+    if (escBox.innerHTML) messagesEl.appendChild(escBox);
+  }
+
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendFamChatbotMessage() {
+  const input = document.getElementById('famChatbotInput');
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+  appendFamChatbotBubble(message, true);
+  famChatHistory.push({ role: 'user', content: message });
+
+  const messagesEl = document.getElementById('famChatbotMessages');
+  const thinking = document.createElement('div');
+  thinking.id = 'famChatbotThinking';
+  thinking.style.cssText = 'align-self:flex-start;color:var(--muted);font-size:12px';
+  thinking.textContent = 'Thinking…';
+  messagesEl.appendChild(thinking);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    const resp = await fetch('/api/chatbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: famChatHistory.slice(-6) }),
+    });
+    if (resp.status === 401) { redirectToLogin(); return; }
+    const data = await resp.json();
+    document.getElementById('famChatbotThinking')?.remove();
+
+    if (!resp.ok) {
+      appendFamChatbotBubble('✗ ' + (data.error || 'Something went wrong.'), false);
+      return;
+    }
+    famChatHistory.push({ role: 'assistant', content: data.answer });
+    appendFamChatbotBubble(data.answer, false, data.needsEscalation ? data.escalation : null);
+  } catch (err) {
+    document.getElementById('famChatbotThinking')?.remove();
+    appendFamChatbotBubble('✗ Network error: ' + err.message, false);
+  }
+}
+
 let woChatPollingStarted = false;
-function startWorkOrderChatPolling() {
-  if (woChatPollingStarted) return;
+function startWorkOrderChatPolling() {  if (woChatPollingStarted) return;
   woChatPollingStarted = true;
   setInterval(async () => {
     try {

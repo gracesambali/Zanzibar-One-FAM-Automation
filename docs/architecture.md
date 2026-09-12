@@ -1,5 +1,10 @@
 # Architecture
 
+> **⚠️ STALE — do not trust this file.** It describes an early Airtable/Next.js
+> version of this system that no longer exists (current stack: Postgres/Supabase,
+> a single-file dashboard served from `/public`, Resend for email, Beem for SMS).
+> See `docs/fam-reference.md` for the current, actively-maintained source of truth.
+
 ## Data flow
 
 1. **Sensor -> Vendor cloud.** Physical sensors (temp/humidity/door/equipment) report to

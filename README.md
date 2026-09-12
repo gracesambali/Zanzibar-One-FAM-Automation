@@ -1,5 +1,16 @@
 # GVC Sensor Integration
 
+> **⚠️ STALE — this whole README describes an early Airtable/Next.js version of
+> this system that no longer exists.** The live app is a single-file dashboard
+> (`public/mv48r1w3.html`) served from plain Vercel functions under `/api`,
+> backed by Postgres/Supabase — not `/pages`, not Airtable, not the npm scripts
+> below. Kept here for history; do not follow its setup steps.
+>
+> **The current source of truth for how FAM actually behaves is
+> `docs/fam-reference.md`.** It must be updated in the same commit as any change
+> that affects user-facing behavior — this is what keeps the in-app chatbot
+> (`api/chatbot.js`) from giving stale answers the way this README itself did.
+
 Sensor + control monitoring layer for **Gracing Ventures' Facility Asset Manager (FMA)**.
 Connects IoT sensor data (temperature, humidity, door/access, equipment status) from
 client facilities to Airtable (source of truth) and exposes a client-facing dashboard

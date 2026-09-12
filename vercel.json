@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/chatbot.js": {
+      "includeFiles": "docs/fam-reference.md"
+    }
+  },
   "crons": [
     {
       "path": "/api/check-maintenance",
