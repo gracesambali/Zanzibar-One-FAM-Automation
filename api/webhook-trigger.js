@@ -1,24 +1,39 @@
 // api/webhook-trigger.js
 //
-// This is the "live connection" — Airtable calls THIS endpoint the
-// instant a record is edited (via an Airtable Automation you configure,
-// see README). No waiting for the daily cron.
+// TWO triggers now live in this one file (kept together deliberately —
+// Hobby plan caps this project at 12 serverless functions, already maxed):
 //
-// Follows the SAME cadence rules as the daily cron (check-maintenance.js):
-//   - No open Work Order yet: alert fires if within 7 days of due date
-//   - Work Order already open: only alerts again if 5+ days have
-//     passed since the last reminder — editing a date twice in one
-//     day won't spam a duplicate alert.
+// 1. AIRTABLE MAINTENANCE ALERT (unchanged, original behavior below)
+//    Airtable calls this the instant a record is edited. No waiting for
+//    the daily cron. Auth: ?secret=WEBHOOK_SECRET query param.
 //
-// This does NOT replace the daily cron — that stays as a safety net
-// in case a webhook call ever fails to fire.
+// 2. RESEND INBOUND EMAIL -> REAL WORK ORDER (new)
+//    A director emails the Resend receiving address (e.g.
+//    something@<your-id>.resend.app). Resend POSTs an "email.received"
+//    webhook here, identified by its svix-* signature headers (Airtable's
+//    calls never carry these, so the two triggers can't collide).
+//    - Sender matched against `users.email` in Postgres
+//      - matched     -> real row in work_orders (source: 'email'), auto-reply
+//      - unmatched   -> admin gets a notification email, nothing created
+//
+// Both paths follow the same "SAME cadence rules" spirit as before: the
+// maintenance-alert half is 100% original code, untouched.
 
 import { parseEmailList, parsePhoneList, buildBeemRecipients } from "../lib/recipients.js";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const ALERT_WINDOW_DAYS = 7;
 const REMINDER_INTERVAL_DAYS = 5;
 
 export default async function handler(req, res) {
+  // --- ROUTE: Resend inbound email webhook (breakdown-by-email) ---
+  // Resend signs every webhook with svix-* headers; Airtable's calls never
+  // send these, so this check cleanly separates the two triggers.
+  if (req.headers["svix-id"]) {
+    return handleResendEmailWebhook(req, res);
+  }
+
+  // --- ROUTE: Airtable maintenance-alert trigger (ORIGINAL, unchanged) ---
   if (req.query.secret !== process.env.WEBHOOK_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -87,6 +102,171 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// ============================================================
+// NEW: Resend inbound email -> real work order
+// ============================================================
+
+async function handleResendEmailWebhook(req, res) {
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  const rawBody = await getRawBodyForVerification(req);
+
+  if (!secret || !verifyResendSignature(rawBody, req.headers, secret)) {
+    return res.status(401).json({ error: "Invalid webhook signature" });
+  }
+
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).json({ error: "Invalid JSON payload" });
+  }
+
+  if (event.type !== "email.received") {
+    // Ignore other Resend event types if this endpoint's webhook config
+    // ever gets more events added to it.
+    return res.status(200).json({ triggered: false, reason: "Ignored event type", type: event.type });
+  }
+
+  const emailId = event.data?.email_id;
+  const fromRaw = event.data?.from || "";
+  const fromEmail = extractEmailAddress(fromRaw);
+  const subject = event.data?.subject || "(no subject)";
+
+  try {
+    // --- Match sender against known users ---
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const userResult = await pgQuery(
+      "select * from users where lower(email) = lower($1) limit 1",
+      [fromEmail]
+    ).catch(() => null);
+    const user = userResult && userResult.rows[0] ? userResult.rows[0] : null;
+
+    if (!user || user.active === false) {
+      await sendPlainEmail(
+        process.env.ADMIN_NOTIFY_EMAIL,
+        `Unrecognized breakdown-report sender: ${fromEmail}`,
+        `An email was sent to the breakdown inbox from an unrecognized address.\n\nFrom: ${fromRaw}\nSubject: ${subject}\nEmail ID: ${emailId}\n\nNo work order was created.`
+      );
+      return res.status(200).json({ triggered: false, reason: "Unrecognized sender, admin notified" });
+    }
+
+    // --- Fetch full email body now that sender is trusted ---
+    const emailResp = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+    });
+    if (!emailResp.ok) {
+      console.error("Failed to fetch inbound email:", await emailResp.text());
+      return res.status(500).json({ error: "Failed to fetch email content" });
+    }
+    const fullEmail = await emailResp.json();
+    const bodyText = fullEmail.text || fullEmail.html || "(no body content)";
+
+    // --- Create the real work order ---
+    const woId = `WO-${Date.now()}`;
+    const { insert } = await import("../lib/postgresClient.js");
+    const created = await insert("work_orders", {
+      wo_id: woId,
+      status: "Open",
+      notes: `[Reported by email: ${subject}]\n\n${bodyText}`,
+      reporter_contact: user.display_name || fromEmail,
+      organization_id: user.organization_id || null,
+      source: "email",
+      source_email_id: emailId,
+      created: new Date().toISOString(),
+      activity_log: JSON.stringify([
+        { text: "🆕 Work order opened — reported by email", by: fromEmail, at: new Date().toISOString() },
+      ]),
+    });
+
+    // --- Auto-reply confirmation to the reporter ---
+    await sendPlainEmail(
+      fromEmail,
+      `Received: ${subject} (Work Order ${woId})`,
+      `Thanks ${user.display_name || ""} — this has been logged as Work Order ${woId} and routed to the team.`
+    );
+
+    return res.status(200).json({ triggered: true, type: "email_workorder", workOrder: woId, reportedBy: fromEmail, recordId: created?.id });
+  } catch (err) {
+    console.error("Resend email webhook error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Reconstructs the exact bytes Resend signed, for signature verification.
+// Most Vercel Node functions pre-parse JSON into req.body before the
+// handler runs; when that happens the raw stream is already consumed, so
+// we re-serialize req.body instead of re-reading the (empty) stream. If
+// the platform hands us an unparsed body, we read the stream directly.
+async function getRawBodyForVerification(req) {
+  if (typeof req.body === "string") return req.body;
+  if (Buffer.isBuffer(req.body)) return req.body.toString("utf8");
+  if (req.body && typeof req.body === "object") return JSON.stringify(req.body);
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function verifyResendSignature(rawBody, headers, secret) {
+  const svixId = headers["svix-id"];
+  const svixTimestamp = headers["svix-timestamp"];
+  const svixSignature = headers["svix-signature"];
+  if (!svixId || !svixTimestamp || !svixSignature) return false;
+
+  try {
+    const secretBytes = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+    const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
+    const expected = createHmac("sha256", secretBytes).update(signedContent, "utf8").digest("base64");
+    const expectedBuf = Buffer.from(expected, "base64");
+
+    return svixSignature
+      .split(" ")
+      .map((s) => s.split(",")[1])
+      .filter(Boolean)
+      .some((sig) => {
+        try {
+          const sigBuf = Buffer.from(sig, "base64");
+          return sigBuf.length === expectedBuf.length && timingSafeEqual(sigBuf, expectedBuf);
+        } catch {
+          return false;
+        }
+      });
+  } catch (err) {
+    console.error("Signature verification error:", err.message);
+    return false;
+  }
+}
+
+function extractEmailAddress(fromHeader) {
+  // "Acme <onboarding@resend.dev>" -> "onboarding@resend.dev"
+  const match = fromHeader.match(/<([^>]+)>/);
+  return (match ? match[1] : fromHeader).trim().toLowerCase();
+}
+
+async function sendPlainEmail(to, subject, text) {
+  if (!to) { console.error("sendPlainEmail: no recipient configured"); return; }
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.WORKORDER_FROM_EMAIL || process.env.ALERT_FROM_EMAIL}>`,
+      to: [to],
+      subject,
+      text,
+    }),
+  });
+  if (!resp.ok) console.error("Resend error (plain email):", await resp.text());
+}
+
+// ============================================================
+// ORIGINAL: Airtable maintenance-alert helpers (unchanged)
+// ============================================================
 
 async function fetchRecord(recordId) {
   const { getById } = await import("../lib/postgresClient.js");
