@@ -19848,11 +19848,10 @@ async function sendFamChatbotMessage() {
 // skipped rather than shown pointing at nothing, so the same step list
 // naturally adapts across every role without separate copies per role.
 const FAM_ONBOARDING_STEPS = [
-  { selector: '.sidebar', title: 'Your navigation', text: 'Everything in FAM lives here on the left — switch between Dashboard, Work Orders, Assets, and everything else your role can see.' },
   { selector: '#facilitySwitcher', title: 'Facility & Building switcher', text: 'Scope the whole dashboard to one facility or building at a time. Set to "All" to see everything at once.' },
+  { selector: 'button[onclick="openMyReportBreakdownPage()"]', title: 'Report a Breakdown', text: 'Opens a shareable link/QR anyone can use to report a problem — no login needed. It becomes a real work order the moment it comes in.' },
   { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, BMS, Maintenance, Level View, Procurement, and more.' },
   { selector: '#holdingsGroupHeader', title: 'Holdings', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
-  { selector: '#integrationsNavBtn', title: 'Integrations', text: 'Connect FAM to accounting, ERP, or 3D-capture tools you already use — QuickBooks, SAP, Matterport, and more.' },
   {
     // The urgency filter only exists once the Work Orders table has
     // actually rendered — it isn't in the DOM at all from Dashboard,
@@ -19863,6 +19862,15 @@ const FAM_ONBOARDING_STEPS = [
     title: 'Filter your work orders',
     text: 'Click any column header — like Urgency — to filter the table down to exactly what you need.',
     beforeShow: () => switchTab('workorders'),
+  },
+  {
+    // Same reasoning as the Work Order filter step above — Maintenance
+    // lives inside the collapsed Operations group, so it isn't visible
+    // from Dashboard until that tab is actually opened.
+    selector: '[data-tab="maintenance"]',
+    title: 'Maintenance',
+    text: 'Scheduled maintenance for your assets, tracked by due date.',
+    beforeShow: () => switchTab('maintenance'),
   },
   { selector: 'button[onclick="openScanAssetBarcodeModal()"]', title: 'Scan Barcode / QR', text: "Scan any asset's barcode or QR code to jump straight to its record — from anywhere in FAM." },
   { selector: '#famChatbotToggle', title: 'Ask about FAM', text: "Stuck on how something works? Ask right here, anytime. If it can't answer, it'll connect you straight to your admin." },
