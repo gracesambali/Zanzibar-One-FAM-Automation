@@ -7258,8 +7258,16 @@ function renderIntegrationsCards(providers) {
   wrap.innerHTML = providers.map(p => {
     let statusLabel, statusColor;
     if (p.connected) { statusLabel = `Connected${p.accountName ? ' — ' + escapeHtml(p.accountName) : ''}`; statusColor = 'var(--green)'; }
-    else if (!p.configured) { statusLabel = 'Not set up yet'; statusColor = 'var(--muted)'; }
+    else if (!p.configured) { statusLabel = p.requiresInstanceConfig ? 'Needs setup' : 'Not set up yet'; statusColor = 'var(--muted)'; }
     else { statusLabel = 'Not connected'; statusColor = 'var(--muted)'; }
+
+    // Self-hosted providers (SAP/Odoo/ERPNext) need their own instance
+    // URL and OAuth client entered once before Connect makes sense at
+    // all - there's no shared GVC-wide app to redirect into like
+    // QuickBooks/Zoho/Xero/Sage have.
+    const setupButton = p.requiresInstanceConfig
+      ? `<button onclick="setupIntegrationInstance('${p.provider}','${escapeHtml(p.label).replace(/'/g,"\\'")}','${escapeHtml(p.instanceBaseUrl||'')}','${escapeHtml(p.oauthClientId||'')}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;margin-right:8px">${p.configured ? 'Edit Setup' : 'Set Up'}</button>`
+      : '';
 
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -7267,14 +7275,52 @@ function renderIntegrationsCards(providers) {
         <div style="font-size:14px;font-weight:700;color:var(--navy)">${escapeHtml(p.label)}</div>
       </div>
       <div style="font-size:12px;color:${statusColor};margin-bottom:4px">${statusLabel}</div>
-      ${p.connected && p.connectedBy ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Connected by ${escapeHtml(p.connectedBy)}${p.connectedAt ? ' on ' + new Date(p.connectedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : '<div style="margin-bottom:12px"></div>'}
-      ${p.connected
-        ? `<button onclick="disconnectIntegration('${p.provider}','${escapeHtml(p.label).replace(/'/g,"\\'")}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Disconnect</button>`
-        : p.configured
-          ? `<a href="/api/integrations?connect=${p.provider}" style="display:inline-block;padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;text-decoration:none;cursor:pointer">Connect</a>`
-          : `<button disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#F7F8FA;color:var(--muted);cursor:not-allowed">Connect</button>`}
+      ${p.requiresInstanceConfig && p.instanceBaseUrl ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">${escapeHtml(p.instanceBaseUrl)}</div>` : ''}
+      ${p.connected && p.connectedBy ? `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Connected by ${escapeHtml(p.connectedBy)}${p.connectedAt ? ' on ' + new Date(p.connectedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : (!p.requiresInstanceConfig || p.instanceBaseUrl) ? '' : '<div style="margin-bottom:12px"></div>'}
+      <div>
+        ${setupButton}
+        ${p.connected
+          ? `<button onclick="disconnectIntegration('${p.provider}','${escapeHtml(p.label).replace(/'/g,"\\'")}')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">Disconnect</button>`
+          : p.configured
+            ? `<a href="/api/integrations?connect=${p.provider}" style="display:inline-block;padding:8px 16px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;text-decoration:none;cursor:pointer">Connect</a>`
+            : `<button disabled style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#F7F8FA;color:var(--muted);cursor:not-allowed">Connect</button>`}
+      </div>
     </div>`;
   }).join('');
+}
+
+// SAP/Odoo/ERPNext each run on the client's own system, so this
+// collects the three real things needed before Connect can work at
+// all: their instance URL, and the OAuth client their own IT admin
+// registers directly on that system. Kept as simple sequential
+// prompts, same pattern already used elsewhere in this dashboard
+// (e.g. decommissionAsset's reason prompt) rather than a new modal
+// component for a one-time, rarely-repeated setup step.
+async function setupIntegrationInstance(provider, label, existingBaseUrl, existingClientId) {
+  const baseUrl = prompt(`${label} instance URL (e.g. https://yourcompany.example.com):`, existingBaseUrl || '');
+  if (baseUrl === null) return;
+  if (!baseUrl.trim()) { alert('An instance URL is required.'); return; }
+
+  const clientId = prompt(`${label} OAuth Client ID (from the OAuth client your IT admin registers on ${label} itself):`, existingClientId || '');
+  if (clientId === null) return;
+  if (!clientId.trim()) { alert('A Client ID is required.'); return; }
+
+  const clientSecret = prompt(`${label} OAuth Client Secret:`, '');
+  if (clientSecret === null) return;
+  if (!clientSecret.trim()) { alert('A Client Secret is required.'); return; }
+
+  try {
+    const resp = await fetch('/api/integrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'configureInstance', provider, baseUrl: baseUrl.trim(), clientId: clientId.trim(), clientSecret: clientSecret.trim() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save setup');
+    renderIntegrations();
+  } catch (err) {
+    alert('Could not save setup: ' + err.message);
+  }
 }
 
 async function disconnectIntegration(provider, label) {

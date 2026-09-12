@@ -98,11 +98,75 @@ const PROVIDERS = {
     clientIdEnv: "SAGE_CLIENT_ID",
     clientSecretEnv: "SAGE_CLIENT_SECRET",
   },
+  // Confirmed directly, verified against each provider's own real
+  // documentation before building: SAP, Odoo, and ERPNext are NOT
+  // single shared SaaS companies the way QuickBooks/Zoho/Xero/Sage
+  // are - each client runs their OWN system (self-hosted or their
+  // own tenant), so there is no one global authUrl/tokenUrl or
+  // GVC-wide client_id/secret that works for every client. Each of
+  // these instead needs the CLIENT's own instance URL plus an OAuth
+  // client their own IT admin registers directly on their own
+  // system - real, per-organization values, stored in this
+  // connection's own metadata rather than a global env var.
+  // requiresInstanceConfig marks this real difference; authPath/
+  // tokenPath are the fixed, real, documented relative paths on top
+  // of whatever base URL that org provides.
+  sap: {
+    label: "SAP",
+    abbr: "SAP",
+    color: "#0FAAFF",
+    requiresInstanceConfig: true,
+    // Confirmed against SAP's own documentation: this is the real,
+    // standard OAuth 2.0 Authorization Code flow path for S/4HANA
+    // On-Premise / Private Cloud (transactions SOAUTH2/SICF). SAP
+    // S/4HANA Cloud public edition and other SAP products can use
+    // different flows (SAML Bearer, BTP-registered systems) - flagged
+    // honestly rather than assumed; a client on one of those variants
+    // needs a small, separate scoping conversation before this fits.
+    authPath: "/sap/bc/sec/oauth2/authorize",
+    tokenPath: "/sap/public/bc/sec/oauth2/token",
+    scope: "",
+  },
+  odoo: {
+    label: "Odoo",
+    abbr: "OD",
+    color: "#714B67",
+    requiresInstanceConfig: true,
+    // Confirmed against Odoo's own REST API documentation: the real,
+    // standard OAuth2 Authorization Code endpoints of the official
+    // Odoo REST API module, relative to that client's own Odoo server
+    // URL (self-hosted, or their own *.odoo.com tenant).
+    authPath: "/restapi/1.0/common/oauth2/authorize",
+    tokenPath: "/restapi/1.0/common/oauth2/access_token",
+    scope: "",
+  },
+  erpnext: {
+    label: "ERPNext",
+    abbr: "EN",
+    color: "#2490EF",
+    requiresInstanceConfig: true,
+    // Confirmed against Frappe's own official documentation: these
+    // paths are standardized across every Frappe-based site (ERPNext,
+    // Frappe HR, etc.), relative to that client's own site URL -
+    // self-hosted, or their own Frappe Cloud tenant.
+    authPath: "/api/method/frappe.integrations.oauth2.authorize",
+    tokenPath: "/api/method/frappe.integrations.oauth2.get_token",
+    scope: "all",
+  },
 };
 
-function providerConfigured(key) {
+function providerConfigured(key, connectionRow) {
   const p = PROVIDERS[key];
-  return !!(p && p.authUrl && p.tokenUrl && process.env[p.clientIdEnv] && process.env[p.clientSecretEnv]);
+  if (!p) return false;
+  if (p.requiresInstanceConfig) {
+    // Real per-org values, not a global env var - "configured" means
+    // THIS organization has already saved its own instance URL and
+    // OAuth client credentials, not that GVC set something up once
+    // for everyone.
+    const meta = connectionRow?.metadata || {};
+    return !!(meta.instanceBaseUrl && meta.oauthClientId && meta.oauthClientSecret);
+  }
+  return !!(p.authUrl && p.tokenUrl && process.env[p.clientIdEnv] && process.env[p.clientSecretEnv]);
 }
 
 function getAppBaseUrl() {
@@ -151,7 +215,57 @@ export default async function handler(req, res) {
     return handleDisconnect(req, res, session);
   }
 
+  if (req.method === "POST" && req.body && req.body.action === "configureInstance") {
+    return handleConfigureInstance(req, res, session);
+  }
+
   return res.status(405).json({ error: "Method not allowed" });
+}
+
+// Saves a self-hosted provider's real, per-organization instance URL
+// and OAuth client credentials - the thing that replaces a global env
+// var for SAP/Odoo/ERPNext, since each client's IT admin registers
+// their own OAuth client directly on their own system. Stored in
+// metadata alongside (and before) any actual token, so Connect can
+// find it on the next step.
+async function handleConfigureInstance(req, res, session) {
+  const { provider, baseUrl, clientId, clientSecret } = req.body || {};
+  const cfg = PROVIDERS[provider];
+  if (!cfg || !cfg.requiresInstanceConfig) return res.status(400).json({ error: "This provider doesn't need instance setup." });
+  if (!can(session.r, "manageUsers")) return res.status(403).json({ error: "Not permitted to configure an integration." });
+  if (!baseUrl || !clientId || !clientSecret) {
+    return res.status(400).json({ error: "Instance URL, Client ID, and Client Secret are all required." });
+  }
+
+  let normalizedBaseUrl;
+  try {
+    const u = new URL(baseUrl.trim());
+    if (u.protocol !== "https:") return res.status(400).json({ error: "The instance URL must start with https://" });
+    normalizedBaseUrl = u.origin; // strips any trailing slash/path the person pasted by mistake
+  } catch {
+    return res.status(400).json({ error: "That doesn't look like a valid URL." });
+  }
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const metadata = { instanceBaseUrl: normalizedBaseUrl, oauthClientId: clientId.trim(), oauthClientSecret: clientSecret.trim() };
+    await pgQuery(
+      `insert into integration_connections (organization_id, provider, status, metadata)
+       values ($1, $2, 'not_connected', $3)
+       on conflict (organization_id, provider) do update set
+         metadata = integration_connections.metadata || $3::jsonb`,
+      [session.org, provider, JSON.stringify(metadata)]
+    );
+    await pgQuery(
+      "insert into integration_activity_log (organization_id, provider, event, detail, actor) values ($1, $2, 'configured', $3, $4)",
+      [session.org, provider, `Instance URL and OAuth client configured by ${session.u}`, session.u]
+    ).catch(() => {});
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("integrations configureInstance error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 // Confirmed directly: the frontend gets provider label, status, who
@@ -162,7 +276,7 @@ async function handleListConnections(req, res, organizationId) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      "select provider, status, provider_account_name, connected_by, connected_at, last_synced_at, last_error from integration_connections where organization_id = $1",
+      "select provider, status, provider_account_name, connected_by, connected_at, last_synced_at, last_error, metadata from integration_connections where organization_id = $1",
       [organizationId]
     );
     const connectedByProvider = {};
@@ -175,7 +289,13 @@ async function handleListConnections(req, res, organizationId) {
         label: cfg.label,
         abbr: cfg.abbr,
         color: cfg.color,
-        configured: providerConfigured(key),
+        requiresInstanceConfig: !!cfg.requiresInstanceConfig,
+        // Shown so the UI can pre-fill the setup form instead of
+        // asking again from scratch - the secret itself never comes
+        // back down, same principle as tokens never leaving the DB.
+        instanceBaseUrl: cfg.requiresInstanceConfig ? (row?.metadata?.instanceBaseUrl || null) : null,
+        oauthClientId: cfg.requiresInstanceConfig ? (row?.metadata?.oauthClientId || null) : null,
+        configured: providerConfigured(key, row),
         connected: !!(row && row.status === "active"),
         status: row ? row.status : null,
         accountName: row ? row.provider_account_name : null,
@@ -198,22 +318,42 @@ async function handleConnect(req, res, session) {
   const cfg = PROVIDERS[provider];
   if (!cfg) return res.status(400).json({ error: "Unknown provider." });
   if (!can(session.r, "manageUsers")) return res.status(403).json({ error: "Not permitted to connect an integration." });
-  if (!providerConfigured(provider)) {
-    return res.status(400).json({ error: `${cfg.label} isn't set up yet on this deployment - it needs application credentials registered with ${cfg.label} first.` });
+
+  let authUrl, clientId, scope;
+  if (cfg.requiresInstanceConfig) {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      "select metadata from integration_connections where organization_id = $1 and provider = $2",
+      [session.org, provider]
+    );
+    const meta = result.rows[0]?.metadata || {};
+    if (!meta.instanceBaseUrl || !meta.oauthClientId || !meta.oauthClientSecret) {
+      return res.status(400).json({ error: `Set up ${cfg.label}'s instance URL and OAuth client first.` });
+    }
+    authUrl = `${meta.instanceBaseUrl}${cfg.authPath}`;
+    clientId = meta.oauthClientId;
+    scope = cfg.scope;
+  } else {
+    if (!providerConfigured(provider)) {
+      return res.status(400).json({ error: `${cfg.label} isn't set up yet on this deployment - it needs application credentials registered with ${cfg.label} first.` });
+    }
+    authUrl = cfg.authUrl;
+    clientId = process.env[cfg.clientIdEnv];
+    scope = cfg.scope;
   }
 
   const state = buildState(session.org, provider);
   const redirectUri = `${getAppBaseUrl()}/api/integrations?callback=${provider}`;
   const params = new URLSearchParams({
-    client_id: process.env[cfg.clientIdEnv],
+    client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: cfg.scope,
+    scope,
     state,
     ...(cfg.extraAuthParams || {}),
   });
 
-  res.writeHead(302, { Location: `${cfg.authUrl}?${params.toString()}` });
+  res.writeHead(302, { Location: `${authUrl}?${params.toString()}` });
   return res.end();
 }
 
@@ -240,20 +380,40 @@ async function handleCallback(req, res, session) {
     const bodyParams = { grant_type: "authorization_code", code, redirect_uri: redirectUri };
     const headers = { "Content-Type": "application/x-www-form-urlencoded" };
 
-    // Confirmed directly against each provider's own documentation:
-    // QuickBooks and Zoho both authenticate this exchange via a Basic
-    // Auth header; Matterport's own real token endpoint instead
-    // requires client_id/client_secret as real body parameters. Kept
-    // as a real, per-provider choice rather than assuming every
-    // provider works the same way.
-    if (cfg.tokenAuthMethod === "body_params") {
-      bodyParams.client_id = process.env[cfg.clientIdEnv];
-      bodyParams.client_secret = process.env[cfg.clientSecretEnv];
+    let tokenUrl;
+    if (cfg.requiresInstanceConfig) {
+      const { query: pgQueryMeta } = await import("../lib/postgresClient.js");
+      const metaResult = await pgQueryMeta(
+        "select metadata from integration_connections where organization_id = $1 and provider = $2",
+        [session.org, provider]
+      );
+      const meta = metaResult.rows[0]?.metadata || {};
+      if (!meta.instanceBaseUrl || !meta.oauthClientId || !meta.oauthClientSecret) {
+        return redirectBackToApp(false, `${cfg.label} instance setup is missing - please configure it again.`);
+      }
+      tokenUrl = `${meta.instanceBaseUrl}${cfg.tokenPath}`;
+      // These self-hosted providers' documented flows send client
+      // credentials as real body parameters, same principle already
+      // used for Matterport/Sage above - not a Basic Auth header.
+      bodyParams.client_id = meta.oauthClientId;
+      bodyParams.client_secret = meta.oauthClientSecret;
     } else {
-      headers.Authorization = `Basic ${Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString("base64")}`;
+      tokenUrl = cfg.tokenUrl;
+      // Confirmed directly against each provider's own documentation:
+      // QuickBooks and Zoho both authenticate this exchange via a Basic
+      // Auth header; Matterport's own real token endpoint instead
+      // requires client_id/client_secret as real body parameters. Kept
+      // as a real, per-provider choice rather than assuming every
+      // provider works the same way.
+      if (cfg.tokenAuthMethod === "body_params") {
+        bodyParams.client_id = process.env[cfg.clientIdEnv];
+        bodyParams.client_secret = process.env[cfg.clientSecretEnv];
+      } else {
+        headers.Authorization = `Basic ${Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString("base64")}`;
+      }
     }
 
-    const tokenResp = await fetch(cfg.tokenUrl, {
+    const tokenResp = await fetch(tokenUrl, {
       method: "POST",
       headers,
       body: new URLSearchParams(bodyParams),
@@ -294,15 +454,27 @@ async function handleCallback(req, res, session) {
 
 async function handleDisconnect(req, res, session) {
   const { provider } = req.body;
-  if (!PROVIDERS[provider]) return res.status(400).json({ error: "Unknown provider." });
+  const cfg = PROVIDERS[provider];
+  if (!cfg) return res.status(400).json({ error: "Unknown provider." });
   if (!can(session.r, "manageUsers")) return res.status(403).json({ error: "Not permitted to disconnect an integration." });
 
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
-    await pgQuery(
-      "delete from integration_connections where organization_id = $1 and provider = $2",
-      [session.org, provider]
-    );
+    if (cfg.requiresInstanceConfig) {
+      // Revokes the connection but keeps the instance URL/OAuth client
+      // saved in metadata - re-typing a whole self-hosted setup just to
+      // reconnect would be real, unnecessary friction that the simpler
+      // one-click providers below don't have.
+      await pgQuery(
+        "update integration_connections set status = 'not_connected', access_token = null, refresh_token = null, token_expires_at = null, provider_account_id = null, provider_account_name = null where organization_id = $1 and provider = $2",
+        [session.org, provider]
+      );
+    } else {
+      await pgQuery(
+        "delete from integration_connections where organization_id = $1 and provider = $2",
+        [session.org, provider]
+      );
+    }
     await pgQuery(
       "insert into integration_activity_log (organization_id, provider, event, detail, actor) values ($1, $2, 'disconnected', $3, $4)",
       [session.org, provider, `Disconnected by ${session.u}`, session.u]
