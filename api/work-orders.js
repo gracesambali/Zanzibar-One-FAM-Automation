@@ -157,6 +157,7 @@ export default async function handler(req, res) {
           created: r.created || "",
           completedDate: r.completed_date || "",
           closedBy: r.closed_by || "",
+          closureSummary: r.closure_summary || "",
           cost: r.cost_tzs !== null ? Number(r.cost_tzs) : null,
           costEditedBy: r.cost_edited_by || "",
           costEditedDate: r.cost_edited_date || "",
@@ -501,6 +502,29 @@ export default async function handler(req, res) {
     // themselves, not a reviewer.
     if (req.body && req.body.closeViaScan) {
       return handleCloseWorkOrderViaScan(req, res, session.u, session.org);
+    }
+
+    if (req.body && req.body.draftClosureSummary) {
+      return handleDraftClosureSummary(req, res, session.org);
+    }
+
+    if (req.body && req.body.backfillClosureSummaries) {
+      return handleBackfillClosureSummaries(req, res, session.org);
+    }
+
+    if (req.body && req.body.saveClosureSummary) {
+      const { recordId, closureSummary } = req.body;
+      if (!recordId || !closureSummary) return res.status(400).json({ error: "recordId and closureSummary required" });
+      try {
+        const { getById, update } = await import("../lib/postgresClient.js");
+        const woData = await getById("work_orders", recordId).catch(() => null);
+        if (!woData || woData.organization_id !== session.org) return res.status(404).json({ error: "Work order not found." });
+        await update("work_orders", recordId, { closure_summary: closureSummary });
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("saveClosureSummary error:", err);
+        return res.status(500).json({ error: err.message });
+      }
     }
 
     if (req.body && req.body.addActivityEntry) {
@@ -2500,8 +2524,95 @@ async function shouldRequireClosureReview(organizationId, maintenanceType, asset
   }
 }
 
+// Drafts a whole-story closure summary from the real activity log,
+// chat thread, and original notes on record - shown to the person as
+// an editable draft (with a "Regenerate" option) before it's actually
+// saved. Does NOT save anything itself - the person's own confirm
+// action (closeViaScan, below, or the on-demand save for an old work
+// order) is what actually persists it, with whatever edits they made.
+async function handleDraftClosureSummary(req, res, organizationId) {
+  const { recordId } = req.body || {};
+  if (!recordId) return res.status(400).json({ error: "recordId required" });
+
+  try {
+    const { getById } = await import("../lib/postgresClient.js");
+    const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
+    if (!woData || woData.organization_id !== organizationId) return res.status(404).json({ error: "Work order not found." });
+
+    const { draftClosureSummary } = await import("../lib/workOrderSummaryAI.js");
+    const summary = await draftClosureSummary({
+      assetName: woData.asset_name,
+      createdAt: woData.created,
+      notes: woData.notes,
+      activityLog: Array.isArray(woData.activity_log) ? woData.activity_log : [],
+      chatLog: Array.isArray(woData.chat_log) ? woData.chat_log : [],
+    });
+
+    if (!summary) return res.status(200).json({ success: false, error: "Could not draft a summary right now — write one manually." });
+    return res.status(200).json({ success: true, summary });
+  } catch (err) {
+    console.error("handleDraftClosureSummary error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// One-time bulk backfill for work orders that were closed before this
+// feature existed - confirmed directly, a deliberate exception to
+// "always reviewed by a person before saving": generated and saved
+// directly, in batches, not reviewed one by one first. Processes a
+// bounded batch per call (not all of them in one request) since a
+// serverless function has a real execution time limit - the frontend
+// calls this repeatedly until it reports done, showing real progress
+// rather than one long, timeout-risking request.
+async function handleBackfillClosureSummaries(req, res, organizationId) {
+  const BATCH_SIZE = 5;
+  try {
+    const { query: pgQuery, update } = await import("../lib/postgresClient.js");
+    const { draftClosureSummary } = await import("../lib/workOrderSummaryAI.js");
+
+    const result = await pgQuery(
+      `select id, asset_name, created, notes, activity_log, chat_log
+       from work_orders
+       where organization_id = $1 and status = 'Closed' and closure_summary is null
+       limit $2`,
+      [organizationId, BATCH_SIZE]
+    );
+
+    let processed = 0;
+    for (const wo of result.rows) {
+      const summary = await draftClosureSummary({
+        assetName: wo.asset_name,
+        createdAt: wo.created,
+        notes: wo.notes,
+        activityLog: Array.isArray(wo.activity_log) ? wo.activity_log : [],
+        chatLog: Array.isArray(wo.chat_log) ? wo.chat_log : [],
+      });
+      // A per-record failure shouldn't block the rest of the batch -
+      // that one just gets picked up again on the next call, since
+      // its closure_summary is still null.
+      if (summary) {
+        await update("work_orders", wo.id, { closure_summary: summary }).catch(err =>
+          console.error("Backfill save failed for", wo.id, err.message)
+        );
+        processed++;
+      }
+    }
+
+    const remainingResult = await pgQuery(
+      `select count(*) from work_orders where organization_id = $1 and status = 'Closed' and closure_summary is null`,
+      [organizationId]
+    );
+    const remaining = Number(remainingResult.rows[0].count);
+
+    return res.status(200).json({ success: true, processed, remaining, done: remaining === 0 });
+  } catch (err) {
+    console.error("handleBackfillClosureSummaries error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizationId) {
-  const { recordId, scannedCode, note } = req.body || {};
+  const { recordId, scannedCode, note, closureSummary } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
   if (!scannedCode || !scannedCode.trim()) return res.status(400).json({ error: "A real scan is required to close this work order." });
 
@@ -2545,12 +2656,14 @@ async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizat
       closed_by: closedByUsername,
       closure_method: "scan",
       closure_rejection_reason: null,
+      closure_summary: closureSummary || null,
     } : {
       status: "Closed",
       completed_date: new Date().toISOString(),
       closed_by: closedByUsername,
       closure_method: "scan",
       closure_rejection_reason: null,
+      closure_summary: closureSummary || null,
     }).catch(() => { throw new Error("Could not close this work order"); });
 
     if (!requiresReview) {
@@ -3203,7 +3316,7 @@ async function handleMaintenanceReport(req, res, organizationId) {
       assetName: r.asset_name || "", system: r.system || "",
       location: r.location || "", status: r.status || "Open",
       urgency: r.urgency || "", maintenanceType: r.maintenance_type || "", created: r.created || "",
-      completedDate: r.completed_date || "", closedBy: r.closed_by || "",
+      completedDate: r.completed_date || "", closedBy: r.closed_by || "", closureSummary: r.closure_summary || "",
       cost: r.cost_tzs !== null ? Number(r.cost_tzs) : null,
       costEditedBy: r.cost_edited_by || "", costEditedDate: r.cost_edited_date || "",
       checklistProgress: JSON.stringify(r.checklist_progress || {}), activityLog: JSON.stringify(r.activity_log || []),

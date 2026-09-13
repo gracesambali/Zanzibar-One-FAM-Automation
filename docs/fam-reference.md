@@ -405,3 +405,36 @@ document system, with a new `entity_type = 'chatbot_knowledge'` link type
 `GET /api/get-assets?chatbotKnowledgeDocuments=true` lists what's
 currently feeding the chatbot for the Knowledge tab; upload via the
 `uploadChatbotKnowledgeDocument` PUT action.
+
+## AI-Drafted Closure Summaries
+
+When a work order is closed (either path — scan-based direct close, or
+sent to Ready for Review), AI drafts a whole-story summary — what was
+reported, what was found, what was done — from the real activity log and
+chat thread already on the record. Shown as an editable draft (with a
+"✨ Regenerate" option) before it's saved; never saved without the
+person's review for a live closure. This becomes the permanent written
+record on the work order — what a reviewer sees before approving
+closure, and what anyone looking back later sees instead of an empty
+notes field.
+
+For work orders closed **before** this feature existed: a "✨ Generate
+Summary" button appears on any closed work order's detail page that
+doesn't have one yet — same draft-then-review flow, on demand.
+
+**Backfill**: confirmed directly, a deliberate one-time exception to
+"always reviewed by a person" — a "✨ Backfill Summaries" button
+(Work Orders tab, Business Owner/System Admin only) generates and saves
+summaries directly for every already-closed work order without one,
+upfront, in bulk, not reviewed one-by-one first. Processed in small
+batches (5 per call) since a single request can't safely draft 100+
+summaries without risking a serverless timeout — the frontend just keeps
+calling the batch endpoint and showing real progress until the backend
+reports nothing left to do.
+
+Backend: `lib/workOrderSummaryAI.js` → `draftClosureSummary()`. New
+`work_orders.closure_summary` column. Actions in `api/work-orders.js`:
+`draftClosureSummary` (draft only, no save), `saveClosureSummary` (for
+old work orders via the on-demand button), `backfillClosureSummaries`
+(bulk batch), and `closeViaScan` now accepts an optional
+`closureSummary` field saved alongside the actual closure.

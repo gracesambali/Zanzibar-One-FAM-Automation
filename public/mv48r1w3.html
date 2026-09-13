@@ -11285,9 +11285,9 @@ function openCloseWorkOrderScanModal(woId, assetName) {
   wcCloseWoId = woId;
   const overlay = document.createElement('div');
   overlay.id = 'closeWoScanOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px;overflow-y:auto';
   overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;margin:20px 0">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Close Work Order</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Scan the barcode or QR code on ${escapeHtml(assetName)} to confirm you're at the equipment.</div>
       <div id="wc_reader" style="width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:10px;min-height:220px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px">Starting camera…</div>
@@ -11298,6 +11298,12 @@ function openCloseWorkOrderScanModal(woId, assetName) {
         <input type="text" value="${escapeHtml(currentUsername)}" disabled style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;background:#F8FAFC;color:var(--muted)">
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Note (optional)</label>
         <textarea id="wc_note" rows="2" placeholder="What was done" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical"></textarea>
+      </div>
+      <div id="wc_summarySection" style="display:none;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Closure Summary — the permanent record of what happened</label>
+        <div id="wc_summaryLoading" style="font-size:12px;color:var(--muted);padding:10px 0">✨ Drafting from the activity log and chat…</div>
+        <textarea id="wc_summary" rows="4" style="display:none;width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical;margin-bottom:6px"></textarea>
+        <button id="wc_regenerateBtn" onclick="regenerateClosureSummary()" style="display:none;padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer">✨ Regenerate</button>
       </div>
       <div id="wc_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -11362,14 +11368,21 @@ async function submitCloseWoScan() {
   if (!code) { errorBox.textContent = 'Scan or enter the barcode or QR code.'; errorBox.style.display = 'block'; return; }
 
   const confirmSection = document.getElementById('wc_confirmSection');
-  if (confirmSection.style.display !== 'none') {
-    // The confirm step is already showing - this click is the real,
-    // final "Confirm Closure" action.
+  const summarySection = document.getElementById('wc_summarySection');
+
+  if (summarySection.style.display !== 'none') {
+    // The summary step is already showing - this click is the real,
+    // final "Close Work Order" action, with whatever summary text is
+    // currently in the box (AI's draft, or the person's own edits).
     btn.disabled = true; btn.textContent = 'Closing…';
     try {
       const resp = await fetch('/api/work-orders', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ closeViaScan: true, recordId: wcCloseWoId, scannedCode: code, note: document.getElementById('wc_note').value.trim() || undefined }),
+        body: JSON.stringify({
+          closeViaScan: true, recordId: wcCloseWoId, scannedCode: code,
+          note: document.getElementById('wc_note').value.trim() || undefined,
+          closureSummary: document.getElementById('wc_summary').value.trim() || undefined,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Could not close this work order');
@@ -11383,8 +11396,22 @@ async function submitCloseWoScan() {
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.style.display = 'block';
-      btn.disabled = false; btn.textContent = 'Confirm Closure';
+      btn.disabled = false; btn.textContent = 'Close Work Order';
     }
+    return;
+  }
+
+  if (confirmSection.style.display !== 'none') {
+    // The confirm step is already showing - this click moves to the
+    // summary step: draft it fresh, then let the person review/edit
+    // before anything is actually saved. Disabled while drafting so a
+    // fast double-click can't trigger the final close before the
+    // summary textarea is actually populated.
+    summarySection.style.display = 'block';
+    confirmSection.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Close Work Order';
+    await regenerateClosureSummary();
     return;
   }
 
@@ -11411,6 +11438,152 @@ async function submitCloseWoScan() {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Scan to Continue';
+  }
+}
+
+async function regenerateClosureSummary() {
+  const loadingEl = document.getElementById('wc_summaryLoading');
+  const textareaEl = document.getElementById('wc_summary');
+  const regenBtn = document.getElementById('wc_regenerateBtn');
+  document.getElementById('wc_submit').disabled = true;
+  loadingEl.style.display = 'block';
+  textareaEl.style.display = 'none';
+  regenBtn.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draftClosureSummary: true, recordId: wcCloseWoId }),
+    });
+    const data = await resp.json();
+    textareaEl.value = (data.success && data.summary) ? data.summary : '';
+    if (!data.success) textareaEl.placeholder = data.error || 'Could not draft a summary — write one manually.';
+  } catch (err) {
+    textareaEl.placeholder = 'Could not draft a summary — write one manually.';
+  } finally {
+    loadingEl.style.display = 'none';
+    textareaEl.style.display = 'block';
+    regenBtn.style.display = 'inline-block';
+    document.getElementById('wc_submit').disabled = false;
+  }
+}
+
+// On-demand summary generation for an OLD work order that was closed
+// before this feature existed - same "draft, then person reviews
+// before it's saved" principle as a live closure, just reached from
+// the detail page of something already done instead of the closing
+// flow itself.
+async function generateOldClosureSummary(recordId) {
+  const btn = document.getElementById('genSummaryBtn_' + recordId);
+  btn.disabled = true;
+  btn.textContent = '✨ Drafting…';
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draftClosureSummary: true, recordId }),
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Could not draft a summary right now.');
+    openOldClosureSummaryReviewModal(recordId, data.summary);
+  } catch (err) {
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = '✨ Generate Summary';
+  }
+}
+
+function openOldClosureSummaryReviewModal(recordId, draftSummary) {
+  const overlay = document.createElement('div');
+  overlay.id = 'oldSummaryReviewOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">Closure Summary</div>
+      <textarea id="oldSummary_text" rows="5" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical;margin-bottom:10px">${escapeHtml(draftSummary || '')}</textarea>
+      <button onclick="regenerateOldClosureSummary('${recordId}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:14px">✨ Regenerate</button>
+      <div id="oldSummary_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('oldSummaryReviewOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="oldSummary_save" onclick="saveOldClosureSummary('${recordId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function regenerateOldClosureSummary(recordId) {
+  const textareaEl = document.getElementById('oldSummary_text');
+  textareaEl.value = '';
+  textareaEl.placeholder = '✨ Drafting…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draftClosureSummary: true, recordId }),
+    });
+    const data = await resp.json();
+    textareaEl.value = (data.success && data.summary) ? data.summary : '';
+    if (!data.success) textareaEl.placeholder = data.error || 'Could not draft a summary.';
+  } catch (err) {
+    textareaEl.placeholder = 'Could not draft a summary.';
+  }
+}
+
+async function saveOldClosureSummary(recordId) {
+  const summary = document.getElementById('oldSummary_text').value.trim();
+  const errorEl = document.getElementById('oldSummary_error');
+  const btn = document.getElementById('oldSummary_save');
+  if (!summary) { errorEl.textContent = 'The summary can\'t be empty.'; errorEl.style.display = 'block'; return; }
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ saveClosureSummary: true, recordId, closureSummary: summary }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save');
+    document.getElementById('oldSummaryReviewOverlay').remove();
+    await showWorkOrderDetail(recordId);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+// Confirmed directly: a one-time, upfront bulk run for every already-
+// closed work order, not reviewed one-by-one first (unlike a live
+// closure or the single-record "Generate Summary" button above) -
+// generated and saved directly in the backend. Processed in small
+// batches since a single request can't safely draft ~100+ summaries
+// without risking a serverless timeout - this just keeps calling the
+// batch endpoint and showing real progress until the backend reports
+// nothing left to do.
+async function startBackfillClosureSummaries() {
+  const btn = document.getElementById('backfillSummaryBtn');
+  const statusEl = document.getElementById('backfillSummaryStatus');
+  btn.disabled = true;
+  let totalProcessed = 0;
+
+  try {
+    while (true) {
+      const resp = await fetch('/api/work-orders', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backfillClosureSummaries: true }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Backfill failed');
+
+      totalProcessed += data.processed;
+      statusEl.textContent = `Generated ${totalProcessed} so far — ${data.remaining} remaining…`;
+
+      if (data.done || data.processed === 0) break; // stop if genuinely done, or a batch made no progress (avoids looping forever on a stuck record)
+    }
+    statusEl.textContent = `✓ Done — generated summaries for ${totalProcessed} work order${totalProcessed !== 1 ? 's' : ''}.`;
+    btn.style.display = 'none';
+  } catch (err) {
+    statusEl.textContent = `Stopped after ${totalProcessed} — ${err.message}. Click to try again.`;
+    btn.disabled = false;
   }
 }
 
@@ -15853,6 +16026,10 @@ async function showWorkOrderDetail(recordId) {
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
       ${o.status === 'Closed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · ' + formatCurrency(o.cost) : ''}</div>` : ''}
+      ${o.status === 'Closed' ? (o.closureSummary
+        ? `<div style="background:#F7F8FA;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px"><div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Closure Summary</div><div style="font-size:12.5px;color:var(--text);line-height:1.4">${escapeHtml(o.closureSummary)}</div></div>`
+        : `<button id="genSummaryBtn_${o.id}" onclick="generateOldClosureSummary('${o.id}')" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:8px">✨ Generate Summary</button>`
+      ) : ''}
       ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
       ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
       ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
@@ -17544,6 +17721,13 @@ async function buildWorkOrdersHtml(orders) {
         <div style="font-size:11.5px;color:var(--muted)">Off by default — closure is immediate and self-service. Turn on to require the routed role's review first, for whichever conditions you choose.</div>
       </div>
       <button onclick="openClosureReviewSettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit Closure Review</button>
+    </div>
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">Closure Summaries — Backfill</div>
+        <div style="font-size:11.5px;color:var(--muted)" id="backfillSummaryStatus">Generates a whole-story summary for every already-closed work order that doesn't have one yet — run once, upfront, since old ones predate this feature.</div>
+      </div>
+      <button id="backfillSummaryBtn" onclick="startBackfillClosureSummaries()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✨ Backfill Summaries</button>
     </div>`;
   }
 
