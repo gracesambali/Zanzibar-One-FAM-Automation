@@ -3276,9 +3276,10 @@ async function handleScheduleInspection(req, res, scheduledBy, organizationId) {
       status: "Open",
       // Deterministic rule, not AI - this is a plain fact check, not
       // language to interpret: a scheduled inspection on a
-      // High-criticality asset starts High, everything else starts
-      // Low. Still subject to the same universal escalation once open.
-      urgency: f.criticality === "High" ? "High" : "Low",
+      // High-criticality asset starts Critical, everything else
+      // starts High (the floor - "Low" no longer exists as a value).
+      // Still subject to the same universal time-based escalation.
+      urgency: f.criticality === "High" ? "Critical" : "High",
       created: new Date().toISOString(),
       notes: notes || `Inspection scheduled by ${scheduledBy}`,
       assigned_role: getAssignedRole(f.system, f.name) || null,
@@ -3326,8 +3327,9 @@ async function handleOrderSparePart(req, res, orderedBy, organizationId) {
       location: f.room_zone || null,
       status: "Open",
       // A spare-part order is administrative, not an active fault -
-      // deterministic rule, always starts Low.
-      urgency: "Low",
+      // deterministic rule, always starts at the floor (High - "Low"
+      // no longer exists as a value).
+      urgency: "High",
       created: new Date().toISOString(),
       notes: `Spare part order initiated by ${orderedBy} for ${f.name || assetId}`,
       assigned_role: getAssignedRole(f.system, f.name) || null,

@@ -300,67 +300,72 @@ WhatsApp is live on the account and a real send is attempted — that setup
 (registering the number, submitting a template to Meta if needed) happens
 in Beem's own dashboard, not in this codebase.
 
-## Work Order Urgency & Status (final design — supersedes the section this replaced)
+## Work Order Urgency & Status (final design — supersedes both sections this replaced)
 
-**Urgency: exactly 3 real values everywhere — Critical / High / Low.**
-No exceptions, no per-origin vocabulary. Every work order gets a
-deterministic initial urgency based on how it was created:
+**Urgency: exactly 3 real values everywhere — High / Critical / Overdue.**
+"Low" was retired entirely — High is now the floor, nothing starts below
+it. No per-origin vocabulary, no exceptions. Every work order gets a
+deterministic initial urgency (Critical or High) based on how it was
+created:
 - **Scheduled maintenance** — Critical if already overdue at creation,
   otherwise High (rule-based, not AI — this is a plain date comparison)
 - **Sensor alert** (reading outside target range) — always Critical (a
   real active fault signal)
-- **Inspection** — High if the asset itself is High-criticality,
-  otherwise Low (rule-based)
-- **Spare-part order** — always Low (administrative, not an active issue)
+- **Inspection** — Critical if the asset itself is High-criticality,
+  otherwise High (rule-based)
+- **Spare-part order** — always High (administrative, not an active issue)
 - **Breakdown email / public no-login portal report** — assessed by AI
-  (`lib/workOrderUrgencyAI.js`), the one case with real unstructured
-  language to interpret, using asset criticality/system when tied to
-  one, the report's own wording, whether multiple systems were flagged,
-  and this organization's own recent similar reports for pattern
-  reference
+  (`lib/workOrderUrgencyAI.js`) between Critical/High only, the one case
+  with real unstructured language to interpret, using asset criticality/
+  system when tied to one, the report's own wording, whether multiple
+  systems were flagged, and this organization's own recent similar
+  reports for pattern reference
 
-**Leadership Reporter hard floor**, confirmed directly: a report from
-someone flagged `users.is_leadership_reporter` (directors, chiefs, etc.
-— independent of functional role) always lands at High or above,
-regardless of what the AI concludes from the text. Must be turned on per
-person via Staff Management → Edit → "Leadership Reporter" checkbox — not
-automatic for any role.
+**"Overdue" is reached purely through elapsed time**, never assigned at
+creation by any origin or by AI — see the escalation clock below.
+
+The original Leadership Reporter "always at least High" floor
+(`users.is_leadership_reporter`) is now automatic, since nothing can be
+assessed below High anymore — there's no separate floor-enforcement step
+left in the code. The flag itself (Staff Management → Edit → "Leadership
+Reporter" checkbox) still exists and is still recorded, in case it's
+wanted for something more specific later (e.g. forcing Critical rather
+than just High).
 
 **Status: Open, Ready for Review, Closed.** "In Progress" was dropped
-entirely, confirmed directly — Open now covers both "not started" and
-"actively being worked."
+entirely, folded into Open. No overdue concept lives in status at all —
+that's exclusively an urgency value now.
 
 **Universal live escalation clock**, confirmed directly, applies
 identically to every work order regardless of origin or starting
-urgency — never stored, computed fresh every time a work order is
-actually viewed (`lib/workOrderState.js` → `computeEffectiveWorkOrderState`,
+urgency, and is a pure function of elapsed time since creation — NOT
+gated by status (`lib/workOrderState.js` → `computeEffectiveWorkOrderState`,
 mirrored in the frontend):
-- 6 hours open, still unresolved → at least High
-- 8 hours open, still unresolved → Critical
-- 24 hours open, still unresolved → displayed status becomes
-  **Open-Overdue** (only "Open" work orders can become overdue — Ready
-  for Review and Closed never do)
+- 0–8 hours: whatever it started as (Critical or High)
+- 8+ hours: at least Critical
+- 24+ hours: **Overdue** — the highest, final tier, overriding whatever
+  it was before
 
-Escalation only ever pushes urgency UP, never down. "Open-Overdue" is
-never a stored database value — computing it live means it's always
-exactly accurate to the second, and avoids relying on a background job:
-the hosting plan's cron only runs once per day (confirmed directly against
-Vercel's own Hobby-tier limits), nowhere near tight enough for a 6-8 hour
-threshold. This was a deliberate trade confirmed directly: no active
-notification fires the moment a work order crosses a threshold, but the
-status is always correct wherever it's shown, at $0 added cost.
+Never stored beyond its starting value — computed live every time a work
+order is actually viewed, so it's always exactly accurate to the second.
+This also avoids relying on a background job: the hosting plan's cron
+only runs once per day (confirmed directly against Vercel's own
+Hobby-tier limits), nowhere near tight enough for an 8-24 hour window.
+This was a deliberate, confirmed trade: no active notification fires the
+moment a work order crosses a threshold, but the urgency shown is always
+correct wherever it's displayed, at $0 added cost.
 
 The old per-urgency SLA Targets settings screen (editable response/
-resolution-hour windows per urgency tier) was removed entirely — it
-doesn't apply under this design. The underlying `sla_targets` table and
-its unit/tenant-SLA-summary code paths (`loadSLATargetsMap`,
-`computeSLACompliance`, `computeUnitSLASummary` — a separate,
-unrelated feature) were left untouched since they may still serve
-tenant/unit tracking, not investigated as part of this change.
+resolution-hour windows per tier) was removed entirely — it doesn't
+apply under this design. The underlying `sla_targets` table and its
+separate unit/tenant-SLA-summary code paths (`loadSLATargetsMap`,
+`computeSLACompliance`, `computeUnitSLASummary` — an unrelated feature)
+were left untouched since they may still serve tenant/unit tracking, not
+investigated as part of this change.
 
 The daily digest email includes a live "All Open Work Orders — Right
-Now" section (Critical/High/Low counts + Open-Overdue count), computed
-fresh at send time using the same escalation logic shown in-app.
+Now" section (High / Critical / Overdue counts), computed fresh at send
+time using the same escalation logic shown in-app.
 
 Every place displaying a work order's urgency or status badge uses two
 shared functions, `woUrgencyBadgeClass()` and `woStatusDisplay()`, both

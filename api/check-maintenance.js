@@ -181,11 +181,10 @@ export default async function handler(req, res) {
         const { query: pgQueryWO } = await import("../lib/postgresClient.js");
         const { computeEffectiveWorkOrderState } = await import("../lib/workOrderState.js");
         const openWOsResult = await pgQueryWO("select created, urgency, status from work_orders where status = 'Open'");
-        const counts = { Critical: 0, High: 0, Low: 0, overdue: 0 };
+        const counts = { Critical: 0, High: 0, Overdue: 0 };
         for (const wo of openWOsResult.rows) {
           const effective = computeEffectiveWorkOrderState(wo.created, wo.urgency, wo.status);
           counts[effective.urgency] = (counts[effective.urgency] || 0) + 1;
-          if (effective.status === "Open-Overdue") counts.overdue++;
         }
         workOrderUrgencySummary = counts;
       } catch (err) {
@@ -429,13 +428,12 @@ async function sendDigestEmail(items, warrantyItems, replacementItems, workOrder
       </table>` : ''}
       ${workOrderUrgencySummary ? `
       <p style="font-size:14px;line-height:1.6;font-weight:700;margin-bottom:6px">📋 All Open Work Orders — Right Now</p>
-      <p style="font-size:12.5px;color:#6b7280;margin:0 0 10px">Reflects the same live escalation shown in the app — a work order started Low can show as High or Critical here if it's been open long enough.</p>
+      <p style="font-size:12.5px;color:#6b7280;margin:0 0 10px">Reflects the same live escalation shown in the app — a work order started High can show as Critical or Overdue here if it's been open long enough.</p>
       <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
         <tbody>
-          <tr><td style="padding:6px 12px;font-size:13px">🔴 Critical</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.Critical}</td></tr>
           <tr><td style="padding:6px 12px;font-size:13px">🟠 High</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.High}</td></tr>
-          <tr><td style="padding:6px 12px;font-size:13px">🟢 Low</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.Low}</td></tr>
-          <tr><td style="padding:6px 12px;font-size:13px;border-top:1px solid #e5e7eb">⏰ Open-Overdue (24h+)</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right;border-top:1px solid #e5e7eb;color:#dc2626">${workOrderUrgencySummary.overdue}</td></tr>
+          <tr><td style="padding:6px 12px;font-size:13px">🔴 Critical</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.Critical}</td></tr>
+          <tr><td style="padding:6px 12px;font-size:13px;border-top:1px solid #e5e7eb">⏰ Overdue (24h+)</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right;border-top:1px solid #e5e7eb;color:#dc2626">${workOrderUrgencySummary.Overdue}</td></tr>
         </tbody>
       </table>` : ''}
       <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${fromName}</p>

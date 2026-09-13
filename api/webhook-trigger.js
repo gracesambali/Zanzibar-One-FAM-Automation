@@ -268,7 +268,7 @@ async function handleResendEmailWebhook(req, res) {
     const { assessWorkOrderUrgency } = await import("../lib/workOrderUrgencyAI.js");
     const recentHistoryResult = await pgQuery(
       `select notes, urgency from work_orders
-       where organization_id = $1 and source = 'email' and urgency in ('Critical','High','Low')
+       where organization_id = $1 and source = 'email' and urgency in ('Critical','High','Overdue')
        order by created desc limit 5`,
       [user.organization_id]
     ).catch(() => null);
@@ -305,7 +305,7 @@ async function handleResendEmailWebhook(req, res) {
       assigned_role_set_by: suggestedRole ? "system_auto_suggested" : null,
       assignment_status: suggestedRole ? "Suggested" : "Unassigned",
       urgency: urgencyAssessment.urgency,
-      urgency_set_by: urgencyAssessment.leadershipFloorApplied ? "ai_leadership_floor" : urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
+      urgency_set_by: urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
       activity_log: JSON.stringify([
         {
           text: suggestedRole
@@ -315,7 +315,7 @@ async function handleResendEmailWebhook(req, res) {
           at: new Date().toISOString(),
         },
         {
-          text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.leadershipFloorApplied ? " (raised — Leadership Reporter)" : ""}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
+          text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
           by: "system",
           at: new Date().toISOString(),
         },

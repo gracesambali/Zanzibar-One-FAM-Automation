@@ -2355,15 +2355,13 @@ async function buildPeriodReport(req, res, days, organizationId) {
         completed: allWorkOrders.filter(r => r.status === "Closed" && r.completed_date && new Date(r.completed_date) >= cutoff).length,
         open: allWorkOrders.filter(r => r.status === "Open").length,
         readyForReview: allWorkOrders.filter(r => r.status === "Ready for Review").length,
-        // "Open-Overdue" is never stored - computed live from real
-        // elapsed time (Vercel Hobby only runs cron once/day, nowhere
-        // near tight enough for a 24-hour threshold, and computing
-        // live is actually more accurate anyway - always exact to the
-        // second, no timer needed). Same for the escalated Critical
-        // count - a work order that started Low or High still counts
-        // here once the universal 6h/8h clock has pushed it to Critical.
-        critical: allWorkOrders.filter(r => r.status === "Open" && computeEffectiveWorkOrderState(r.created, r.urgency, r.status).urgency === "Critical").length,
-        overdue: allWorkOrders.filter(r => r.status === "Open" && computeEffectiveWorkOrderState(r.created, r.urgency, r.status).status === "Open-Overdue").length,
+        // Urgency is a pure function of elapsed time since creation,
+        // never gated by status, never stored beyond its starting
+        // value - computed live every time (Vercel Hobby only runs
+        // cron once/day, nowhere near tight enough for an 8-24 hour
+        // window, and computing live is actually more accurate anyway).
+        critical: allWorkOrders.filter(r => computeEffectiveWorkOrderState(r.created, r.urgency, r.status).urgency === "Critical").length,
+        overdue: allWorkOrders.filter(r => computeEffectiveWorkOrderState(r.created, r.urgency, r.status).urgency === "Overdue").length,
       },
       periodStart: cutoff.toISOString(),
       periodEnd: new Date().toISOString(),

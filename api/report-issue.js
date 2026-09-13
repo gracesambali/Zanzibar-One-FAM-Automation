@@ -1125,7 +1125,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   const { assessWorkOrderUrgency } = await import("../lib/workOrderUrgencyAI.js");
   const recentHistoryResult = await pgQuery(
     `select notes, urgency from work_orders
-     where organization_id = $1 and urgency in ('Critical','High','Low')
+     where organization_id = $1 and urgency in ('Critical','High','Overdue')
      order by created desc limit 5`,
     [organizationId]
   ).catch(() => null);
@@ -1150,7 +1150,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     location,
     status: "Open",
     urgency: urgencyAssessment.urgency,
-    urgency_set_by: urgencyAssessment.leadershipFloorApplied ? "ai_leadership_floor" : urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
+    urgency_set_by: urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
     created: new Date().toISOString(),
     last_reminder_sent: new Date().toISOString().split("T")[0],
     notes: `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
@@ -1158,7 +1158,7 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     satisfaction_status: "Pending",
     maintenance_type: "Corrective",
     activity_log: JSON.stringify([{
-      text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.leadershipFloorApplied ? " (raised — Leadership Reporter)" : ""}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
+      text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
       by: "system",
       at: new Date().toISOString(),
     }]),

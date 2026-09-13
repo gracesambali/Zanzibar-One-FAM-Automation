@@ -1399,50 +1399,39 @@ function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 
 // Mirrors lib/workOrderState.js exactly - kept in sync deliberately,
 // since the frontend has no shared-module import path to the backend
-// lib files. One real urgency scale everywhere: Critical/High/Low, no
-// exceptions. Escalation only ever pushes urgency UP, never down.
-// "Open-Overdue" is never stored - Vercel Hobby only runs cron once a
-// day, nowhere near tight enough for a 24-hour threshold, and
-// computing this live instead means it's always exactly accurate to
-// the second, for every work order, with no timer at all.
-const WO_URGENCY_RANK = { Low: 0, High: 1, Critical: 2 };
-const WO_ESCALATE_TO_HIGH_HOURS = 6;
+// lib files. One real urgency scale everywhere: Critical/High/Overdue
+// - "Low" retired entirely, confirmed directly - High is now the
+// floor, nothing starts below it. Urgency is a pure function of
+// elapsed time since creation, NOT gated by status.
 const WO_ESCALATE_TO_CRITICAL_HOURS = 8;
-const WO_MARK_OVERDUE_HOURS = 24;
+const WO_ESCALATE_TO_OVERDUE_HOURS = 24;
 
 function computeEffectiveWorkOrderState(createdAt, storedUrgency, storedStatus) {
   const hoursSince = createdAt ? (Date.now() - new Date(createdAt).getTime()) / 3600000 : 0;
-  let urgency = ['Critical', 'High', 'Low'].includes(storedUrgency) ? storedUrgency : 'Low';
-  if (hoursSince >= WO_ESCALATE_TO_CRITICAL_HOURS) {
+  let urgency = ['Critical', 'High'].includes(storedUrgency) ? storedUrgency : 'High';
+  if (hoursSince >= WO_ESCALATE_TO_OVERDUE_HOURS) {
+    urgency = 'Overdue';
+  } else if (hoursSince >= WO_ESCALATE_TO_CRITICAL_HOURS) {
     urgency = 'Critical';
-  } else if (hoursSince >= WO_ESCALATE_TO_HIGH_HOURS && WO_URGENCY_RANK[urgency] < WO_URGENCY_RANK.High) {
-    urgency = 'High';
   }
-  let status = storedStatus;
-  if (storedStatus === 'Open' && hoursSince >= WO_MARK_OVERDUE_HOURS) {
-    status = 'Open-Overdue';
-  }
-  return { urgency, status, hoursSinceCreated: hoursSince };
+  return { urgency, status: storedStatus, hoursSinceCreated: hoursSince };
 }
 
 // Three real values, everywhere, regardless of origin - confirmed
 // directly. Applied to the LIVE-computed urgency (post-escalation),
-// not the raw stored value, so a work order that's aged into Critical
-// shows as Critical even if it started Low.
+// not the raw stored value, so a work order that's aged into Overdue
+// shows as Overdue even if it started High.
 function woUrgencyBadgeClass(urgency) {
-  if (urgency === 'Critical') return 'badge-overdue';
-  if (urgency === 'High') return 'badge-warning';
-  return 'badge-good'; // Low
+  if (urgency === 'Overdue') return 'badge-overdue';
+  if (urgency === 'Critical') return 'badge-high';
+  return 'badge-warning'; // High
 }
 
-// Confirmed directly, requested: Open, Open-Overdue, Ready for
-// Review, Closed - In Progress no longer exists as a distinct
-// concept, folded into Open. Takes the whole work order object so it
-// can compute the live Open-Overdue state from real elapsed time,
-// not just echo back whatever's stored.
+// Confirmed directly: Open, Ready for Review, Closed - a plain,
+// unconditional status, no live computation needed here anymore.
+// "In Progress" no longer exists as a distinct concept, folded into
+// Open. "Overdue" now lives entirely in urgency, not status.
 function woStatusDisplay(o) {
-  const effective = computeEffectiveWorkOrderState(o.created, o.urgency, o.status);
-  if (effective.status === 'Open-Overdue') return { label: 'Open-Overdue', badgeClass: 'badge-overdue' };
   if (o.status === 'Ready for Review') return { label: 'Ready for Review', badgeClass: 'badge-warning' };
   if (o.status === 'Closed') return { label: 'Closed', badgeClass: 'badge-good' };
   return { label: 'Open', badgeClass: 'badge-good' };
@@ -1711,7 +1700,7 @@ function renderDashboard() {
     const monthWOs = dashWOs.filter(w => (w.created||'').startsWith(mKey));
     const planned = monthWOs.length;
     const completed = monthWOs.filter(w => w.status === 'Closed').length;
-    const overdue = monthWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).status === 'Open-Overdue').length;
+    const overdue = monthWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).urgency === 'Overdue').length;
     maintData.push({ m: monthNames[d.getMonth()], p: planned, c: completed, o: overdue });
   }
   const maxM = Math.max(1, ...maintData.map(d => Math.max(d.p, d.c, d.o)));
@@ -1761,9 +1750,9 @@ function renderDashboard() {
   // Work Orders Summary — live from dashboardWorkOrders
   const woOpen = dashWOs.filter(w => w.status === 'Open').length;
   const woReadyForReview = dashWOs.filter(w => w.status === 'Ready for Review').length;
-  // "Open-Overdue" is never stored - computed live from real elapsed
-  // time against the universal 24-hour threshold, same as everywhere else.
-  const woOverdue = dashWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).status === 'Open-Overdue').length;
+  // "Overdue" is a live-computed urgency value, never stored -
+  // reflects real elapsed time against the 24-hour threshold, same as everywhere else.
+  const woOverdue = dashWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).urgency === 'Overdue').length;
   const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
   const woCompletedYTD = dashWOs.filter(w => w.status === 'Closed' && w.completedDate >= yearStart).length;
 
@@ -17787,8 +17776,8 @@ function renderWorkOrdersTable() {
   // Fixed order rather than derived from whatever's currently present,
   // so the filter always offers all 3 real values even if none of
   // today's work orders happen to be, say, Critical right now.
-  const uniqueUrgencies = ['Critical', 'High', 'Low'];
-  const uniqueStatuses = ['Open', 'Open-Overdue', 'Ready for Review', 'Closed'];
+  const uniqueUrgencies = ['Critical', 'High', 'Overdue'];
+  const uniqueStatuses = ['Open', 'Ready for Review', 'Closed'];
   const uniqueTechnicians = [...new Set(orders.map(o => o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned'))].sort();
 
   const anyFilterActive = Object.values(woTableFilters).some(v => v !== 'All');
