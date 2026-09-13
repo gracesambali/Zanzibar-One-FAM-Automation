@@ -338,13 +338,23 @@ that's exclusively an urgency value now.
 
 **Universal live escalation clock**, confirmed directly, applies
 identically to every work order regardless of origin or starting
-urgency, and is a pure function of elapsed time since creation — NOT
-gated by status (`lib/workOrderState.js` → `computeEffectiveWorkOrderState`,
-mirrored in the frontend):
+urgency, and is a pure function of elapsed time since creation — while
+still unresolved (Open or Ready for Review):
 - 0–8 hours: whatever it started as (Critical or High)
 - 8+ hours: at least Critical
-- 24+ hours: **Overdue** — the highest, final tier, overriding whatever
-  it was before
+- 24+ hours: **Overdue** — the highest tier, overriding whatever it was
+  before
+
+**Once Closed, urgency becomes "Closed" too** — confirmed directly,
+fixing a real bug in the first version of this design: urgency being a
+pure function of elapsed time with no status gate meant a work order
+closed within the first hour could still show "Overdue" a day later,
+since 24+ hours had passed since it was *created* — nonsensical for
+something already finished. Freezing at whatever it last was (instead
+of collapsing to "Closed") was considered and rejected too — a job
+closed in 20 minutes still showing "Critical" forever afterward is the
+same problem in a milder form. Once Closed, urgency and status say the
+same thing.
 
 Never stored beyond its starting value — computed live every time a work
 order is actually viewed, so it's always exactly accurate to the second.

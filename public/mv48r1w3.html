@@ -1401,13 +1401,18 @@ function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 // since the frontend has no shared-module import path to the backend
 // lib files. One real urgency scale everywhere: Critical/High/Overdue
 // - "Low" retired entirely, confirmed directly - High is now the
-// floor, nothing starts below it. Urgency is a pure function of
-// elapsed time since creation, NOT gated by status.
+// floor, nothing starts below it. Urgency escalates with elapsed time
+// while unresolved (Open/Ready for Review); once Closed, urgency
+// itself becomes "Closed" too - confirmed directly, a closed work
+// order shouldn't keep showing a stale Critical/High/Overdue snapshot.
 const WO_ESCALATE_TO_CRITICAL_HOURS = 8;
 const WO_ESCALATE_TO_OVERDUE_HOURS = 24;
 
 function computeEffectiveWorkOrderState(createdAt, storedUrgency, storedStatus) {
   const hoursSince = createdAt ? (Date.now() - new Date(createdAt).getTime()) / 3600000 : 0;
+  if (storedStatus === 'Closed') {
+    return { urgency: 'Closed', status: storedStatus, hoursSinceCreated: hoursSince };
+  }
   let urgency = ['Critical', 'High'].includes(storedUrgency) ? storedUrgency : 'High';
   if (hoursSince >= WO_ESCALATE_TO_OVERDUE_HOURS) {
     urgency = 'Overdue';
@@ -1424,6 +1429,7 @@ function computeEffectiveWorkOrderState(createdAt, storedUrgency, storedStatus) 
 function woUrgencyBadgeClass(urgency) {
   if (urgency === 'Overdue') return 'badge-overdue';
   if (urgency === 'Critical') return 'badge-high';
+  if (urgency === 'Closed') return 'badge-good';
   return 'badge-warning'; // High
 }
 
