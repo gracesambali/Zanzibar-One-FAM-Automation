@@ -1434,7 +1434,7 @@ function woUrgencyBadgeClass(urgency) {
 function woStatusDisplay(o) {
   if (o.status === 'Ready for Review') return { label: 'Ready for Review', badgeClass: 'badge-warning' };
   if (o.status === 'Closed') return { label: 'Closed', badgeClass: 'badge-good' };
-  return { label: 'Open', badgeClass: 'badge-good' };
+  return { label: 'Open', badgeClass: 'badge-overdue' };
 }
 
 // A plain total-duration line, deliberately separate from SLA — this
