@@ -1103,6 +1103,44 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   const woId = `WO-${Date.now()}`;
   const location = roomZone ? `${floor} — ${roomZone}` : floor;
 
+  const { insert, update, query: pgQuery } = await import("../lib/postgresClient.js");
+
+  // AI urgency assessment — replaces the old generic "REPORTED"
+  // placeholder with a real Critical/High/Low. No asset is tied to
+  // this kind of report (a floor/room, not a specific asset id), so
+  // the assessment leans on the report's own language, multi-system
+  // signal, and this org's own recent pattern. Leadership Reporter
+  // status is checked by matching reporterContact against a real user
+  // record — the public no-login report form has no session to read
+  // it from directly.
+  let isLeadershipReporter = false;
+  if (reporterContact) {
+    const reporterUser = await pgQuery(
+      "select is_leadership_reporter from users where organization_id = $1 and (lower(email) = lower($2) or phone = $2) limit 1",
+      [organizationId, reporterContact]
+    ).catch(() => null);
+    isLeadershipReporter = !!(reporterUser?.rows?.[0]?.is_leadership_reporter);
+  }
+
+  const { assessWorkOrderUrgency } = await import("../lib/workOrderUrgencyAI.js");
+  const recentHistoryResult = await pgQuery(
+    `select notes, urgency from work_orders
+     where organization_id = $1 and urgency in ('Critical','High','Low')
+     order by created desc limit 5`,
+    [organizationId]
+  ).catch(() => null);
+  const recentOrgHistory = (recentHistoryResult?.rows || []).map(r => ({
+    summary: (r.notes || "").slice(0, 100),
+    urgency: r.urgency,
+  }));
+  const urgencyAssessment = await assessWorkOrderUrgency({
+    reportText: `${description} (reported at ${location})`,
+    asset: null,
+    multiIssueLikely: false, // this report path isn't keyword-scanned for multiple systems the way the breakdown-email path is
+    isLeadershipReporter,
+    recentOrgHistory,
+  });
+
   const baseFields = {
     wo_id: woId,
     asset_id: null,
@@ -1111,20 +1149,23 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
     assigned_role: assignedRole,
     location,
     status: "Open",
-    urgency: "REPORTED",
+    urgency: urgencyAssessment.urgency,
+    urgency_set_by: urgencyAssessment.leadershipFloorApplied ? "ai_leadership_floor" : urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
     created: new Date().toISOString(),
     last_reminder_sent: new Date().toISOString().split("T")[0],
     notes: `Reported by ${reporterName}${reporterRole ? " (" + reporterRole + ")" : ""} at ${location}: ${description}`,
     reporter_contact: reporterContact || null,
     satisfaction_status: "Pending",
     maintenance_type: "Corrective",
-    activity_log: "[]",
+    activity_log: JSON.stringify([{
+      text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.leadershipFloorApplied ? " (raised — Leadership Reporter)" : ""}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
+      by: "system",
+      at: new Date().toISOString(),
+    }]),
     organization_id: organizationId,
   };
   if (building) baseFields.building = building;
   if (unit) baseFields.unit = unit;
-
-  const { insert, update } = await import("../lib/postgresClient.js");
 
   let created;
   try {

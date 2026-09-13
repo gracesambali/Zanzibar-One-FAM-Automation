@@ -130,7 +130,7 @@ export default async function handler(req, res) {
       if (daysUntil > ALERT_WINDOW_DAYS) {
         return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
       }
-      const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
+      const urgency = daysUntil < 0 ? "OVERDUE" : "UPCOMING";
       const message = `[${urgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
@@ -247,6 +247,30 @@ async function handleResendEmailWebhook(req, res) {
     // --- Keyword-based role suggestion (best effort, admin always backstops it) ---
     const { suggestedRole, multiIssueLikely, matchedRoles } = guessAssignedRole(`${subject} ${bodyText}`);
 
+    // --- AI urgency assessment — a human report has no due date, so
+    // it needs its own real signal, not the date-based OVERDUE/UPCOMING
+    // scale used for scheduled maintenance. A flagged Leadership
+    // Reporter's report is floored at High regardless of content,
+    // confirmed directly.
+    const { assessWorkOrderUrgency } = await import("../lib/workOrderUrgencyAI.js");
+    const recentHistoryResult = await pgQuery(
+      `select notes, urgency from work_orders
+       where organization_id = $1 and source = 'email' and urgency in ('Critical','High','Low')
+       order by created desc limit 5`,
+      [user.organization_id]
+    ).catch(() => null);
+    const recentOrgHistory = (recentHistoryResult?.rows || []).map(r => ({
+      summary: (r.notes || "").slice(0, 100),
+      urgency: r.urgency,
+    }));
+    const urgencyAssessment = await assessWorkOrderUrgency({
+      reportText: `${subject}\n\n${bodyText}`,
+      asset: null, // this breakdown-email path isn't tied to a specific asset - a general report
+      multiIssueLikely,
+      isLeadershipReporter: !!user.is_leadership_reporter,
+      recentOrgHistory,
+    });
+
     let notes = `[Reported by email: ${subject}]\n\n${bodyText}`;
     if (multiIssueLikely) {
       notes = `[Possible multiple issues reported — review before splitting into separate work orders]\n\n${notes}`;
@@ -267,12 +291,19 @@ async function handleResendEmailWebhook(req, res) {
       assigned_role: suggestedRole || null,
       assigned_role_set_by: suggestedRole ? "system_auto_suggested" : null,
       assignment_status: suggestedRole ? "Suggested" : "Unassigned",
+      urgency: urgencyAssessment.urgency,
+      urgency_set_by: urgencyAssessment.leadershipFloorApplied ? "ai_leadership_floor" : urgencyAssessment.assessedBy === "ai" ? "ai_suggested" : "system_default",
       activity_log: JSON.stringify([
         {
           text: suggestedRole
             ? `🆕 Work order opened — reported by email, auto-suggested to ${suggestedRole}`
             : "🆕 Work order opened — reported by email, needs manual triage",
           by: fromEmail,
+          at: new Date().toISOString(),
+        },
+        {
+          text: `Urgency assessed: ${urgencyAssessment.urgency}${urgencyAssessment.leadershipFloorApplied ? " (raised — Leadership Reporter)" : ""}${urgencyAssessment.reason ? ` — ${urgencyAssessment.reason}` : ""}`,
+          by: "system",
           at: new Date().toISOString(),
         },
       ]),
@@ -533,7 +564,7 @@ async function sendEmail(f, urgency, message) {
       subject: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} — Maintenance Alert [${urgency}]: ${f.name || f.asset_id}`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
-          <div style="background:${urgency === "OVERDUE" ? "#dc2626" : urgency === "URGENT" ? "#d97706" : "#1A3566"};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+          <div style="background:${urgency === "OVERDUE" ? "#dc2626" : "#1A3566"};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
             <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;opacity:0.85">Maintenance Alert — ${urgency}</div>
             <div style="font-size:18px;font-weight:700;margin-top:4px">${f.name || f.asset_id}</div>
           </div>

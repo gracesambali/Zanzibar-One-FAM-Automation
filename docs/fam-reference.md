@@ -299,3 +299,42 @@ registered template name is needed instead, can only be confirmed once
 WhatsApp is live on the account and a real send is attempted — that setup
 (registering the number, submitting a template to Meta if needed) happens
 in Beem's own dashboard, not in this codebase.
+
+## Work Order Urgency (Critical / High / Low) + simplified maintenance dates
+
+Two separate, real scales, both stored in the same `work_orders.urgency`
+column depending on how the work order originated:
+
+- **Date-triggered work orders** (scheduled maintenance due dates) now use
+  only **OVERDUE** or **UPCOMING** — the old URGENT tier (due within 3
+  days) was dropped entirely, confirmed directly. UPCOMING still uses the
+  same 7-day alert window as before.
+- **Human-reported work orders** (breakdown emails, the public no-login
+  report portal) now get a real **Critical / High / Low** urgency,
+  assessed by AI (`lib/workOrderUrgencyAI.js`) instead of the old
+  meaningless "REPORTED" placeholder. Real signals combined: the tied
+  asset's Criticality and system (when the report names a specific
+  asset — the current email and portal paths don't yet), the report's
+  own language, whether multiple systems were flagged in one report, and
+  this organization's own recent similar reports for pattern reference.
+
+**Leadership Reporter hard floor**, confirmed directly: a report from
+someone flagged `users.is_leadership_reporter` (directors, chiefs, etc. —
+independent of their functional role) always lands at **High or above**,
+regardless of what the AI concludes from the text. `business_owner` role
+is already the most senior functional role and doesn't need the flag set
+separately in code, but the flag itself must still be turned on per
+person via Staff Management → Edit → "Leadership Reporter" checkbox — it
+is not automatic for any role today. Same principle as every other AI
+feature: suggest, never silently decide — every assessment (and whether
+the floor was applied) is logged in the work order's own Activity Log.
+
+SLA Targets: the old URGENT row (4h/48h) was renamed to Critical; High
+(8h/72h) and Low (48h/168h) are new rows with sensible starting defaults,
+editable like everything else in that screen.
+
+Every place that displays a work order's urgency badge (Work Orders
+table, Dashboard cards, detail pages) uses one shared function,
+`woUrgencyBadgeClass()`, so both vocabularies (OVERDUE/UPCOMING and
+Critical/High/Low) always render consistently rather than being
+re-guessed per screen.

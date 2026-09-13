@@ -126,7 +126,7 @@ export default async function handler(req, res) {
 
       if (!existingWO) {
         if (daysUntil <= ALERT_WINDOW_DAYS) {
-          const urgency = daysUntil < 0 ? "OVERDUE" : daysUntil <= 3 ? "URGENT" : "UPCOMING";
+          const urgency = daysUntil < 0 ? "OVERDUE" : "UPCOMING";
           const message = buildMessage(f, daysUntil, urgency, null);
 
           const [logResult, woId] = await Promise.all([
@@ -314,13 +314,12 @@ async function sendDigestEmail(items, warrantyItems, replacementItems) {
 
   const fromName = process.env.ALERT_FROM_NAME || "Facility Asset Management System";
   const overdueCount = items.filter(i => i.urgency === "OVERDUE").length;
-  const urgentCount = items.filter(i => i.urgency === "URGENT").length;
   const upcomingCount = items.filter(i => i.urgency === "UPCOMING").length;
   const reminderCount = items.filter(i => i.type === "reminder").length;
   const totalItems = items.length + warrantyItems.length + replacementItems.length;
 
   const itemRows = items.map(i => {
-    const color = i.urgency === "OVERDUE" ? "#dc2626" : i.urgency === "URGENT" ? "#d97706" : "#1A3566";
+    const color = i.urgency === "OVERDUE" ? "#dc2626" : "#1A3566";
     const timing = i.daysUntil < 0 ? `${Math.abs(i.daysUntil)} days overdue` : `${i.daysUntil} days remaining`;
     const woLabel = i.woId ? ` · ${i.woId}` : "";
     return `<tr>
@@ -364,7 +363,7 @@ async function sendDigestEmail(items, warrantyItems, replacementItems) {
     <div style="border:1px solid #e5e7eb;border-top:none;padding:20px 22px;border-radius:0 0 10px 10px">
       <p style="font-size:14px;line-height:1.6;margin-top:0">Dear Team,</p>
       ${items.length > 0 ? `
-      <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${urgentCount ? `, ${urgentCount} urgent` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
+      <p style="font-size:14px;line-height:1.6">Your daily maintenance check found <strong>${items.length}</strong> item${items.length!==1?"s":""} needing attention${overdueCount ? ` (<span style="color:#dc2626;font-weight:600">${overdueCount} overdue</span>)` : ""}${upcomingCount ? `, ${upcomingCount} upcoming` : ""}${reminderCount ? ` — including ${reminderCount} open reminder${reminderCount!==1?"s":""}` : ""}.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0">
         <thead><tr style="background:#f7f8fa">
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">ID</th>
@@ -431,10 +430,8 @@ async function sendDigestSms(items) {
   if (phoneList.length === 0) { console.error("No ALERT_TO_PHONE recipients configured"); return; }
 
   const overdueCount = items.filter(i => i.urgency === "OVERDUE").length;
-  const urgentCount = items.filter(i => i.urgency === "URGENT").length;
   let smsText = `FAM Daily: ${items.length} item${items.length!==1?"s":""}`;
   if (overdueCount) smsText += `, ${overdueCount} overdue`;
-  if (urgentCount) smsText += `, ${urgentCount} urgent`;
   // Add first 2-3 asset IDs for quick reference
   const topIds = items.slice(0, 3).map(i => i.assetId).join(", ");
   smsText += `. Top: ${topIds}`;

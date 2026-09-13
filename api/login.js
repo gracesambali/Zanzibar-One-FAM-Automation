@@ -238,13 +238,14 @@ async function handleListStaffAccounts(req, res) {
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const result = await pgQuery(
-      "select username, email, phone, display_name, role, password_hash, active from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
+      "select username, email, phone, display_name, role, password_hash, active, is_leadership_reporter from users where organization_id = $1 order by active desc, coalesce(display_name, username) asc",
       [effectiveOrg]
     );
     return res.status(200).json({
       accounts: result.rows.map(u => ({
         username: u.username, email: u.email, phone: u.phone, displayName: u.display_name,
         role: u.role, hasPassword: !!u.password_hash, active: u.active,
+        isLeadershipReporter: u.is_leadership_reporter || false,
       })),
     });
   } catch (err) {
@@ -304,7 +305,7 @@ async function handleEditStaffAccount(req, res) {
     return res.status(403).json({ error: "Only System Admin or Business Owner can edit a staff account." });
   }
 
-  const { username, newUsername, displayName, email, phone, role, targetOrgId } = req.body || {};
+  const { username, newUsername, displayName, email, phone, role, isLeadershipReporter, targetOrgId } = req.body || {};
   if (!username) return res.status(400).json({ error: "username required" });
   if (role && !ROLES[role]) return res.status(400).json({ error: "A real, known role is required." });
 
@@ -344,6 +345,10 @@ async function handleEditStaffAccount(req, res) {
     }
     if (role !== undefined && role !== target.role) {
       fields.role = role; changes.push(`role: "${ROLES[target.role]?.label || target.role}" → "${ROLES[role]?.label || role}"`);
+    }
+    if (isLeadershipReporter !== undefined && !!isLeadershipReporter !== !!target.is_leadership_reporter) {
+      fields.is_leadership_reporter = !!isLeadershipReporter;
+      changes.push(`Leadership Reporter: ${target.is_leadership_reporter ? "on" : "off"} → ${isLeadershipReporter ? "on" : "off"}`);
     }
 
     if (Object.keys(fields).length === 0) {

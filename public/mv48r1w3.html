@@ -1397,6 +1397,18 @@ function filterByBuilding(items) {
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 
+// Work Order urgency now holds two different real vocabularies
+// depending on where the WO came from: OVERDUE/UPCOMING for ones
+// triggered by a scheduled maintenance due date, or Critical/High/Low
+// for ones from a human report (assessed by AI, confirmed directly).
+// One shared badge mapping so every place displaying urgency treats
+// both vocabularies consistently rather than re-guessing per screen.
+function woUrgencyBadgeClass(urgency) {
+  if (urgency === 'OVERDUE' || urgency === 'Critical') return 'badge-overdue';
+  if (urgency === 'High') return 'badge-warning';
+  return 'badge-good'; // UPCOMING, Low, or anything else
+}
+
 // Confirmed directly, requested: a work order's own status is now
 // genuinely just Open or Closed wherever it's shown - In Progress no
 // longer exists as a distinct concept, folded into Open here. Ready
@@ -9877,9 +9889,13 @@ function openEditStaffModal(username) {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Phone</label>
       <input id="es_phone" type="text" value="${escapeHtml(account.phone || '')}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Role</label>
-      <select id="es_role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px">
+      <select id="es_role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${Object.entries(STAFF_ROLE_LABELS).map(([k, label]) => `<option value="${k}"${account.role===k?' selected':''}>${label}</option>`).join('')}
       </select>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);margin-bottom:14px;cursor:pointer">
+        <input id="es_isLeadershipReporter" type="checkbox" ${account.isLeadershipReporter ? 'checked' : ''} style="width:16px;height:16px">
+        Leadership Reporter — a report from this person (business owner, director, chief, etc.) always lands at High or Critical urgency
+      </label>
       <div id="es_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px;margin-bottom:16px">
         <button onclick="document.getElementById('editStaffOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
@@ -9929,6 +9945,7 @@ async function submitEditStaff(username) {
   const email = document.getElementById('es_email').value.trim();
   const phone = document.getElementById('es_phone').value.trim();
   const role = document.getElementById('es_role').value;
+  const isLeadershipReporter = document.getElementById('es_isLeadershipReporter').checked;
   const errorBox = document.getElementById('es_error');
   const btn = document.getElementById('es_submit');
   errorBox.style.display = 'none';
@@ -9940,7 +9957,7 @@ async function submitEditStaff(username) {
   try {
     const resp = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'editStaffAccount', username, newUsername, displayName, email, phone, role, targetOrgId: viewingClientOrgId }),
+      body: JSON.stringify({ action: 'editStaffAccount', username, newUsername, displayName, email, phone, role, isLeadershipReporter, targetOrgId: viewingClientOrgId }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save changes');
@@ -15785,7 +15802,7 @@ async function showWorkOrderDetail(recordId) {
       <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <span class="badge ${woStatus.badgeClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${woStatus.label}</span>
-        <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
+        <span class="badge ${woUrgencyBadgeClass(o.urgency)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
         ${renderSLABadges(o.sla)}
@@ -16019,7 +16036,7 @@ async function fetchSlaTargetsData() {
   const resp = await fetch('/api/get-assets?slaTargets=true');
   const data = await resp.json();
   const targets = data.targets || [];
-  const order = ['OVERDUE', 'URGENT', 'UPCOMING'];
+  const order = ['OVERDUE', 'Critical', 'High', 'UPCOMING', 'Low'];
   return order.map(u => targets.find(t => t.urgency === u)).filter(Boolean);
 }
 
@@ -16093,7 +16110,7 @@ async function submitSLATargets() {
   errorBox.style.display = 'none';
 
   const targets = [];
-  for (const urgency of ['OVERDUE', 'URGENT', 'UPCOMING']) {
+  for (const urgency of ['OVERDUE', 'Critical', 'High', 'UPCOMING', 'Low']) {
     const responseEl = document.getElementById(`sla_${urgency}_response`);
     const resolutionEl = document.getElementById(`sla_${urgency}_resolution`);
     if (!responseEl || !resolutionEl) continue; // not loaded successfully, skip rather than send incomplete data
@@ -17609,7 +17626,7 @@ function renderWORowHtml(o, staff) {
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         ${getWOUnreadCount(o) > 0 ? `<span class="wo-row-unread-dot" title="Unread chat">${getWOUnreadCount(o) > 9 ? '9+' : getWOUnreadCount(o)}</span>` : ''}
-        <span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${o.urgency}</span>
+        <span class="badge ${woUrgencyBadgeClass(o.urgency)}">${o.urgency}</span>
         <span class="badge ${woStatusDisplay(o.status).badgeClass}">${woStatusDisplay(o.status).label}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
@@ -17922,7 +17939,7 @@ function renderWorkOrdersTable() {
               </td>
               <td style="padding:10px 12px">${escapeHtml(o.system||'—')}</td>
               <td style="padding:10px 12px">${escapeHtml(o.maintenanceType||'—')}</td>
-              <td style="padding:10px 12px"><span class="badge ${critBadge(o.urgency === 'OVERDUE' || o.urgency === 'URGENT' ? 'Critical' : 'Medium')}">${escapeHtml(o.urgency)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${woUrgencyBadgeClass(o.urgency)}">${escapeHtml(o.urgency)}</span></td>
               <td style="padding:10px 12px"><span class="badge ${woStatusDisplay(o.status).badgeClass}">${escapeHtml(woStatusDisplay(o.status).label)}</span></td>
               <td style="padding:10px 12px">${escapeHtml(techLabel)}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</td>
               <td style="padding:10px 12px;white-space:nowrap;color:var(--muted)">${new Date(o.created).toLocaleDateString()}</td>
@@ -19569,7 +19586,7 @@ function buildPeriodReportHtml(data, title, periodLabel) {
         <div class="kpi"><div class="kpi-val">${ws.open || 0}</div><div class="kpi-label">Open</div></div>
         <div class="kpi"><div class="kpi-val">${ws.readyForReview || 0}</div><div class="kpi-label">Ready for Review</div></div>
         <div class="kpi"><div class="kpi-val">${ws.overdue || 0}</div><div class="kpi-label">Overdue</div></div>
-        <div class="kpi"><div class="kpi-val">${ws.urgent || 0}</div><div class="kpi-label">Urgent</div></div>
+        <div class="kpi"><div class="kpi-val">${ws.critical || 0}</div><div class="kpi-label">Critical</div></div>
         <div class="kpi"><div class="kpi-val">${ws.upcoming || 0}</div><div class="kpi-label">Upcoming</div></div>
       </div>
 
@@ -19636,7 +19653,7 @@ function buildReportExportRows(data) {
   rows.push(['Open', ws.open || 0]);
   rows.push(['Ready for Review', ws.readyForReview || 0]);
   rows.push(['Overdue', ws.overdue || 0]);
-  rows.push(['Urgent', ws.urgent || 0]);
+  rows.push(['Critical', ws.critical || 0]);
   rows.push(['Upcoming', ws.upcoming || 0]);
   rows.push([]);
   rows.push(['Total Maintenance Cost This Period (TZS)', data.totalCost || 0]);
