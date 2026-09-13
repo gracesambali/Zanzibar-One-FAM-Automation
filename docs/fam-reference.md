@@ -117,8 +117,12 @@ ERP/SAP systems can also connect via a documented REST + API-key pattern (see
 ## Calendar (formerly "Maintenance")
 
 Renamed from Maintenance because that tab mostly duplicated Dashboard's own
-Upcoming Maintenance panel. Calendar is a real month-view pulling in every
-date FAM actually tracks:
+Upcoming Maintenance panel. Calendar fills the page (not a small card) —
+a fixed 6-row month grid, same height every month regardless of how many
+weeks it actually needs. Each day cell lists up to 3 real item labels
+directly (color-coded by type), with "+N more" once there are more than
+that, rather than just a count badge — pulling in every date FAM actually
+tracks:
 - **Scheduled maintenance** — each asset's `next_service_due`
 - **Replacement planning** — each asset's own `replacement_date` if set
   (a real, deliberate plan). If not set, falls back to FAM's own
@@ -190,7 +194,11 @@ A Dashboard button (beside "How to use FAM") listing every real AI
 feature in FAM, what it does, and where to find it — the 5 pre-existing
 ones (chatbot, invoice reading, vendor category suggestion, vendor smart
 search, floor plan room detection) plus AI-assisted requisition and AI
-document filing above. Every entry states the same real principle:
+document filing above. A real portal, not just a static list: each entry
+has a "Go to →" button that highlights the actual place in the app,
+navigating there first if needed — same spotlight/highlight mechanism as
+the "How to use FAM" tour, reused directly rather than a second system.
+Every entry states the same real principle:
 these features suggest, they never decide on their own.
 
 ## Asset detail sharing

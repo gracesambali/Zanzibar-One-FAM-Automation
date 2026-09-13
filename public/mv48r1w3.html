@@ -4158,8 +4158,24 @@ function renderFamCalendarMonth() {
   const startOffset = (firstOfMonth.getDay() + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  let html = `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+  // Each item type gets its own small color, so a glance at a day cell
+  // tells you roughly what's on it before even opening it — same
+  // color meanings a person would learn once and recognize everywhere.
+  const typeColor = (type) => {
+    if (type.startsWith('Scheduled Maintenance')) return 'var(--navy)';
+    if (type.startsWith('Replacement Planning')) return '#7C3AED';
+    if (type.startsWith('Planned Maintenance')) return '#0EA5E9';
+    if (type.startsWith('Annual Planning')) return '#F97316';
+    return 'var(--muted)';
+  };
+
+  // Fixed 6 rows regardless of how many this month actually needs —
+  // keeps every month the same height rather than growing/shrinking
+  // the grid depending on where the 1st falls, and fills the page the
+  // way a real calendar does instead of sitting in a small card at
+  // the top with empty space below it.
+  let html = `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px;display:flex;flex-direction:column;height:calc(100vh - 170px);min-height:560px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;flex-shrink:0">
       <div style="font-size:16px;font-weight:700;color:var(--navy)">${monthNames[month]} ${year}</div>
       <div style="display:flex;gap:6px">
         <button onclick="changeFamCalendarMonth(-1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px">‹</button>
@@ -4167,20 +4183,31 @@ function renderFamCalendarMonth() {
         <button onclick="changeFamCalendarMonth(1)" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px">›</button>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+    <div style="flex:1;display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:auto repeat(6,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:8px;overflow:hidden;min-height:0">
       ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `<div style="background:#F7F8FA;padding:8px 4px;text-align:center;font-size:11px;font-weight:700;color:var(--muted)">${d}</div>`).join('')}`;
 
+  const totalCells = startOffset + daysInMonth;
+  const trailingCells = (6 * 7) - totalCells; // pad out to exactly 6 full rows
+
   for (let i = 0; i < startOffset; i++) {
-    html += `<div style="background:#fff;min-height:64px"></div>`;
+    html += `<div style="background:#fff"></div>`;
   }
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const items = famCalendarDayMap[dateStr] || [];
     const isToday = dateStr === todayStr;
-    html += `<div onclick="${items.length ? `openFamCalendarDay('${dateStr}')` : ''}" style="background:#fff;min-height:64px;padding:6px;cursor:${items.length ? 'pointer' : 'default'};${isToday ? 'box-shadow:inset 0 0 0 2px var(--navy)' : ''}">
-      <div style="font-size:12px;font-weight:${isToday ? '700' : '500'};color:${isToday ? 'var(--navy)' : 'var(--muted)'}">${day}</div>
-      ${items.length ? `<div style="margin-top:4px;font-size:10px;font-weight:700;color:#fff;background:var(--navy);border-radius:10px;padding:1px 6px;display:inline-block">${items.length}</div>` : ''}
+    const visibleItems = items.slice(0, 3);
+    const remaining = items.length - visibleItems.length;
+    html += `<div onclick="${items.length ? `openFamCalendarDay('${dateStr}')` : ''}" style="background:#fff;padding:5px;cursor:${items.length ? 'pointer' : 'default'};overflow:hidden;display:flex;flex-direction:column;${isToday ? 'box-shadow:inset 0 0 0 2px var(--navy)' : ''}">
+      <div style="font-size:12px;font-weight:${isToday ? '700' : '500'};color:${isToday ? 'var(--navy)' : 'var(--muted)'};margin-bottom:2px;flex-shrink:0">${day}</div>
+      <div style="display:flex;flex-direction:column;gap:2px;min-height:0;overflow:hidden">
+        ${visibleItems.map(item => `<div style="font-size:10px;color:#fff;background:${typeColor(item.type)};border-radius:4px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(item.type)}: ${escapeHtml(item.label)}">${escapeHtml(item.label)}</div>`).join('')}
+        ${remaining > 0 ? `<div style="font-size:10px;color:var(--navy);font-weight:700;padding:1px 5px">+${remaining} more</div>` : ''}
+      </div>
     </div>`;
+  }
+  for (let i = 0; i < trailingCells; i++) {
+    html += `<div style="background:#fff"></div>`;
   }
   html += `</div></div>`;
   container.innerHTML = html;
@@ -20392,13 +20419,13 @@ let famTourStepIndex = 0;
 let famTourVisibleSteps = [];
 
 const HELPFUL_AI_FEATURES = [
-  { title: 'Ask about FAM', desc: 'Answers "how do I..." questions from a living reference doc — escalates to your admin if it genuinely can\'t answer.', where: 'The 💬 chat bubble, bottom-right, on every screen.' },
-  { title: 'Invoice / Quote Reading', desc: "Reads a vendor's uploaded quote PDF and pulls out the total cost, VAT status, and a summary automatically.", where: 'Procurement — attaching a vendor quote to a requisition response.' },
-  { title: 'Vendor Category Suggestion', desc: 'Suggests which technical system (HVAC, Electrical, etc.) a new vendor belongs to, from their own description.', where: 'Adding a new vendor.' },
-  { title: 'Vendor Smart Search', desc: 'Understands "aircon guy" means the vendor described as "climate control servicing" — beyond exact keyword matching.', where: 'Searching the vendor list.' },
-  { title: 'Floor Plan Room Detection', desc: 'Reads an uploaded floor drawing and tries to match it against your existing Level View rooms.', where: 'Uploading a floor plan.' },
-  { title: 'AI-Assisted Requisition', desc: 'Type a plain description, or photograph a paper requisition slip — fills the New Requisition form for you to review.', where: 'New Requisition — the ✨ buttons at the top of the form.' },
-  { title: 'AI Document Filing', desc: 'When you upload a document, suggests which real assets it should be linked to (or a facility-wide template) — you confirm before anything is linked.', where: 'Uploading a document on any asset.' },
+  { title: 'Ask about FAM', desc: 'Answers "how do I..." questions from a living reference doc — escalates to your admin if it genuinely can\'t answer.', where: 'The 💬 chat bubble, bottom-right, on every screen.', selector: '#famChatbotToggle' },
+  { title: 'Invoice / Quote Reading', desc: "Reads a vendor's uploaded quote PDF and pulls out the total cost, VAT status, and a summary automatically.", where: 'Procurement — attaching a vendor quote to a requisition response.', selector: '[data-tab="procurement"]', beforeShow: () => switchTab('procurement') },
+  { title: 'Vendor Category Suggestion', desc: 'Suggests which technical system (HVAC, Electrical, etc.) a new vendor belongs to, from their own description.', where: 'Procurement — adding a new vendor.', selector: '[data-tab="procurement"]', beforeShow: () => switchTab('procurement') },
+  { title: 'Vendor Smart Search', desc: 'Understands "aircon guy" means the vendor described as "climate control servicing" — beyond exact keyword matching.', where: 'Procurement — searching the vendor list.', selector: '[data-tab="procurement"]', beforeShow: () => switchTab('procurement') },
+  { title: 'Floor Plan Room Detection', desc: 'Reads an uploaded floor drawing and tries to match it against your existing Level View rooms.', where: 'Level View — uploading a floor plan.', selector: '[data-tab="levelview"]', beforeShow: () => switchTab('levelview') },
+  { title: 'AI-Assisted Requisition', desc: 'Type a plain description, or photograph a paper requisition slip — fills the New Requisition form for you to review.', where: 'Procurement — the ✨ buttons at the top of the New Requisition form.', selector: 'button[onclick="openNewRequisitionForm()"]', beforeShow: () => switchTab('procurement') },
+  { title: 'AI Document Filing', desc: 'When you upload a document, suggests which real assets it should be linked to (or a facility-wide template) — you confirm before anything is linked.', where: 'Asset Register — any asset\'s Documents section.', selector: '[data-tab="assets"]', beforeShow: () => switchTab('assets') },
 ];
 
 function openHelpfulAiFeaturesModal() {
@@ -20410,17 +20437,52 @@ function openHelpfulAiFeaturesModal() {
       <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">✨ Helpful AI Features</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every AI feature in FAM suggests — it never decides on its own. You always see and confirm before anything changes.</div>
       <div style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto">
-        ${HELPFUL_AI_FEATURES.map(f => `
+        ${HELPFUL_AI_FEATURES.map((f, i) => `
           <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
-            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:3px">${f.title}</div>
-            <div style="font-size:12px;color:var(--text);line-height:1.4;margin-bottom:5px">${f.desc}</div>
-            <div style="font-size:10.5px;color:var(--muted)">📍 ${f.where}</div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+              <div style="min-width:0">
+                <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:3px">${f.title}</div>
+                <div style="font-size:12px;color:var(--text);line-height:1.4;margin-bottom:5px">${f.desc}</div>
+                <div style="font-size:10.5px;color:var(--muted)">📍 ${f.where}</div>
+              </div>
+              <button onclick="highlightFamFeature(HELPFUL_AI_FEATURES[${i}])" style="flex-shrink:0;padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer">Go to →</button>
+            </div>
           </div>`).join('')}
       </div>
       <button onclick="document.getElementById('helpfulAiFeaturesOverlay').remove()" style="margin-top:16px;width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;font-size:13px;cursor:pointer">Close</button>
     </div>`;
   document.body.appendChild(overlay);
 }
+
+// Shared by the full onboarding tour AND single-feature highlights from
+// the Helpful AI Features panel — same overlay, same highlight box,
+// same card, created once and reused either way.
+function ensureFamTourOverlayExists() {
+  if (document.getElementById('famTourOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'famTourOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9500;pointer-events:none';
+  overlay.innerHTML = `
+    <div id="famTourDim" style="position:absolute;inset:0;background:rgba(15,20,35,0.55);pointer-events:auto"></div>
+    <div id="famTourHighlightBox" style="position:absolute;border:3px solid var(--navy);border-radius:8px;box-shadow:0 0 0 4000px rgba(15,20,35,0.55);transition:all 0.25s ease;pointer-events:none"></div>
+    <div id="famTourCard" style="position:absolute;max-width:280px;background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.3);padding:16px;pointer-events:auto;font-size:12.5px">
+      <div id="famTourCardTitle" style="font-weight:700;color:var(--navy);margin-bottom:6px;font-size:14px"></div>
+      <div id="famTourCardText" style="color:var(--navy);line-height:1.5;margin-bottom:12px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span onclick="skipFamOnboardingTour()" id="famTourSkipLink" style="color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline">Skip</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="famTourStepCount" style="font-size:11px;color:var(--muted)"></span>
+          <button onclick="advanceFamOnboardingTour()" id="famTourNextBtn" style="padding:7px 14px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Next</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // The dim background itself is NOT a skip button — clicking it does
+  // nothing, deliberately, so an accidental tap outside the highlighted
+  // area doesn't lose the person's place partway through.
+}
+
+let famTourSingleFeatureMode = false;
 
 function startFamOnboardingTour() {
   // Steps with a beforeShow action (e.g. navigating to a different tab
@@ -20430,33 +20492,25 @@ function startFamOnboardingTour() {
   famTourVisibleSteps = FAM_ONBOARDING_STEPS.filter(s => s.beforeShow || findVisibleElement(s.selector));
   if (famTourVisibleSteps.length === 0) return; // nothing real to point at right now — don't show an empty tour
   famTourStepIndex = 0;
-
-  if (!document.getElementById('famTourOverlay')) {
-    const overlay = document.createElement('div');
-    overlay.id = 'famTourOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9500;pointer-events:none';
-    overlay.innerHTML = `
-      <div id="famTourDim" style="position:absolute;inset:0;background:rgba(15,20,35,0.55);pointer-events:auto"></div>
-      <div id="famTourHighlightBox" style="position:absolute;border:3px solid var(--navy);border-radius:8px;box-shadow:0 0 0 4000px rgba(15,20,35,0.55);transition:all 0.25s ease;pointer-events:none"></div>
-      <div id="famTourCard" style="position:absolute;max-width:280px;background:#fff;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.3);padding:16px;pointer-events:auto;font-size:12.5px">
-        <div id="famTourCardTitle" style="font-weight:700;color:var(--navy);margin-bottom:6px;font-size:14px"></div>
-        <div id="famTourCardText" style="color:var(--navy);line-height:1.5;margin-bottom:12px"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span onclick="skipFamOnboardingTour()" style="color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline">Skip</span>
-          <div style="display:flex;align-items:center;gap:10px">
-            <span id="famTourStepCount" style="font-size:11px;color:var(--muted)"></span>
-            <button onclick="advanceFamOnboardingTour()" id="famTourNextBtn" style="padding:7px 14px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Next</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    // The dim background itself is NOT a skip button — clicking it does
-    // nothing, deliberately, so an accidental tap outside the highlighted
-    // area doesn't lose the person's place partway through.
-  }
+  famTourSingleFeatureMode = false;
+  ensureFamTourOverlayExists();
   document.getElementById('famTourOverlay').style.display = 'block';
   renderFamTourStep();
 }
+
+// One-off highlight for a single feature, launched from the Helpful AI
+// Features panel — same overlay/highlight mechanism as the full tour,
+// just one step, and never touches has_seen_onboarding either way.
+function highlightFamFeature(step) {
+  document.getElementById('helpfulAiFeaturesOverlay')?.remove();
+  famTourVisibleSteps = [step];
+  famTourStepIndex = 0;
+  famTourSingleFeatureMode = true;
+  ensureFamTourOverlayExists();
+  document.getElementById('famTourOverlay').style.display = 'block';
+  renderFamTourStep();
+}
+
 
 async function renderFamTourStep() {
   const step = famTourVisibleSteps[famTourStepIndex];
@@ -20495,8 +20549,9 @@ async function renderFamTourStep() {
   const card = document.getElementById('famTourCard');
   document.getElementById('famTourCardTitle').textContent = step.title;
   document.getElementById('famTourCardText').textContent = step.text;
-  document.getElementById('famTourStepCount').textContent = `${famTourStepIndex + 1} of ${famTourVisibleSteps.length}`;
-  document.getElementById('famTourNextBtn').textContent = famTourStepIndex === famTourVisibleSteps.length - 1 ? 'Done' : 'Next';
+  document.getElementById('famTourStepCount').textContent = famTourSingleFeatureMode ? '' : `${famTourStepIndex + 1} of ${famTourVisibleSteps.length}`;
+  document.getElementById('famTourNextBtn').textContent = famTourSingleFeatureMode ? 'Got it' : (famTourStepIndex === famTourVisibleSteps.length - 1 ? 'Done' : 'Next');
+  document.getElementById('famTourSkipLink').style.display = famTourSingleFeatureMode ? 'none' : 'inline';
 
   // Position the card beside the highlighted element, flipping to
   // whichever side actually has room rather than running off-screen.
@@ -20524,6 +20579,7 @@ function skipFamOnboardingTour() {
 async function finishFamOnboardingTour() {
   const overlay = document.getElementById('famTourOverlay');
   if (overlay) overlay.style.display = 'none';
+  if (famTourSingleFeatureMode) { famTourSingleFeatureMode = false; return; } // a single-feature highlight from Helpful AI Features - never touches onboarding state
   if (famHasSeenOnboarding) return; // relaunched manually from Dashboard — nothing to mark
   famHasSeenOnboarding = true;
   try {
