@@ -880,20 +880,9 @@ async function checkFinanceReminders() {
 
       if (phones.length > 0) {
         try {
-          await fetch("https://apisms.beem.africa/v1/send", {
-            method: "POST",
-            headers: {
-              Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              source_addr: process.env.BEEM_SENDER_ID || "INFO",
-              schedule_time: "", encoding: 0,
-              message: smsMessage,
-              recipients: buildBeemRecipients(phones),
-            }),
-          });
-        } catch (err) { console.error("Finance reminder SMS failed:", err.message); }
+          const { sendViaOrgPreferredChannel } = await import("../lib/notifications.js");
+          await sendViaOrgPreferredChannel(orgId, phones, smsMessage);
+        } catch (err) { console.error("Finance reminder message failed:", err.message); }
       }
       notifiedOrgCount++;
     }
@@ -922,6 +911,7 @@ async function checkFinanceReminders() {
 // going out.
 async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMessage, pmSubject, pmMessage, activityText }) {
   const { update } = await import("../lib/postgresClient.js");
+  const { sendViaOrgPreferredChannel } = await import("../lib/notifications.js");
 
   if (u.tenant_email) {
     try {
@@ -940,21 +930,8 @@ async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMess
 
   if (u.tenant_phone) {
     try {
-      await fetch("https://apisms.beem.africa/v1/send", {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          source_addr: process.env.BEEM_SENDER_ID || "INFO",
-          schedule_time: "",
-          encoding: 0,
-          message: tenantMessage.slice(0, 320),
-          recipients: buildBeemRecipients(parsePhoneList(u.tenant_phone)),
-        }),
-      });
-    } catch (err) { console.error("Rent notice tenant SMS failed for", u.unit_name, err.message); }
+      await sendViaOrgPreferredChannel(u.organization_id, parsePhoneList(u.tenant_phone), tenantMessage);
+    } catch (err) { console.error("Rent notice tenant message failed for", u.unit_name, err.message); }
   }
 
   if (pmEmails.length > 0) {
@@ -974,21 +951,8 @@ async function sendRentNotice(u, pmEmails, pmPhones, { tenantSubject, tenantMess
 
   if (pmPhones.length > 0) {
     try {
-      await fetch("https://apisms.beem.africa/v1/send", {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${process.env.BEEM_API_KEY}:${process.env.BEEM_SECRET_KEY}`).toString("base64")}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          source_addr: process.env.BEEM_SENDER_ID || "INFO",
-          schedule_time: "",
-          encoding: 0,
-          message: pmMessage.slice(0, 320),
-          recipients: buildBeemRecipients(pmPhones),
-        }),
-      });
-    } catch (err) { console.error("Rent notice PM SMS failed for", u.unit_name, err.message); }
+      await sendViaOrgPreferredChannel(u.organization_id, pmPhones, pmMessage);
+    } catch (err) { console.error("Rent notice PM message failed for", u.unit_name, err.message); }
   }
 
   const log = Array.isArray(u.activity_log) ? u.activity_log : [];

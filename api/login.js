@@ -104,6 +104,9 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "editClientBranding") {
     return handleEditClientBranding(req, res);
   }
+  if (req.body && req.body.action === "updateClientNotificationChannel") {
+    return handleUpdateClientNotificationChannel(req, res);
+  }
   if (req.body && req.body.action === "listClients") {
     return handleListClients(req, res);
   }
@@ -593,6 +596,33 @@ async function handleEditClientBranding(req, res) {
   }
 }
 
+// The one setting that decides which channel automated notifications
+// use for this client's staff — WhatsApp with automatic SMS fallback
+// if it genuinely fails, or SMS directly. Same permission gate as
+// branding: Master System only, since this is a client-wide default,
+// not something an individual staff member should be able to flip.
+async function handleUpdateClientNotificationChannel(req, res) {
+  const session = getSession(req);
+  if (!session || session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can manage a client's notification channel." });
+  }
+  const { targetOrgId, notificationChannel } = req.body || {};
+  if (!targetOrgId) return res.status(400).json({ error: "targetOrgId required" });
+  if (!["sms", "whatsapp"].includes(notificationChannel)) {
+    return res.status(400).json({ error: "notificationChannel must be 'sms' or 'whatsapp'." });
+  }
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const targetOrg = await getById("organizations", targetOrgId).catch(() => null);
+    if (!targetOrg) return res.status(404).json({ error: "Client not found." });
+    await update("organizations", targetOrgId, { notification_channel: notificationChannel });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("updateClientNotificationChannel error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handleListClients(req, res) {
   const session = getSession(req);
   if (!session) return res.status(401).json({ error: "Not logged in." });
@@ -607,10 +637,10 @@ async function handleListClients(req, res) {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const { getSignedUrlSafe } = await import("../lib/storageClient.js");
     const result = await pgQuery(
-      `select o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color, count(u.id) filter (where u.active) as active_user_count
+      `select o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color, o.notification_channel, count(u.id) filter (where u.active) as active_user_count
        from organizations o
        left join users u on u.organization_id = o.id
-       group by o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color
+       group by o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color, o.notification_channel
        order by o.created_at desc`
     );
     const clients = await Promise.all(result.rows.map(async r => ({
@@ -618,6 +648,7 @@ async function handleListClients(req, res) {
       activeUserCount: Number(r.active_user_count),
       logoUrl: r.logo_path ? await getSignedUrlSafe(r.logo_path).catch(() => null) : null,
       brandColor: r.brand_color || null,
+      notificationChannel: r.notification_channel || 'sms',
     })));
     return res.status(200).json({ clients });
   } catch (err) {

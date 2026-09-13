@@ -9741,6 +9741,7 @@ function renderStaffManagementTable() {
       <div style="font-size:12.5px;color:var(--navy)">Viewing <strong>${escapeHtml(viewingClientName)}</strong> from the Master System</div>
       <div style="display:flex;align-items:center;gap:8px">
         <button onclick="openEditClientBrandingModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','${(clientsCache.find(c => c.id === viewingClientOrgId)?.logoUrl) || ''}','${(clientsCache.find(c => c.id === viewingClientOrgId)?.brandColor) || ''}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">🎨 Branding</button>
+        <button onclick="openClientNotificationChannelModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','${(clientsCache.find(c => c.id === viewingClientOrgId)?.notificationChannel) || 'sms'}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📱 Notifications</button>
         <button onclick="renderStaffManagement()" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">← Back to Clients</button>
       </div>
     </div>` : ''}
@@ -10186,6 +10187,62 @@ function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColo
       </div>
     </div>`;
   document.body.appendChild(overlay);
+}
+
+// Organization-level choice, agreed directly: WhatsApp with automatic
+// SMS fallback when it genuinely fails, or SMS directly. Not per-person
+// - every staff member at this client uses whichever one is chosen here.
+function openClientNotificationChannelModal(orgId, orgName, currentChannel) {
+  const overlay = document.createElement('div');
+  overlay.id = 'clientNotifChannelOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Notification Channel — ${escapeHtml(orgName)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Every automated alert this client's staff receives by phone uses this channel. If WhatsApp genuinely fails for someone, it falls back to SMS automatically for them.</div>
+
+      <label style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer">
+        <input type="radio" name="ncm_channel" value="sms" ${currentChannel==='sms'?'checked':''} style="width:16px;height:16px">
+        <div><div style="font-size:13px;font-weight:600;color:var(--navy)">SMS</div><div style="font-size:11px;color:var(--muted)">The current default</div></div>
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:14px;cursor:pointer">
+        <input type="radio" name="ncm_channel" value="whatsapp" ${currentChannel==='whatsapp'?'checked':''} style="width:16px;height:16px">
+        <div><div style="font-size:13px;font-weight:600;color:var(--navy)">WhatsApp</div><div style="font-size:11px;color:var(--muted)">Falls back to SMS automatically if it fails for someone</div></div>
+      </label>
+
+      <div id="ncm_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('clientNotifChannelOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="ncm_submit" onclick="submitClientNotificationChannel('${orgId}')" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitClientNotificationChannel(orgId) {
+  const channel = document.querySelector('input[name="ncm_channel"]:checked')?.value;
+  const btn = document.getElementById('ncm_submit');
+  const errorEl = document.getElementById('ncm_error');
+  errorEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'updateClientNotificationChannel', targetOrgId: orgId, notificationChannel: channel }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Failed to save');
+    const client = clientsCache.find(c => c.id === orgId);
+    if (client) client.notificationChannel = channel;
+    document.getElementById('clientNotifChannelOverlay').remove();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
 }
 
 // Confirmed directly: real colors picked from the real, uploaded

@@ -263,3 +263,39 @@ addressed to whoever holds the `admin` role in their organization (pulled from
 that user's real `email`/`phone` on file, not a fixed number). If the org's admin
 also can't resolve it, the admin contacts Gracing Ventures directly (this last
 step is a manual, human process — the chatbot has no role in it).
+
+## WhatsApp / SMS Notification Channel
+
+Each client (organization) picks a preferred channel — WhatsApp or SMS —
+for every automated phone notification their staff receives (finance
+reminders, rent notices). Set per-client via Master System → Staff
+Management → viewing a client → "📱 Notifications" (beside "🎨 Branding").
+Organization-level only, not per-person — everyone at that client uses
+whichever one is chosen.
+
+Both channels go through the same Beem account already used for SMS —
+Beem is itself a WhatsApp Business Solution Provider, so this is one more
+product enabled on the existing account, not a second vendor. WhatsApp is
+tried first when that's the client's preference; if it genuinely fails for
+a specific number (not opted in, invalid, template rejected), that number
+automatically falls back to SMS rather than that person silently never
+being notified.
+
+Shared logic: `lib/notifications.js` — `sendViaOrgPreferredChannel(organizationId, phones, text)`
+is the one function everything should call. Currently wired into the
+finance reminder digest and rent notices (both already looped per real
+organization with real per-org phone numbers). The original asset-
+maintenance daily digest (`sendDigestSms` in check-maintenance.js) was
+deliberately left on its existing single shared `ALERT_TO_PHONE` env-var
+list — that path predates per-organization scoping and wasn't touched here.
+
+Requires `BEEM_WHATSAPP_FROM` (the registered WhatsApp Business number to
+send from) as a new environment variable — not yet set. A genuine open
+item: WhatsApp requires either the recipient having messaged first within
+24 hours, or a Meta-approved message template for the first business-
+initiated message. Whether Beem's Moja "text" message_type already
+handles that compliance step, or whether a "template" message_type with a
+registered template name is needed instead, can only be confirmed once
+WhatsApp is live on the account and a real send is attempted — that setup
+(registering the number, submitting a template to Meta if needed) happens
+in Beem's own dashboard, not in this codebase.
