@@ -399,6 +399,7 @@ button { font-family: inherit; cursor: pointer; }
       </div>
     </div>
     <button onclick="openMyReportBreakdownPage()" style="background:#B0431E;border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">🚨 Report Breakdown</button>
+    <button onclick="openStaffReportIssueModal()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">📝 Report an Issue</button>
     <button onclick="logout()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Log Out</button>
   </div>
 </div>
@@ -9680,6 +9681,129 @@ function closeFinanceModal() {
 // System Admin/Business Owner - opens the exact same real, public
 // report page (no duplicate form logic to maintain), pre-identified
 // with this user's own organization via currentUserOrgId.
+// The first real "report an issue" screen for a logged-in staff
+// member - confirmed directly, no such screen existed before. Checks
+// for a likely duplicate as a real, non-blocking warning once both a
+// building and a real description are entered - never blocks
+// submission either way, confirmed directly.
+function openStaffReportIssueModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'staffReportIssueOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px;overflow-y:auto';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;margin:20px 0">
+      <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">📝 Report an Issue</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Reports a real problem — becomes a real work order right away.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Facility</label>
+      <select id="sri_facility" onchange="updateStaffReportBuildingOptions()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <option value="">— Select —</option>
+        ${facilitiesData.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('')}
+      </select>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Building *</label>
+      <select id="sri_building" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <option value="">— Select a facility first —</option>
+      </select>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Floor *</label>
+      <input id="sri_floor" placeholder="e.g. 3rd Floor" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Room/Zone (optional)</label>
+      <input id="sri_room" placeholder="e.g. Room 304" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category *</label>
+      <select id="sri_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box">
+        <option value="Electrical">Electrical</option>
+        <option value="Mechanical">Mechanical</option>
+        <option value="Biomedical">Biomedical</option>
+        <option value="NonTechnical">Non-Technical</option>
+        <option value="TenantRelated">Tenant-Related</option>
+      </select>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Description *</label>
+      <textarea id="sri_description" rows="3" placeholder="What's the problem?" onblur="checkStaffReportDuplicate()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;resize:vertical"></textarea>
+
+      <div id="sri_duplicateWarning" style="display:none;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#92400E"></div>
+      <div id="sri_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
+
+      <div style="display:flex;gap:8px">
+        <button onclick="document.getElementById('staffReportIssueOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="sri_submit" onclick="submitStaffReportIssue()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Submit Report</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function updateStaffReportBuildingOptions() {
+  const facilitySelect = document.getElementById('sri_facility');
+  const buildingSelect = document.getElementById('sri_building');
+  const selectedFacility = facilitySelect.value;
+  const buildings = selectedFacility ? (facilitiesData.find(f => f.name === selectedFacility)?.buildings || []) : [];
+  buildingSelect.innerHTML = `<option value="">— Select —</option>` + buildings.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+}
+
+// Fires once both a building and a real description exist - a real,
+// non-blocking warning shown before submission; never prevents
+// submitting either way, confirmed directly.
+async function checkStaffReportDuplicate() {
+  const building = document.getElementById('sri_building').value;
+  const description = document.getElementById('sri_description').value.trim();
+  const warningEl = document.getElementById('sri_duplicateWarning');
+  if (!building || description.length < 8) { warningEl.style.display = 'none'; return; }
+
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkForDuplicateReport: true, description, building }),
+    });
+    const data = await resp.json();
+    if (data.match) {
+      warningEl.innerHTML = `⚠ This looks similar to <strong>${escapeHtml(data.match.woId)}</strong>${data.match.reason ? ' — ' + escapeHtml(data.match.reason) : ''}. You can still submit if this is genuinely different.`;
+      warningEl.style.display = 'block';
+    } else {
+      warningEl.style.display = 'none';
+    }
+  } catch (err) {
+    warningEl.style.display = 'none'; // a failed check should never block or alarm someone over nothing
+  }
+}
+
+async function submitStaffReportIssue() {
+  const facility = document.getElementById('sri_facility').value;
+  const building = document.getElementById('sri_building').value;
+  const floor = document.getElementById('sri_floor').value.trim();
+  const roomZone = document.getElementById('sri_room').value.trim();
+  const category = document.getElementById('sri_category').value;
+  const description = document.getElementById('sri_description').value.trim();
+  const errorBox = document.getElementById('sri_error');
+  const btn = document.getElementById('sri_submit');
+  errorBox.style.display = 'none';
+
+  if (!building || !floor || !description) {
+    errorBox.textContent = 'Building, floor, and a description are all required.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ createStaffReportedIssue: true, facility, building, floor, roomZone, category, description }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit this report');
+    document.getElementById('staffReportIssueOverlay').remove();
+    alert(`✓ Reported — ${data.woId}`);
+    if (document.getElementById('view-workorders')?.classList.contains('active')) renderWorkOrders();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Submit Report';
+  }
+}
+
 function openMyReportBreakdownPage() {
   if (!currentUserOrgId) {
     alert('Could not determine your organization — try refreshing the page.');
@@ -15979,6 +16103,7 @@ async function showWorkOrderDetail(recordId) {
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
+        ${o.possibleDuplicateOf ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#FEF3C7;color:#92400E">⚠ Possibly the same issue as ${escapeHtml(o.possibleDuplicateOf)}</span>` : ''}
       </div>
     </div>
 
@@ -17681,6 +17806,7 @@ function renderWORowHtml(o, staff) {
           ${o.assignedRole ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : ''}
           ${techLabel ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${o.assignmentStatus==='Confirmed'?'#DCFCE7':'#FEF3C7'};color:${o.assignmentStatus==='Confirmed'?'#166534':'#92400E'}">👷 ${techLabel}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</span>` : ''}
           ${procStatus !== 'None' ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${procColors[procStatus][0]};color:${procColors[procStatus][1]}">🛒 ${procStatusLabel(procStatus)}</span>` : ''}
+          ${o.possibleDuplicateOf ? `<span title="Possibly the same issue as ${escapeHtml(o.possibleDuplicateOf)}" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E">⚠ Possible duplicate of ${escapeHtml(o.possibleDuplicateOf)}</span>` : ''}
         </div>
         <div class="asset-meta">${o.location} · ${o.system} · Created ${new Date(o.created).toLocaleString()}</div>
       </div>

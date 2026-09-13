@@ -438,3 +438,38 @@ Backend: `lib/workOrderSummaryAI.js` → `draftClosureSummary()`. New
 old work orders via the on-demand button), `backfillClosureSummaries`
 (bulk batch), and `closeViaScan` now accepts an optional
 `closureSummary` field saved alongside the actual closure.
+
+## AI Duplicate Report Detection + "Report an Issue" (staff)
+
+New: a "📝 Report an Issue" button in the header — the first real way a
+logged-in staff member can report a general issue themselves (previously
+every work order came only from scheduled maintenance, sensors, a
+breakdown email, Schedule Inspection, Order a Spare Part, or one of the
+two public no-login links — no in-app staff report form existed before
+this).
+
+**Duplicate detection**, confirmed directly: reporters describe symptoms
+and location, not asset IDs, so matching is by real language similarity
+within a real, narrow candidate pool — same building/facility only, still
+Open, reported in the last 48 hours — not exact-match, and never against
+the whole organization (keeps it cheap, avoids coincidental matches from
+unrelated locations). `lib/duplicateReportAI.js` → `findLikelyDuplicate()`.
+
+- **Staff "Report an Issue" form**: checks live, as a non-blocking warning
+  once a building and a real description are entered — *"This looks
+  similar to WO-123 — you can still submit if this is genuinely
+  different."* Never blocks submission.
+- **The two existing no-login report paths** (tenant portal, public
+  "Report a Breakdown" page): no one there to warn live, so the check
+  runs retroactively right after creation — a match sets
+  `work_orders.possible_duplicate_of` and adds an Activity Log entry,
+  shown as a badge in the Work Orders list and on the detail page for
+  whoever picks it up to notice.
+
+Backend: `api/work-orders.js` → `checkForDuplicateReport` (live check, no
+save) and `createStaffReportedIssue` (the actual staff report, runs the
+same AI urgency assessment as the public report paths, plus a duplicate
+check for record-keeping). `api/report-issue.js`'s shared
+`createReportedWorkOrder()` (used by both no-login paths) runs the
+retroactive check itself, so both paths get it without duplicating the
+wiring twice.

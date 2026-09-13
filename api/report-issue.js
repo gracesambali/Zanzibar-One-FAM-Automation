@@ -1182,6 +1182,29 @@ async function createReportedWorkOrder(reporterName, reporterRole, reporterConta
   await update("work_orders", created.id, { activity_log: JSON.stringify(openingLog) })
     .catch(e => console.error("Opening log write failed (non-fatal):", e.message));
 
+  // Retroactive duplicate check - there's no live person here to warn
+  // before submitting (this is one of the no-login report paths), so
+  // instead this flags the NEW record afterward for a real person to
+  // notice and judge when they open it. Non-fatal by design: a failed
+  // check just means no flag gets added, the report itself still went
+  // through fine either way.
+  if (building) {
+    try {
+      const { findLikelyDuplicate } = await import("../lib/duplicateReportAI.js");
+      const match = await findLikelyDuplicate({ pgQuery, description, building, organizationId, excludeRecordId: created.id });
+      if (match) {
+        const flaggedLog = [...openingLog, {
+          text: `⚠ Possibly the same issue as ${match.woId}${match.reason ? ` — ${match.reason}` : ""}`,
+          by: "system", at: new Date().toISOString(),
+        }];
+        await update("work_orders", created.id, { possible_duplicate_of: match.woId, activity_log: JSON.stringify(flaggedLog) })
+          .catch(e => console.error("Duplicate flag write failed (non-fatal):", e.message));
+      }
+    } catch (err) {
+      console.error("Duplicate check failed (non-fatal):", err.message);
+    }
+  }
+
   return { woId, recordId: created.id };
 }
 
