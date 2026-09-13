@@ -140,6 +140,7 @@ export default async function handler(req, res) {
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u, session.org);
     if (action === "confirmDocumentLinks") return handleConfirmDocumentLinks(req, res, session.u, session.org);
     if (action === "removeDocumentLink") return handleRemoveDocumentLink(req, res, session.u, session.org);
+    if (action === "uploadChatbotKnowledgeDocument") return handleUploadChatbotKnowledgeDocument(req, res, session.u, session.org);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u, session.org);
     if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u, session.org);
     if (action === "setBuildingDigitalTwin") return handleSetBuildingDigitalTwin(req, res, session.u, session.r, session.org);
@@ -3055,6 +3056,74 @@ async function handleRemoveDocumentLink(req, res, removedBy, organizationId) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("handleRemoveDocumentLink error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Uploads a document specifically for the chatbot to reference when
+// answering questions - agreed directly: both this organization's own
+// uploaded documents AND the standing FAM reference doc feed answers
+// together, uploaded documents never replace the reference doc.
+// Same permission level as uploading any other document (canManage on
+// the relevant PUT dispatcher below), not admin-only.
+//
+// A single-purpose upload, unlike the general document flow above: it
+// only ever attaches to one destination (chatbot knowledge), so there's
+// no multi-select confirmation step needed - upload, extract, link,
+// done in one action.
+async function handleUploadChatbotKnowledgeDocument(req, res, uploadedBy, organizationId) {
+  const { filename, contentType, fileBase64 } = req.body || {};
+  if (!filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "filename, contentType, and fileBase64 are all required" });
+  }
+
+  const approxBytes = fileBase64.length * 0.75;
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: "File is too large — the upload limit is 5MB." });
+  }
+
+  try {
+    const { insert } = await import("../lib/postgresClient.js");
+    const { uploadFile } = await import("../lib/storageClient.js");
+    const { extractDocumentText } = await import("../lib/documentAI.js");
+
+    const docPath = `documents/${organizationId}/${Date.now()}-${filename}`;
+    await uploadFile(docPath, fileBase64, contentType);
+
+    // Non-fatal by design: a failed extraction still lets the upload
+    // succeed, it just won't contribute to chatbot answers until
+    // re-uploaded or fixed - same principle as every other AI step
+    // in this system never blocking the actual thing the person is doing.
+    const extractedText = await extractDocumentText(fileBase64, contentType).catch(err => {
+      console.error("Chatbot knowledge extraction failed (non-fatal):", err.message);
+      return null;
+    });
+
+    const created = await insert("documents", {
+      organization_id: organizationId,
+      filename,
+      storage_path: docPath,
+      document_type: "Knowledge Base",
+      uploaded_by: uploadedBy,
+      extracted_text: extractedText,
+    });
+
+    await insert("document_links", {
+      document_id: created.id,
+      entity_type: "chatbot_knowledge",
+      entity_id: organizationId,
+      linked_by: uploadedBy,
+    });
+
+    return res.status(200).json({
+      success: true,
+      documentId: created.id,
+      filename,
+      extracted: !!extractedText,
+      ...(extractedText ? {} : { warning: "Uploaded, but the text could not be read automatically — this document won't yet contribute to chatbot answers." }),
+    });
+  } catch (err) {
+    console.error("handleUploadChatbotKnowledgeDocument error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

@@ -338,3 +338,28 @@ table, Dashboard cards, detail pages) uses one shared function,
 `woUrgencyBadgeClass()`, so both vocabularies (OVERDUE/UPCOMING and
 Critical/High/Low) always render consistently rather than being
 re-guessed per screen.
+
+## Chatbot Knowledge Portal
+
+The chatbot ("Ask about FAM") now has two views in the same widget:
+**💬 Chat** (unchanged) and **📚 Knowledge** — where an organization can
+upload their own documents (procedures, policies, manuals) for the chatbot
+to answer from. Same permission level as uploading any other document,
+not admin-only.
+
+Confirmed directly: uploaded documents feed answers **alongside** the
+standing FAM reference doc, never replacing it — a question about how FAM
+itself works still answers from the reference doc; a question about this
+organization's own procedures answers from what they've uploaded. Text is
+extracted once at upload time (`lib/documentAI.js` → `extractDocumentText`)
+and stored on the document record, so the chatbot doesn't re-read the raw
+file on every question. Combined organization-document context is capped
+at 15,000 characters per request (most recently uploaded first) so a
+handful of large uploads can't balloon every chatbot call's cost/latency.
+
+Reuses the same unified `documents`/`document_links` tables as the general
+document system, with a new `entity_type = 'chatbot_knowledge'` link type
+— one more real use of that shared model, not a separate storage system.
+`GET /api/get-assets?chatbotKnowledgeDocuments=true` lists what's
+currently feeding the chatbot for the Knowledge tab; upload via the
+`uploadChatbotKnowledgeDocument` PUT action.

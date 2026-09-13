@@ -171,6 +171,37 @@ export default async function handler(req, res) {
     }
   }
 
+  // Documents feeding the in-app chatbot's answers, for this org only.
+  // The chatbot itself (api/chatbot.js) reads these by extracted_text
+  // directly rather than through this endpoint - this one is purely
+  // for the Knowledge tab in the chatbot widget to list/manage them.
+  if (req.query.chatbotKnowledgeDocuments === "true") {
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+      const rows = await pgQuery(
+        `select d.*, dl.id as link_id
+         from document_links dl join documents d on d.id = dl.document_id
+         where dl.entity_type = 'chatbot_knowledge' and d.organization_id = $1
+         order by d.uploaded_at desc`,
+        [session.org]
+      );
+      const documents = await Promise.all(rows.rows.map(async r => ({
+        id: r.id,
+        linkId: r.link_id,
+        filename: r.filename,
+        url: await getSignedUrlSafe(r.storage_path).catch(() => null),
+        uploadedBy: r.uploaded_by,
+        uploadedAt: r.uploaded_at,
+        extracted: !!r.extracted_text,
+      })));
+      return res.status(200).json({ documents });
+    } catch (err) {
+      console.error("chatbotKnowledgeDocuments read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm DATABASE_URL actually works once set
   // in Vercel — restricted to Business Owner/System Admin since this
   // is infrastructure testing, not something day-to-day staff need.

@@ -59,18 +59,51 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Reference document unavailable." });
   }
 
+  // This organization's own uploaded documents — agreed directly:
+  // these feed answers ALONGSIDE the standing reference doc, never in
+  // place of it. Capped combined so a handful of large uploads can't
+  // balloon every single chatbot request's cost/latency; documents
+  // are truncated in upload order (most recent first) once the cap is
+  // hit, not silently dropped entirely.
+  const ORG_DOCS_CHAR_CAP = 15000;
+  let orgDocsSection = "";
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const orgDocsResult = await pgQuery(
+      `select filename, extracted_text from document_links dl
+       join documents d on d.id = dl.document_id
+       where dl.entity_type = 'chatbot_knowledge' and d.organization_id = $1 and d.extracted_text is not null
+       order by d.uploaded_at desc`,
+      [session.org]
+    );
+    let remaining = ORG_DOCS_CHAR_CAP;
+    const parts = [];
+    for (const doc of orgDocsResult.rows) {
+      if (remaining <= 0) break;
+      const chunk = doc.extracted_text.slice(0, remaining);
+      parts.push(`[Document: ${doc.filename}]\n${chunk}`);
+      remaining -= chunk.length;
+    }
+    if (parts.length > 0) {
+      orgDocsSection = `\n\n--- THIS ORGANIZATION'S OWN UPLOADED DOCUMENTS ---\n${parts.join("\n\n")}\n--- END ORGANIZATION DOCUMENTS ---`;
+    }
+  } catch (err) {
+    console.error("chatbot: org documents lookup failed (non-fatal):", err.message);
+    // Non-fatal — the chatbot still answers from the reference doc alone.
+  }
+
   const systemPrompt = `You are the in-app help assistant for FAM (Facility Asset Manager), a facility/asset management platform.
 
-Answer questions ONLY using the reference document below. It is the sole source of truth - never use general knowledge about CMMS/facility software, and never guess at how FAM works beyond what this document actually says.
+Answer questions using the reference document below, AND this organization's own uploaded documents if provided. The reference document covers how FAM itself works; the organization's own documents cover their own procedures, policies, and operations. Never use general knowledge beyond what these sources actually say, and never guess.
 
-If the document does not clearly answer the question, respond with EXACTLY this sentence and nothing else - no apology, no elaboration, no partial guess:
+If neither source clearly answers the question, respond with EXACTLY this sentence and nothing else - no apology, no elaboration, no partial guess:
 "${CANNOT_ANSWER_PHRASE}"
 
 Keep answers short and direct - a sentence or two for simple questions, a short paragraph at most for anything more involved. This is a chat interface, not a document.
 
---- REFERENCE DOCUMENT ---
+--- REFERENCE DOCUMENT (how FAM works) ---
 ${referenceDoc}
---- END REFERENCE DOCUMENT ---`;
+--- END REFERENCE DOCUMENT ---${orgDocsSection}`;
 
   // Keep a little real back-and-forth context, but bounded - this is a
   // quick-help widget, not a long-running conversation thread that
