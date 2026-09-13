@@ -114,6 +114,63 @@ export default async function handler(req, res) {
     }
   }
 
+  // Documents linked to one specific asset or work order — the new
+  // unified model, replacing the old one-copy-per-asset compliance
+  // documents. A document shows here if it's EITHER directly linked to
+  // this specific entity, OR (for assets only) marked as a facility
+  // template for the facility this asset actually belongs to — so a
+  // facility-wide contract shows up on every relevant asset without
+  // needing its own separate link row per asset.
+  if (req.query.documentsFor === "asset" || req.query.documentsFor === "work_order") {
+    const entityId = req.query.id;
+    if (!entityId) return res.status(400).json({ error: "id is required" });
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+      const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+
+      let rows;
+      if (req.query.documentsFor === "asset") {
+        const assetRow = await pgQuery("select facility from components where asset_id = $1 and organization_id = $2", [entityId, session.org]);
+        const facility = assetRow.rows[0]?.facility || null;
+        rows = await pgQuery(
+          `select d.*, dl.id as link_id, dl.linked_by, dl.linked_at, 'link' as source
+           from document_links dl join documents d on d.id = dl.document_id
+           where dl.entity_type = 'asset' and dl.entity_id = $1 and d.organization_id = $2
+           union
+           select d.*, null as link_id, null as linked_by, null as linked_at, 'template' as source
+           from documents d
+           where d.is_facility_template = true and d.template_facility_id = $3 and d.organization_id = $2
+           order by uploaded_at desc`,
+          [entityId, session.org, facility]
+        );
+      } else {
+        rows = await pgQuery(
+          `select d.*, dl.id as link_id, dl.linked_by, dl.linked_at
+           from document_links dl join documents d on d.id = dl.document_id
+           where dl.entity_type = 'work_order' and dl.entity_id = $1 and d.organization_id = $2
+           order by d.uploaded_at desc`,
+          [entityId, session.org]
+        );
+      }
+
+      const documents = await Promise.all(rows.rows.map(async r => ({
+        id: r.id,
+        linkId: r.link_id || null,
+        filename: r.filename,
+        url: await getSignedUrlSafe(r.storage_path).catch(() => null),
+        documentType: r.document_type,
+        isFacilityTemplate: r.is_facility_template,
+        uploadedBy: r.uploaded_by,
+        uploadedAt: r.uploaded_at,
+        viaTemplate: r.source === "template",
+      })));
+      return res.status(200).json({ documents });
+    } catch (err) {
+      console.error("documentsFor read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // One-off diagnostic to confirm DATABASE_URL actually works once set
   // in Vercel — restricted to Business Owner/System Admin since this
   // is infrastructure testing, not something day-to-day staff need.

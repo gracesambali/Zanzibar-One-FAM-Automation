@@ -121,6 +121,8 @@ export default async function handler(req, res) {
     if (action === "addFuelInvoice") return handleAddFuelInvoice(req, res, session.u);
     if (action === "deleteFuelInvoice") return handleDeleteFuelInvoice(req, res, session.u);
     if (action === "createRequisition") return handleCreateRequisition(req, res, session.u, session.org);
+    if (action === "aiFillRequisitionFromText") return handleAiFillRequisitionFromText(req, res, session.org);
+    if (action === "aiFillRequisitionFromPhoto") return handleAiFillRequisitionFromPhoto(req, res, session.org);
     if (action === "editRequisition") return handleEditRequisition(req, res, session.u, session.r, session.org);
     if (action === "deleteRequisition") return handleDeleteRequisition(req, res, session.u, session.r, session.org);
     if (action === "requestProcurementForWorkOrder") return handleRequestProcurementForWorkOrder(req, res, session.u, session.org);
@@ -136,6 +138,8 @@ export default async function handler(req, res) {
     if (action === "analyzeFloorPlanRooms") return handleAnalyzeFloorPlanRooms(req, res, session.org);
     if (action === "confirmFloorRoomMapping") return handleConfirmFloorRoomMapping(req, res, session.u, session.org);
     if (action === "uploadDocument") return handleUploadDocument(req, res, session.u, session.org);
+    if (action === "confirmDocumentLinks") return handleConfirmDocumentLinks(req, res, session.u, session.org);
+    if (action === "removeDocumentLink") return handleRemoveDocumentLink(req, res, session.u, session.org);
     if (action === "clearTechnicalReview") return handleClearTechnicalReview(req, res, session.u, session.org);
     if (action === "uploadPlanDocument") return handleUploadPlanDocument(req, res, session.u, session.org);
     if (action === "setBuildingDigitalTwin") return handleSetBuildingDigitalTwin(req, res, session.u, session.r, session.org);
@@ -2915,15 +2919,23 @@ async function handleConfirmFloorRoomMapping(req, res, confirmedBy, organization
   }
 }
 
-// Uploads a real compliance document (Fire Safety Certificate, OSHA
-// Compliance Licence, etc.) — an actual file the client already has,
-// not a system-generated report. Multiple documents per asset, unlike
-// the single nameplate photo, so each upload adds a new row to
-// component_documents rather than overwriting a single column.
+// Uploads a real document — a contract, certificate, warranty, manual,
+// anything — into the unified `documents` table. Confirmed directly:
+// one document can now be linked to any number of assets and/or work
+// orders at once, or marked as a facility-wide template, instead of
+// the old model where the same file had to be uploaded separately per
+// asset (a generator contract covering 3 generators meant 3 separate
+// copies, free to drift out of sync when one got updated).
+//
+// This step only uploads the file and runs the AI link suggestion —
+// it does NOT create any links yet. The person reviews the AI's
+// suggestion (or ignores it entirely) and confirms via a separate
+// confirmDocumentLinks call, same "suggest, never decide" principle
+// as every other AI feature in FAM.
 async function handleUploadDocument(req, res, uploadedBy, organizationId) {
-  const { recordId, filename, contentType, fileBase64 } = req.body || {};
-  if (!recordId || !filename || !contentType || !fileBase64) {
-    return res.status(400).json({ error: "recordId, filename, contentType, and fileBase64 are all required" });
+  const { filename, contentType, fileBase64 } = req.body || {};
+  if (!filename || !contentType || !fileBase64) {
+    return res.status(400).json({ error: "filename, contentType, and fileBase64 are all required" });
   }
 
   const approxBytes = fileBase64.length * 0.75;
@@ -2932,35 +2944,164 @@ async function handleUploadDocument(req, res, uploadedBy, organizationId) {
   }
 
   try {
-    const { insert, update, getById } = await import("../lib/postgresClient.js");
-    // Confirmed directly: same reasoning as decommission/relocate/edit
-    // - without this, any logged-in user could attach a document to
-    // any asset in the entire system by knowing or guessing its
-    // recordId, regardless of which client it actually belonged to.
-    const owner = await getById("components", recordId).catch(() => null);
-    if (!owner || owner.organization_id !== organizationId) {
-      return res.status(404).json({ error: "Asset not found." });
-    }
-
+    const { insert, query: pgQuery } = await import("../lib/postgresClient.js");
     const { uploadFile } = await import("../lib/storageClient.js");
-    // Timestamped so the same filename can be uploaded twice without colliding.
-    const docPath = `components/${recordId}/documents/${Date.now()}-${filename}`;
+
+    const docPath = `documents/${organizationId}/${Date.now()}-${filename}`;
     await uploadFile(docPath, fileBase64, contentType);
 
-    await insert("component_documents", { component_id: recordId, url: docPath, filename });
+    const created = await insert("documents", {
+      organization_id: organizationId,
+      filename,
+      storage_path: docPath,
+      document_type: "Other", // updated below once/if the AI suggests something more specific
+      uploaded_by: uploadedBy,
+    });
 
-    // Stamp who uploaded it and when — same accountability pattern as
-    // floor plan uploads, relocations, and edits elsewhere in the system.
-    await update("components", recordId, { documents_uploaded_by: uploadedBy, documents_uploaded_date: new Date().toISOString() }, organizationId);
-
-    const current = await getById("components", recordId).catch(() => null);
-    if (current) {
-      await logAssetActivity(current.asset_id || "", "Compliance Document", "", `Uploaded: ${filename}`, uploadedBy, organizationId);
+    // Run the AI suggestion — a real, lightweight asset list (not the
+    // full asset object with cost/depreciation/etc.), non-fatal by
+    // design: if this fails for any reason, the upload itself has
+    // already succeeded, the person just links it manually instead.
+    let aiSuggestion = null;
+    try {
+      const { suggestDocumentLinks } = await import("../lib/documentAI.js");
+      const assetRows = await pgQuery(
+        "select asset_id as id, name, system, model, manufacturer from components where organization_id = $1",
+        [organizationId]
+      );
+      aiSuggestion = await suggestDocumentLinks(fileBase64, contentType, filename, assetRows.rows);
+      if (aiSuggestion) {
+        const { update: pgUpdate } = await import("../lib/postgresClient.js");
+        await pgUpdate("documents", created.id, { document_type: aiSuggestion.documentTypeGuess, ai_suggestion: aiSuggestion });
+      }
+    } catch (aiErr) {
+      console.error("Document AI suggestion failed (non-fatal):", aiErr.message);
     }
 
-    return res.status(200).json({ success: true, filename, uploadedBy });
+    return res.status(200).json({ success: true, documentId: created.id, filename, aiSuggestion });
   } catch (err) {
     console.error("handleUploadDocument error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// The person's real, final decision after seeing (or ignoring) the AI
+// suggestion above — creates the actual links. Multiple asset ids,
+// multiple work order ids, and/or a facility template flag can all be
+// set at once, exactly as asked: not a single forced choice.
+async function handleConfirmDocumentLinks(req, res, linkedBy, organizationId) {
+  const { documentId, assetIds, workOrderIds, isFacilityTemplate, templateFacilityId, documentType } = req.body || {};
+  if (!documentId) return res.status(400).json({ error: "documentId is required" });
+
+  try {
+    const { getById, update, insert, getByColumn } = await import("../lib/postgresClient.js");
+    const doc = await getById("documents", documentId).catch(() => null);
+    if (!doc || doc.organization_id !== organizationId) {
+      return res.status(404).json({ error: "Document not found." });
+    }
+
+    const updates = {};
+    if (documentType) updates.document_type = documentType;
+    if (isFacilityTemplate) {
+      updates.is_facility_template = true;
+      updates.template_facility_id = templateFacilityId || null;
+    }
+    if (Object.keys(updates).length > 0) await update("documents", documentId, updates);
+
+    const validAssetIds = Array.isArray(assetIds) ? assetIds.filter(Boolean) : [];
+    const validWorkOrderIds = Array.isArray(workOrderIds) ? workOrderIds.filter(Boolean) : [];
+
+    for (const assetId of validAssetIds) {
+      // Same org-ownership check as every other asset-touching action —
+      // without it, a document could be linked to another client's
+      // asset by guessing its id.
+      const asset = await getByColumn("components", "asset_id", assetId, organizationId).catch(() => null);
+      if (!asset) continue;
+      await insert("document_links", { document_id: documentId, entity_type: "asset", entity_id: assetId, linked_by: linkedBy });
+      await logAssetActivity(assetId, "Document", "", `Linked: ${doc.filename}`, linkedBy, organizationId);
+    }
+    for (const woId of validWorkOrderIds) {
+      const wo = await getByColumn("work_orders", "wo_id", woId, organizationId).catch(() => null);
+      if (!wo) continue;
+      await insert("document_links", { document_id: documentId, entity_type: "work_order", entity_id: woId, linked_by: linkedBy });
+    }
+
+    return res.status(200).json({ success: true, linkedAssets: validAssetIds.length, linkedWorkOrders: validWorkOrderIds.length });
+  } catch (err) {
+    console.error("handleConfirmDocumentLinks error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Undoes one link — a wrong AI suggestion accepted by mistake, or a
+// document that no longer applies to something it was linked to.
+// Never deletes the document itself, only this one connection.
+async function handleRemoveDocumentLink(req, res, removedBy, organizationId) {
+  const { linkId } = req.body || {};
+  if (!linkId) return res.status(400).json({ error: "linkId is required" });
+
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const result = await pgQuery(
+      `delete from document_links
+       using documents
+       where document_links.id = $1
+         and document_links.document_id = documents.id
+         and documents.organization_id = $2
+       returning document_links.id`,
+      [linkId, organizationId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Link not found." });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("handleRemoveDocumentLink error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function getFacilitiesWithBuildingsForAI(organizationId) {
+  const { listAllRecords: pgListAllRecords, query: pgQuery } = await import("../lib/postgresClient.js");
+  const facilityRows = await pgListAllRecords("facilities", organizationId);
+  const buildingRows = await pgQuery("select * from facility_buildings where organization_id = $1", [organizationId]);
+  const buildingsByFacility = {};
+  for (const b of buildingRows.rows) {
+    (buildingsByFacility[b.facility_id] = buildingsByFacility[b.facility_id] || []).push(b.building_name);
+  }
+  return facilityRows.map(r => ({ name: r.name || "", buildings: buildingsByFacility[r.id] || [] })).filter(f => f.name);
+}
+
+// Fills the New Requisition form from a plain-language description —
+// the person still reviews and submits it themselves, this never
+// creates a requisition directly.
+async function handleAiFillRequisitionFromText(req, res, organizationId) {
+  const { description } = req.body || {};
+  if (!description || !description.trim()) return res.status(400).json({ error: "description is required" });
+
+  try {
+    const { fillRequisitionFromText } = await import("../lib/requisitionAI.js");
+    const facilitiesData = await getFacilitiesWithBuildingsForAI(organizationId);
+    const filled = await fillRequisitionFromText(description.trim(), facilitiesData);
+    if (!filled) return res.status(200).json({ success: false, error: "AI could not process this — fill the form manually." });
+    return res.status(200).json({ success: true, filled });
+  } catch (err) {
+    console.error("handleAiFillRequisitionFromText error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Same as above, from a photographed paper requisition slip instead of typed text.
+async function handleAiFillRequisitionFromPhoto(req, res, organizationId) {
+  const { imageBase64, contentType } = req.body || {};
+  if (!imageBase64 || !contentType) return res.status(400).json({ error: "imageBase64 and contentType are required" });
+
+  try {
+    const { fillRequisitionFromPhoto } = await import("../lib/requisitionAI.js");
+    const facilitiesData = await getFacilitiesWithBuildingsForAI(organizationId);
+    const filled = await fillRequisitionFromPhoto(imageBase64, contentType, facilitiesData);
+    if (!filled) return res.status(200).json({ success: false, error: "AI could not read this photo — fill the form manually." });
+    return res.status(200).json({ success: true, filled });
+  } catch (err) {
+    console.error("handleAiFillRequisitionFromPhoto error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

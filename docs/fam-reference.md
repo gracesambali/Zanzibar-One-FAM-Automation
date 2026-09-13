@@ -143,6 +143,56 @@ still shows the normal back button.
 A Replacement Report (sorted soonest-first, each item labeled "planned" or
 "estimated") is available via `GET /api/get-assets?replacementReport=true`.
 
+## Documents (unified, multi-linkable)
+
+Replaces the old one-copy-per-asset "Compliance Documents." One document
+can now be linked to any number of assets, any number of work orders,
+and/or marked as a facility-wide template — all at once, not a single
+forced choice. A generator maintenance contract covering 3 generators is
+uploaded once and linked to all 3, instead of 3 separate copies free to
+drift out of sync.
+
+On upload, AI reads the document and suggests links — never applies them
+automatically:
+- **Specific match**: the document explicitly names an asset ID, model,
+  or serial number that matches a real asset in the Asset Register.
+- **Category match** (fallback, only when nothing specific is found):
+  the document is clearly about one real system in general (e.g.
+  "generators") without naming which ones — shown as an unchecked
+  suggestion the person actively opts into, not pre-applied.
+- **No match**: person links manually.
+
+Every suggestion is shown as checkboxes in a confirmation modal after
+upload — the person can accept, reject, or add anything the AI missed
+before any link is actually created. Document types: Contract,
+Compliance Certificate, Warranty, Manual, Other.
+
+Backend: `documents` + `document_links` tables (Postgres). Existing
+compliance documents were migrated in automatically, nothing lost.
+`GET /api/get-assets?documentsFor=asset&id=<assetId>` and
+`?documentsFor=work_order&id=<woId>` fetch what's linked to each; an
+asset also sees any facility-wide template that applies to its own
+facility. AI suggestion logic: `lib/documentAI.js`.
+
+## AI-Assisted Requisition
+
+The New Requisition form can be filled two ways instead of typed by
+hand: a plain-language description ("need 20L diesel for the generator
+at Zenaultra Tower, Building B"), or a photograph of a paper requisition
+slip. Both fill the same form fields for the person to review and
+submit themselves — never submitted automatically. Logic:
+`lib/requisitionAI.js`; backend actions `aiFillRequisitionFromText` /
+`aiFillRequisitionFromPhoto` in `api/manage-asset.js`.
+
+## Helpful AI Features
+
+A Dashboard button (beside "How to use FAM") listing every real AI
+feature in FAM, what it does, and where to find it — the 5 pre-existing
+ones (chatbot, invoice reading, vendor category suggestion, vendor smart
+search, floor plan room detection) plus AI-assisted requisition and AI
+document filing above. Every entry states the same real principle:
+these features suggest, they never decide on their own.
+
 ## Asset detail sharing
 
 Each asset's detail page has two small buttons in the action row next to

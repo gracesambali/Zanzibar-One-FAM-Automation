@@ -1658,7 +1658,10 @@ function renderDashboard() {
   }
   html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
     <div style="font-size:13px;font-weight:600;color:var(--navy)">📍 Viewing: ${scopeLabel}</div>
-    <button onclick="startFamOnboardingTour()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧭 How to use FAM</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="startFamOnboardingTour()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧭 How to use FAM</button>
+      <button onclick="openHelpfulAiFeaturesModal()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✨ Helpful AI Features</button>
+    </div>
   </div>`;
 
   // Dashboard timeframe selector — a simple dropdown instead of a row of buttons
@@ -2440,24 +2443,19 @@ function showDetail(idx) {
     <div id="checklistContent" style="font-size:12px;color:var(--muted)">Loading…</div>
   </div>`;
 
-  // Compliance Documents — real files (Fire Safety Certificate, OSHA
-  // Licence, etc.), not system-generated records.
+  // Documents — real files (contracts, certificates, warranties,
+  // manuals), now a shared, multi-linkable record rather than living
+  // only on this one asset — the same document can also cover other
+  // assets, a work order, or the whole facility. Loaded async, same
+  // pattern as Edit History below.
   html += `<div id="documentsSection" style="padding:16px 24px;border-top:1px solid var(--border)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:12px;font-weight:600;color:var(--navy)">Compliance Documents</div>
-      ${canManage ? `<button onclick="document.getElementById('docUploadInput_${a.recordId}').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Document</button>` : ''}
-      <input type="file" id="docUploadInput_${a.recordId}" style="display:none" onchange="submitDocumentUpload('${a.recordId}', this)">
+      <div style="font-size:12px;font-weight:600;color:var(--navy)">Documents</div>
+      ${canManage ? `<button onclick="document.getElementById('docUploadInput_${a.id}').click()" style="padding:5px 12px;font-size:11px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬆ Upload Document</button>` : ''}
+      <input type="file" id="docUploadInput_${a.id}" style="display:none" onchange="submitDocumentUpload(this, {assetId:'${a.id}', assetIdxToRefresh:${idx}})">
     </div>
-    ${a.documents && a.documents.length > 0 ? `
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
-        ${a.documents.map(doc => `<a href="${doc.url}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;text-decoration:none;color:var(--text);font-size:12.5px">
-          <span>📄 ${doc.filename}</span>
-          <span style="color:var(--muted);font-size:11px">${doc.size ? Math.round(doc.size/1024) + ' KB' : ''}</span>
-        </a>`).join('')}
-      </div>
-      ${a.documentsUploadedBy ? `<div style="font-size:10.5px;color:var(--muted)">Last uploaded by ${a.documentsUploadedBy}${a.documentsUploadedDate ? ' · ' + new Date(a.documentsUploadedDate).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>` : ''}
-    ` : `<div style="font-size:12px;color:var(--muted)">No documents uploaded yet — e.g. Fire Safety Certificate, OSHA Compliance Licence, or any real compliance paperwork for this asset.</div>`}
-    <div id="docUploadStatus_${a.recordId}" style="font-size:11px;margin-top:6px"></div>
+    <div id="documentsList_${a.id}" style="font-size:12px;color:var(--muted)">Loading…</div>
+    <div id="docUploadStatus_${a.id}" style="font-size:11px;margin-top:6px"></div>
   </div>`;
 
   // Audit trail — edit history
@@ -2473,6 +2471,7 @@ function showDetail(idx) {
   if (a.generatorRatedConsumptionLph) renderFuelMonitorSection(a);
 
   loadAssetEditLog(a.id);
+  loadAssetDocuments(a.id);
   loadAssetChecklist(a);
 }
 
@@ -15332,9 +15331,56 @@ function copyApiKey() {
   });
 }
 
-async function submitDocumentUpload(recordId, inputEl) {
+async function loadAssetDocuments(assetId) {
+  const el = document.getElementById('documentsList_' + assetId);
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/get-assets?documentsFor=asset&id=' + encodeURIComponent(assetId));
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load documents');
+    renderAssetDocumentsList(assetId, data.documents || []);
+  } catch (err) {
+    el.textContent = 'Could not load documents.';
+  }
+}
+
+function renderAssetDocumentsList(assetId, documents) {
+  const el = document.getElementById('documentsList_' + assetId);
+  if (!el) return;
+  if (documents.length === 0) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No documents yet — e.g. a contract, compliance certificate, warranty, or manual.</div>`;
+    return;
+  }
+  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px">
+    ${documents.map(doc => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;font-size:12.5px">
+      <a href="${doc.url}" target="_blank" style="text-decoration:none;color:var(--text);flex:1;min-width:0">
+        📄 ${escapeHtml(doc.filename)}
+        <span style="color:var(--muted);font-size:10.5px;display:block">${escapeHtml(doc.documentType)}${doc.viaTemplate ? ' · Facility Template' : ''}${doc.uploadedBy ? ' · ' + escapeHtml(doc.uploadedBy) : ''}</span>
+      </a>
+      ${doc.linkId ? `<span onclick="removeDocumentLink('${doc.linkId}','${assetId}')" title="Unlink from this asset" style="color:var(--muted);cursor:pointer;font-size:14px;padding:4px 6px;flex-shrink:0">✕</span>` : ''}
+    </div>`).join('')}
+  </div>`;
+}
+
+async function removeDocumentLink(linkId, assetId) {
+  if (!confirm('Unlink this document from this asset? The document itself is not deleted.')) return;
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'removeDocumentLink', linkId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to unlink');
+    loadAssetDocuments(assetId);
+  } catch (err) {
+    alert('Could not unlink: ' + err.message);
+  }
+}
+
+async function submitDocumentUpload(inputEl, context) {
   const file = inputEl.files[0];
-  const statusEl = document.getElementById('docUploadStatus_' + recordId);
+  const statusEl = document.getElementById('docUploadStatus_' + context.assetId);
   if (!file) return;
 
   if (file.size > 5 * 1024 * 1024) {
@@ -15344,7 +15390,7 @@ async function submitDocumentUpload(recordId, inputEl) {
   }
 
   statusEl.style.color = 'var(--muted)';
-  statusEl.textContent = 'Uploading…';
+  statusEl.textContent = 'Uploading and checking what this document should be linked to…';
 
   try {
     const base64 = await new Promise((resolve, reject) => {
@@ -15359,7 +15405,6 @@ async function submitDocumentUpload(recordId, inputEl) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'uploadDocument',
-        recordId,
         filename: file.name,
         contentType: file.type || 'application/octet-stream',
         fileBase64: base64,
@@ -15368,15 +15413,139 @@ async function submitDocumentUpload(recordId, inputEl) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Upload failed');
 
-    statusEl.style.color = 'var(--green)';
-    statusEl.textContent = `✓ Uploaded ${file.name}`;
     inputEl.value = '';
-    await loadAssetsAndInit();
-    const idx = assets.findIndex(a => a.recordId === recordId);
-    if (idx >= 0) showDetail(idx);
+    statusEl.textContent = '';
+    openDocumentLinkConfirmModal(data.documentId, file.name, data.aiSuggestion, context);
   } catch (err) {
     statusEl.style.color = 'var(--red)';
     statusEl.textContent = 'Could not upload: ' + err.message;
+  }
+}
+
+// The real confirmation step — the AI's suggestion (if any) is shown
+// as pre-checked boxes the person can freely uncheck or add to, never
+// applied on its own. Multiple options allowed at once: specific
+// assets, a whole category, other assets, a work order, and/or a
+// facility template are not mutually exclusive.
+function openDocumentLinkConfirmModal(documentId, filename, aiSuggestion, context) {
+  const overlay = document.createElement('div');
+  overlay.id = 'docLinkConfirmOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px;overflow-y:auto';
+
+  const specificMatches = (aiSuggestion?.specificAssetIds || []).map(id => assets.find(a => a.id === id)).filter(Boolean);
+  const categorySystem = aiSuggestion?.matchType === 'category' ? aiSuggestion.categorySystem : null;
+  const categoryAssets = categorySystem ? assets.filter(a => a.system === categorySystem) : [];
+  const currentAssetAlreadySuggested = context.assetId && specificMatches.some(a => a.id === context.assetId);
+
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:90vw;margin:20px 0">
+      <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">📄 ${escapeHtml(filename)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Uploaded. Choose everything this document applies to — as many as apply.</div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Document Type</label>
+      <select id="dlc_type" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+        ${['Contract','Compliance Certificate','Warranty','Manual','Other'].map(t => `<option value="${t}" ${aiSuggestion?.documentTypeGuess===t?'selected':''}>${t}</option>`).join('')}
+      </select>
+
+      ${context.assetId && !currentAssetAlreadySuggested ? `
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" class="dlc-asset-cb" value="${context.assetId}" checked style="width:16px;height:16px">
+        This asset (${escapeHtml(assets.find(a=>a.id===context.assetId)?.name || context.assetId)})
+      </label>` : ''}
+
+      ${specificMatches.length > 0 ? `
+      <div style="font-size:11px;font-weight:600;color:var(--navy);margin:10px 0 6px">✨ AI found this document specifically names:</div>
+      ${specificMatches.map(a => `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" class="dlc-asset-cb" value="${a.id}" checked style="width:16px;height:16px">
+        ${escapeHtml(a.name)} (${a.id})
+      </label>`).join('')}
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${escapeHtml(aiSuggestion.reason || '')}</div>` : ''}
+
+      ${categorySystem ? `
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;margin:10px 0;cursor:pointer;background:#F0F1F4;padding:10px;border-radius:8px">
+        <input type="checkbox" id="dlc_categoryAll" data-system="${escapeHtml(categorySystem)}" style="width:16px;height:16px;margin-top:2px">
+        <span>✨ <strong>AI thinks this is about ${escapeHtml(categorySystem)} in general</strong> (not a specific one) — link to all ${categoryAssets.length} ${escapeHtml(categorySystem)} assets?<br><span style="color:var(--muted);font-size:11px">${escapeHtml(aiSuggestion.reason || '')}</span></span>
+      </label>` : ''}
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin:14px 0 4px">Link to other assets (optional)</label>
+      <input id="dlc_otherAssets" list="dlc_otherAssets_list" placeholder="Search and press Enter to add" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();addDlcManualAsset(this)}">
+      <datalist id="dlc_otherAssets_list">${assets.map(a => `<option value="${escapeHtml(a.id)} — ${escapeHtml(a.name)}">`).join('')}</datalist>
+      <div id="dlc_manualAssetsList" style="margin-bottom:10px"></div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Link to a Work Order (optional)</label>
+      <input id="dlc_workOrderId" placeholder="e.g. WO-1234567890" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px;box-sizing:border-box">
+
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" id="dlc_isTemplate" onchange="document.getElementById('dlc_templateFacilityWrap').style.display=this.checked?'block':'none'" style="width:16px;height:16px">
+        This is a facility-wide template — applies to every asset at one facility
+      </label>
+      <div id="dlc_templateFacilityWrap" style="display:none;margin-bottom:14px">
+        <select id="dlc_templateFacility" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box">
+          <option value="">— Select facility —</option>
+          ${facilitiesData.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div id="dlcConfirmStatus" style="font-size:11.5px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('docLinkConfirmOverlay').remove()" style="padding:9px 16px;font-size:13px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);cursor:pointer">Skip for now</button>
+        <button onclick="confirmDocumentLinksSubmit('${documentId}', ${JSON.stringify(context).replace(/"/g,'&quot;')})" style="padding:9px 20px;font-size:13px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Confirm Links</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+let dlcManualAssetIds = [];
+function addDlcManualAsset(inputEl) {
+  const match = inputEl.value.split(' — ')[0].trim();
+  const asset = assets.find(a => a.id === match);
+  if (!asset || dlcManualAssetIds.includes(asset.id)) { inputEl.value = ''; return; }
+  dlcManualAssetIds.push(asset.id);
+  const list = document.getElementById('dlc_manualAssetsList');
+  list.innerHTML += `<span style="display:inline-flex;align-items:center;gap:4px;background:#F0F1F4;border-radius:12px;padding:3px 10px;font-size:11.5px;margin:0 4px 4px 0">${escapeHtml(asset.name)} <span onclick="this.parentElement.remove();dlcManualAssetIds=dlcManualAssetIds.filter(id=>id!=='${asset.id}')" style="cursor:pointer">✕</span></span>`;
+  inputEl.value = '';
+}
+
+async function confirmDocumentLinksSubmit(documentId, contextJson) {
+  const context = typeof contextJson === 'string' ? JSON.parse(contextJson) : contextJson;
+  const statusEl = document.getElementById('dlcConfirmStatus');
+  const assetIds = new Set(dlcManualAssetIds);
+  document.querySelectorAll('.dlc-asset-cb:checked').forEach(cb => assetIds.add(cb.value));
+  if (document.getElementById('dlc_categoryAll')?.checked) {
+    const categorySystem = document.getElementById('dlc_categoryAll').dataset.system;
+    assets.filter(a => a.system === categorySystem).forEach(a => assetIds.add(a.id));
+  }
+  const woId = document.getElementById('dlc_workOrderId').value.trim();
+  const isFacilityTemplate = document.getElementById('dlc_isTemplate').checked;
+  const templateFacilityId = document.getElementById('dlc_templateFacility').value;
+  const documentType = document.getElementById('dlc_type').value;
+
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Saving…';
+
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'confirmDocumentLinks',
+        documentId,
+        assetIds: [...assetIds],
+        workOrderIds: woId ? [woId] : [],
+        isFacilityTemplate,
+        templateFacilityId: isFacilityTemplate ? templateFacilityId : null,
+        documentType,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to save links');
+
+    dlcManualAssetIds = [];
+    document.getElementById('docLinkConfirmOverlay').remove();
+    if (context.assetId) loadAssetDocuments(context.assetId);
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not save: ' + err.message;
   }
 }
 
@@ -15612,6 +15781,11 @@ async function showWorkOrderDetail(recordId) {
       </div>
     </div>
   </div>
+
+  <div class="detail-panel" style="margin-top:14px">
+    <div style="padding:16px 20px;font-size:12px;font-weight:700;color:var(--navy)">Documents</div>
+    <div id="woDocumentsList_${o.woId}" style="padding:0 20px 16px;font-size:12px;color:var(--muted)">Loading…</div>
+  </div>
   </div>
 
   <div class="wo-chat-col">
@@ -15635,7 +15809,36 @@ async function showWorkOrderDetail(recordId) {
   renderWODetailChecklist(o);
   renderWODetailActivityThread(o);
   renderWODetailChat(o);
+  loadWorkOrderDocuments(o.woId);
 }
+
+// Same unified documents model as the asset detail page — a document
+// shows here if it was directly linked to this work order (during
+// upload, via the "Link to a Work Order" field). Read-only from this
+// side for now; uploading and linking happens from wherever the
+// document actually originates.
+async function loadWorkOrderDocuments(woId) {
+  const el = document.getElementById('woDocumentsList_' + woId);
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/get-assets?documentsFor=work_order&id=' + encodeURIComponent(woId));
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load documents');
+    if (!data.documents || data.documents.length === 0) {
+      el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No documents linked to this work order yet.</div>`;
+      return;
+    }
+    el.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px">
+      ${data.documents.map(doc => `<a href="${doc.url}" target="_blank" style="display:block;padding:8px 10px;background:#F7F8FA;border:1px solid var(--border);border-radius:6px;text-decoration:none;color:var(--text);font-size:12.5px">
+        📄 ${escapeHtml(doc.filename)}
+        <span style="color:var(--muted);font-size:10.5px;display:block">${escapeHtml(doc.documentType)}${doc.uploadedBy ? ' · ' + escapeHtml(doc.uploadedBy) : ''}</span>
+      </a>`).join('')}
+    </div>`;
+  } catch (err) {
+    el.textContent = 'Could not load documents.';
+  }
+}
+
 
 // Any of the four core roles can assign/reassign a technician on any
 // work order, regardless of which discipline it's routed to —
@@ -17815,7 +18018,18 @@ function openNewRequisitionForm() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;margin:20px 0">
       <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">New Requisition</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Records this from the moment it's genuinely intended — before it's ordered, before it's an asset.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Records this from the moment it's genuinely intended — before it's ordered, before it's an asset.</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button onclick="document.getElementById('nr_aiTextWrap').style.display='block'" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✨ Fill from description</button>
+        <button onclick="document.getElementById('nr_aiPhotoInput').click()" style="flex:1;padding:8px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✨ Fill from photo</button>
+        <input type="file" id="nr_aiPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="aiFillRequisitionFromPhoto(this)">
+      </div>
+      <div id="nr_aiTextWrap" style="display:none;margin-bottom:14px">
+        <textarea id="nr_aiTextInput" rows="2" placeholder="e.g. need 20L diesel for the generator at Zenaultra Tower, Building B" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical;margin-bottom:6px"></textarea>
+        <button onclick="aiFillRequisitionFromText()" style="padding:8px 16px;font-size:12px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">Fill Form</button>
+      </div>
+      <div id="nr_aiStatus" style="font-size:11.5px;margin-bottom:10px"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What's needed *</label>
       <textarea id="nr_description" rows="2" placeholder="e.g. New X-Ray Machine for Radiology" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px;box-sizing:border-box;resize:vertical"></textarea>
@@ -17882,6 +18096,75 @@ function openNewRequisitionForm() {
 // asset — picking a facility narrows Building to just that
 // facility's real buildings; leaving it unset keeps every building
 // available.
+function applyRequisitionAiFill(filled) {
+  if (filled.itemDescription) document.getElementById('nr_description').value = filled.itemDescription;
+  if (filled.quantityRequested != null) document.getElementById('nr_quantity').value = filled.quantityRequested;
+  if (filled.unitOfMeasure) document.getElementById('nr_unit').value = filled.unitOfMeasure;
+  if (filled.facility) {
+    document.getElementById('nr_facility').value = filled.facility;
+    updateNewRequisitionBuildingOptions();
+  }
+  if (filled.building) document.getElementById('nr_building').value = filled.building;
+  if (filled.requestingDepartment) document.getElementById('nr_department').value = filled.requestingDepartment;
+  document.getElementById('nr_isAsset').checked = !!filled.isAsset;
+  document.getElementById('nr_relatedAssetWrap').style.display = filled.isAsset ? 'none' : 'block';
+  if (filled.notes) document.getElementById('nr_notes').value = filled.notes;
+}
+
+async function aiFillRequisitionFromText() {
+  const description = document.getElementById('nr_aiTextInput').value.trim();
+  const statusEl = document.getElementById('nr_aiStatus');
+  if (!description) return;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Reading…';
+  try {
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'aiFillRequisitionFromText', description }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not process this — fill the form manually.');
+    applyRequisitionAiFill(data.filled);
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = '✓ Filled — review before submitting.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = err.message;
+  }
+}
+
+async function aiFillRequisitionFromPhoto(inputEl) {
+  const file = inputEl.files[0];
+  const statusEl = document.getElementById('nr_aiStatus');
+  if (!file) return;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Reading the photo…';
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/manage-asset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'aiFillRequisitionFromPhoto', imageBase64: base64, contentType: file.type || 'image/jpeg' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not read this photo — fill the form manually.');
+    applyRequisitionAiFill(data.filled);
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = '✓ Filled from photo — review before submitting.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = err.message;
+  } finally {
+    inputEl.value = '';
+  }
+}
+
 function updateNewRequisitionBuildingOptions() {
   const facilitySelect = document.getElementById('nr_facility');
   const buildingSelect = document.getElementById('nr_building');
@@ -20107,6 +20390,37 @@ function findVisibleElement(selector) {
 
 let famTourStepIndex = 0;
 let famTourVisibleSteps = [];
+
+const HELPFUL_AI_FEATURES = [
+  { title: 'Ask about FAM', desc: 'Answers "how do I..." questions from a living reference doc — escalates to your admin if it genuinely can\'t answer.', where: 'The 💬 chat bubble, bottom-right, on every screen.' },
+  { title: 'Invoice / Quote Reading', desc: "Reads a vendor's uploaded quote PDF and pulls out the total cost, VAT status, and a summary automatically.", where: 'Procurement — attaching a vendor quote to a requisition response.' },
+  { title: 'Vendor Category Suggestion', desc: 'Suggests which technical system (HVAC, Electrical, etc.) a new vendor belongs to, from their own description.', where: 'Adding a new vendor.' },
+  { title: 'Vendor Smart Search', desc: 'Understands "aircon guy" means the vendor described as "climate control servicing" — beyond exact keyword matching.', where: 'Searching the vendor list.' },
+  { title: 'Floor Plan Room Detection', desc: 'Reads an uploaded floor drawing and tries to match it against your existing Level View rooms.', where: 'Uploading a floor plan.' },
+  { title: 'AI-Assisted Requisition', desc: 'Type a plain description, or photograph a paper requisition slip — fills the New Requisition form for you to review.', where: 'New Requisition — the ✨ buttons at the top of the form.' },
+  { title: 'AI Document Filing', desc: 'When you upload a document, suggests which real assets it should be linked to (or a facility-wide template) — you confirm before anything is linked.', where: 'Uploading a document on any asset.' },
+];
+
+function openHelpfulAiFeaturesModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'helpfulAiFeaturesOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px;overflow-y:auto';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:90vw;margin:20px 0">
+      <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">✨ Helpful AI Features</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every AI feature in FAM suggests — it never decides on its own. You always see and confirm before anything changes.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto">
+        ${HELPFUL_AI_FEATURES.map(f => `
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:3px">${f.title}</div>
+            <div style="font-size:12px;color:var(--text);line-height:1.4;margin-bottom:5px">${f.desc}</div>
+            <div style="font-size:10.5px;color:var(--muted)">📍 ${f.where}</div>
+          </div>`).join('')}
+      </div>
+      <button onclick="document.getElementById('helpfulAiFeaturesOverlay').remove()" style="margin-top:16px;width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
 
 function startFamOnboardingTour() {
   // Steps with a beforeShow action (e.g. navigating to a different tab
