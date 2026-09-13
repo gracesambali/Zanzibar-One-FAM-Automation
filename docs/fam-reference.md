@@ -300,44 +300,71 @@ WhatsApp is live on the account and a real send is attempted — that setup
 (registering the number, submitting a template to Meta if needed) happens
 in Beem's own dashboard, not in this codebase.
 
-## Work Order Urgency (Critical / High / Low) + simplified maintenance dates
+## Work Order Urgency & Status (final design — supersedes the section this replaced)
 
-Two separate, real scales, both stored in the same `work_orders.urgency`
-column depending on how the work order originated:
-
-- **Date-triggered work orders** (scheduled maintenance due dates) now use
-  only **OVERDUE** or **UPCOMING** — the old URGENT tier (due within 3
-  days) was dropped entirely, confirmed directly. UPCOMING still uses the
-  same 7-day alert window as before.
-- **Human-reported work orders** (breakdown emails, the public no-login
-  report portal) now get a real **Critical / High / Low** urgency,
-  assessed by AI (`lib/workOrderUrgencyAI.js`) instead of the old
-  meaningless "REPORTED" placeholder. Real signals combined: the tied
-  asset's Criticality and system (when the report names a specific
-  asset — the current email and portal paths don't yet), the report's
-  own language, whether multiple systems were flagged in one report, and
-  this organization's own recent similar reports for pattern reference.
+**Urgency: exactly 3 real values everywhere — Critical / High / Low.**
+No exceptions, no per-origin vocabulary. Every work order gets a
+deterministic initial urgency based on how it was created:
+- **Scheduled maintenance** — Critical if already overdue at creation,
+  otherwise High (rule-based, not AI — this is a plain date comparison)
+- **Sensor alert** (reading outside target range) — always Critical (a
+  real active fault signal)
+- **Inspection** — High if the asset itself is High-criticality,
+  otherwise Low (rule-based)
+- **Spare-part order** — always Low (administrative, not an active issue)
+- **Breakdown email / public no-login portal report** — assessed by AI
+  (`lib/workOrderUrgencyAI.js`), the one case with real unstructured
+  language to interpret, using asset criticality/system when tied to
+  one, the report's own wording, whether multiple systems were flagged,
+  and this organization's own recent similar reports for pattern
+  reference
 
 **Leadership Reporter hard floor**, confirmed directly: a report from
-someone flagged `users.is_leadership_reporter` (directors, chiefs, etc. —
-independent of their functional role) always lands at **High or above**,
-regardless of what the AI concludes from the text. `business_owner` role
-is already the most senior functional role and doesn't need the flag set
-separately in code, but the flag itself must still be turned on per
-person via Staff Management → Edit → "Leadership Reporter" checkbox — it
-is not automatic for any role today. Same principle as every other AI
-feature: suggest, never silently decide — every assessment (and whether
-the floor was applied) is logged in the work order's own Activity Log.
+someone flagged `users.is_leadership_reporter` (directors, chiefs, etc.
+— independent of functional role) always lands at High or above,
+regardless of what the AI concludes from the text. Must be turned on per
+person via Staff Management → Edit → "Leadership Reporter" checkbox — not
+automatic for any role.
 
-SLA Targets: the old URGENT row (4h/48h) was renamed to Critical; High
-(8h/72h) and Low (48h/168h) are new rows with sensible starting defaults,
-editable like everything else in that screen.
+**Status: Open, Ready for Review, Closed.** "In Progress" was dropped
+entirely, confirmed directly — Open now covers both "not started" and
+"actively being worked."
 
-Every place that displays a work order's urgency badge (Work Orders
-table, Dashboard cards, detail pages) uses one shared function,
-`woUrgencyBadgeClass()`, so both vocabularies (OVERDUE/UPCOMING and
-Critical/High/Low) always render consistently rather than being
-re-guessed per screen.
+**Universal live escalation clock**, confirmed directly, applies
+identically to every work order regardless of origin or starting
+urgency — never stored, computed fresh every time a work order is
+actually viewed (`lib/workOrderState.js` → `computeEffectiveWorkOrderState`,
+mirrored in the frontend):
+- 6 hours open, still unresolved → at least High
+- 8 hours open, still unresolved → Critical
+- 24 hours open, still unresolved → displayed status becomes
+  **Open-Overdue** (only "Open" work orders can become overdue — Ready
+  for Review and Closed never do)
+
+Escalation only ever pushes urgency UP, never down. "Open-Overdue" is
+never a stored database value — computing it live means it's always
+exactly accurate to the second, and avoids relying on a background job:
+the hosting plan's cron only runs once per day (confirmed directly against
+Vercel's own Hobby-tier limits), nowhere near tight enough for a 6-8 hour
+threshold. This was a deliberate trade confirmed directly: no active
+notification fires the moment a work order crosses a threshold, but the
+status is always correct wherever it's shown, at $0 added cost.
+
+The old per-urgency SLA Targets settings screen (editable response/
+resolution-hour windows per urgency tier) was removed entirely — it
+doesn't apply under this design. The underlying `sla_targets` table and
+its unit/tenant-SLA-summary code paths (`loadSLATargetsMap`,
+`computeSLACompliance`, `computeUnitSLASummary` — a separate,
+unrelated feature) were left untouched since they may still serve
+tenant/unit tracking, not investigated as part of this change.
+
+The daily digest email includes a live "All Open Work Orders — Right
+Now" section (Critical/High/Low counts + Open-Overdue count), computed
+fresh at send time using the same escalation logic shown in-app.
+
+Every place displaying a work order's urgency or status badge uses two
+shared functions, `woUrgencyBadgeClass()` and `woStatusDisplay()`, both
+applied to the live-computed effective state, not the raw stored value.
 
 ## Chatbot Knowledge Portal
 

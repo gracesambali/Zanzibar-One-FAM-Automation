@@ -121,7 +121,7 @@ export default async function handler(req, res) {
     // since this local version is already tested and working.
     const { query: pgQuery } = await import("../lib/postgresClient.js");
     const existingWOResult = await pgQuery(
-      "select * from work_orders where asset_id = $1 and status in ('Open', 'In Progress') limit 1",
+      "select * from work_orders where asset_id = $1 and status = 'Open' limit 1",
       [f.asset_id || ""]
     ).catch(() => null);
     const existingWO = existingWOResult && existingWOResult.rows[0] ? existingWOResult.rows[0] : null;
@@ -130,13 +130,22 @@ export default async function handler(req, res) {
       if (daysUntil > ALERT_WINDOW_DAYS) {
         return res.status(200).json({ triggered: false, reason: "Not within alert window yet", daysUntil });
       }
+      // "urgency" here describes the MAINTENANCE SCHEDULE state (used
+      // for the email subject/message wording only) - a real, separate
+      // concept from the work order's OWN urgency. Confirmed directly:
+      // every work order gets a real Critical/High/Low regardless of
+      // origin - deterministic here, no AI needed, this is a plain
+      // fact: already overdue at creation -> Critical; still within
+      // the alert window -> High. Either way it's still subject to
+      // the same universal 6h/8h/24h escalation once open.
       const urgency = daysUntil < 0 ? "OVERDUE" : "UPCOMING";
+      const workOrderUrgency = daysUntil < 0 ? "Critical" : "High";
       const message = `[${urgency}] ${f.name} (${f.asset_id}) at ${f.room_zone} — service due ${dueDateRaw}. ${daysUntil < 0 ? Math.abs(daysUntil) + " days overdue" : daysUntil + " days remaining"}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);
-      const [, woId] = await Promise.all([logAlert(f, urgency, message, f.organization_id), createWorkOrder(f, urgency, f.organization_id)]);
+      const [, woId] = await Promise.all([logAlert(f, urgency, message, f.organization_id), createWorkOrder(f, workOrderUrgency, f.organization_id)]);
 
-      return res.status(200).json({ triggered: true, type: "initial", urgency, asset: f.asset_id, message, workOrder: woId });
+      return res.status(200).json({ triggered: true, type: "initial", urgency: workOrderUrgency, asset: f.asset_id, message, workOrder: woId });
     } else {
       const lastReminder = existingWO.last_reminder_sent;
       const daysSinceReminder = lastReminder ? daysBetween(new Date(lastReminder), new Date()) : REMINDER_INTERVAL_DAYS;
@@ -149,7 +158,11 @@ export default async function handler(req, res) {
         });
       }
 
-      const urgency = existingWO.urgency || "OVERDUE";
+      // Recomputed fresh from the real due date rather than read off
+      // the work order's own urgency field, which is a different
+      // concept now (Critical/High/Low) and not what this reminder
+      // message is actually describing.
+      const urgency = daysUntil < 0 ? "OVERDUE" : "UPCOMING";
       const message = `[REMINDER — ${existingWO.wo_id} still open] ${f.name} (${f.asset_id}) at ${f.room_zone} — service due ${dueDateRaw}.`;
 
       await Promise.all([sendEmail(f, urgency, message), sendSms(message)]);

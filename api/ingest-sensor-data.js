@@ -320,7 +320,11 @@ async function createWorkOrder({ assetId, assetName, location, sensorTypeLabel, 
       system: sensorTypeLabel || null,
       location: location || null,
       status: "Open",
-      urgency: "SENSOR ALERT",
+      // A sensor reading outside its target range is a real, active
+      // fault signal - deterministic rule (no AI needed, this is a
+      // plain fact), confirmed directly: sensor-triggered work orders
+      // always start Critical.
+      urgency: "Critical",
       created: new Date().toISOString(),
       last_reminder_sent: new Date().toISOString().split("T")[0],
       notes: `Auto-generated from sensor alert: ${sensorTypeLabel} reading ${reading}${unit}, expected ${targetRangeDisplay}.`,

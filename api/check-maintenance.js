@@ -119,19 +119,30 @@ export default async function handler(req, res) {
       // built specifically for this query shape.
       const { query: pgQuery } = await import("../lib/postgresClient.js");
       const existingWOResult = await pgQuery(
-        "select * from work_orders where asset_id = $1 and status in ('Open', 'In Progress') limit 1",
+        "select * from work_orders where asset_id = $1 and status = 'Open' limit 1",
         [assetId]
       ).catch(() => null);
       const existingWO = existingWOResult && existingWOResult.rows[0] ? existingWOResult.rows[0] : null;
 
       if (!existingWO) {
         if (daysUntil <= ALERT_WINDOW_DAYS) {
+          // "urgency" here describes the MAINTENANCE SCHEDULE state
+          // (used for the digest email/alert log wording only) - kept
+          // as OVERDUE/UPCOMING, a real, separate concept from the
+          // work order's OWN urgency below. Confirmed directly: every
+          // work order gets a real Critical/High/Low regardless of
+          // origin - a deterministic rule here (no AI needed, this is
+          // a plain fact): already overdue at creation -> Critical;
+          // still within the alert window -> High. Either way it's
+          // still subject to the same universal 6h/8h/24h escalation
+          // once open, same as everything else.
           const urgency = daysUntil < 0 ? "OVERDUE" : "UPCOMING";
+          const workOrderUrgency = daysUntil < 0 ? "Critical" : "High";
           const message = buildMessage(f, daysUntil, urgency, null);
 
           const [logResult, woId] = await Promise.all([
             logAlert(f, urgency, message, "Initial"),
-            createWorkOrder(f, urgency),
+            createWorkOrder(f, workOrderUrgency),
           ]);
 
           digestItems.push({ f, assetId, urgency, daysUntil, type: "initial", woId, message });
@@ -161,7 +172,27 @@ export default async function handler(req, res) {
     // maintenance alerts, warranty expiries, and replacement notices
     // together, still one message.
     if (digestItems.length > 0 || warrantyItems.length > 0 || replacementItems.length > 0) {
-      await sendDigestEmail(digestItems, warrantyItems, replacementItems);
+      // Confirmed directly: the daily email should reflect the same
+      // live escalation logic shown in-app, not a stale snapshot -
+      // computed fresh right here at send time, same as everything
+      // else in this digest.
+      let workOrderUrgencySummary = null;
+      try {
+        const { query: pgQueryWO } = await import("../lib/postgresClient.js");
+        const { computeEffectiveWorkOrderState } = await import("../lib/workOrderState.js");
+        const openWOsResult = await pgQueryWO("select created, urgency, status from work_orders where status = 'Open'");
+        const counts = { Critical: 0, High: 0, Low: 0, overdue: 0 };
+        for (const wo of openWOsResult.rows) {
+          const effective = computeEffectiveWorkOrderState(wo.created, wo.urgency, wo.status);
+          counts[effective.urgency] = (counts[effective.urgency] || 0) + 1;
+          if (effective.status === "Open-Overdue") counts.overdue++;
+        }
+        workOrderUrgencySummary = counts;
+      } catch (err) {
+        console.error("Work order urgency summary failed (non-fatal):", err.message);
+      }
+
+      await sendDigestEmail(digestItems, warrantyItems, replacementItems, workOrderUrgencySummary);
       if (digestItems.length > 0) await sendDigestSms(digestItems);
 
       // Update "Last Alert Sent" on each affected Component record —
@@ -306,7 +337,7 @@ async function updateReminderTimestamp(recordId) {
 // ---------------------------------------------------------------------
 
 // Sends ONE email containing all items for today — not per-asset.
-async function sendDigestEmail(items, warrantyItems, replacementItems) {
+async function sendDigestEmail(items, warrantyItems, replacementItems, workOrderUrgencySummary) {
   warrantyItems = warrantyItems || [];
   replacementItems = replacementItems || [];
   const toList = parseEmailList(process.env.ALERT_TO_EMAIL);
@@ -395,6 +426,17 @@ async function sendDigestEmail(items, warrantyItems, replacementItems) {
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase">Timing</th>
         </tr></thead>
         <tbody>${replacementRows}</tbody>
+      </table>` : ''}
+      ${workOrderUrgencySummary ? `
+      <p style="font-size:14px;line-height:1.6;font-weight:700;margin-bottom:6px">📋 All Open Work Orders — Right Now</p>
+      <p style="font-size:12.5px;color:#6b7280;margin:0 0 10px">Reflects the same live escalation shown in the app — a work order started Low can show as High or Critical here if it's been open long enough.</p>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
+        <tbody>
+          <tr><td style="padding:6px 12px;font-size:13px">🔴 Critical</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.Critical}</td></tr>
+          <tr><td style="padding:6px 12px;font-size:13px">🟠 High</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.High}</td></tr>
+          <tr><td style="padding:6px 12px;font-size:13px">🟢 Low</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right">${workOrderUrgencySummary.Low}</td></tr>
+          <tr><td style="padding:6px 12px;font-size:13px;border-top:1px solid #e5e7eb">⏰ Open-Overdue (24h+)</td><td style="padding:6px 12px;font-size:13px;font-weight:700;text-align:right;border-top:1px solid #e5e7eb;color:#dc2626">${workOrderUrgencySummary.overdue}</td></tr>
+        </tbody>
       </table>` : ''}
       <p style="font-size:14px;line-height:1.6;margin-bottom:0">Regards,<br>${fromName}</p>
     </div>
@@ -654,7 +696,7 @@ async function checkAndEscalateStaleWorkOrders() {
 
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const stale = workOrders.filter(r => {
-      const isOpenState = r.status === "Open" || r.status === "In Progress";
+      const isOpenState = r.status === "Open";
       const isOld = r.created && new Date(r.created).getTime() < cutoff;
       const alreadyEscalated = r.escalation_sent === true;
       return isOpenState && isOld && !alreadyEscalated;

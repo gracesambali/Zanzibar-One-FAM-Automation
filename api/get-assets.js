@@ -10,6 +10,7 @@ import { can } from "../lib/roles.js";
 import { calculateCurrentValue } from "../lib/depreciation.js";
 import { getContactForUsername, getAllStaffDirectory } from "../lib/staffDirectory.js";
 import { getChecklistForWorkOrder } from "../lib/checklists.js";
+import { computeEffectiveWorkOrderState } from "../lib/workOrderState.js";
 
 export default async function handler(req, res) {
   // Public branding config — no login needed. Sourced from env vars so
@@ -2329,7 +2330,7 @@ async function buildPeriodReport(req, res, days, organizationId) {
           urgency: r.urgency || "",
           location: r.location || "",
           dateOpened: linkedWO ? linkedWO.created : r.timestamp,
-          dateClosed: linkedWO && linkedWO.status === "Completed" ? linkedWO.completed_date : null,
+          dateClosed: linkedWO && linkedWO.status === "Closed" ? linkedWO.completed_date : null,
         };
       }),
       maintenanceTypes: countBy(workOrdersInPeriod, "maintenance_type"),
@@ -2341,7 +2342,7 @@ async function buildPeriodReport(req, res, days, organizationId) {
           (grouped[type] = grouped[type] || []).push({
             name: r.asset_name || r.asset_id || "Unnamed",
             dateOpened: r.created || null,
-            dateClosed: r.status === "Completed" ? (r.completed_date || null) : null,
+            dateClosed: r.status === "Closed" ? (r.completed_date || null) : null,
           });
         }
         return grouped;
@@ -2351,12 +2352,18 @@ async function buildPeriodReport(req, res, days, organizationId) {
         return sum + (typeof cost === "number" && !isNaN(cost) ? cost : 0);
       }, 0),
       workOrderStatus: {
-        completed: allWorkOrders.filter(r => r.status === "Completed" && r.completed_date && new Date(r.completed_date) >= cutoff).length,
-        open: allWorkOrders.filter(r => r.status === "Open" || r.status === "In Progress").length,
+        completed: allWorkOrders.filter(r => r.status === "Closed" && r.completed_date && new Date(r.completed_date) >= cutoff).length,
+        open: allWorkOrders.filter(r => r.status === "Open").length,
         readyForReview: allWorkOrders.filter(r => r.status === "Ready for Review").length,
-        overdue: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "OVERDUE").length,
-        upcoming: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "UPCOMING").length,
-        critical: allWorkOrders.filter(r => r.status !== "Completed" && r.urgency === "Critical").length,
+        // "Open-Overdue" is never stored - computed live from real
+        // elapsed time (Vercel Hobby only runs cron once/day, nowhere
+        // near tight enough for a 24-hour threshold, and computing
+        // live is actually more accurate anyway - always exact to the
+        // second, no timer needed). Same for the escalated Critical
+        // count - a work order that started Low or High still counts
+        // here once the universal 6h/8h clock has pushed it to Critical.
+        critical: allWorkOrders.filter(r => r.status === "Open" && computeEffectiveWorkOrderState(r.created, r.urgency, r.status).urgency === "Critical").length,
+        overdue: allWorkOrders.filter(r => r.status === "Open" && computeEffectiveWorkOrderState(r.created, r.urgency, r.status).status === "Open-Overdue").length,
       },
       periodStart: cutoff.toISOString(),
       periodEnd: new Date().toISOString(),
@@ -2471,7 +2478,7 @@ async function handleStaffPerformance(req, res, organizationId) {
     const closedBy = {};
     for (const r of workOrders) {
       const person = r.closed_by;
-      if (!person || r.status !== "Completed") continue;
+      if (!person || r.status !== "Closed") continue;
       if (!closedBy[person]) closedBy[person] = { count: 0, totalDays: 0 };
       closedBy[person].count += 1;
       if (r.created && r.completed_date) {
@@ -2547,7 +2554,7 @@ function computePendingItems(workOrders, role) {
 
   if (role === "technician") {
     for (const r of workOrders) {
-      if (r.status === "Open" || r.status === "In Progress") {
+      if (r.status === "Open") {
         items.push(describe(r, r.status === "Open" ? "Needs to be started" : "In progress"));
       }
     }

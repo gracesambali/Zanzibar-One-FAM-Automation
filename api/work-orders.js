@@ -2324,13 +2324,13 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
   const { getById, update } = await import("../lib/postgresClient.js");
 
   // Closing is never a single person's unilateral call anymore.
-  // "Completed" can only be reached through the dedicated approveClosure
+  // "Closed" can only be reached through the dedicated approveClosure
   // action below, which checks the routed role's sign-off. Anyone still
-  // trying to set Status directly to Completed through this general
+  // trying to set Status directly to Closed through this general
   // path is blocked here, server-side — the same principle as the
   // procurement gate: a real gate has to hold even if someone bypasses
   // the UI and calls the API directly.
-  if (status === "Completed") {
+  if (status === "Closed") {
     return {
       ok: false,
       recordId,
@@ -2401,7 +2401,7 @@ async function updateWorkOrder(recordId, status, notes, closedByUsername, cost) 
 // actually closes a work order now, not the technician's own say-so.
 // Carries the same asset-rollover and satisfaction-request logic that
 // used to live in the direct-close path, since this is the only place
-// "Completed" is ever reached from now on.
+// "Closed" is ever reached from now on.
 async function handleApproveClosure(req, res, approvedByUsername) {
   const { recordId } = req.body || {};
   if (!recordId) return res.status(400).json({ error: "recordId required" });
@@ -2420,7 +2420,7 @@ async function handleApproveClosure(req, res, approvedByUsername) {
     const assetName = woData.asset_name || "the reported issue";
 
     await update("work_orders", recordId, {
-      status: "Completed",
+      status: "Closed",
       completed_date: new Date().toISOString(),
       closed_by: approvedByUsername,
       closure_rejection_reason: null,
@@ -2509,7 +2509,7 @@ async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizat
     const { getById, getByColumn, insert, update } = await import("../lib/postgresClient.js");
     const woData = await getById("work_orders", recordId).catch(() => { throw new Error("Could not read work order"); });
     if (!woData || woData.organization_id !== organizationId) return res.status(404).json({ error: "Work order not found." });
-    if (woData.status === "Completed") return res.status(400).json({ error: "This work order is already closed." });
+    if (woData.status === "Closed") return res.status(400).json({ error: "This work order is already closed." });
     if (!woData.asset_id) {
       return res.status(400).json({ error: "This work order has no linked asset to scan — close it through the standard review path instead." });
     }
@@ -2546,7 +2546,7 @@ async function handleCloseWorkOrderViaScan(req, res, closedByUsername, organizat
       closure_method: "scan",
       closure_rejection_reason: null,
     } : {
-      status: "Completed",
+      status: "Closed",
       completed_date: new Date().toISOString(),
       closed_by: closedByUsername,
       closure_method: "scan",
@@ -3236,9 +3236,9 @@ async function handleMaintenanceReport(req, res, organizationId) {
     });
 
     const summary = {
-      total: workOrders.length, open: workOrders.filter(w => w.status === "Open" || w.status === "In Progress").length,
+      total: workOrders.length, open: workOrders.filter(w => w.status === "Open").length,
       readyForReview: workOrders.filter(w => w.status === "Ready for Review").length,
-      completed: workOrders.filter(w => w.status === "Completed").length,
+      completed: workOrders.filter(w => w.status === "Closed").length,
       costByMaintenanceType: costByType,
       totalCostRecorded: Object.values(costByType).reduce((a,b) => a+b, 0),
     };
@@ -3274,7 +3274,11 @@ async function handleScheduleInspection(req, res, scheduledBy, organizationId) {
       system: f.system || null,
       location: f.room_zone || null,
       status: "Open",
-      urgency: "SCHEDULED",
+      // Deterministic rule, not AI - this is a plain fact check, not
+      // language to interpret: a scheduled inspection on a
+      // High-criticality asset starts High, everything else starts
+      // Low. Still subject to the same universal escalation once open.
+      urgency: f.criticality === "High" ? "High" : "Low",
       created: new Date().toISOString(),
       notes: notes || `Inspection scheduled by ${scheduledBy}`,
       assigned_role: getAssignedRole(f.system, f.name) || null,
@@ -3321,7 +3325,9 @@ async function handleOrderSparePart(req, res, orderedBy, organizationId) {
       system: f.system || null,
       location: f.room_zone || null,
       status: "Open",
-      urgency: "SCHEDULED",
+      // A spare-part order is administrative, not an active fault -
+      // deterministic rule, always starts Low.
+      urgency: "Low",
       created: new Date().toISOString(),
       notes: `Spare part order initiated by ${orderedBy} for ${f.name || assetId}`,
       assigned_role: getAssignedRole(f.system, f.name) || null,

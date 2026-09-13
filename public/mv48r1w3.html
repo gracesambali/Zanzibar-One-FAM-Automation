@@ -1397,28 +1397,55 @@ function filterByBuilding(items) {
 function statusBadge(s) { return s==="Good"?"badge-good":s==="Poor"?"badge-warning":"badge-overdue"; }
 function critBadge(c) { return c==="High"?"badge-high":"badge-low"; }
 
-// Work Order urgency now holds two different real vocabularies
-// depending on where the WO came from: OVERDUE/UPCOMING for ones
-// triggered by a scheduled maintenance due date, or Critical/High/Low
-// for ones from a human report (assessed by AI, confirmed directly).
-// One shared badge mapping so every place displaying urgency treats
-// both vocabularies consistently rather than re-guessing per screen.
-function woUrgencyBadgeClass(urgency) {
-  if (urgency === 'OVERDUE' || urgency === 'Critical') return 'badge-overdue';
-  if (urgency === 'High') return 'badge-warning';
-  return 'badge-good'; // UPCOMING, Low, or anything else
+// Mirrors lib/workOrderState.js exactly - kept in sync deliberately,
+// since the frontend has no shared-module import path to the backend
+// lib files. One real urgency scale everywhere: Critical/High/Low, no
+// exceptions. Escalation only ever pushes urgency UP, never down.
+// "Open-Overdue" is never stored - Vercel Hobby only runs cron once a
+// day, nowhere near tight enough for a 24-hour threshold, and
+// computing this live instead means it's always exactly accurate to
+// the second, for every work order, with no timer at all.
+const WO_URGENCY_RANK = { Low: 0, High: 1, Critical: 2 };
+const WO_ESCALATE_TO_HIGH_HOURS = 6;
+const WO_ESCALATE_TO_CRITICAL_HOURS = 8;
+const WO_MARK_OVERDUE_HOURS = 24;
+
+function computeEffectiveWorkOrderState(createdAt, storedUrgency, storedStatus) {
+  const hoursSince = createdAt ? (Date.now() - new Date(createdAt).getTime()) / 3600000 : 0;
+  let urgency = ['Critical', 'High', 'Low'].includes(storedUrgency) ? storedUrgency : 'Low';
+  if (hoursSince >= WO_ESCALATE_TO_CRITICAL_HOURS) {
+    urgency = 'Critical';
+  } else if (hoursSince >= WO_ESCALATE_TO_HIGH_HOURS && WO_URGENCY_RANK[urgency] < WO_URGENCY_RANK.High) {
+    urgency = 'High';
+  }
+  let status = storedStatus;
+  if (storedStatus === 'Open' && hoursSince >= WO_MARK_OVERDUE_HOURS) {
+    status = 'Open-Overdue';
+  }
+  return { urgency, status, hoursSinceCreated: hoursSince };
 }
 
-// Confirmed directly, requested: a work order's own status is now
-// genuinely just Open or Closed wherever it's shown - In Progress no
-// longer exists as a distinct concept, folded into Open here. Ready
-// for Review keeps its own real, separate label, since it's a
-// genuine supervisor-approval state, not part of what was asked to
-// simplify - it just isn't "Open" or "Closed" either.
-function woStatusDisplay(status) {
-  if (status === 'Completed') return { label: 'Closed', badgeClass: 'badge-good' };
-  if (status === 'Ready for Review') return { label: 'Ready for Review', badgeClass: 'badge-warning' };
-  return { label: 'Open', badgeClass: 'badge-overdue' };
+// Three real values, everywhere, regardless of origin - confirmed
+// directly. Applied to the LIVE-computed urgency (post-escalation),
+// not the raw stored value, so a work order that's aged into Critical
+// shows as Critical even if it started Low.
+function woUrgencyBadgeClass(urgency) {
+  if (urgency === 'Critical') return 'badge-overdue';
+  if (urgency === 'High') return 'badge-warning';
+  return 'badge-good'; // Low
+}
+
+// Confirmed directly, requested: Open, Open-Overdue, Ready for
+// Review, Closed - In Progress no longer exists as a distinct
+// concept, folded into Open. Takes the whole work order object so it
+// can compute the live Open-Overdue state from real elapsed time,
+// not just echo back whatever's stored.
+function woStatusDisplay(o) {
+  const effective = computeEffectiveWorkOrderState(o.created, o.urgency, o.status);
+  if (effective.status === 'Open-Overdue') return { label: 'Open-Overdue', badgeClass: 'badge-overdue' };
+  if (o.status === 'Ready for Review') return { label: 'Ready for Review', badgeClass: 'badge-warning' };
+  if (o.status === 'Closed') return { label: 'Closed', badgeClass: 'badge-good' };
+  return { label: 'Open', badgeClass: 'badge-good' };
 }
 
 // A plain total-duration line, deliberately separate from SLA — this
@@ -1453,31 +1480,6 @@ function formatWorkOrderDuration(createdAt, completedAt) {
   return completedAt
     ? `Took ${durationText} to complete`
     : `Open for ${durationText} so far`;
-}
-
-// Response and resolution are shown as two separate signals, not one
-// combined badge — they mean genuinely different things (did staff
-// act quickly vs was the job actually finished in time), and
-// collapsing them loses real information, especially for an open
-// work order where response might already be Met while resolution is
-// still pending. Each only renders once it's actually measurable —
-// no badge for "not yet responded to" or "not yet completed", since
-// that's the normal state of most open work, not something worth
-// flagging.
-function renderSLABadges(sla) {
-  if (!sla || !sla.hasTarget) return '';
-  let html = '';
-  if (sla.responseMet !== null) {
-    html += sla.responseMet
-      ? `<span title="Responded in ${sla.responseHours}h (target ${sla.targetResponseHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#DCFCE7;color:#166534">✓ Response</span>`
-      : `<span title="Responded in ${sla.responseHours}h (target was ${sla.targetResponseHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#FEE2E2;color:#991B1B">⚠ Response Breached</span>`;
-  }
-  if (sla.resolutionMet !== null) {
-    html += sla.resolutionMet
-      ? `<span title="Resolved in ${sla.resolutionHours}h (target ${sla.targetResolutionHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#DCFCE7;color:#166534">✓ Resolution</span>`
-      : `<span title="Resolved in ${sla.resolutionHours}h (target was ${sla.targetResolutionHours}h)" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:14px;background:#FEE2E2;color:#991B1B">⚠ Resolution Breached</span>`;
-  }
-  return html;
 }
 
 function statusBg(s) { return s==="Good"?"var(--green-bg)":s==="Poor"?"var(--amber-bg)":"var(--red-bg)"; }
@@ -1708,8 +1710,8 @@ function renderDashboard() {
     const mKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
     const monthWOs = dashWOs.filter(w => (w.created||'').startsWith(mKey));
     const planned = monthWOs.length;
-    const completed = monthWOs.filter(w => w.status === 'Completed').length;
-    const overdue = monthWOs.filter(w => w.status === 'Open' && w.urgency === 'OVERDUE').length;
+    const completed = monthWOs.filter(w => w.status === 'Closed').length;
+    const overdue = monthWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).status === 'Open-Overdue').length;
     maintData.push({ m: monthNames[d.getMonth()], p: planned, c: completed, o: overdue });
   }
   const maxM = Math.max(1, ...maintData.map(d => Math.max(d.p, d.c, d.o)));
@@ -1735,7 +1737,7 @@ function renderDashboard() {
   // Recent Alerts — live from work orders, most recent first
   html += `<div class="dash-panel"><div class="dash-panel-title">Recent Alerts</div>`;
   const recentAlerts = dashWOs
-    .filter(w => w.status !== 'Completed')
+    .filter(w => w.status !== 'Closed')
     .sort((a, b) => new Date(b.created) - new Date(a.created))
     .slice(0, 5);
   if (recentAlerts.length === 0) {
@@ -1757,11 +1759,13 @@ function renderDashboard() {
   html += `<div class="dash-grid-4">`;
 
   // Work Orders Summary — live from dashboardWorkOrders
-  const woOpen = dashWOs.filter(w => w.status === 'Open' || w.status === 'In Progress').length;
+  const woOpen = dashWOs.filter(w => w.status === 'Open').length;
   const woReadyForReview = dashWOs.filter(w => w.status === 'Ready for Review').length;
-  const woOverdue = dashWOs.filter(w => w.status !== 'Completed' && w.urgency === 'OVERDUE').length;
+  // "Open-Overdue" is never stored - computed live from real elapsed
+  // time against the universal 24-hour threshold, same as everywhere else.
+  const woOverdue = dashWOs.filter(w => computeEffectiveWorkOrderState(w.created, w.urgency, w.status).status === 'Open-Overdue').length;
   const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
-  const woCompletedYTD = dashWOs.filter(w => w.status === 'Completed' && w.completedDate >= yearStart).length;
+  const woCompletedYTD = dashWOs.filter(w => w.status === 'Closed' && w.completedDate >= yearStart).length;
 
   html += `<div class="dash-panel"><div class="dash-panel-title">Work Orders Summary</div><div class="wo-summary">
     <div class="wo-box" style="background:var(--blue-bg)"><div class="wo-box-val" style="color:var(--blue)">${woOpen}</div><div class="wo-box-label">Open</div></div>
@@ -15792,7 +15796,8 @@ async function showWorkOrderDetail(recordId) {
   const container = document.getElementById('view-workorders');
   const procStatus = o.procurementStatus || 'None';
   const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
-  const woStatus = woStatusDisplay(o.status);
+  const woStatus = woStatusDisplay(o);
+  const woEffectiveUrgency = computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency;
 
   let html = `<button class="back-btn" onclick="renderWorkOrders()">← Back to Work Orders</button>
   <div class="wo-layout">
@@ -15802,10 +15807,9 @@ async function showWorkOrderDetail(recordId) {
       <div><div class="detail-title">${o.assetName}</div><div class="detail-sub">${o.woId} · ${o.system || '—'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <span class="badge ${woStatus.badgeClass}" style="padding:4px 12px;border-radius:14px;font-size:12px">${woStatus.label}</span>
-        <span class="badge ${woUrgencyBadgeClass(o.urgency)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${o.urgency}</span>
+        <span class="badge ${woUrgencyBadgeClass(woEffectiveUrgency)}" style="padding:4px 12px;border-radius:14px;font-size:12px">${woEffectiveUrgency}</span>
         ${o.maintenanceType ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:${o.maintenanceType==='Preventive'?'#DBEAFE':o.maintenanceType==='Corrective'?'#FEE2E2':o.maintenanceType==='Procurement'?'#FEF3C7':'#EDE9FE'};color:${o.maintenanceType==='Preventive'?'#1E40AF':o.maintenanceType==='Corrective'?'#991B1B':o.maintenanceType==='Procurement'?'#92400E':'#5B21B6'}">${o.maintenanceType}</span>` : ''}
         ${o.assignedRole ? `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#E0E7FF;color:#3730A3">→ ${o.assignedRole}</span>` : `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#F3F4F6;color:var(--muted)">Unassigned</span>`}
-        ${renderSLABadges(o.sla)}
         ${canReassignWorkOrder(o) ? `<button onclick="openReassignModal('${o.id}')" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--border);border-radius:14px;background:#fff;color:var(--navy);cursor:pointer">Reassign</button>` : ''}
       </div>
     </div>
@@ -15853,23 +15857,23 @@ async function showWorkOrderDetail(recordId) {
 
     <div style="padding:20px 24px;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Closing</div>
-      ${o.status === 'Completed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · ' + formatCurrency(o.cost) : ''}</div>` : ''}
+      ${o.status === 'Closed' && o.closedBy ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✓ Closed by ${o.closedBy}${o.completedDate ? ' · ' + new Date(o.completedDate).toLocaleDateString() : ''}${o.cost !== null && o.cost !== undefined ? ' · ' + formatCurrency(o.cost) : ''}</div>` : ''}
       ${o.closureRejectionReason ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">❌ Sent back: ${o.closureRejectionReason}</div>` : ''}
       ${o.satisfactionStatus === 'Not Satisfied' ? `<div style="font-size:12.5px;color:#991B1B;margin-bottom:8px">🔄 Reporter not satisfied — reopened. ${o.satisfactionReason || ''}</div>` : ''}
       ${o.satisfactionStatus === 'Satisfied' ? `<div style="font-size:12.5px;color:var(--green);margin-bottom:8px">✅ Reporter confirmed satisfied</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${o.status !== 'Completed' && o.assetId ? `
+        ${o.status !== 'Closed' && o.assetId ? `
           <button onclick="openCloseWorkOrderScanModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">📷 Close Work Order</button>
-        ` : o.status !== 'Completed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
-          <option value="Open" ${o.status==='Open' || o.status==='In Progress'?'selected':''}>Open</option>
+        ` : o.status !== 'Closed' ? `<select onchange="handleWorkOrderStatusChange('${o.id}', this.value, '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--navy)">
+          <option value="Open" ${o.status==='Open'?'selected':''}>Open</option>
           <option value="Ready for Review" ${o.status==='Ready for Review'?'selected':''}>Ready for Review</option>
         </select>` : `<span class="badge badge-good">Closed</span>`}
         ${o.status === 'Ready for Review' && currentUserPermissions && currentUserPermissions.reviewWorkOrderClosure ? `
           <button onclick="approveWorkOrderClosure('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:8px;background:var(--green);color:#fff;cursor:pointer">✓ Approve & Close</button>
           <button onclick="rejectWorkOrderClosurePrompt('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--red);border-radius:8px;background:#fff;color:var(--red);cursor:pointer">✗ Send Back</button>
         ` : ''}
-        ${o.status === 'Completed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
-        ${o.status === 'Completed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
+        ${o.status === 'Closed' && canEnterCost ? `<button onclick="openCostEntryModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}', true, ${o.cost !== null && o.cost !== undefined ? o.cost : 'null'})" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">${o.cost !== null && o.cost !== undefined ? '✎ Edit Cost' : '+ Add Cost'}</button>` : ''}
+        ${o.status === 'Closed' ? `<button onclick="generateCertificate('${o.id}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--green);border-radius:8px;background:#fff;color:var(--green);cursor:pointer">📄 Certificate</button>` : ''}
       </div>
     </div>
 
@@ -16031,122 +16035,6 @@ function closeAssetLinkModal() {
 // gate) — everyone who can see this panel at all can still view and
 // search the existing vendor list.
 let vendorListCache = []; // fetched once per modal open, filtered locally without refetching
-
-async function fetchSlaTargetsData() {
-  const resp = await fetch('/api/get-assets?slaTargets=true');
-  const data = await resp.json();
-  const targets = data.targets || [];
-  const order = ['OVERDUE', 'Critical', 'High', 'UPCOMING', 'Low'];
-  return order.map(u => targets.find(t => t.urgency === u)).filter(Boolean);
-}
-
-function renderSlaTargetsFromData(sorted) {
-  const el = document.getElementById('slaSettingsBody');
-  if (!el) return;
-  el.innerHTML = sorted.map(t => `
-    <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)">
-      <div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">${t.urgency}</div>
-      <div style="display:flex;gap:10px">
-        <div style="flex:1">
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Response (hours)</label>
-          <input id="sla_${t.urgency}_response" type="number" min="0" step="any" value="${t.responseHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-        </div>
-        <div style="flex:1">
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Resolution (hours)</label>
-          <input id="sla_${t.urgency}_resolution" type="number" min="0" step="any" value="${t.resolutionHours}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-        </div>
-      </div>
-    </div>`).join('');
-}
-
-// Editing the actual promised SLA numbers — Business Owner/System
-// Admin only, confirmed by nature: this is a business policy
-// decision, not routine entry. Fetches the real current targets
-// first rather than assuming defaults, since they may already have
-// been edited by someone else.
-// Confirmed directly, discussed and agreed in full: applies here too,
-// no exception, with the same real, deliberate care already applied
-// to BMS Notification Settings - this is a real, editable form, so
-// the background refresh only ever updates the cache quietly, never
-// re-rendering over targets someone may already be editing.
-async function openSLASettingsModal() {
-  const overlay = document.createElement('div');
-  overlay.id = 'slaSettingsOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
-  const cached = tabPrefetchCache.slaTargets;
-  overlay.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;width:460px;max-width:90vw;max-height:85vh;overflow-y:auto">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">SLA Targets</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Response = how quickly staff acts after a request comes in. Resolution = how quickly it's actually finished. Both measured automatically from real work order activity — nothing to log separately.</div>
-      <div id="slaSettingsBody">${cached ? '' : '<div style="font-size:12px;color:var(--muted)">Loading…</div>'}</div>
-      <div id="sla_error" style="display:none;color:var(--red);font-size:12px;margin:10px 0"></div>
-      <div style="display:flex;gap:8px;margin-top:14px">
-        <button onclick="document.getElementById('slaSettingsOverlay').remove()" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Cancel</button>
-        <button id="sla_submit" onclick="submitSLATargets()" style="flex:1;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save Targets</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  if (cached) {
-    renderSlaTargetsFromData(cached.data);
-    fetchSlaTargetsData().then(sorted => {
-      tabPrefetchCache.slaTargets = { data: sorted, fetchedAt: Date.now() };
-    }).catch(err => console.error('Background SLA Targets refresh failed (non-fatal):', err.message));
-    return;
-  }
-
-  try {
-    const sorted = await fetchSlaTargetsData();
-    tabPrefetchCache.slaTargets = { data: sorted, fetchedAt: Date.now() };
-    renderSlaTargetsFromData(sorted);
-  } catch (err) {
-    document.getElementById('slaSettingsBody').innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load current targets: ${err.message}</div>`;
-  }
-}
-
-async function submitSLATargets() {
-  const errorBox = document.getElementById('sla_error');
-  const btn = document.getElementById('sla_submit');
-  errorBox.style.display = 'none';
-
-  const targets = [];
-  for (const urgency of ['OVERDUE', 'Critical', 'High', 'UPCOMING', 'Low']) {
-    const responseEl = document.getElementById(`sla_${urgency}_response`);
-    const resolutionEl = document.getElementById(`sla_${urgency}_resolution`);
-    if (!responseEl || !resolutionEl) continue; // not loaded successfully, skip rather than send incomplete data
-    const responseHours = Number(responseEl.value);
-    const resolutionHours = Number(resolutionEl.value);
-    if (!responseEl.value || !resolutionEl.value || responseHours < 0 || resolutionHours < 0) {
-      errorBox.textContent = `${urgency} needs a valid response and resolution time.`;
-      errorBox.style.display = 'block';
-      return;
-    }
-    targets.push({ urgency, responseHours, resolutionHours });
-  }
-  if (targets.length === 0) {
-    errorBox.textContent = 'Targets did not load correctly — close this and try again.';
-    errorBox.style.display = 'block';
-    return;
-  }
-
-  btn.disabled = true; btn.textContent = 'Saving…';
-  try {
-    const resp = await fetch('/api/work-orders', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updateSLATargets: true, targets }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save targets');
-    tabPrefetchCache.slaTargets = null; // confirmed directly: this is a real, genuine post-mutation refresh - it must never show stale, pre-save target values next time
-    document.getElementById('slaSettingsOverlay')?.remove();
-    renderWorkOrders();
-  } catch (err) {
-    errorBox.textContent = err.message;
-    errorBox.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Save Targets';
-  }
-}
 
 // Confirmed directly, discussed and agreed in full before building:
 // whether Work Order closure requires a supervisor's review first is
@@ -16674,7 +16562,7 @@ function renderWODetailProcurement(o) {
 
   if (procStatus === 'None') {
     html += `<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Not requested for this work order.</div>
-      ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
+      ${o.status !== 'Closed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Request Procurement</button>` : ''}`;
   } else if (procStatus === 'Rejected') {
     // Rejected is a real, reachable state again — Procurement can
     // reject a request either before any quotes exist (unclear,
@@ -16683,7 +16571,7 @@ function renderWODetailProcurement(o) {
     // requester needs a real way back from here, not a dead end.
     html += `<span style="font-size:11px;font-weight:700;padding:4px 12px;border-radius:14px;background:#FEE2E2;color:#991B1B">Rejected</span>
       <div style="margin-top:10px;background:#FEF2F2;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#991B1B">${escapeHtml(o.procurementRejectionReason || 'No reason given')}</div>
-      ${o.status !== 'Completed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Revise and Resubmit</button>` : ''}`;
+      ${o.status !== 'Closed' ? `<button onclick="openProcurementRequestModal('${o.id}', '${o.assetName.replace(/'/g,"\\'")}')" style="margin-top:10px;padding:8px 14px;font-size:12.5px;font-weight:600;border:1px solid #B45309;border-radius:8px;background:#fff;color:#B45309;cursor:pointer">🛒 Revise and Resubmit</button>` : ''}`;
   } else {
     // Approved kept in the color map purely for safe display of any
     // historical record from before this flow changed — that state
@@ -17626,17 +17514,17 @@ function renderWORowHtml(o, staff) {
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         ${getWOUnreadCount(o) > 0 ? `<span class="wo-row-unread-dot" title="Unread chat">${getWOUnreadCount(o) > 9 ? '9+' : getWOUnreadCount(o)}</span>` : ''}
-        <span class="badge ${woUrgencyBadgeClass(o.urgency)}">${o.urgency}</span>
-        <span class="badge ${woStatusDisplay(o.status).badgeClass}">${woStatusDisplay(o.status).label}</span>
+        <span class="badge ${woUrgencyBadgeClass(computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency)}">${computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency}</span>
+        <span class="badge ${woStatusDisplay(o).badgeClass}">${woStatusDisplay(o).label}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
     </button>`;
 }
 
 async function buildWorkOrdersHtml(orders) {
-  const open = orders.filter(o => o.status === 'Open' || o.status === 'In Progress').length;
+  const open = orders.filter(o => o.status === 'Open').length;
   const readyForReview = orders.filter(o => o.status === 'Ready for Review').length;
-  const completed = orders.filter(o => o.status === 'Completed').length;
+  const completed = orders.filter(o => o.status === 'Closed').length;
 
   const isSimplified = currentUserPermissions && currentUserPermissions.simplifiedNav;
 
@@ -17656,13 +17544,6 @@ async function buildWorkOrdersHtml(orders) {
 
   if (currentUserRole === 'business_owner' || currentUserRole === 'system_admin') {
     html += `<div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--navy)">SLA Targets</div>
-        <div style="font-size:11.5px;color:var(--muted)">What you're actually promising, per urgency tier — shown as a badge on every work order once it's measurable.</div>
-      </div>
-      <button onclick="openSLASettingsModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Edit SLA Targets</button>
-    </div>
-    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--navy)">Closure Review</div>
         <div style="font-size:11.5px;color:var(--muted)">Off by default — closure is immediate and self-service. Turn on to require the routed role's review first, for whichever conditions you choose.</div>
@@ -17703,8 +17584,8 @@ async function buildWorkOrdersHtml(orders) {
       return log.some(e => e.by === currentUsername);
     });
     const myOrderIds = new Set(myOrders.map(o => o.id));
-    const myActive = myOrders.filter(o => o.status !== 'Completed');
-    const myCompleted = myOrders.filter(o => o.status === 'Completed')
+    const myActive = myOrders.filter(o => o.status !== 'Closed');
+    const myCompleted = myOrders.filter(o => o.status === 'Closed')
       .sort((a, b) => new Date(b.completedDate || b.created) - new Date(a.completedDate || a.created));
 
     // Recency windows — cumulative rolling windows ending now, not
@@ -17728,7 +17609,7 @@ async function buildWorkOrdersHtml(orders) {
     // happens it drops out of this shared pool, so two technicians
     // never end up duplicating the same job.
     const available = techOrders.filter(o => {
-      if (o.status === 'Completed' || myOrderIds.has(o.id)) return false;
+      if (o.status === 'Closed' || myOrderIds.has(o.id)) return false;
       if (o.assignedTechnician) return false;
       let log = [];
       try { log = JSON.parse(o.activityLog || '[]'); } catch { log = []; }
@@ -17892,8 +17773,8 @@ function renderWorkOrdersTable() {
   const filtered = orders.filter(o => {
     if (woTableFilters.system !== 'All' && o.system !== woTableFilters.system) return false;
     if (woTableFilters.maintType !== 'All' && (o.maintenanceType || '—') !== woTableFilters.maintType) return false;
-    if (woTableFilters.urgency !== 'All' && o.urgency !== woTableFilters.urgency) return false;
-    if (woTableFilters.status !== 'All' && woStatusDisplay(o.status).label !== woTableFilters.status) return false;
+    if (woTableFilters.urgency !== 'All' && computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency !== woTableFilters.urgency) return false;
+    if (woTableFilters.status !== 'All' && woStatusDisplay(o).label !== woTableFilters.status) return false;
     if (woTableFilters.technician !== 'All') {
       const label = o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned';
       if (label !== woTableFilters.technician) return false;
@@ -17903,8 +17784,11 @@ function renderWorkOrdersTable() {
 
   const uniqueSystems = [...new Set(orders.map(o => o.system).filter(Boolean))].sort();
   const uniqueMaintTypes = [...new Set(orders.map(o => o.maintenanceType || '—'))].sort();
-  const uniqueUrgencies = [...new Set(orders.map(o => o.urgency).filter(Boolean))];
-  const uniqueStatuses = [...new Set(orders.map(o => woStatusDisplay(o.status).label))];
+  // Fixed order rather than derived from whatever's currently present,
+  // so the filter always offers all 3 real values even if none of
+  // today's work orders happen to be, say, Critical right now.
+  const uniqueUrgencies = ['Critical', 'High', 'Low'];
+  const uniqueStatuses = ['Open', 'Open-Overdue', 'Ready for Review', 'Closed'];
   const uniqueTechnicians = [...new Set(orders.map(o => o.assignedTechnician ? chatParticipantLabel(o.assignedTechnician, staff || []) : 'Unassigned'))].sort();
 
   const anyFilterActive = Object.values(woTableFilters).some(v => v !== 'All');
@@ -17939,8 +17823,8 @@ function renderWorkOrdersTable() {
               </td>
               <td style="padding:10px 12px">${escapeHtml(o.system||'—')}</td>
               <td style="padding:10px 12px">${escapeHtml(o.maintenanceType||'—')}</td>
-              <td style="padding:10px 12px"><span class="badge ${woUrgencyBadgeClass(o.urgency)}">${escapeHtml(o.urgency)}</span></td>
-              <td style="padding:10px 12px"><span class="badge ${woStatusDisplay(o.status).badgeClass}">${escapeHtml(woStatusDisplay(o.status).label)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${woUrgencyBadgeClass(computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency)}">${escapeHtml(computeEffectiveWorkOrderState(o.created, o.urgency, o.status).urgency)}</span></td>
+              <td style="padding:10px 12px"><span class="badge ${woStatusDisplay(o).badgeClass}">${escapeHtml(woStatusDisplay(o).label)}</span></td>
               <td style="padding:10px 12px">${escapeHtml(techLabel)}${o.assignmentStatus==='Pending' ? ' (pending)' : ''}</td>
               <td style="padding:10px 12px;white-space:nowrap;color:var(--muted)">${new Date(o.created).toLocaleDateString()}</td>
               <td style="padding:10px 12px;text-align:right;color:var(--muted)">›</td>
@@ -18772,7 +18656,7 @@ async function submitRequisitionAction(kind) {
 
 async function handleWorkOrderStatusChange(recordId, newStatus, assetName) {
   const canEnterCost = currentUserPermissions && currentUserPermissions.enterWorkOrderCost;
-  if (newStatus === 'Completed' && canEnterCost) {
+  if (newStatus === 'Closed' && canEnterCost) {
     openCostEntryModal(recordId, assetName);
     return;
   }
@@ -19129,7 +19013,7 @@ function openCostEntryModal(recordId, assetName, editMode, existingCost) {
   const submitAction = editMode ? `submitCostEdit('${recordId}')` : `submitCostAndClose('${recordId}')`;
   const skipButton = editMode
     ? `<button onclick="document.getElementById('costEntryOverlay').remove()" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Cancel</button>`
-    : `<button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Completed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>`;
+    : `<button onclick="document.getElementById('costEntryOverlay').remove();updateWorkOrderStatus('${recordId}', 'Closed')" style="flex:1;padding:11px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);font-weight:600;cursor:pointer">Skip</button>`;
 
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:28px">
@@ -19166,7 +19050,7 @@ async function submitCostEdit(recordId) {
 function submitCostAndClose(recordId) {
   const costVal = document.getElementById('ce_cost').value;
   document.getElementById('costEntryOverlay').remove();
-  updateWorkOrderStatus(recordId, 'Completed', costVal || undefined);
+  updateWorkOrderStatus(recordId, 'Closed', costVal || undefined);
 }
 
 async function updateWorkOrderStatus(recordId, status, cost) {
@@ -19218,7 +19102,7 @@ async function bulkCloseWorkOrders() {
     const resp = await fetch('/api/work-orders', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordIds: ids, status: 'Completed' }),
+      body: JSON.stringify({ recordIds: ids, status: 'Closed' }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Bulk close failed');
@@ -19649,7 +19533,7 @@ function buildReportExportRows(data) {
   const rows = [];
 
   rows.push(['Work Orders Summary']);
-  rows.push(['Completed', ws.completed || 0]);
+  rows.push(['Closed', ws.completed || 0]);
   rows.push(['Open', ws.open || 0]);
   rows.push(['Ready for Review', ws.readyForReview || 0]);
   rows.push(['Overdue', ws.overdue || 0]);
