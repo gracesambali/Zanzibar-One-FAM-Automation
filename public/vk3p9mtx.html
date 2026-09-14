@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vendor Portal — GVC Facility Asset Manager</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#F0F2F6; color:#1A1A2E; min-height:100vh; }
+  .header { background:#1A3566; color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .header-left { display:flex; align-items:center; gap:12px; min-width:0; }
+  .logo { width:36px; height:36px; border-radius:50%; overflow:hidden; flex-shrink:0; background:#F0A93E; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#1A3566; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  .header h1 { font-size:15px; font-weight:700; }
+  .header .sub { font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:2px; }
+  .identify-card { max-width:400px; margin:60px auto; background:#fff; border-radius:16px; padding:28px; box-shadow:0 4px 24px rgba(0,0,0,.08); text-align:center; }
+  .identify-card h2 { font-size:16px; color:#1A3566; margin-bottom:8px; }
+  .identify-card p { font-size:13px; color:#6B7280; margin-bottom:18px; line-height:1.5; }
+  .identify-card input { width:100%; padding:11px 14px; border:1px solid #E2E6ED; border-radius:8px; font-size:14px; margin-bottom:12px; }
+  .identify-card button { width:100%; padding:12px; border:none; border-radius:10px; background:#1A3566; color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
+  .identify-card button:disabled { opacity:.6; cursor:wait; }
+  .page-wrap { max-width:760px; width:100%; margin:0 auto; padding:16px 24px; }
+  .panel { background:#fff; border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .panel-title { font-size:12px; font-weight:700; color:#1A3566; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em; }
+  .invitation-item { border:1px solid #E2E6ED; border-radius:10px; padding:14px 16px; margin-bottom:10px; }
+  .invitation-item .desc { font-size:13.5px; font-weight:600; color:#1A1A2E; margin-bottom:4px; }
+  .invitation-item .meta { font-size:11.5px; color:#9CA3AF; margin-bottom:10px; }
+  .badge { display:inline-block; font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:10px; }
+  .badge-invited { background:#FEF5E7; color:#B45309; }
+  .badge-quoted { background:#E8F8EF; color:#166534; }
+  .quote-form { display:none; margin-top:10px; padding-top:10px; border-top:1px solid #E2E6ED; }
+  .quote-form input, .quote-form textarea { width:100%; padding:9px 12px; border:1px solid #E2E6ED; border-radius:8px; font-size:13px; margin-bottom:8px; box-sizing:border-box; }
+  .quote-form button { padding:9px 16px; border:none; border-radius:8px; background:#1A3566; color:#fff; font-size:12.5px; font-weight:600; cursor:pointer; }
+  .quote-form button:disabled { opacity:.6; cursor:wait; }
+  .link-btn { background:none; border:none; color:#1A3566; font-size:12.5px; font-weight:600; cursor:pointer; text-decoration:underline; padding:0; }
+  .empty-state { text-align:center; color:#9CA3AF; font-size:13px; padding:20px 0; line-height:1.5; }
+  .error-banner { max-width:400px; margin:60px auto; text-align:center; color:#991B1B; font-size:14px; }
+  .field-error { color:#991B1B; font-size:12px; margin-bottom:10px; display:none; }
+  .past-quote-item { font-size:12.5px; color:#1A1A2E; padding:8px 0; border-bottom:1px solid #F0F2F6; }
+  .past-quote-item .meta { color:#9CA3AF; font-size:11px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="logo"><img src="/logo.png" alt="GVC" onerror="this.style.display='none';this.parentElement.textContent='GVC'"></div>
+      <div style="min-width:0">
+        <h1 id="vendorHeaderName">Vendor Portal</h1>
+        <div class="sub" id="vendorHeaderSub">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="identifyStep" class="identify-card">
+    <h2>Verify to continue</h2>
+    <p>Enter the phone number or email already on file for your business with this client.</p>
+    <input id="idPhone" type="tel" placeholder="Phone number">
+    <input id="idEmail" type="email" placeholder="Or email address">
+    <div id="idError" class="field-error"></div>
+    <button id="idSubmit" onclick="submitIdentify()">Continue</button>
+  </div>
+
+  <div id="portalStep" class="page-wrap" style="display:none">
+    <div class="panel">
+      <div class="panel-title">Open Invitations</div>
+      <div id="invitationsList"><div class="empty-state">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Your Past Quotes</div>
+      <div id="pastQuotesList"><div class="empty-state">Loading…</div></div>
+    </div>
+  </div>
+
+  <div id="errorStep" style="display:none" class="error-banner"></div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const vendorId = params.get('vendor');
+  const orgId = params.get('org');
+  let verifiedPhone = '';
+  let verifiedEmail = '';
+  let cachedInvitations = [];
+
+  if (!vendorId || !orgId) {
+    document.getElementById('identifyStep').style.display = 'none';
+    const errEl = document.getElementById('errorStep');
+    errEl.textContent = 'This link is missing information. Please use the link you were sent, or contact the client directly.';
+    errEl.style.display = 'block';
+  }
+
+  async function submitIdentify() {
+    const phone = document.getElementById('idPhone').value.trim();
+    const email = document.getElementById('idEmail').value.trim();
+    const errEl = document.getElementById('idError');
+    const btn = document.getElementById('idSubmit');
+    errEl.style.display = 'none';
+
+    if (!phone && !email) {
+      errEl.textContent = 'Enter a phone number or email.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendorPortalLogin: true, vendorId, org: orgId, phone, email }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not verify');
+
+      verifiedPhone = phone;
+      verifiedEmail = email;
+      document.getElementById('vendorHeaderName').textContent = data.vendorName;
+      document.getElementById('vendorHeaderSub').textContent = 'Vendor Portal';
+      document.getElementById('identifyStep').style.display = 'none';
+      document.getElementById('portalStep').style.display = 'block';
+      renderInvitations(data.invitations || []);
+      renderPastQuotes(data.pastQuotes || []);
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Continue';
+    }
+  }
+
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  function renderInvitations(invitations) {
+    cachedInvitations = invitations;
+    const el = document.getElementById('invitationsList');
+    const open = invitations.filter(i => i.status === 'Invited');
+    if (open.length === 0) {
+      el.innerHTML = '<div class="empty-state">No open invitations right now.</div>';
+      return;
+    }
+    el.innerHTML = open.map(i => `
+      <div class="invitation-item">
+        <div class="desc">${esc(i.description)}</div>
+        <div class="meta">${i.quantity ? esc(i.quantity) + ' ' + esc(i.unit || '') + ' · ' : ''}Invited ${new Date(i.invitedAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}</div>
+        <button class="link-btn" onclick="toggleQuoteForm('${i.id}')">Submit a quote →</button>
+        <div class="quote-form" id="qform_${i.id}">
+          <label style="font-size:11px;font-weight:600;color:#1A3566;display:block;margin-bottom:4px">Amount (TZS)</label>
+          <input id="qamount_${i.id}" type="number" min="0" placeholder="e.g. 250000">
+          <label style="font-size:11px;font-weight:600;color:#1A3566;display:block;margin-bottom:4px">Notes (optional)</label>
+          <textarea id="qnotes_${i.id}" rows="2" placeholder="Anything else about your quote"></textarea>
+          <label style="font-size:11px;font-weight:600;color:#1A3566;display:block;margin-bottom:4px">Attach a formal quote/proforma (optional)</label>
+          <input id="qfile_${i.id}" type="file" accept=".pdf,.jpg,.jpeg,.png" style="margin-bottom:10px">
+          <div id="qerror_${i.id}" class="field-error"></div>
+          <button onclick="submitQuote('${i.id}')" id="qsubmit_${i.id}">Submit Quote</button>
+        </div>
+      </div>`).join('');
+  }
+
+  function renderPastQuotes(quotes) {
+    const el = document.getElementById('pastQuotesList');
+    if (quotes.length === 0) {
+      el.innerHTML = '<div class="empty-state">No quotes submitted yet.</div>';
+      return;
+    }
+    el.innerHTML = quotes.map(q => `
+      <div class="past-quote-item">
+        ${q.woId ? esc(q.woId) : (q.requisitionId ? 'Requisition' : 'Quote')}
+        ${q.chosen ? '<span class="badge badge-quoted" style="margin-left:8px">Chosen</span>' : ''}
+        <div class="meta">Submitted ${new Date(q.submittedAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}</div>
+      </div>`).join('');
+  }
+
+  function toggleQuoteForm(invitationId) {
+    const form = document.getElementById('qform_' + invitationId);
+    form.style.display = form.style.display === 'block' ? 'none' : 'block';
+  }
+
+  async function submitQuote(invitationId) {
+    const amount = document.getElementById('qamount_' + invitationId).value;
+    const notes = document.getElementById('qnotes_' + invitationId).value.trim();
+    const fileInput = document.getElementById('qfile_' + invitationId);
+    const errEl = document.getElementById('qerror_' + invitationId);
+    const btn = document.getElementById('qsubmit_' + invitationId);
+    errEl.style.display = 'none';
+
+    const file = fileInput.files[0];
+    if (file && file.size > 5 * 1024 * 1024) {
+      errEl.textContent = 'File is larger than 5MB.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+    try {
+      let fileBase64 = null, filename = null, contentType = null;
+      if (file) {
+        fileBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        filename = file.name;
+        contentType = file.type || 'application/pdf';
+      }
+
+      const resp = await fetch('/api/report-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendorPortalSubmitQuote: true, vendorId, org: orgId,
+          phone: verifiedPhone, email: verifiedEmail,
+          invitationId, amount: amount || null, notes: notes || null,
+          fileBase64, filename, contentType,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) throw new Error(data.error || 'Could not submit your quote');
+
+      alert('✓ Quote submitted — thank you.');
+      submitIdentify(); // re-fetch, using the already-filled verify fields, to show the updated Invited/Quoted state
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Submit Quote';
+    }
+  }
+</script>
+</body>
+</html>

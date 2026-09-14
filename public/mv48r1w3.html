@@ -16297,10 +16297,12 @@ function renderVendorList(highlightIds) {
         </div>
         ${canRemove ? `
           <button onclick="toggleVendorRowMenu(event, ${i})" style="padding:4px 8px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;line-height:1;flex-shrink:0">⋮</button>
-          <div id="vendorRowMenu-${i}" style="display:none;position:absolute;right:0;top:32px;z-index:20;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:100px;overflow:hidden">
+          <div id="vendorRowMenu-${i}" style="display:none;position:absolute;right:0;top:32px;z-index:20;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:170px;overflow:hidden">
+            <button onclick="closeAllVendorRowMenus();submitToggleVendorPortalAccess('${v.id}', ${!v.portalAccessEnabled})" style="display:block;width:100%;text-align:left;padding:8px 14px;font-size:12px;font-weight:600;border:none;background:#fff;color:var(--navy);cursor:pointer">${v.portalAccessEnabled ? '🔒 Turn Off Portal Access' : '🔓 Turn On Portal Access'}</button>
             <button onclick="closeAllVendorRowMenus();submitRemoveVendor('${v.id}','${(v.name || '').replace(/'/g,"\\'")}')" style="display:block;width:100%;text-align:left;padding:8px 14px;font-size:12px;font-weight:600;border:none;background:#fff;color:var(--red);cursor:pointer">Remove</button>
           </div>` : ''}
       </div>
+      ${v.portalAccessEnabled ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#E8F8EF;color:#166534;margin-top:4px;display:inline-block">🔓 Portal Access On</span>` : ''}
     </div>`).join('');
 }
 
@@ -16330,6 +16332,24 @@ async function submitRemoveVendor(vendorId, vendorName) {
     loadVendorList();
   } catch (err) {
     alert('Could not remove: ' + err.message);
+  }
+}
+
+// Confirmed directly: additive, opt-in per vendor - turning this on
+// doesn't change anything about the existing staff-mediated informal
+// flow, it just also lets this one vendor verify and quote themselves
+// through the portal going forward.
+async function submitToggleVendorPortalAccess(vendorId, enable) {
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toggleVendorPortalAccess: true, vendorId, enabled: enable }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not update portal access');
+    loadVendorList();
+  } catch (err) {
+    alert('Could not update: ' + err.message);
   }
 }
 
@@ -16779,15 +16799,28 @@ async function openAddProcurementResponseModal(recordId, woId) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000';
 
   let vendorOptions = '';
+  let portalVendors = [];
   try {
     const vResp = await fetch('/api/work-orders?vendors=true');
     const vData = await vResp.json();
     vendorOptions = (vData.vendors || []).map(v => `<option value="${v.name}">`).join('');
+    portalVendors = (vData.vendors || []).filter(v => v.portalAccessEnabled);
   } catch { /* datalist just stays empty if this fails — free text still works */ }
 
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px">Add Vendor Quote</div>
+      ${portalVendors.length > 0 ? `
+      <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:6px">🔓 Or invite a vendor to quote themselves</div>
+        <select id="aq_inviteVendor" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;margin-bottom:8px">
+          <option value="">— Select a portal-enabled vendor —</option>
+          ${portalVendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('')}
+        </select>
+        <button onclick="submitInviteVendorToQuote('${woId}')" id="aq_inviteBtn" style="width:100%;padding:8px;font-size:12px;font-weight:600;border:1px solid #166534;border-radius:8px;background:#fff;color:#166534;cursor:pointer">Send Portal Invite</button>
+        <div id="aq_inviteStatus" style="font-size:11px;margin-top:6px"></div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--muted);margin-bottom:14px">— or enter a quote you already have —</div>` : ''}
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Vendor Name *</label>
       <input id="aq_vendor" list="aq_vendor_list" placeholder="Pick an existing vendor or type a new one" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
       <datalist id="aq_vendor_list">${vendorOptions}</datalist>
@@ -16801,6 +16834,38 @@ async function openAddProcurementResponseModal(recordId, woId) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+}
+
+// Confirmed directly: staff specifically invites one real vendor to
+// quote on this one real work order - sends them a real, persistent
+// portal link via whichever channel this organization prefers, plus
+// email if they have one on file. Does not create a quote itself -
+// the vendor submits their own, through the portal, on their own time.
+async function submitInviteVendorToQuote(woId) {
+  const vendorId = document.getElementById('aq_inviteVendor').value;
+  const statusEl = document.getElementById('aq_inviteStatus');
+  const btn = document.getElementById('aq_inviteBtn');
+  if (!vendorId) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Pick a vendor first.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  statusEl.textContent = '';
+  try {
+    const resp = await fetch('/api/work-orders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inviteVendorToQuote: true, vendorId, woId }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Could not send the invite');
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = '✓ Invite sent.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Portal Invite';
+  }
 }
 
 async function submitAddProcurementResponse(recordId, woId) {

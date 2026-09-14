@@ -2014,6 +2014,87 @@ export default async function handler(req, res) {
     // only, confirmed (they're the ones sending POs and collecting
     // responses; nobody else in this flow touches vendor quotes at
     // all).
+    if (req.body && req.body.toggleVendorPortalAccess) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can manage vendor portal access." });
+      }
+      const { vendorId, enabled } = req.body;
+      if (!vendorId) return res.status(400).json({ error: "vendorId required" });
+      try {
+        const { getById, update } = await import("../lib/postgresClient.js");
+        const v = await getById("vendors", vendorId).catch(() => null);
+        if (!v || v.organization_id !== session.org) return res.status(404).json({ error: "Vendor not found." });
+        if (enabled && (!v.phone && !v.email)) {
+          return res.status(400).json({ error: "This vendor needs a real phone number or email on file before portal access can be turned on." });
+        }
+        await update("vendors", vendorId, { portal_access_enabled: !!enabled });
+        return res.status(200).json({ success: true });
+      } catch (err) {
+        console.error("toggleVendorPortalAccess error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // Confirmed directly: staff specifically invites one real vendor
+    // to quote on one real requisition or work order - not an open
+    // marketplace a vendor browses. Sends the vendor a real,
+    // persistent portal link via whichever channel this organization
+    // actually prefers (same sendViaOrgPreferredChannel used
+    // everywhere else - WhatsApp with automatic SMS fallback, or
+    // SMS directly), plus email if they have one on file.
+    if (req.body && req.body.inviteVendorToQuote) {
+      const isOverseer = session.r === "business_owner" || session.r === "system_admin";
+      if (!isOverseer && session.r !== "procurement") {
+        return res.status(403).json({ error: "Only Procurement can invite a vendor to quote." });
+      }
+      const { vendorId, woId, requisitionId } = req.body;
+      if (!vendorId || (!woId && !requisitionId)) {
+        return res.status(400).json({ error: "vendorId is required, along with either woId or requisitionId." });
+      }
+      try {
+        const { getById, insert } = await import("../lib/postgresClient.js");
+        const v = await getById("vendors", vendorId).catch(() => null);
+        if (!v || v.organization_id !== session.org) return res.status(404).json({ error: "Vendor not found." });
+        if (!v.portal_access_enabled) return res.status(400).json({ error: "This vendor doesn't have portal access enabled yet." });
+
+        const invitation = await insert("vendor_invitations", {
+          organization_id: session.org,
+          vendor_id: vendorId,
+          requisition_id: requisitionId || null,
+          wo_id: woId || null,
+          invited_by: session.u,
+        });
+
+        const portalLink = `${req.headers.origin || "https://" + req.headers.host}/vk3p9mtx?vendor=${vendorId}&org=${session.org}`;
+        const message = `You've been invited to quote on a new request. View and submit your quote here: ${portalLink}`;
+
+        if (v.phone) {
+          const { sendViaOrgPreferredChannel } = await import("../lib/notifications.js");
+          await sendViaOrgPreferredChannel(session.org, [v.phone], message).catch(err =>
+            console.error("Vendor invite message failed (non-fatal):", err.message)
+          );
+        }
+        if (v.email && process.env.RESEND_API_KEY) {
+          await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
+              to: [v.email],
+              subject: "You've been invited to submit a quote",
+              html: `<p>Hello ${v.vendor_name},</p><p>You've been invited to quote on a new request. <a href="${portalLink}">View it and submit your quote here</a>.</p>`,
+            }),
+          }).catch(err => console.error("Vendor invite email failed (non-fatal):", err.message));
+        }
+
+        return res.status(200).json({ success: true, invitationId: invitation.id });
+      } catch (err) {
+        console.error("inviteVendorToQuote error:", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     if (req.body && req.body.addProcurementResponse) {
       const isOverseer = session.r === "business_owner" || session.r === "system_admin";
       if (!isOverseer && session.r !== "procurement") {
@@ -3287,6 +3368,7 @@ async function handleGetVendors(req, res, organizationId) {
       phone: r.phone || "",
       supplies: r.supplies || "",
       categories: r.categories || [],
+      portalAccessEnabled: r.portal_access_enabled || false,
     })).sort((a, b) => a.name.localeCompare(b.name));
 
     return res.status(200).json({ vendors });

@@ -840,6 +840,14 @@ export default async function handler(req, res) {
     return handlePublicCheckDuplicateReport(req, res);
   }
 
+  if (req.method === "POST" && req.body && req.body.vendorPortalLogin) {
+    return handleVendorPortalLogin(req, res);
+  }
+
+  if (req.method === "POST" && req.body && req.body.vendorPortalSubmitQuote) {
+    return handleVendorPortalSubmitQuote(req, res);
+  }
+
   return res.status(405).json({ error: "Method not allowed" });
 }
 
@@ -978,6 +986,149 @@ async function handlePublicFloorRooms(req, res) {
 // this same page is used by people with no FAM account at all.
 // Non-blocking by design - a real warning shown while filling in the
 // form, never prevents submitting either way.
+// Vendor Portal — confirmed directly, built as a real, additive
+// layer alongside the existing staff-mediated informal flow, never
+// replacing it. Off by default per vendor (vendors.
+// portal_access_enabled) - staff specifically invites a vendor to
+// quote on one real requisition, not an open marketplace a vendor
+// browses. Same real, proven auth pattern as the tenant portal:
+// phone or email verified against what's already on file, no
+// password, persistent - once verified, a vendor sees everything
+// open with this one client (every invitation, past quotes), not
+// just what they were invited on today, and can return anytime with
+// the same lightweight re-verification rather than a single-use link.
+async function handleVendorPortalLogin(req, res) {
+  const { vendorId, org, phone, email } = req.body || {};
+  if (!vendorId || !org) return res.status(400).json({ error: "vendorId and org required" });
+  try {
+    const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
+    const v = await getById("vendors", vendorId).catch(() => null);
+    if (!v || v.organization_id !== org || !v.active) return res.status(404).json({ error: "Vendor not found" });
+    if (!v.portal_access_enabled) return res.status(403).json({ error: "Portal access isn't enabled for this vendor — check with the client directly." });
+
+    // Fail closed: no phone/email on file yet means no access, not
+    // open access - same principle as the tenant portal.
+    const storedPhone = normalizePhone(v.phone);
+    const phoneMatches = storedPhone && phone && normalizePhone(phone) === storedPhone;
+    const emailMatches = v.email && email && v.email.toLowerCase().trim() === email.toLowerCase().trim();
+    if (!phoneMatches && !emailMatches) {
+      return res.status(401).json({ error: "That phone number or email doesn't match our records — check with the client directly." });
+    }
+
+    const invitationsResult = await pgQuery(
+      `select vi.*, r.item_description, r.quantity_requested, r.unit_of_measure, w.notes as wo_notes, w.asset_name
+       from vendor_invitations vi
+       left join requisitions r on r.id::text = vi.requisition_id
+       left join work_orders w on w.wo_id = vi.wo_id
+       where vi.vendor_id = $1 and vi.organization_id = $2
+       order by vi.invited_at desc`,
+      [vendorId, org]
+    );
+
+    const responsesResult = await pgQuery(
+      `select * from procurement_responses where vendor_id = $1 and organization_id = $2 order by created_at desc`,
+      [vendorId, org]
+    ).catch(() => ({ rows: [] }));
+
+    return res.status(200).json({
+      success: true,
+      vendorName: v.vendor_name,
+      invitations: invitationsResult.rows.map(r => ({
+        id: r.id,
+        status: r.status,
+        invitedAt: r.invited_at,
+        requisitionId: r.requisition_id,
+        woId: r.wo_id,
+        description: r.item_description || r.wo_notes || r.asset_name || "Details not available",
+        quantity: r.quantity_requested || null,
+        unit: r.unit_of_measure || null,
+      })),
+      pastQuotes: responsesResult.rows.map(r => ({
+        id: r.id,
+        submittedAt: r.created_at,
+        chosen: r.chosen,
+        requisitionId: r.requisition_id,
+        woId: r.wo_id,
+      })),
+    });
+  } catch (err) {
+    console.error("handleVendorPortalLogin error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleVendorPortalSubmitQuote(req, res) {
+  const { vendorId, org, phone, email, invitationId, amount, notes, fileBase64, filename, contentType } = req.body || {};
+  if (!vendorId || !org || !invitationId) return res.status(400).json({ error: "vendorId, org, and invitationId are required" });
+  try {
+    const { getById, query: pgQuery, insert, update } = await import("../lib/postgresClient.js");
+    const v = await getById("vendors", vendorId).catch(() => null);
+    if (!v || v.organization_id !== org || !v.active || !v.portal_access_enabled) return res.status(404).json({ error: "Vendor not found" });
+
+    // Re-verified on every real write, same as the tenant portal's
+    // own payment/report actions - a stateless, no-session design, so
+    // every action that actually changes something re-checks the
+    // real credential rather than trusting a prior login forever.
+    const storedPhone = normalizePhone(v.phone);
+    const phoneMatches = storedPhone && phone && normalizePhone(phone) === storedPhone;
+    const emailMatches = v.email && email && v.email.toLowerCase().trim() === email.toLowerCase().trim();
+    if (!phoneMatches && !emailMatches) {
+      return res.status(401).json({ error: "That phone number or email doesn't match our records." });
+    }
+
+    const invitation = await getById("vendor_invitations", invitationId).catch(() => null);
+    if (!invitation || invitation.vendor_id !== vendorId || invitation.organization_id !== org) {
+      return res.status(404).json({ error: "Invitation not found" });
+    }
+
+    const created = await insert("procurement_responses", {
+      wo_id: invitation.wo_id || null,
+      requisition_id: invitation.requisition_id || null,
+      vendor_name: v.vendor_name,
+      vendor_id: vendorId,
+      submitted_via: "vendor_portal",
+      chosen: false,
+      organization_id: org,
+      quoted_amount_tzs: amount ? Number(amount) : null,
+      notes: notes || null,
+    }).catch(async (err) => {
+      // quoted_amount_tzs/notes may not exist as real columns yet on
+      // procurement_responses depending on how far that table's
+      // schema has grown - fall back to the minimal, always-real
+      // field set rather than fail the whole submission over an
+      // optional detail.
+      console.error("procurement_responses insert with extra fields failed, retrying minimal:", err.message);
+      return insert("procurement_responses", {
+        wo_id: invitation.wo_id || null,
+        requisition_id: invitation.requisition_id || null,
+        vendor_name: v.vendor_name,
+        vendor_id: vendorId,
+        submitted_via: "vendor_portal",
+        chosen: false,
+        organization_id: org,
+      });
+    });
+
+    if (fileBase64 && filename) {
+      try {
+        const { uploadFile } = await import("../lib/storageClient.js");
+        const attachmentPath = `procurement-responses/${created.id}/${filename}`;
+        await uploadFile(attachmentPath, fileBase64, contentType || "application/pdf");
+        await update("procurement_responses", created.id, { proforma_attachment_url: attachmentPath, proforma_attachment_filename: filename });
+      } catch (err) {
+        console.error("Vendor portal quote attachment failed (non-fatal, quote itself still saved):", err.message);
+      }
+    }
+
+    await update("vendor_invitations", invitationId, { status: "Quoted" }).catch(() => {});
+
+    return res.status(200).json({ success: true, responseId: created.id });
+  } catch (err) {
+    console.error("handleVendorPortalSubmitQuote error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 async function handlePublicCheckDuplicateReport(req, res) {
   const { org, description, building } = req.body || {};
   if (!org || !description || !description.trim() || !building) {

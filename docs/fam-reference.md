@@ -540,3 +540,43 @@ oldest-to-newest order throughout.
 Swapped, confirmed directly — Integrations now sits above Client
 Management in the sidebar (both still Business Owner/System Admin only,
 hidden entirely for everyone else, unchanged).
+
+## Vendor Portal (foundation)
+
+Confirmed directly: built as a genuinely additive, opt-in layer alongside
+the existing staff-mediated informal procurement flow — never replacing
+it. Most vendors (especially local ones who don't want to be "system
+integrated") are completely unaffected; this only activates for a vendor
+once staff explicitly turns portal access on for them.
+
+**Same proven auth pattern as the tenant portal**: a vendor verifies with
+their phone number or email against what's already on file — no
+password. Once verified, they see everything currently open with this
+one specific client (every invitation, past quotes), not just a single
+requisition, and can return anytime with the same lightweight
+re-verification rather than a single-use link.
+
+**Staff specifically invites one real vendor to quote on one real work
+order or requisition** — confirmed directly, not an open marketplace a
+vendor browses. Sending an invite creates a real `vendor_invitations`
+row and sends the vendor a real portal link via whichever channel the
+organization prefers (`sendViaOrgPreferredChannel` — WhatsApp with
+automatic SMS fallback, or SMS directly), plus email if they have one on
+file.
+
+The vendor's own submission (amount and/or an attached proforma) creates
+the exact same `procurement_responses` record staff-entered quotes use —
+just with `vendor_id` set and `submitted_via: 'vendor_portal'` for a real
+audit trail of which quotes came from the vendor themselves versus staff
+typing in what a vendor told them over the phone.
+
+**Where it lives**: "🔓 Portal Access" toggle in each vendor's row menu
+(Procurement → Vendors); "Send Portal Invite" option inside the Add
+Vendor Quote modal, shown only when at least one portal-enabled vendor
+exists. Public page: `public/vk3p9mtx.html` (same obfuscated-slug
+convention as every other public page — the tenant portal, the Report a
+Breakdown page).
+
+Backend: `api/report-issue.js` → `vendorPortalLogin`, `vendorPortalSubmitQuote`
+(genuinely public, no session). `api/work-orders.js` → `toggleVendorPortalAccess`,
+`inviteVendorToQuote` (staff-only: Procurement, Business Owner, System Admin).
