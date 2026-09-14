@@ -570,6 +570,12 @@ just with `vendor_id` set and `submitted_via: 'vendor_portal'` for a real
 audit trail of which quotes came from the vendor themselves versus staff
 typing in what a vendor told them over the phone.
 
+**Staff gets notified the moment a vendor actually responds** — Procurement
+plus Business Owner/System Admin as overseers (same contact-lookup
+pattern used elsewhere, `getContactsForRole`), via the org's preferred
+channel (WhatsApp/SMS) and email. Without this, a submitted quote would
+just sit there until someone happened to check back manually.
+
 **Where it lives**: "🔓 Portal Access" toggle in each vendor's row menu
 (Procurement → Vendors); "Send Portal Invite" option inside the Add
 Vendor Quote modal, shown only when at least one portal-enabled vendor

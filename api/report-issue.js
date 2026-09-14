@@ -1122,6 +1122,45 @@ async function handleVendorPortalSubmitQuote(req, res) {
 
     await update("vendor_invitations", invitationId, { status: "Quoted" }).catch(() => {});
 
+    // Confirmed directly, a real gap closed: procurement (plus
+    // Business Owner/System Admin as overseers, same pattern used
+    // elsewhere in this app) gets told the moment a vendor actually
+    // responds - otherwise nobody would know a quote came in without
+    // manually checking back.
+    try {
+      const { getContactsForRole } = await import("../lib/staffDirectory.js");
+      const contacts = [
+        ...await getContactsForRole("procurement", org),
+        ...await getContactsForRole("business_owner", org),
+        ...await getContactsForRole("system_admin", org),
+      ];
+      const phones = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
+      const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+      const refLabel = invitation.wo_id || invitation.requisition_id || "your request";
+      const message = `${v.vendor_name} has submitted a quote via the vendor portal for ${refLabel}. Review it in FAM.`;
+
+      if (phones.length > 0) {
+        const { sendViaOrgPreferredChannel } = await import("../lib/notifications.js");
+        await sendViaOrgPreferredChannel(org, phones, message).catch(err =>
+          console.error("Vendor quote staff message failed (non-fatal):", err.message)
+        );
+      }
+      if (emails.length > 0 && process.env.RESEND_API_KEY) {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
+            to: emails,
+            subject: `New vendor quote — ${v.vendor_name}`,
+            html: `<p>${v.vendor_name} has submitted a quote via the vendor portal for <strong>${refLabel}</strong>.</p><p>Review it in FAM under Procurement.</p>`,
+          }),
+        }).catch(err => console.error("Vendor quote staff email failed (non-fatal):", err.message));
+      }
+    } catch (err) {
+      console.error("Vendor quote staff notification failed (non-fatal, quote itself still saved):", err.message);
+    }
+
     return res.status(200).json({ success: true, responseId: created.id });
   } catch (err) {
     console.error("handleVendorPortalSubmitQuote error:", err);
