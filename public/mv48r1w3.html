@@ -525,6 +525,15 @@ button { font-family: inherit; cursor: pointer; }
     <span class="tab-label">Finance</span>
   </button>
 
+  <!-- Confirmed directly, discussed and agreed: same hard gate as
+       Client Management right below it - a client connects their own
+       accounts here directly, GVC never touches or holds their
+       credentials. -->
+  <button class="tab-btn" data-tab="integrations" data-label="Integrations" id="integrationsNavBtn" onclick="switchTab('integrations')" onmouseenter="showSidebarTooltip(this, 'Integrations')" onmouseleave="hideSidebarTooltip()" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    <span class="tab-label">Integrations</span>
+  </button>
+
   <!-- Confirmed directly: only Business Owner and System Admin (the
        existing manageUsers permission holders) ever see this at all -
        hidden entirely for everyone else, same hard gate already used
@@ -532,15 +541,6 @@ button { font-family: inherit; cursor: pointer; }
   <button class="tab-btn" data-tab="staffmanagement" data-label="Client Management" id="staffManagementNavBtn" onclick="switchTab('staffmanagement')" onmouseenter="showSidebarTooltip(this, 'Client Management')" onmouseleave="hideSidebarTooltip()" style="display:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
     <span class="tab-label">Client Management</span>
-  </button>
-
-  <!-- Confirmed directly, discussed and agreed: same hard gate as
-       Client Management right above it - a client connects their own
-       accounts here directly, GVC never touches or holds their
-       credentials. -->
-  <button class="tab-btn" data-tab="integrations" data-label="Integrations" id="integrationsNavBtn" onclick="switchTab('integrations')" onmouseenter="showSidebarTooltip(this, 'Integrations')" onmouseleave="hideSidebarTooltip()" style="display:none">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-    <span class="tab-label">Integrations</span>
   </button>
 
   <!-- Confirmed directly: Technician keeps the exact same flat list
@@ -15324,20 +15324,38 @@ async function loadPendingForMe() {
       return;
     }
 
+    // Confirmed directly: only the 3 oldest shown by default (the
+    // backend already sorts oldest-first, newest-last) - "View more"
+    // expands the same list in place rather than re-fetching, so the
+    // order stays exactly oldest-at-top, newest-at-bottom throughout,
+    // not just within the visible 3.
     el.innerHTML = `
       <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
         <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">For You Today (${items.length})</div>
-        ${items.map(i => `
-          <button onclick="switchTab('workorders');setTimeout(()=>showWorkOrderDetail('${i.recordId}'),300)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:9px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer">
+        ${items.map((i, idx) => `
+          <button onclick="switchTab('workorders');setTimeout(()=>showWorkOrderDetail('${i.recordId}'),300)" data-pending-idx="${idx}" style="display:${idx < 3 ? 'flex' : 'none'};justify-content:space-between;align-items:center;width:100%;text-align:left;padding:9px 0;border-bottom:1px solid var(--border);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer">
             <span style="font-size:13px;color:var(--text)"><strong>${i.assetName}</strong> <span style="color:var(--muted)">(${i.woId})</span></span>
             <span style="font-size:11.5px;color:var(--navy);font-weight:600">${i.why} →</span>
           </button>
         `).join('')}
+        ${items.length > 3 ? `<button id="pendingForMeToggle" data-expanded="false" onclick="togglePendingForMeExpand()" style="width:100%;text-align:center;padding:8px 0 0;background:none;border:none;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer">View ${items.length - 3} more ▾</button>` : ''}
       </div>`;
   } catch (err) {
     el.innerHTML = '';
     console.error('loadPendingForMe error:', err);
   }
+}
+
+function togglePendingForMeExpand() {
+  const panel = document.getElementById('pendingForMePanel');
+  const toggle = document.getElementById('pendingForMeToggle');
+  const rows = panel.querySelectorAll('[data-pending-idx]');
+  const isExpanded = toggle.dataset.expanded === 'true';
+  rows.forEach((btn, i) => {
+    if (i >= 3) btn.style.display = isExpanded ? 'none' : 'flex';
+  });
+  toggle.dataset.expanded = isExpanded ? 'false' : 'true';
+  toggle.textContent = isExpanded ? `View ${rows.length - 3} more ▾` : 'Show less ▴';
 }
 
 async function fetchStaffPerformanceData() {

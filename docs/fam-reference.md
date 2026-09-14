@@ -508,3 +508,15 @@ date as a reasonable approximation.
 
 Engineer/Admin/Property Manager and Procurement roles were already
 correctly scoped to their own real, assigned tasks — left unchanged.
+
+**Display, confirmed directly**: sorted oldest-first, newest-last (by the
+work order's real `created` date) — only the 3 oldest shown by default,
+with a "View N more ▾" toggle that expands the same already-loaded list
+in place (no re-fetch) rather than a separate dropdown, keeping the same
+oldest-to-newest order throughout.
+
+## Sidebar order: Integrations above Client Management
+
+Swapped, confirmed directly — Integrations now sits above Client
+Management in the sidebar (both still Business Owner/System Admin only,
+hidden entirely for everyone else, unchanged).

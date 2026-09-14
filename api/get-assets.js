@@ -2548,6 +2548,7 @@ function computePendingItems(workOrders, role, username) {
     woId: r.wo_id,
     assetName: r.asset_name || r.asset_id || "Unnamed",
     why,
+    created: r.created,
   });
   const STALLED_HOURS = 24;
   const hoursSince = (ts) => ts ? (Date.now() - new Date(ts).getTime()) / 3600000 : Infinity;
@@ -2602,6 +2603,11 @@ function computePendingItems(workOrders, role, username) {
       }
     }
   }
+  // Confirmed directly: oldest first, newest last - so the 3 shown by
+  // default (the frontend truncates to 3) are genuinely the 3 that
+  // have been waiting the longest, not whatever order the database
+  // happened to return them in.
+  items.sort((a, b) => new Date(a.created) - new Date(b.created));
   return items;
 }
 
