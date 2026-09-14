@@ -77,22 +77,42 @@ the three scheduled-maintenance urgency tiers, not for reported issues.
 role's review is required before a work order can close, instead of the default
 immediate self-service closure.
 
-## BMS / Sensors
+## Sensor Monitoring (renamed from "BMS")
+
+Confirmed directly: renamed because "BMS" (Building Management System) is a
+specific term for an active *control* system (Siemens, Honeywell, Johnson
+Controls — can adjust setpoints, automate schedules) — not what this tab
+actually does, which is monitoring only: reads sensor values, opens a real
+work order when something's outside its target range. Calling it BMS
+implied control capability FAM doesn't have. "Sensor Monitoring" is the
+honest, accurate, and broader term — covering not just building sensors
+but any condition-monitoring case (fleet/vehicle telematics, industrial
+vibration/pressure sensors, cold-chain temperature logging, generator fuel,
+etc.), none of which is "building management" either.
 
 Sensors are **not** their own assets — each sensor is a separate record with an
 `asset_id` linking it to an existing asset it monitors (e.g. a chiller might have a
 temperature sensor and a runtime sensor both attached to it). A reading outside a
 sensor's target range creates a real work order and sends email + SMS.
 
-Test tools (a manual "Sensor Test Tool" on BMS, and "Test Overdue/Urgent/Upcoming"
+Test tools (a manual "Sensor Test Tool", and "Test Overdue/Urgent/Upcoming"
 buttons on Work Orders) were removed from the product — they no longer exist.
 
-Real building-wide BMS integrations (Siemens, Honeywell, etc.) are not yet built.
-Many buildings run a vendor-neutral integration layer (most commonly the Tridium
-Niagara Framework) that normalizes multiple hardware vendors into one system — if
-that exists on a client's building, FAM would only need one connector to that layer,
-not one per underlying vendor. This is still a future scoping conversation, not
-built yet.
+Real, vendor-specific BMS *integrations* (Siemens, Honeywell, etc. — pulling
+data from an actual client-owned BMS) are not yet built, and can't
+meaningfully be built speculatively — each vendor uses its own proprietary
+protocol/API, so there's nothing concrete to build against without a real
+client relationship with that specific system already in hand. FAM's
+current design sidesteps this for the common case: sensors *push* readings
+to FAM's own endpoint, which works immediately for any hardware capable of
+sending an HTTP request, rather than requiring FAM to build and maintain a
+separate integration per vendor. The gap is specifically for a client who
+already has a locked-down existing BMS that FAM would need to pull *from*.
+Many buildings run a vendor-neutral integration layer (most commonly the
+Tridium Niagara Framework) that normalizes multiple hardware vendors into
+one system — if that exists on a client's building, FAM would only need one
+connector to that layer, not one per underlying vendor. Still a future
+scoping conversation, not built yet.
 
 ## Integrations tab
 

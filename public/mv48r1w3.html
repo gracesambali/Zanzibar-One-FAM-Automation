@@ -438,9 +438,9 @@ button { font-family: inherit; cursor: pointer; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
         <span class="tab-label">Asset Register</span>
       </button>
-      <button class="tab-btn nested" data-tab="sensors" data-label="BMS" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'BMS')" onmouseleave="hideSidebarTooltip()">
+      <button class="tab-btn nested" data-tab="sensors" data-label="Sensor Monitoring" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensor Monitoring')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span class="tab-label">BMS</span>
+        <span class="tab-label">Sensor Monitoring</span>
       </button>
       <button class="tab-btn nested" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
@@ -2066,7 +2066,7 @@ async function renderBmsFuelMonitorSection(assetId) {
     fetchFuelMonitorData(assetId).then(data => {
       tabPrefetchCache.fuelMonitorByAsset = { key: cacheKey, data, fetchedAt: Date.now() };
       if (document.getElementById('bmsFuelMonitorContent')) el.innerHTML = buildFuelMonitorHtml(data);
-    }).catch(err => console.error('Background BMS Fuel Monitor refresh failed (non-fatal):', err.message));
+    }).catch(err => console.error('Background Sensor Monitoring Fuel Monitor refresh failed (non-fatal):', err.message));
     return;
   }
 
@@ -2427,7 +2427,7 @@ function showDetail(idx) {
 
   // Confirmed directly, discussed and agreed in full before building:
   // the same real fuel summary shown here too, on the generator's own
-  // Asset Register page, not just in BMS - only rendered at all when
+  // Asset Register page, not just in Sensor Monitoring - only rendered at all when
   // this specific asset genuinely has fuel monitoring configured,
   // since most assets aren't generators.
   if (a.generatorRatedConsumptionLph) {
@@ -3070,8 +3070,8 @@ async function renderSensorMonitorFromData(sensors, categories, isRefresh) {
     if (!isRefresh) {
       const headerHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div>
-          <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">BMS</h2>
-          <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, and water — extracted from your smart equipment or BMS. FAM bridges it to notifications and maintenance.</p>
+          <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">Sensor Monitoring</h2>
+          <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, water, and any other condition monitoring — from your own sensors, smart equipment, fleet devices, or a connected BMS. FAM bridges it to notifications and maintenance.</p>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
           <button onclick="openBmsDecommissionedModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">👁 Decommissioned</button>
@@ -3338,7 +3338,7 @@ function drawSensorHistoryChart(canvas, readings) {
 
 // --- Add Sensor ---
 
-const BMS_SENSOR_TYPES = [
+const SENSOR_MONITORING_TYPES = [
   { value: 'alarm', label: 'Alarm (real fault codes)' },
   { value: 'equipment', label: 'Equipment (OK/Fault)' },
   { value: 'door', label: 'Door (Open/Closed)' },
@@ -3382,10 +3382,10 @@ function openEditSensorModal(recordId, sensorId, currentAssetId, currentAssetNam
   editSensorRecordId = recordId;
   editSensorId = sensorId;
   editSensorSelectedAsset = currentAssetId ? { id: currentAssetId, name: currentAssetName } : null;
-  const typeOptions = BMS_SENSOR_TYPES.map(t => `<option value="${t.value}" ${t.value === currentSensorType ? 'selected' : ''}>${t.label}</option>`).join('');
+  const typeOptions = SENSOR_MONITORING_TYPES.map(t => `<option value="${t.value}" ${t.value === currentSensorType ? 'selected' : ''}>${t.label}</option>`).join('');
   const isBinaryType = ['door', 'equipment', 'alarm'].includes(currentSensorType);
   const isSpikeType = ['runtime', 'electrical', 'water'].includes(currentSensorType);
-  showBmsModal('Edit Sensor', `
+  showSensorMonitoringModal('Edit Sensor', `
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Linked Asset</label>
     <input id="es_assetSearch" type="text" placeholder="Search by name or asset id" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box;${editSensorSelectedAsset ? 'display:none' : ''}" oninput="renderEditSensorAssetResults()">
     <div id="es_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
@@ -3506,8 +3506,8 @@ async function submitEditSensor() {
 }
 
 function openAddSensorModal() {
-  const typeOptions = BMS_SENSOR_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('');
-  showBmsModal('Add Sensor', `
+  const typeOptions = SENSOR_MONITORING_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('');
+  showSensorMonitoringModal('Add Sensor', `
     <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Linked Asset</label>
     <input id="as_assetSearch" type="text" placeholder="Search by name or asset id" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:6px;box-sizing:border-box" oninput="renderAddSensorAssetResults()">
     <div id="as_assetResults" style="max-height:160px;overflow-y:auto;margin-bottom:10px"></div>
@@ -3648,7 +3648,7 @@ function renderDecommissionedSensorsFromData(sensors) {
 // no exception. Same real, already-proven pattern.
 async function openBmsDecommissionedModal() {
   const cached = tabPrefetchCache.decommissionedSensors;
-  showBmsModal('Decommissioned Sensors', `<div id="dc_body">${cached ? '' : 'Loading…'}</div>`);
+  showSensorMonitoringModal('Decommissioned Sensors', `<div id="dc_body">${cached ? '' : 'Loading…'}</div>`);
 
   if (cached) {
     renderDecommissionedSensorsFromData(cached.data);
@@ -3709,13 +3709,13 @@ function renderBmsNotificationSettingsFromData(bundle) {
 // started making before saving.
 async function openBmsNotificationSettingsModal() {
   const cached = tabPrefetchCache.bmsNotificationSettings;
-  showBmsModal('BMS Notification Settings', `<div id="ns_body">${cached ? '' : 'Loading…'}</div>`);
+  showSensorMonitoringModal('Sensor Monitoring Notification Settings', `<div id="ns_body">${cached ? '' : 'Loading…'}</div>`);
 
   if (cached) {
     renderBmsNotificationSettingsFromData(cached.data);
     fetchBmsNotificationSettingsData().then(bundle => {
       tabPrefetchCache.bmsNotificationSettings = { data: bundle, fetchedAt: Date.now() };
-    }).catch(err => console.error('Background BMS Notification Settings refresh failed (non-fatal):', err.message));
+    }).catch(err => console.error('Background Sensor Monitoring Notification Settings refresh failed (non-fatal):', err.message));
     return;
   }
 
@@ -3748,9 +3748,9 @@ async function submitBmsNotificationSettings() {
   }
 }
 
-// --- Shared modal shell for BMS ---
+// --- Shared modal shell for Sensor Monitoring ---
 
-function showBmsModal(title, bodyHtml) {
+function showSensorMonitoringModal(title, bodyHtml) {
   const existing = document.getElementById('bms-modal-overlay');
   if (existing) existing.remove();
   const overlay = document.createElement('div');
@@ -3799,7 +3799,7 @@ async function decommissionSensor(sensorId, assetName) {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to decommission sensor');
-    alert('Sensor decommissioned. Its reading history stays intact, but it no longer appears in the active BMS list.');
+    alert('Sensor decommissioned. Its reading history stays intact, but it no longer appears in the active Sensor Monitoring list.');
     renderSensorMonitor();
   } catch (err) {
     alert('Error: ' + err.message);
@@ -20525,7 +20525,7 @@ async function sendFamChatbotMessage() {
 const FAM_ONBOARDING_STEPS = [
   { selector: '#facilitySwitcher', title: 'Facility & Building switcher', text: 'Scope the whole dashboard to one facility or building at a time. Set to "All" to see everything at once.' },
   { selector: 'button[onclick="openMyReportBreakdownPage()"]', title: 'Report a Breakdown', text: 'Opens a shareable link/QR anyone can use to report a problem — no login needed. It becomes a real work order the moment it comes in.' },
-  { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, BMS, Maintenance, Level View, Procurement, and more.' },
+  { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, Sensor Monitoring, Maintenance, Level View, Procurement, and more.' },
   { selector: '#holdingsGroupHeader', title: 'Holdings', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
   {
     // The urgency filter only exists once the Work Orders table has
