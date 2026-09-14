@@ -2541,7 +2541,7 @@ const ASSIGNED_ROLE_TO_LOGIN_ROLE_PENDING = {
   "Biomedical": "biomedical_technician",
 };
 
-function computePendingItems(workOrders, role) {
+function computePendingItems(workOrders, role, username) {
   const items = [];
   const describe = (r, why) => ({
     recordId: r.id,
@@ -2549,11 +2549,17 @@ function computePendingItems(workOrders, role) {
     assetName: r.asset_name || r.asset_id || "Unnamed",
     why,
   });
+  const STALLED_HOURS = 24;
+  const hoursSince = (ts) => ts ? (Date.now() - new Date(ts).getTime()) / 3600000 : Infinity;
 
   if (role === "technician") {
+    // Confirmed directly, a real fix: this used to show every open
+    // work order in the whole organization to every technician,
+    // regardless of who it was actually assigned to - now scoped to
+    // this specific person's own assigned work only.
     for (const r of workOrders) {
-      if (r.status === "Open") {
-        items.push(describe(r, r.status === "Open" ? "Needs to be started" : "In progress"));
+      if (r.status === "Open" && r.assigned_technician === username) {
+        items.push(describe(r, "Assigned to you — needs to be started"));
       }
     }
   } else if (["electrical_engineer", "mechanical_engineer", "biomedical_technician", "admin", "property_manager"].includes(role)) {
@@ -2573,10 +2579,27 @@ function computePendingItems(workOrders, role) {
       }
     }
   } else if (role === "business_owner" || role === "system_admin") {
+    // Confirmed directly, a real fix: this used to list EVERY review
+    // and procurement request in flight across the whole
+    // organization, regardless of stage - not a genuine personal task
+    // for a Business Owner/System Admin, who can't actually close a
+    // review sitting with the electrical engineer or approve a
+    // request pending someone else's sign-off. Now scoped to what's
+    // actually stalled - sitting in its current state for 24+ hours
+    // with nobody acting on it - the kind of thing worth a senior
+    // person actually stepping in on, using real status_changed_at/
+    // procurement_status_changed_at timestamps, not the work order's
+    // original creation date.
     for (const r of workOrders) {
-      if (r.status === "Ready for Review") items.push(describe(r, `Waiting on ${r.assigned_role || "someone"}'s review`));
-      if (r.procurement_status === "Requested") items.push(describe(r, "Procurement awaiting approval"));
-      if (r.procurement_status === "Approved") items.push(describe(r, "Approved — awaiting fulfillment"));
+      if (r.status === "Ready for Review" && hoursSince(r.status_changed_at) >= STALLED_HOURS) {
+        items.push(describe(r, `Stalled — waiting on ${r.assigned_role || "someone"}'s review for over a day`));
+      }
+      if (r.procurement_status === "Requested" && hoursSince(r.procurement_status_changed_at) >= STALLED_HOURS) {
+        items.push(describe(r, "Stalled — procurement request awaiting approval for over a day"));
+      }
+      if (r.procurement_status === "Approved" && hoursSince(r.procurement_status_changed_at) >= STALLED_HOURS) {
+        items.push(describe(r, "Stalled — approved but not yet fulfilled for over a day"));
+      }
     }
   }
   return items;
@@ -2589,7 +2612,7 @@ async function handlePendingForMe(req, res) {
   try {
     const workOrders = await fetchAllWorkOrdersForReport(session.org);
     const role = session.r;
-    const items = computePendingItems(workOrders, role);
+    const items = computePendingItems(workOrders, role, session.u);
 
     return res.status(200).json({ role, items });
   } catch (err) {

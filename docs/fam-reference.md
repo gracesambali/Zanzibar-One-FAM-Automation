@@ -473,3 +473,38 @@ unrelated locations). `lib/duplicateReportAI.js` → `findLikelyDuplicate()`.
   for any reason — a match sets `work_orders.possible_duplicate_of` and
   adds an Activity Log entry, shown as a badge in the Work Orders list
   and on the detail page.
+
+## Dashboard: Maintenance Cost Overview removed
+
+Removed entirely from the Dashboard — the Finance tab already covers this
+(Maintenance Cost Overview export/panel there), so the Dashboard copy was
+redundant. The API Integration panel now sits where it did before.
+
+## "For You Today" — real fixes, not just Business Owner
+
+Two real accuracy bugs found and fixed, confirmed directly:
+
+- **Technician**: used to show every open work order in the entire
+  organization, regardless of who it was actually assigned to. Now scoped
+  to `assigned_technician` — only this specific person's own assigned
+  work.
+- **Business Owner / System Admin**: used to list every review and
+  procurement request in flight across the whole organization, regardless
+  of stage — not a genuine personal task, since a BO/System Admin can't
+  actually close a review sitting with the electrical engineer or approve
+  a request pending someone else's sign-off. Now scoped to what's
+  genuinely **stalled**: sitting in its current state for 24+ hours with
+  nobody acting on it — the kind of thing worth a senior person actually
+  stepping in on.
+
+New: `work_orders.status_changed_at` and
+`work_orders.procurement_status_changed_at`, auto-stamped centrally
+inside the shared `insert()`/`update()` functions in
+`lib/postgresClient.js` whenever `status`/`procurement_status` actually
+changes — not scattered across every individual call site that changes
+these fields, since missing even one would silently break the stalled-
+time calculation. Backfilled on existing rows using their real creation
+date as a reasonable approximation.
+
+Engineer/Admin/Property Manager and Procurement roles were already
+correctly scoped to their own real, assigned tasks — left unchanged.

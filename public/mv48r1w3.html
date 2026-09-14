@@ -1829,16 +1829,6 @@ function renderDashboard() {
 
   if (canSeeApiKey) {
     html += `<div class="dash-panel" style="margin-top:20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-        <div class="dash-panel-title" style="margin-bottom:0">Maintenance Cost Overview</div>
-        ${currencySwitcherHtml('dashboard')}
-      </div>
-      <div id="costOverviewContent" style="padding:8px 0;font-size:12px;color:var(--muted)">Loading…</div>
-    </div>`;
-  }
-
-  if (canSeeApiKey) {
-    html += `<div class="dash-panel" style="margin-top:20px">
       <div class="dash-panel-title">API Integration (for ERP/SAP connections)</div>
       <div id="apiKeyPanelContent" style="font-size:12px;color:var(--muted);padding:8px 0">
         <button onclick="loadApiKeyInfo()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">Show API Key</button>
@@ -1855,7 +1845,6 @@ function renderDashboard() {
 
   document.getElementById('view-dashboard').innerHTML = html;
   loadPendingForMe();
-  if (canSeeApiKey) loadCostOverview();
   if (currentUserPermissions && currentUserPermissions.viewStaffPerformance) loadStaffPerformance();
 
   setTimeout(() => {
@@ -15422,124 +15411,6 @@ async function loadStaffPerformance() {
     renderStaffPerformanceFromData(data);
   } catch (err) {
     el.innerHTML = `<div style="font-size:12px;color:var(--red)">Could not load: ${err.message}</div>`;
-  }
-}
-
-async function fetchCostOverviewData() {
-  const resp = await fetch('/api/work-orders?report=true');
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || 'Could not load cost overview');
-  const costSummaries = await loadAssetCostSummaries();
-  return { report: data, costSummaries, pendingIdCost: pendingIdCostCache, unattributedCost: unattributedCostCache };
-}
-TAB_PREFETCH_FETCHERS.costOverview = fetchCostOverviewData;
-
-function renderCostOverviewFromData(bundle) {
-  const panel = document.getElementById('costOverviewContent');
-  if (!panel) return;
-  const data = bundle.report;
-
-  const byType = (data.summary && data.summary.costByMaintenanceType) || {};
-  const total = (data.summary && data.summary.totalCostRecorded) || 0;
-  const types = Object.keys(byType);
-
-  if (types.length === 0) {
-    panel.innerHTML = `<div>No costs recorded yet — costs get added when Engineer+ closes a work order, or via "Edit Cost" on a completed one. Once a few are in, this fills in automatically.</div>`;
-    return;
-  }
-
-  const colors = { Preventive: '#1E40AF', Corrective: '#991B1B', Inspection: '#5B21B6', Unspecified: '#6B7280' };
-  const maxVal = Math.max(...types.map(t => byType[t]));
-
-  let html = `<div style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:12px">${formatCurrency(total)} <span style="font-size:12px;font-weight:400;color:var(--muted)">total recorded</span></div>`;
-  types.sort((a,b) => byType[b]-byType[a]).forEach(type => {
-    const pct = maxVal > 0 ? (byType[type]/maxVal)*100 : 0;
-    html += `<div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-        <span style="font-weight:600;color:${colors[type]||'#6B7280'}">${type}</span>
-        <span style="color:var(--muted)">${formatCurrency(byType[type])}</span>
-      </div>
-      <div style="background:#F0F2F6;border-radius:6px;height:8px;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${colors[type]||'#6B7280'};border-radius:6px"></div>
-      </div>
-    </div>`;
-  });
-
-  const preventive = byType['Preventive'] || 0;
-  const corrective = byType['Corrective'] || 0;
-  if (preventive > 0 && corrective > 0) {
-    const ratio = (corrective / preventive).toFixed(1);
-    html += `<div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">Reactive (Corrective) spend is ${ratio}× scheduled (Preventive) spend — the gap a preventive program is meant to close.</div>`;
-  }
-
-  // By Asset — which specific Asset IDs actually made up that total.
-  // Reuses the exact same cost-summary function and rules already
-  // built for the Asset Register (every status counts, rejected
-  // procurement excluded), so this always agrees with what each
-  // asset's own page shows — no separate logic to drift out of sync.
-  const costSummaries = bundle.costSummaries;
-  const assetRows = Object.entries(costSummaries)
-    .map(([assetId, s]) => {
-      const asset = assets.find(a => a.id === assetId);
-      return { assetId, name: asset ? asset.name : '(asset not found in register)', total: s.total };
-    })
-    .filter(r => r.total > 0)
-    .sort((a, b) => b.total - a.total);
-
-  if (assetRows.length > 0) {
-    const shown = assetRows.slice(0, 10);
-    html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">By Asset</div>
-      ${shown.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-        <span><span style="font-weight:600;color:var(--text)">${r.assetId}</span> <span style="color:var(--muted)">— ${r.name}</span></span>
-        <span style="color:var(--navy);font-weight:600">${formatCurrency(r.total)}</span>
-      </div>`).join('')}
-      ${assetRows.length > 10 ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">+${assetRows.length - 10} more — see Asset Register, sorted by Maintenance Cost Ratio, for the full list.</div>` : ''}
-    </div>`;
-  }
-
-  // Costs with no Asset ID never just vanish from this total — they
-  // split into two honest, distinct lines instead of one vague one.
-  // "Pending" still needs someone to actually attach the real asset;
-  // "Confirmed non-asset" has already been deliberately resolved.
-  if (bundle.pendingIdCost > 0 || bundle.unattributedCost > 0) {
-    html += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      ${bundle.pendingIdCost > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-        <span style="color:#92400E;font-weight:600">⚠ Pending Asset Identification</span>
-        <span style="color:#92400E;font-weight:600">${formatCurrency(bundle.pendingIdCost)}</span>
-      </div>` : ''}
-      ${bundle.unattributedCost > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px">
-        <span style="color:var(--muted)">Unattributed / Non-Asset Costs</span>
-        <span style="color:var(--muted);font-weight:600">${formatCurrency(bundle.unattributedCost)}</span>
-      </div>` : ''}
-    </div>`;
-  }
-
-  panel.innerHTML = html;
-}
-
-// Confirmed directly, discussed and agreed in full: applies here too,
-// no exception. Same real, already-proven pattern.
-async function loadCostOverview() {
-  const panel = document.getElementById('costOverviewContent');
-  if (!panel) return;
-  const cached = tabPrefetchCache.costOverview;
-
-  if (cached) {
-    renderCostOverviewFromData(cached.data);
-    fetchCostOverviewData().then(bundle => {
-      tabPrefetchCache.costOverview = { data: bundle, fetchedAt: Date.now() };
-      if (document.getElementById('costOverviewContent')) renderCostOverviewFromData(bundle);
-    }).catch(err => console.error('Background Cost Overview refresh failed (non-fatal):', err.message));
-    return;
-  }
-
-  try {
-    const bundle = await fetchCostOverviewData();
-    tabPrefetchCache.costOverview = { data: bundle, fetchedAt: Date.now() };
-    renderCostOverviewFromData(bundle);
-  } catch (err) {
-    panel.innerHTML = `<div style="color:var(--red)">${err.message}</div>`;
   }
 }
 
