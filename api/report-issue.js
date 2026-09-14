@@ -836,6 +836,10 @@ export default async function handler(req, res) {
     return handlePublicReportBreakdown(req, res);
   }
 
+  if (req.method === "POST" && req.body && req.body.publicCheckDuplicateReport) {
+    return handlePublicCheckDuplicateReport(req, res);
+  }
+
   return res.status(405).json({ error: "Method not allowed" });
 }
 
@@ -963,6 +967,30 @@ async function handlePublicFloorRooms(req, res) {
   } catch (err) {
     console.error("handlePublicFloorRooms error:", err);
     return res.status(500).json({ error: err.message });
+  }
+}
+
+// Live duplicate check for the public Report a Breakdown page - the
+// SAME page used everywhere (Dashboard header, the asset info page
+// beneath maintenance history, and what a QR/barcode scan opens),
+// confirmed directly, rather than a separate weaker form built
+// specifically for logged-in staff. Genuinely public/no-session, since
+// this same page is used by people with no FAM account at all.
+// Non-blocking by design - a real warning shown while filling in the
+// form, never prevents submitting either way.
+async function handlePublicCheckDuplicateReport(req, res) {
+  const { org, description, building } = req.body || {};
+  if (!org || !description || !description.trim() || !building) {
+    return res.status(200).json({ match: null }); // too early to check yet, not an error
+  }
+  try {
+    const { query: pgQuery } = await import("../lib/postgresClient.js");
+    const { findLikelyDuplicate } = await import("../lib/duplicateReportAI.js");
+    const match = await findLikelyDuplicate({ pgQuery, description: description.trim(), building, organizationId: org });
+    return res.status(200).json({ match });
+  } catch (err) {
+    console.error("handlePublicCheckDuplicateReport error (non-fatal):", err.message);
+    return res.status(200).json({ match: null }); // a failed check should never block or alarm someone reporting a real issue
   }
 }
 

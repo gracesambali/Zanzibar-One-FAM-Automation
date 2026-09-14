@@ -439,14 +439,20 @@ old work orders via the on-demand button), `backfillClosureSummaries`
 (bulk batch), and `closeViaScan` now accepts an optional
 `closureSummary` field saved alongside the actual closure.
 
-## AI Duplicate Report Detection + "Report an Issue" (staff)
+## AI Duplicate Report Detection (Report a Breakdown page)
 
-New: a "📝 Report an Issue" button in the header — the first real way a
-logged-in staff member can report a general issue themselves (previously
-every work order came only from scheduled maintenance, sensors, a
-breakdown email, Schedule Inspection, Order a Spare Part, or one of the
-two public no-login links — no in-app staff report form existed before
-this).
+Confirmed directly, after a real course-correction: a separate "Report an
+Issue" screen for logged-in staff was built first, then removed —
+inferior to the existing "Report a Breakdown" page (no attachments, no
+reporter info fields) and redundant with it (two buttons/forms doing
+almost the same thing). The right fix was enhancing the one, already-good
+page instead of maintaining a second, weaker one.
+
+**The Report a Breakdown page (`wt15j8hd.html`) is the single, real
+report form used everywhere** — the Dashboard header button, the link on
+an asset's own info page beneath its maintenance history, and what a
+QR/barcode scan opens. All three are the exact same page, so this
+enhancement reaches every entry point automatically.
 
 **Duplicate detection**, confirmed directly: reporters describe symptoms
 and location, not asset IDs, so matching is by real language similarity
@@ -455,21 +461,15 @@ Open, reported in the last 48 hours — not exact-match, and never against
 the whole organization (keeps it cheap, avoids coincidental matches from
 unrelated locations). `lib/duplicateReportAI.js` → `findLikelyDuplicate()`.
 
-- **Staff "Report an Issue" form**: checks live, as a non-blocking warning
-  once a building and a real description are entered — *"This looks
-  similar to WO-123 — you can still submit if this is genuinely
-  different."* Never blocks submission.
-- **The two existing no-login report paths** (tenant portal, public
-  "Report a Breakdown" page): no one there to warn live, so the check
-  runs retroactively right after creation — a match sets
-  `work_orders.possible_duplicate_of` and adds an Activity Log entry,
-  shown as a badge in the Work Orders list and on the detail page for
-  whoever picks it up to notice.
-
-Backend: `api/work-orders.js` → `checkForDuplicateReport` (live check, no
-save) and `createStaffReportedIssue` (the actual staff report, runs the
-same AI urgency assessment as the public report paths, plus a duplicate
-check for record-keeping). `api/report-issue.js`'s shared
-`createReportedWorkOrder()` (used by both no-login paths) runs the
-retroactive check itself, so both paths get it without duplicating the
-wiring twice.
+- **Live, on the page itself**: as someone fills in the building and
+  description, a real, non-blocking warning appears if it looks like the
+  same issue as something already open nearby — *"This looks similar to
+  something reported recently (WO-123)."* Never blocks submission.
+  Backend: `api/report-issue.js` → `publicCheckDuplicateReport` action
+  (genuinely public, no session — this page has no login at all).
+- **Retroactive safety net**: the same check also runs right after
+  creation (inside the shared `createReportedWorkOrder()` both the tenant
+  portal and this page's backend call), in case the live check didn't run
+  for any reason — a match sets `work_orders.possible_duplicate_of` and
+  adds an Activity Log entry, shown as a badge in the Work Orders list
+  and on the detail page.

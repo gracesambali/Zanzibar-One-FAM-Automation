@@ -96,6 +96,7 @@
 
       <label for="description">What's wrong? *</label>
       <textarea id="description" placeholder="Describe what you're seeing — noise, leak, not working, etc." required></textarea>
+      <div id="duplicateWarning" style="display:none;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-top:8px;font-size:12.5px;color:#92400E;line-height:1.5"></div>
 
       <label for="photo">Photo (optional)</label>
       <div class="sub" style="margin:0 0 6px">A quick picture helps the team understand the issue faster</div>
@@ -349,6 +350,35 @@ function getFloorValue() {
   const opt = sel.options[sel.selectedIndex];
   return opt ? (opt.getAttribute('data-label') || sel.value) : '';
 }
+
+// Real, non-blocking warning if this looks like the same issue as
+// something already open nearby - confirmed directly, never prevents
+// submitting either way. Fires once both a building and a real
+// description exist.
+async function checkForDuplicate() {
+  const building = getBuildingValue();
+  const description = document.getElementById('description').value.trim();
+  const warningEl = document.getElementById('duplicateWarning');
+  if (!orgId || !building || description.length < 8) { warningEl.style.display = 'none'; return; }
+
+  try {
+    const resp = await fetch('/api/report-issue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publicCheckDuplicateReport: true, org: orgId, description, building }),
+    });
+    const data = await resp.json();
+    if (data.match) {
+      warningEl.innerHTML = `⚠ This looks similar to something reported recently (${data.match.woId})${data.match.reason ? ' — ' + data.match.reason : ''}. You can still submit if this is genuinely different.`;
+      warningEl.style.display = 'block';
+    } else {
+      warningEl.style.display = 'none';
+    }
+  } catch (err) {
+    warningEl.style.display = 'none'; // a failed check should never block or alarm someone over nothing
+  }
+}
+document.getElementById('description').addEventListener('blur', checkForDuplicate);
 function getRoomValue() {
   const sel = document.getElementById('roomSelect').value;
   return sel === '__other__' ? document.getElementById('roomOther').value.trim() : sel;
