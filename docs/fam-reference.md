@@ -654,3 +654,19 @@ Intangible) are now correctly TRA-classified. Assets with no Guideline
 category at all yet are a separate, pre-existing gap (most existing
 assets were never run through that classification), left alone rather
 than papered over.
+
+## Chatbot markdown rendering fix
+
+Real bug, confirmed directly: the chatbot's own responses were dropped
+straight into `textContent`, so any formatting the model actually used
+(bold, bullet/numbered lists) showed up as literal `**asterisks**` and
+dashes instead of being rendered. `renderChatbotMarkdown()` now renders a
+small, safe subset — bold, italic, bullet/numbered lists, paragraph
+breaks — matching what the model actually produces, not full Markdown.
+Always HTML-escaped first, since this text ultimately comes from an LLM
+response and is never trusted as raw HTML — verified directly against an
+XSS attempt before shipping. Only applied to the AI's own messages; what
+the person types themselves stays plain text via `textContent`, unchanged.
+Other AI-generated text in the app (Closure Summaries) was checked too —
+already safely escaped, and that prompt explicitly avoids markdown, so no
+fix needed there.

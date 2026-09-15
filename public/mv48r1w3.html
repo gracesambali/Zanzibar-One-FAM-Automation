@@ -20611,12 +20611,56 @@ async function removeChatbotKnowledgeDocument(linkId) {
   }
 }
 
+// Confirmed directly, a real bug: the chatbot's raw text was being
+// dropped straight into textContent, so any markdown formatting the
+// model actually used (bold, bullet lists) showed up as literal
+// asterisks and dashes instead of being rendered. This renders a
+// small, safe subset - bold, italic, bullet/numbered lists, line
+// breaks - matching what the model actually produces, not full
+// Markdown. HTML-escaped FIRST, always, since this text ultimately
+// comes from an LLM response and is never trusted as raw HTML.
+function renderChatbotMarkdown(rawText) {
+  const lines = escapeHtml(rawText).split('\n');
+  const inlineFormat = (line) => line
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/_(.+?)_/g, '<em>$1</em>');
+
+  let html = '';
+  let listType = null; // 'ul' | 'ol' | null
+  for (const line of lines) {
+    const bulletMatch = line.match(/^[-*]\s+(.*)$/);
+    const numberedMatch = line.match(/^\d+\.\s+(.*)$/);
+    if (bulletMatch) {
+      if (listType !== 'ul') { if (listType) html += `</${listType}>`; html += '<ul style="margin:4px 0 4px 18px;padding:0">'; listType = 'ul'; }
+      html += `<li>${inlineFormat(bulletMatch[1])}</li>`;
+    } else if (numberedMatch) {
+      if (listType !== 'ol') { if (listType) html += `</${listType}>`; html += '<ol style="margin:4px 0 4px 18px;padding:0">'; listType = 'ol'; }
+      html += `<li>${inlineFormat(numberedMatch[1])}</li>`;
+    } else {
+      if (listType) { html += `</${listType}>`; listType = null; }
+      html += (line.trim() === '' ? '' : inlineFormat(line)) + '<br>';
+    }
+  }
+  if (listType) html += `</${listType}>`;
+  return html.replace(/<br>$/, '');
+}
+
 function appendFamChatbotBubble(text, fromUser, escalation) {
   const messagesEl = document.getElementById('famChatbotMessages');
   if (!messagesEl) return;
   const bubble = document.createElement('div');
-  bubble.style.cssText = `align-self:${fromUser ? 'flex-end' : 'flex-start'};max-width:85%;padding:8px 11px;border-radius:10px;background:${fromUser ? 'var(--navy)' : '#F1F3F7'};color:${fromUser ? '#fff' : 'var(--navy)'};white-space:pre-wrap;line-height:1.4`;
-  bubble.textContent = text;
+  bubble.style.cssText = `align-self:${fromUser ? 'flex-end' : 'flex-start'};max-width:85%;padding:8px 11px;border-radius:10px;background:${fromUser ? 'var(--navy)' : '#F1F3F7'};color:${fromUser ? '#fff' : 'var(--navy)'};line-height:1.4`;
+  // Only the AI's own responses get markdown rendering - what the
+  // person typed themselves stays plain text, no reason to interpret
+  // formatting in their own message.
+  if (fromUser) {
+    bubble.style.whiteSpace = 'pre-wrap';
+    bubble.textContent = text;
+  } else {
+    bubble.innerHTML = renderChatbotMarkdown(text);
+  }
   messagesEl.appendChild(bubble);
 
   if (escalation) {
