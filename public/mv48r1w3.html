@@ -7376,6 +7376,14 @@ function renderStaffManagementFromData(bundle) {
 // directly through this; GVC never touches or holds their
 // credentials at any point. Adding a future provider is a config
 // entry on the backend, not new architecture here.
+async function fetchIntegrationsData() {
+  const resp = await fetch('/api/integrations?list=true');
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Could not load integrations');
+  return data.providers || [];
+}
+TAB_PREFETCH_FETCHERS.integrations = fetchIntegrationsData;
+
 async function renderIntegrations() {
   const container = document.getElementById('view-integrations');
   if (!container) return;
@@ -7404,11 +7412,26 @@ async function renderIntegrations() {
       <div style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
 
+  // Confirmed directly, a real gap: every other Finance sub-tab
+  // already had this cache-first pattern, but this one didn't -
+  // always cold-loaded on first visit, unlike its siblings. Same,
+  // already-proven pattern: instant render from what's already known
+  // (if the background prefetch already ran), then a quiet,
+  // un-flashed refresh, rather than a guaranteed spinner every time.
+  const cached = tabPrefetchCache.integrations;
+  if (cached) {
+    renderIntegrationsCards(cached.data);
+    fetchIntegrationsData().then(fresh => {
+      tabPrefetchCache.integrations = { data: fresh, fetchedAt: Date.now() };
+      if (document.getElementById('integrationsCardsWrap')) renderIntegrationsCards(fresh);
+    }).catch(err => console.error('Background Integrations refresh failed (non-fatal):', err.message));
+    return;
+  }
+
   try {
-    const resp = await fetch('/api/integrations?list=true');
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Could not load integrations');
-    renderIntegrationsCards(data.providers || []);
+    const providers = await fetchIntegrationsData();
+    tabPrefetchCache.integrations = { data: providers, fetchedAt: Date.now() };
+    renderIntegrationsCards(providers);
   } catch (err) {
     document.getElementById('integrationsCardsWrap').innerHTML = `<div style="font-size:12.5px;color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
   }
@@ -13977,6 +14000,14 @@ async function loadAssetCostSummaries() {
   })();
   return assetCostSummaryLoading;
 }
+// Confirmed directly, a real gap: every other Finance sub-tab was
+// already registered here, but this one wasn't - meaning it always
+// cold-loaded on first visit each session, unlike its siblings. Since
+// loadAssetCostSummaries() already sets assetCostSummaryCache as a
+// real side effect, registering it here is enough on its own -
+// renderFinanceLifecycle's existing cache-first check just finds it
+// already populated by the time someone actually clicks in.
+TAB_PREFETCH_FETCHERS.financeLifecycle = loadAssetCostSummaries;
 
 let cachedStaffList = null;
 async function loadStaffList() {
