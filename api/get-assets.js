@@ -1704,16 +1704,18 @@ async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
     acquisitionDate: row.install_date,
   });
 
-  // Real TRA declining-balance value, matching the exact same
-  // calculateTRAValue logic already proven in fixedAssetRegister -
-  // reused here rather than duplicated, so the merged per-asset view
-  // shows the same real number the standalone register always did.
+  // Real TRA value, method-aware per class (declining balance for
+  // Classes 1/2/3, straight-line for 5/6/7, immediate write-off for
+  // 8) - matching the exact same calculateTRAValue logic already
+  // proven in fixedAssetRegister, reused here rather than duplicated.
   const { calculateTRAValue } = await import("../lib/traDepreciation.js");
   const matchedTraClass = row.tra_class_id ? (traClassById || {})[row.tra_class_id] : null;
   const tra = calculateTRAValue({
     acquisitionCost: row.acquisition_cost_tzs !== null ? Number(row.acquisition_cost_tzs) : undefined,
     acquisitionDate: row.install_date,
     rate: matchedTraClass ? matchedTraClass.rate : null,
+    method: matchedTraClass ? matchedTraClass.method : null,
+    usefulLifeYears: Number(row.expected_lifespan_years) || null,
   });
 
   // The nameplate_photo_url column stores a storage PATH, not a URL —
@@ -1799,6 +1801,10 @@ async function normalizeRecord(row, documents, traClassById, linkedBarcode) {
     traClassId: row.tra_class_id || null,
     traClassName: matchedTraClass ? matchedTraClass.label : null,
     traValue: tra.traCurrentValue,
+    transportSeatingCapacity: row.transport_seating_capacity ?? null,
+    transportLoadCapacityTonnes: row.transport_load_capacity_tonnes !== null ? Number(row.transport_load_capacity_tonnes) : null,
+    buildingAgriculturalUse: row.building_agricultural_use ?? null,
+    plantMachinerySubtype: row.plant_machinery_subtype || null,
 
     maintenanceIntervalDays: Number(row.maintenance_interval_days) || 90,
 

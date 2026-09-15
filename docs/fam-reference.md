@@ -586,3 +586,71 @@ Breakdown page).
 Backend: `api/report-issue.js` → `vendorPortalLogin`, `vendorPortalSubmitQuote`
 (genuinely public, no session). `api/work-orders.js` → `toggleVendorPortalAccess`,
 `inviteVendorToQuote` (staff-only: Procurement, Business Owner, System Admin).
+
+## TRA Depreciation Classes — real, automatic, no AI
+
+Rebuilt entirely against the actual Income Tax Act (CAP. 332, R.E. 2023,
+Third Schedule) and PWC's Tanzania tax summary, confirmed directly to
+agree exactly with each other. Class 4 genuinely doesn't exist — deleted
+from the Act itself, not a gap on our end.
+
+**The real 7 classes** (`tra_classes` table — global, no organization_id,
+shared across every client, same as before):
+
+| Class | Covers | Rate | Method |
+|---|---|---|---|
+| 1 | Computers/data equipment, light vehicles (<30 seats, <7 tonnes), construction & earth-moving equipment | 37.5% | Declining balance |
+| 2 | Heavy vehicles (≥30 seats), specialised trucks, aircraft, vessels, agriculture/manufacturing plant | 25% | Declining balance |
+| 3 | Office furniture/equipment, anything not in another class | 12.5% | Declining balance |
+| 5 | Buildings used in agriculture/livestock/fishing | 20% | Straight-line |
+| 6 | All other permanent buildings/structures | 5% | Straight-line |
+| 7 | Intangible assets | 1/useful life (rounded down to nearest half year) | Straight-line |
+| 8 | Agricultural plant/machinery, non-VAT fiscal devices | 100% | Immediate write-off |
+
+**Real calculation bug fixed**: `lib/traDepreciation.js` used to apply
+declining-balance to every class uniformly. Now method-aware — Classes
+5/6 depreciate a fixed amount of the *original* cost every year (the
+Act's own depreciation-basis formula for these classes never reduces by
+prior depreciation, unlike 1/2/3/8, which is what makes them genuinely
+straight-line), Class 7 divides by useful life rounded down to the
+nearest half year, Class 8 is zero from the moment of acquisition
+regardless of elapsed time.
+
+**Automatic classification, confirmed directly — no AI, no manual
+class-picking**: `deriveTraClassNumber()` derives the correct class from
+real facts already captured on the asset. Getting a tax classification
+wrong has real consequences, so every branch is a plain deterministic
+rule. Wired into both asset creation and every edit — re-derived
+immediately whenever a relevant fact changes, same "recalculate now,
+don't wait" principle as book value.
+
+Most of the existing Guideline classification hierarchy (Tangible/
+Intangible → Movable/Immovable → category) maps cleanly: Computer
+Hardware → Class 1, Furniture → Class 3, any Intangible → Class 7, Land
+→ excluded entirely (the Act explicitly excludes land from depreciation),
+everything else → Class 3 (the Act's own "any asset not in another
+class" catch-all).
+
+**Three categories are genuinely ambiguous and need one real extra fact
+each** — the Guideline's own categories don't capture the distinguishing
+detail, so this isn't a categories problem, it's a missing-fact problem:
+- **Transport Assets** — seating/load capacity decides Class 1 vs 2
+- **Buildings** — agricultural use (yes/no) decides Class 5 vs 6
+- **Plant & Machinery** — construction/earth-moving vs general ag-or-
+  manufacturing vs agriculture-specific decides Class 1 vs 2 vs 8
+
+Each gets a real, targeted field in both the New Asset and Edit Asset
+forms, shown only when that category is selected, required before
+submission — never AI, never a free-choice class dropdown for these.
+`tra_class_id` stays manually settable only for Procurement/System
+Admin/Business Owner (a tightly-restricted override, unchanged from
+before) — but editing it directly is skipped from the automatic
+re-derivation in the same request, so a deliberate override isn't
+immediately clobbered.
+
+**Existing assets**: backfilled directly — the assets that already had a
+clean Guideline category (Computer Hardware, Furniture, Equipment, any
+Intangible) are now correctly TRA-classified. Assets with no Guideline
+category at all yet are a separate, pre-existing gap (most existing
+assets were never run through that classification), left alone rather
+than papered over.

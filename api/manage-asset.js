@@ -1918,6 +1918,28 @@ async function createOneAsset(a, addedBy, addedByRole, organizationId) {
   const nonTechnicalRoles = ["admin", "office_admin", "stock_keeper"];
   const needsReview = nonTechnicalRoles.includes(addedByRole);
 
+  // Confirmed directly: TRA classification is automatic from real
+  // facts, never manually picked - getting a tax classification wrong
+  // has real consequences, so this is a plain deterministic rule, not
+  // AI, not a free-choice dropdown. Three categories genuinely need
+  // one extra real fact to resolve (handled by deriveTraClassNumber
+  // itself); everything else resolves immediately from nature/category.
+  const { deriveTraClassNumber } = await import("../lib/traDepreciation.js");
+  const traClassNumber = deriveTraClassNumber({
+    nature: a.nature,
+    category: a.category,
+    transportSeatingCapacity: a.transportSeatingCapacity,
+    transportLoadCapacityTonnes: a.transportLoadCapacityTonnes,
+    buildingAgriculturalUse: a.buildingAgriculturalUse,
+    plantMachinerySubtype: a.plantMachinerySubtype,
+  });
+  let traClassId = null;
+  if (traClassNumber !== null) {
+    const { getByColumn: getTraClassByNumber } = await import("../lib/postgresClient.js");
+    const traClassRow = await getTraClassByNumber("tra_classes", "class_number", traClassNumber).catch(() => null);
+    traClassId = traClassRow ? traClassRow.id : null;
+  }
+
   const { insert } = await import("../lib/postgresClient.js");
   let created;
   try {
@@ -1930,6 +1952,11 @@ async function createOneAsset(a, addedBy, addedByRole, organizationId) {
       asset_nature: a.nature || "Tangible",
       mobility: a.mobility || null,
       asset_category: a.category || null,
+      tra_class_id: traClassId,
+      transport_seating_capacity: a.transportSeatingCapacity !== undefined ? Number(a.transportSeatingCapacity) : null,
+      transport_load_capacity_tonnes: a.transportLoadCapacityTonnes !== undefined ? Number(a.transportLoadCapacityTonnes) : null,
+      building_agricultural_use: a.buildingAgriculturalUse !== undefined ? !!a.buildingAgriculturalUse : null,
+      plant_machinery_subtype: a.plantMachinerySubtype || null,
       floor_level: a.floor || null,
       zone: a.zone || null,
       room_zone: a.room || null,
@@ -2317,6 +2344,8 @@ const EDITABLE_FIELDS = [
   "Acquisition Cost (TZS)", "Residual Value (TZS)",
   "Status", "Criticality", "Note", "TRA Class",
   "Generator Rated Consumption (L/h)", "Generator Tank Capacity (L)", "Fuel Price (TZS/L)",
+  "Transport Seating Capacity", "Transport Load Capacity (Tonnes)",
+  "Building Agricultural Use", "Plant & Machinery Subtype",
 ];
 
 const EDITABLE_FIELD_COLUMNS = {
@@ -2332,6 +2361,10 @@ const EDITABLE_FIELD_COLUMNS = {
   "Maintenance Interval (Days)": "maintenance_interval_days", "Acquisition Cost (TZS)": "acquisition_cost_tzs",
   "Residual Value (TZS)": "residual_value_tzs", "Status": "status", "Criticality": "criticality", "Note": "note",
   "TRA Class": "tra_class_id",
+  "Transport Seating Capacity": "transport_seating_capacity",
+  "Transport Load Capacity (Tonnes)": "transport_load_capacity_tonnes",
+  "Building Agricultural Use": "building_agricultural_use",
+  "Plant & Machinery Subtype": "plant_machinery_subtype",
 };
 
 // Bulk-assigns TRA classes from a CSV a person uploads — the
@@ -2500,7 +2533,7 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
   }
 
   try {
-    const { getById, update, insert } = await import("../lib/postgresClient.js");
+    const { getById, update, insert, getByColumn } = await import("../lib/postgresClient.js");
 
     // Read current values first (for the audit log)
     const current = await getById("components", recordId).catch(e => { throw new Error("Could not read asset: " + e.message); });
@@ -2577,6 +2610,35 @@ async function handleEditAsset(req, res, editedBy, editorRole, organizationId) {
       });
       if (result.currentValue !== null) {
         updateFields.current_value_tzs = result.currentValue;
+      }
+    }
+
+    // Confirmed directly: TRA classification is automatic from real
+    // facts, never manually picked - re-derived immediately whenever
+    // any of the real underlying facts change, the same "recalculate
+    // now, don't wait" principle already applied to book value above.
+    // Skipped only when the person is deliberately setting TRA Class
+    // directly in this same request (the tightly-restricted manual
+    // override for Procurement/System Admin/Business Owner) - a
+    // deliberate override shouldn't be immediately clobbered by the
+    // automatic rule in the same edit.
+    const TRA_DERIVATION_COLUMNS = ["asset_nature", "asset_category", "transport_seating_capacity", "transport_load_capacity_tonnes", "building_agricultural_use", "plant_machinery_subtype"];
+    if (!("tra_class_id" in updateFields) && TRA_DERIVATION_COLUMNS.some(c => c in updateFields)) {
+      const merged = { ...current, ...updateFields };
+      const { deriveTraClassNumber } = await import("../lib/traDepreciation.js");
+      const traClassNumber = deriveTraClassNumber({
+        nature: merged.asset_nature,
+        category: merged.asset_category,
+        transportSeatingCapacity: merged.transport_seating_capacity,
+        transportLoadCapacityTonnes: merged.transport_load_capacity_tonnes,
+        buildingAgriculturalUse: merged.building_agricultural_use === true || merged.building_agricultural_use === "true" ? true : (merged.building_agricultural_use === false || merged.building_agricultural_use === "false" ? false : null),
+        plantMachinerySubtype: merged.plant_machinery_subtype,
+      });
+      if (traClassNumber !== null) {
+        const traClassRow = await getByColumn("tra_classes", "class_number", traClassNumber).catch(() => null);
+        updateFields.tra_class_id = traClassRow ? traClassRow.id : null;
+      } else {
+        updateFields.tra_class_id = null; // genuinely not enough real information yet (or Land, which is excluded)
       }
     }
 

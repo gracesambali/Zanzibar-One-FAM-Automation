@@ -2629,7 +2629,35 @@ function openEditForm(idx) {
       </div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Category</label>
-      <select id="ea_category" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+      <select id="ea_category" onchange="onEditCategoryChange()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px"></select>
+
+      <!-- Confirmed directly: the only three real facts standing
+           between automatic and manual TRA classification for these
+           categories - shown here too so re-editing an asset keeps
+           its class correct as facts change. -->
+      <div id="ea_traTransportWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Seating or Load Capacity (for TRA classification)</label>
+        <div style="display:flex;gap:8px">
+          <input id="ea_traSeating" type="number" min="0" value="${a.transportSeatingCapacity ?? ''}" placeholder="Seats" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          <input id="ea_traLoadTonnes" type="number" min="0" step="0.1" value="${a.transportLoadCapacityTonnes ?? ''}" placeholder="Load capacity, tonnes" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </div>
+      </div>
+      <div id="ea_traBuildingWrap" style="display:none;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);cursor:pointer">
+          <input id="ea_traBuildingAg" type="checkbox" ${a.buildingAgriculturalUse ? 'checked' : ''} style="width:16px;height:16px">
+          Used in agriculture, livestock, or fishing (for TRA classification)
+        </label>
+      </div>
+      <div id="ea_traPlantWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What kind of plant/machinery is this? (for TRA classification)</label>
+        <select id="ea_traPlantSubtype" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          <option value="">— Select —</option>
+          <option value="construction_earthmoving" ${a.plantMachinerySubtype==='construction_earthmoving'?'selected':''}>Construction / earth-moving equipment</option>
+          <option value="agriculture_manufacturing" ${a.plantMachinerySubtype==='agriculture_manufacturing'?'selected':''}>General agriculture or manufacturing plant</option>
+          <option value="agriculture_specific" ${a.plantMachinerySubtype==='agriculture_specific'?'selected':''}>Agriculture-specific (e.g. irrigation, agricultural generators)</option>
+        </select>
+      </div>
+      <div id="ea_traClassDisplay" style="font-size:11.5px;color:var(--muted);margin-bottom:10px">${a.traClassName ? `Current TRA class: <strong>${escapeHtml(a.traClassName)}</strong> — updates automatically as the facts above change.` : 'Not yet TRA classified — fill in the required facts above.'}</div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
       <select id="ea_system" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -2747,6 +2775,13 @@ function onEditCategoryOptionsRefresh(preselectCategory) {
   if (current && !categories.includes(current)) {
     categorySelect.insertAdjacentHTML('afterbegin', `<option value="${current}" selected>${current} (current)</option>`);
   }
+  onEditCategoryChange();
+}
+function onEditCategoryChange() {
+  const category = document.getElementById('ea_category').value;
+  document.getElementById('ea_traTransportWrap').style.display = category === 'Transport Assets' ? 'block' : 'none';
+  document.getElementById('ea_traBuildingWrap').style.display = category === 'Buildings' ? 'block' : 'none';
+  document.getElementById('ea_traPlantWrap').style.display = category === 'Plant & Machinery' ? 'block' : 'none';
 }
 
 function closeEditForm() {
@@ -2780,6 +2815,10 @@ async function submitAssetEdit(recordId) {
     "Status": document.getElementById('ea_status').value,
     "Criticality": document.getElementById('ea_criticality').value,
     "Note": document.getElementById('ea_note').value.trim(),
+    "Transport Seating Capacity": document.getElementById('ea_traSeating')?.value || '',
+    "Transport Load Capacity (Tonnes)": document.getElementById('ea_traLoadTonnes')?.value || '',
+    "Building Agricultural Use": document.getElementById('ea_traBuildingAg')?.checked ? 'true' : (document.getElementById('ea_category').value === 'Buildings' ? 'false' : ''),
+    "Plant & Machinery Subtype": document.getElementById('ea_traPlantSubtype')?.value || '',
   };
   const costField = document.getElementById('ea_cost');
   if (costField) {
@@ -19810,6 +19849,39 @@ function openAddAssetForm() {
         <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Specify Category *</label>
         <input id="na_othersText" placeholder="e.g. Signage" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
       </div>
+
+      <!-- Confirmed directly: these three real facts are the only
+           thing standing between "automatic" and "manual" TRA
+           classification for Transport Assets, Buildings, and Plant
+           & Machinery - the Guideline's own categories don't capture
+           them, so asked once here, deterministic, no AI, no
+           class-picking. -->
+      <div id="na_traTransportWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Seating or Load Capacity (for TRA classification) *</label>
+        <div style="display:flex;gap:8px">
+          <input id="na_traSeating" type="number" min="0" placeholder="Seats (if a passenger vehicle)" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          <input id="na_traLoadTonnes" type="number" min="0" step="0.1" placeholder="Load capacity, tonnes (if a goods vehicle)" style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Determines Class 1 (37.5%) vs Class 2 (25%) automatically — fill in whichever actually applies.</div>
+      </div>
+      <div id="na_traBuildingWrap" style="display:none;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--navy);cursor:pointer">
+          <input id="na_traBuildingAg" type="checkbox" style="width:16px;height:16px">
+          Used in agriculture, livestock, or fishing (for TRA classification)
+        </label>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Determines Class 5 (20%) vs Class 6 (5%) automatically.</div>
+      </div>
+      <div id="na_traPlantWrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">What kind of plant/machinery is this? (for TRA classification) *</label>
+        <select id="na_traPlantSubtype" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          <option value="">— Select —</option>
+          <option value="construction_earthmoving">Construction / earth-moving equipment</option>
+          <option value="agriculture_manufacturing">General agriculture or manufacturing plant</option>
+          <option value="agriculture_specific">Agriculture-specific (e.g. irrigation, agricultural generators)</option>
+        </select>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Determines Class 1 (37.5%), Class 2 (25%), or Class 8 (100% immediate write-off) automatically.</div>
+      </div>
+
       <div id="na_prefixHint" style="font-size:11px;color:var(--muted);margin:-6px 0 10px;font-family:monospace"></div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
@@ -20067,6 +20139,9 @@ function onCategoryChange() {
   const category = document.getElementById('na_category').value;
   const othersWrap = document.getElementById('na_othersWrap');
   othersWrap.style.display = category === 'Others' ? 'block' : 'none';
+  document.getElementById('na_traTransportWrap').style.display = category === 'Transport Assets' ? 'block' : 'none';
+  document.getElementById('na_traBuildingWrap').style.display = category === 'Buildings' ? 'block' : 'none';
+  document.getElementById('na_traPlantWrap').style.display = category === 'Plant & Machinery' ? 'block' : 'none';
   const prefix = CATEGORY_PREFIXES[category] || 'AST';
   const facilityName = document.getElementById('na_facility')?.value;
   const buildingSel = document.getElementById('na_building');
@@ -20110,6 +20185,25 @@ async function submitNewAsset() {
     return;
   }
 
+  // Confirmed directly: these are the only real facts standing between
+  // automatic and manual TRA classification for these three
+  // categories - required here, not optional, so a new asset never
+  // ends up unclassified for a fact that was simply skipped.
+  const traSeating = document.getElementById('na_traSeating')?.value || '';
+  const traLoadTonnes = document.getElementById('na_traLoadTonnes')?.value || '';
+  const traBuildingAg = document.getElementById('na_traBuildingAg')?.checked;
+  const traPlantSubtype = document.getElementById('na_traPlantSubtype')?.value || '';
+  if (category === 'Transport Assets' && !traSeating && !traLoadTonnes) {
+    errorBox.textContent = 'Enter a seating or load capacity so this can be TRA classified correctly.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (category === 'Plant & Machinery' && !traPlantSubtype) {
+    errorBox.textContent = 'Select what kind of plant/machinery this is so it can be TRA classified correctly.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
   btn.disabled = true;
   btn.textContent = 'Adding…';
   errorBox.style.display = 'none';
@@ -20146,6 +20240,10 @@ async function submitNewAsset() {
         criticality: document.getElementById('na_criticality').value,
         acquisitionCost: costField ? costField.value : undefined,
         lifespan: lifespanField ? lifespanField.value : undefined,
+        transportSeatingCapacity: traSeating || undefined,
+        transportLoadCapacityTonnes: traLoadTonnes || undefined,
+        buildingAgriculturalUse: category === 'Buildings' ? !!traBuildingAg : undefined,
+        plantMachinerySubtype: traPlantSubtype || undefined,
         nameplatePhotoBase64: nameplateBase64,
         nameplatePhotoFilename: nameplateFile ? nameplateFile.name : undefined,
         nameplatePhotoContentType: nameplateFile ? nameplateFile.type : undefined,
