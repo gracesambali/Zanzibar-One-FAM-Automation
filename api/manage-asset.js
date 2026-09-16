@@ -3134,7 +3134,7 @@ async function handleRemoveDocumentLink(req, res, removedBy, organizationId) {
 // no multi-select confirmation step needed - upload, extract, link,
 // done in one action.
 async function handleUploadChatbotKnowledgeDocument(req, res, uploadedBy, organizationId) {
-  const { filename, contentType, fileBase64 } = req.body || {};
+  const { filename, contentType, fileBase64, statedIntent } = req.body || {};
   if (!filename || !contentType || !fileBase64) {
     return res.status(400).json({ error: "filename, contentType, and fileBase64 are all required" });
   }
@@ -3145,7 +3145,7 @@ async function handleUploadChatbotKnowledgeDocument(req, res, uploadedBy, organi
   }
 
   try {
-    const { insert } = await import("../lib/postgresClient.js");
+    const { insert, query: pgQuery } = await import("../lib/postgresClient.js");
     const { uploadFile } = await import("../lib/storageClient.js");
     const { extractDocumentText } = await import("../lib/documentAI.js");
 
@@ -3177,10 +3177,32 @@ async function handleUploadChatbotKnowledgeDocument(req, res, uploadedBy, organi
       linked_by: uploadedBy,
     });
 
+    // Confirmed directly: a real, additive capability on top of
+    // feeding the chatbot - if the person said (or the document
+    // itself makes clear) that this is really for a specific asset,
+    // a work order, or facility-wide, the same real AI suggestion +
+    // human-confirmation flow the general Documents system already
+    // uses runs here too, rather than this upload only ever feeding
+    // the chatbot and nothing else. Non-fatal: a failed suggestion
+    // still leaves the chatbot-knowledge link (already created above)
+    // and the upload itself intact.
+    let aiSuggestion = null;
+    try {
+      const { suggestDocumentLinks } = await import("../lib/documentAI.js");
+      const assetRows = await pgQuery(
+        "select asset_id as id, name, system, model, manufacturer from components where organization_id = $1",
+        [organizationId]
+      );
+      aiSuggestion = await suggestDocumentLinks(fileBase64, contentType, filename, assetRows.rows, statedIntent);
+    } catch (aiErr) {
+      console.error("Chatbot knowledge document link suggestion failed (non-fatal):", aiErr.message);
+    }
+
     return res.status(200).json({
       success: true,
       documentId: created.id,
       filename,
+      aiSuggestion,
       extracted: !!extractedText,
       ...(extractedText ? {} : { warning: "Uploaded, but the text could not be read automatically — this document won't yet contribute to chatbot answers." }),
     });

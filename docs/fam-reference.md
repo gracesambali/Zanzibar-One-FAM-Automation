@@ -401,13 +401,14 @@ Every place displaying a work order's urgency or status badge uses two
 shared functions, `woUrgencyBadgeClass()` and `woStatusDisplay()`, both
 applied to the live-computed effective state, not the raw stored value.
 
-## Chatbot Knowledge Portal
+## Chatbot Knowledge Portal (renamed 📄 Documents)
 
-The chatbot ("Ask about FAM") now has two views in the same widget:
-**💬 Chat** (unchanged) and **📚 Knowledge** — where an organization can
-upload their own documents (procedures, policies, manuals) for the chatbot
-to answer from. Same permission level as uploading any other document,
-not admin-only.
+The chatbot ("Ask about FAM") has two views in the same widget:
+**💬 Chat** (unchanged) and **📄 Documents** (renamed from "📚 Knowledge" —
+confirmed directly, since it now does more than just feed the chatbot) —
+where an organization can upload their own documents (procedures,
+policies, manuals) for the chatbot to answer from. Same permission level
+as uploading any other document, not admin-only.
 
 Confirmed directly: uploaded documents feed answers **alongside** the
 standing FAM reference doc, never replacing it — a question about how FAM
@@ -418,6 +419,21 @@ and stored on the document record, so the chatbot doesn't re-read the raw
 file on every question. Combined organization-document context is capped
 at 15,000 characters per request (most recently uploaded first) so a
 handful of large uploads can't balloon every chatbot call's cost/latency.
+
+**Stated-intent document routing**, confirmed directly, a real gap closed:
+this upload used to *only* feed the chatbot — it had no way to also link
+to a specific asset, a work order, or apply facility-wide, unlike the
+general Documents system. Now: an optional "What's this for?" field
+(e.g. "Warranty for the pump on Level 3") is passed to the same
+`suggestDocumentLinks()` AI used by the general Documents system, weighed
+as a real signal alongside the document's own content (never overriding
+what the document itself clearly says if the two genuinely conflict). If
+the AI finds a specific asset match or a facility-wide category match,
+the same real confirm-then-link modal the general Documents system
+already uses (`openDocumentLinkConfirmModal`) opens right there — reusing
+the existing "suggest, never decide" flow rather than building a second
+one. The chatbot-knowledge link is always created immediately regardless
+(unchanged) — this is additive, not a replacement.
 
 Reuses the same unified `documents`/`document_links` tables as the general
 document system, with a new `entity_type = 'chatbot_knowledge'` link type
