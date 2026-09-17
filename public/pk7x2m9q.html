@@ -176,6 +176,12 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   const password = document.getElementById('password').value;
   const btn = document.getElementById('loginBtn');
   const errorBox = document.getElementById('error');
+  // Confirmed directly, a real security fix: this page's own URL is
+  // the only place that says which organization's login this is
+  // supposed to be - it was never actually sent to the backend
+  // before, so any valid username/password anywhere could log in
+  // here regardless of whose login page it actually was.
+  const orgSlug = new URLSearchParams(window.location.search).get('org') || '';
 
   btn.disabled = true;
   btn.textContent = 'Signing in…';
@@ -185,7 +191,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     const resp = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, orgSlug }),
     });
     const data = await resp.json();
 

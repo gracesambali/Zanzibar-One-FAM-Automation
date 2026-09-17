@@ -114,10 +114,30 @@ export default async function handler(req, res) {
     return handleMarkOnboardingSeen(req, res);
   }
 
-  const { username, password } = req.body || {};
+  const { username, password, orgSlug } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password required" });
+  }
+
+  // Confirmed directly, a real security fix: the login page's own URL
+  // is the only place that says which organization this login is for
+  // — the backend never actually checked it before, so any account's
+  // real credentials worked from any organization's login page,
+  // logging the person into their own real account regardless of
+  // whose page they typed it into. Resolved the same way
+  // resolveOrgSlug already does, reused here rather than duplicated.
+  // Fails closed: a missing or unrecognized slug means no login page
+  // this session actually reached should have skipped sending one, so
+  // treating it as a mismatch is the safe default, not an open one.
+  let requiredOrgId = null;
+  try {
+    const { getByColumn } = await import("../lib/postgresClient.js");
+    const org = orgSlug ? await getByColumn("organizations", "slug", orgSlug).catch(() => null) : null;
+    requiredOrgId = org ? org.id : "__no_such_org__";
+  } catch (err) {
+    console.error("Org slug resolution failed during login (failing closed):", err);
+    requiredOrgId = "__no_such_org__";
   }
 
   // Real accounts, checked first — Postgres users table, hashed
@@ -132,6 +152,12 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "No password set yet for this account. Use \u201cSet / change password\u201d on the login page." });
       }
       if (!verifyPassword(password, user.password_hash, user.password_salt)) {
+        return res.status(401).json({ error: "Incorrect username or password" });
+      }
+      // Same generic message either way — never reveals that the
+      // password was actually correct for a different organization,
+      // which would itself leak real information to someone probing.
+      if (user.organization_id !== requiredOrgId) {
         return res.status(401).json({ error: "Incorrect username or password" });
       }
       const role = user.role;
@@ -167,7 +193,13 @@ export default async function handler(req, res) {
   // Confirmed directly: every legacy env-var login here is existing
   // Master System staff, not a Gracing Ventures (or any future
   // client's) account - defaults to the Master System's own org id.
-  setSessionCookie(res, username, matched.role, "73ae9f3b-bbef-4f4a-b3df-3cca81c49063");
+  // Same real fix applies here too: these credentials only work from
+  // the Master System's own login page now, not from any client's.
+  const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+  if (requiredOrgId !== MASTER_ORG_ID) {
+    return res.status(401).json({ error: "Incorrect username or password" });
+  }
+  setSessionCookie(res, username, matched.role, MASTER_ORG_ID);
   return res.status(200).json({ success: true, role: matched.role, permissions: ROLES[matched.role] });
   // --- end legacy fallback --------------------------------------------
 }

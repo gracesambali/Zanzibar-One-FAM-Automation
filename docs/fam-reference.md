@@ -686,3 +686,35 @@ the person types themselves stays plain text via `textContent`, unchanged.
 Other AI-generated text in the app (Closure Summaries) was checked too —
 already safely escaped, and that prompt explicitly avoids markdown, so no
 fix needed there.
+
+## Security fix: login was not verifying organization match
+
+Real bug, confirmed directly from a live report: logging into an
+organization's login page (`public/pk7x2m9q.html?org=<slug>`) with a
+DIFFERENT organization's valid credentials (including the Master
+System's own legacy credentials) succeeded and logged the person into
+that OTHER account's real organization — not the one whose login page
+they were actually on. The `org` slug in the URL was only ever used for
+cosmetic display (organization name/logo on the page); it was never
+sent to `/api/login` at all, so the backend had no way to know which
+organization's login page a request actually came from — it just
+authenticated any valid username/password globally.
+
+Fixed on both sides:
+- `public/pk7x2m9q.html` now sends `orgSlug` (read from its own URL)
+  alongside `username`/`password` in the login POST.
+- `api/login.js` resolves `orgSlug` to a real organization id (same
+  lookup `resolveOrgSlug` already used for display) and checks it
+  against the authenticating user's real `organization_id` — for both
+  real database accounts and the legacy env-var fallback (which always
+  maps to the Master System's own org id, so those credentials now only
+  work from the Master System's own login page). A mismatch returns the
+  exact same generic "Incorrect username or password" as a genuinely
+  wrong password — never reveals that the password was actually correct
+  for a different organization.
+- Fails closed: a missing or unrecognized `orgSlug` is treated as a
+  mismatch, not an open pass. Confirmed safe — every real, distributed
+  login link in the app already always includes a real `org` slug
+  (Client Management, Master onboarding, the session-expiry redirect
+  which forwards whatever query string the person already had); there
+  was no legitimate bare-login flow this could break.
