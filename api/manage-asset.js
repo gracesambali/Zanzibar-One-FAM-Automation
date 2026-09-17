@@ -2092,11 +2092,13 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
       try {
         await createOneAsset({
           name, nature: row.nature, category: row.category, building: row.building, facility: row.facility,
-          system: row.system, mobility: row.mobility, floor: row.floor, room: row.room,
+          system: row.system, mobility: row.mobility, floor: row.floor, room: row.room, zone: row.zone,
           manufacturer: row.manufacturer, model: row.model, installDate: row.installDate,
           lifespan: row.lifespan, maintenanceIntervalDays: row.maintenanceIntervalDays,
           acquisitionCost: row.acquisitionCost, residualValue: row.residualValue,
           status: row.status, criticality: row.criticality,
+          transportSeatingCapacity: row.transportSeatingCapacity, transportLoadCapacityTonnes: row.transportLoadCapacityTonnes,
+          buildingAgriculturalUse: row.buildingAgriculturalUse, plantMachinerySubtype: row.plantMachinerySubtype,
         }, addedBy, addedByRole, organizationId);
         created++;
         seenInThisUpload.add(dupeKey);

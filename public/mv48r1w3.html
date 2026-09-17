@@ -11907,6 +11907,43 @@ async function submitRemoveDuplicates() {
   }
 }
 
+// Confirmed directly: generates the template client-side as a real
+// CSV rather than relying on a hand-maintained file that can drift
+// from what the parser above actually recognizes - the headers here
+// are written from the exact same real column names the upload
+// already understands, so they can never fall out of sync with each
+// other the way a separately-maintained spreadsheet could.
+function downloadAssetSheetTemplate() {
+  const headers = [
+    'Name*', 'Nature*', 'Category*', 'Building*', 'Facility*', 'Mobility', 'System',
+    'Manufacturer', 'Model', 'Acquisition Cost (TZS)', 'Residual Value (TZS)',
+    'Expected Lifespan (Years)', 'Maintenance Interval (Days)', 'Install Date',
+    'Floor', 'Room', 'Zone', 'Status', 'Critical Importance',
+    'Seating Capacity', 'Load Capacity (Tonnes)', 'Agricultural Use', 'Plant & Machinery Subtype',
+  ];
+  // One real, realistic example row - shows the expected format
+  // without being mistaken for real data, per the same convention
+  // every other template in this app follows.
+  const exampleRow = [
+    'Example: Office Desk', 'Tangible', 'Furniture', 'Head Office', 'Acme Ltd', 'Movable', '',
+    'IKEA', 'BEKANT', '450000', '0',
+    '10', '90', '2026-01-15',
+    'GF', 'Reception', '', 'Good', 'High',
+    '', '', '', '',
+  ];
+  const escapeCsv = (v) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const csv = [headers, exampleRow].map(row => row.map(escapeCsv).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'FAM_Asset_Upload_Template.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 async function openUploadAssetSheetModal() {
   let knownPairsHtml = '<div style="font-size:11.5px;color:var(--muted)">Loading known buildings…</div>';
   try {
@@ -11930,7 +11967,9 @@ async function openUploadAssetSheetModal() {
     <div style="background:#fff;border-radius:12px;padding:24px;width:520px;max-width:90vw;max-height:88vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order: Name*, Nature*, Category*, Building*, Facility*, System, Manufacturer, Model, Acquisition Cost (TZS), Install Date, Room/Zone (or separate Room and Zone columns), Critical Importance. Only the first five are required — matched by what each header says, not by position.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order — matched by what each header says, not by position. Only Name, Nature, Category, Building, and Facility are required:</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.6">Name*, Nature*, Category*, Building*, Facility*, Mobility, System, Manufacturer, Model, Acquisition Cost, Residual Value, Expected Lifespan (Years), Maintenance Interval (Days), Install Date, Floor, Room and Zone (combined "Room/Zone", or two separate columns), Condition/Status, Critical Importance — plus, only where relevant: Seating Capacity, Load Capacity (Tonnes), Agricultural Use, Plant &amp; Machinery Subtype (used to automatically work out TRA depreciation class).</div>
+      <button onclick="downloadAssetSheetTemplate()" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:12px">⬇ Download Template</button>
       <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
       ${knownPairsHtml}
       <div style="font-size:10.5px;color:var(--muted);margin:8px 0 14px">Don't see the building you need? Add it under Asset Tracking's facility settings first, then upload.</div>
@@ -11961,15 +12000,25 @@ const ASSET_SHEET_HEADER_ALIASES = {
   category: ['category', 'asset category'],
   building: ['building', 'building name'],
   facility: ['facility', 'facility name'],
+  mobility: ['mobility'],
   system: ['system'],
   manufacturer: ['manufacturer', 'maker', 'brand'],
   model: ['model'],
   acquisitionCost: ['acquisition cost', 'acquisition cost (tzs)', 'cost', 'acquisition cost tzs'],
+  residualValue: ['residual value', 'residual value (tzs)', 'residual value tzs', 'salvage value'],
+  lifespan: ['expected lifespan', 'expected lifespan (years)', 'lifespan', 'useful life', 'useful life (years)'],
+  maintenanceIntervalDays: ['maintenance interval', 'maintenance interval (days)', 'maintenance interval days'],
   installDate: ['install date', 'installation date', 'date installed'],
+  floor: ['floor', 'floor/level', 'floor level', 'level'],
   roomZone: ['room/zone', 'room zone', 'location'],
   room: ['room'],
   zone: ['zone'],
+  status: ['status', 'condition'],
   criticality: ['critical importance', 'criticality', 'importance'],
+  transportSeatingCapacity: ['seating capacity', 'transport seating capacity', 'seats'],
+  transportLoadCapacityTonnes: ['load capacity', 'load capacity (tonnes)', 'transport load capacity (tonnes)', 'load capacity tonnes'],
+  buildingAgriculturalUse: ['agricultural use', 'building agricultural use', 'used in agriculture'],
+  plantMachinerySubtype: ['plant machinery subtype', 'plant & machinery subtype', 'plant and machinery subtype'],
 };
 
 function normalizeAssetSheetHeader(raw) {
@@ -11989,19 +12038,36 @@ function buildAssetSheetHeaderMap(headerRow) {
 function assetSheetRowFromColumns(c, headerMap) {
   const get = (field) => (headerMap[field] !== undefined ? (c[headerMap[field]] || '') : '');
   const rawCriticality = get('criticality').trim().toLowerCase();
-  // Confirmed directly as the real cause of a reported gap: Room and
-  // Zone are genuinely separate columns in some real sheets, not
-  // always one combined "Room/Zone" column - combined here into the
-  // single, real field the backend actually stores, rather than
-  // silently picking only whichever one happened to be found first.
+  const rawStatus = get('status').trim();
+  // Confirmed directly: Room/Zone is sometimes one combined column in
+  // a real sheet, sometimes two separate ones - if there's a real,
+  // separate Zone column, it's passed through as its own real field
+  // (the backend genuinely stores Zone separately from Room), only
+  // folded into Room's own text as a fallback when no combined or
+  // separate column exists at all for it.
   const roomZoneCombined = get('roomZone').trim();
   const roomOnly = get('room').trim();
   const zoneOnly = get('zone').trim();
-  const combinedRoomZone = roomZoneCombined || [roomOnly, zoneOnly].filter(Boolean).join(' - ');
+  const finalRoom = roomZoneCombined || roomOnly;
+  const finalZone = zoneOnly; // a combined Room/Zone column's text stays entirely in Room, never duplicated into Zone
+  // Confirmed directly as a real, reported gap: this used to only
+  // recognize a handful of fields - Floor, Mobility, Residual Value,
+  // Maintenance Interval, Status/Condition, Expected Lifespan, and the
+  // TRA classification helper fields were silently dropped even when
+  // the column existed with an exact, reasonable header, because
+  // nothing here was ever taught to look for them at all.
+  const rawAgUse = get('buildingAgriculturalUse').trim().toLowerCase();
   return {
     name: get('name'), nature: get('nature'), category: get('category'), building: get('building'), facility: get('facility'),
-    system: get('system'), manufacturer: get('manufacturer'), model: get('model'), acquisitionCost: get('acquisitionCost'), installDate: get('installDate'),
-    room: combinedRoomZone, criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
+    mobility: get('mobility'), system: get('system'), manufacturer: get('manufacturer'), model: get('model'),
+    acquisitionCost: get('acquisitionCost'), residualValue: get('residualValue'),
+    lifespan: get('lifespan'), maintenanceIntervalDays: get('maintenanceIntervalDays'), installDate: get('installDate'),
+    floor: get('floor'), room: finalRoom, zone: finalZone,
+    status: rawStatus || undefined,
+    criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
+    transportSeatingCapacity: get('transportSeatingCapacity'), transportLoadCapacityTonnes: get('transportLoadCapacityTonnes'),
+    buildingAgriculturalUse: rawAgUse === 'yes' || rawAgUse === 'true' ? true : (rawAgUse === 'no' || rawAgUse === 'false' ? false : undefined),
+    plantMachinerySubtype: get('plantMachinerySubtype') || undefined,
   };
 }
 

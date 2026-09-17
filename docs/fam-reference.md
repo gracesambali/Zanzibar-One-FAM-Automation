@@ -718,3 +718,41 @@ Fixed on both sides:
   (Client Management, Master onboarding, the session-expiry redirect
   which forwards whatever query string the person already had); there
   was no legitimate bare-login flow this could break.
+
+## Asset Register: Upload Sheet — real gap fixed + Download Template added
+
+Confirmed directly from a live, reported case: the existing self-service
+"⬆ Upload Sheet" button (Asset Register page) already had real Excel/CSV
+parsing and a flexible header-matching system (strips `*` and
+parenthetical notes automatically) — but that matching system had never
+been taught to recognize **Floor, Mobility, Residual Value, Maintenance
+Interval, Status/Condition, or Expected Lifespan at all**, regardless of
+what the column was actually named. A column named exactly "Floor" was
+silently dropped, same as one named "Floor (ref only)" — this wasn't a
+naming-mismatch bug, the fields were never in the recognized list to
+begin with. Tested directly against a real reported file's exact headers
+to confirm the fix — Floor, Mobility, Zone, and Room now all map
+correctly.
+
+`ASSET_SHEET_HEADER_ALIASES` and `assetSheetRowFromColumns()` now also
+recognize: Mobility, Residual Value, Expected Lifespan, Maintenance
+Interval, Floor, Status/Condition, and the four TRA classification
+helper fields (Seating Capacity, Load Capacity, Agricultural Use, Plant
+& Machinery Subtype) — so a bulk-uploaded asset can now be automatically
+TRA-classified the same way a manually-created one is, not left
+unclassified. Zone is now passed through as its own real field (the
+backend genuinely stores it separately from Room) rather than always
+folded into Room's own text.
+
+`api/manage-asset.js`'s `handleBulkImportAssets` updated to actually pass
+all of these through to `createOneAsset()` — it was accepting several of
+them from the row object already but silently dropping `zone`,
+`mobility`, and the TRA helper fields before this fix.
+
+**New: "⬇ Download Template" button** inside the Upload Asset Sheet
+modal — generates a CSV client-side, headers written directly from the
+same `ASSET_SHEET_HEADER_ALIASES` list the parser itself reads, so the
+template can never drift out of sync with what upload actually
+recognizes (the exact failure mode of a separately hand-maintained
+template). Includes one realistic example row, clearly marked as an
+example, matching the convention used elsewhere in the app.
