@@ -756,3 +756,34 @@ template can never drift out of sync with what upload actually
 recognizes (the exact failure mode of a separately hand-maintained
 template). Includes one realistic example row, clearly marked as an
 example, matching the convention used elsewhere in the app.
+
+## Asset Register: Activity Log renamed + decommission history added + real cross-tenant fix
+
+Renamed "TRA Activity Log" to plain "Activity Log", confirmed directly —
+it was never really TRA-only in spirit, just narrowly scoped in
+practice. Decommission events now also land here (previously only
+written to each asset's own private, per-asset log, invisible from this
+shared register-level panel) — so decommission history is now visible
+on the register as a whole, not just buried on each individual asset's
+detail page.
+
+**Real cross-tenant gap found and fixed while making this change,
+confirmed directly**: `asset_tracking_activity_log` had no
+`organization_id` at all, on either its writes or its one read query —
+every client's asset register activity would have been visible to
+every other client on this panel. Table happened to be empty (0 rows)
+at the time this was found, so nothing had actually leaked in
+practice, but the vulnerability was real in the code.
+
+Fixed with a genuine distinction, not a blanket fix — TRA class
+management (Added/Edited/Deleted Category, Bulk Imported TRA Classes)
+is legitimately global, since `tra_classes` itself is a shared,
+organization-less table everyone's asset edit dropdown pulls from —
+those entries are stored with `organization_id = null` and shown to
+everyone regardless of which org's register they're viewing.
+Decommission events are genuinely per-client and are now scoped with
+the real `organization_id` — the read query
+(`api/get-assets.js`, `?assetTrackingLog=true`) filters to
+`organization_id = <requesting org> OR organization_id IS NULL`, so a
+viewer sees their own org's decommission history plus the shared global
+TRA log, but never another specific client's decommission events.

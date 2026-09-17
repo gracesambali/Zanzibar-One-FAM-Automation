@@ -2134,7 +2134,7 @@ function renderAssets() {
       <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAssetTrackingCategories()">
         <div style="font-size:14px;font-weight:700;color:var(--navy)">Manage TRA Classes ${assetTrackingCategoriesOpen ? '▾' : '▸'}</div>
         <div style="display:flex;gap:8px">
-          <button onclick="event.stopPropagation();scrollToAssetTrackingLog()" title="Jump to TRA Activity Log" style="padding:6px 10px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐</button>
+          <button onclick="event.stopPropagation();scrollToAssetTrackingLog()" title="Jump to Activity Log" style="padding:6px 10px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🕐</button>
           ${assetTrackingCategoriesOpen ? `<button onclick="event.stopPropagation();openImportTraClassesModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬆ Import</button>
           <button onclick="event.stopPropagation();openAddTraClassModal()" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">+ Add Class</button>` : ''}
         </div>
@@ -2159,7 +2159,7 @@ function renderAssets() {
 
   if (canManageTra) {
     html += `<div id="assetTrackingLogPanel" style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:16px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">TRA Activity Log</div>
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">Activity Log</div>
       <div id="assetTrackingLogContent" style="font-size:12px;color:var(--muted)">Loading…</div>
     </div>`;
   }

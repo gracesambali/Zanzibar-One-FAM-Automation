@@ -2211,6 +2211,15 @@ async function handleDecommission(req, res, decommissionedBy, organizationId) {
         await pgQuery("delete from asset_positions where asset_id = $1 and organization_id = $2", [assetId, organizationId]).catch(() => {});
       }
       await logAssetActivity(assetId, "Status", "Active", `Decommissioned${reason ? ": " + reason : ""}`, decommissionedBy, organizationId);
+      // Confirmed directly: decommission events now also land in the
+      // shared, register-level Activity Log (previously TRA-only) -
+      // real decommission history for the whole register, not just
+      // buried on each individual asset's own private log. Scoped to
+      // this specific organization - unlike TRA class management
+      // (which is genuinely global, shared across every client), a
+      // decommission is a real, per-client event and must never be
+      // visible to a different organization's own register.
+      await logAssetTrackingActivity("Decommissioned", `${currentAsset.name || assetId}${reason ? ` — ${reason}` : ""}`, decommissionedBy, organizationId);
     }
 
     return res.status(200).json({ success: true });
@@ -2449,10 +2458,10 @@ async function handleBulkImportTraClasses(req, res, editedBy) {
 // confirmed directly: all of it recorded, who did it, visible
 // together. Non-fatal on purpose — a logging failure should never
 // block the actual action it's describing.
-async function logAssetTrackingActivity(action, details, performedBy) {
+async function logAssetTrackingActivity(action, details, performedBy, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    await insert("asset_tracking_activity_log", { action, details, performed_by: performedBy });
+    await insert("asset_tracking_activity_log", { action, details, performed_by: performedBy, organization_id: organizationId });
   } catch (err) {
     console.error("logAssetTrackingActivity failed (non-fatal):", err.message);
   }

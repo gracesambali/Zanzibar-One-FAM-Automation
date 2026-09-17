@@ -653,13 +653,22 @@ export default async function handler(req, res) {
     }
   }
 
-  // Everything that's happened on the Asset Tracking page - category
-  // additions/edits/deletes, TRA class assignments, bulk imports - one
-  // unified timeline, most recent first.
+  // Everything that's happened on the Asset Tracking page - decommission
+  // history plus TRA class assignments/edits/bulk imports. Real
+  // org-scoping, confirmed directly as a genuine gap found and fixed
+  // here: decommission events are per-client and must never be visible
+  // to a different organization's own register, unlike TRA class
+  // management (genuinely global, shared across every client, stored
+  // with a null organization_id) - shown to everyone regardless of
+  // which org's register they're viewing, since it's the same shared
+  // TRA class list everyone's asset edit dropdown already pulls from.
   if (req.query.assetTrackingLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from asset_tracking_activity_log order by performed_at desc limit 200");
+      const result = await pgQuery(
+        "select * from asset_tracking_activity_log where organization_id = $1 or organization_id is null order by performed_at desc limit 200",
+        [session.org]
+      );
       return res.status(200).json({
         entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
       });
