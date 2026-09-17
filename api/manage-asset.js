@@ -108,9 +108,9 @@ export default async function handler(req, res) {
     if (action === "scanInventoryOut") return handleScanInventoryOut(req, res, session.u, session.org);
     if (action === "setItemBatchTracked") return handleSetItemBatchTracked(req, res, session.u, session.org);
     if (action === "mergeInventoryItems") return handleMergeInventoryItems(req, res, session.u, session.org);
-    if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u);
-    if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u);
-    if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u);
+    if (action === "addAnnualPlanItem") return handleAddAnnualPlanItem(req, res, session.u, session.org);
+    if (action === "editAnnualPlanItem") return handleEditAnnualPlanItem(req, res, session.u, session.org);
+    if (action === "deleteAnnualPlanItem") return handleDeleteAnnualPlanItem(req, res, session.u, session.org);
     if (action === "addFleetRequest") return handleAddFleetRequest(req, res, session.u, session.org);
     if (action === "editFleetRequest") return handleEditFleetRequest(req, res, session.u, session.org);
     if (action === "deleteFleetRequest") return handleDeleteFleetRequest(req, res, session.u, session.org);
@@ -510,10 +510,10 @@ async function handleUploadInventorySnapshot(req, res, uploadedBy, organizationI
 // Shared logging for Annual Plan activity, matching the exact same
 // pattern already proven for Inventory - non-fatal on purpose, a
 // logging failure should never block the real action it describes.
-async function logAnnualPlanActivity(action, details, performedBy) {
+async function logAnnualPlanActivity(action, details, performedBy, organizationId) {
   try {
     const { insert } = await import("../lib/postgresClient.js");
-    await insert("annual_plan_activity_log", { action, details, performed_by: performedBy });
+    await insert("annual_plan_activity_log", { action, details, performed_by: performedBy, organization_id: organizationId });
   } catch (err) {
     console.error("logAnnualPlanActivity failed (non-fatal):", err.message);
   }
@@ -523,7 +523,7 @@ async function logAnnualPlanActivity(action, details, performedBy) {
 // aligned - one row per planned purchase for the coming financial
 // year, tracked from Planned through to Completed as the year
 // actually unfolds.
-async function handleAddAnnualPlanItem(req, res, addedBy) {
+async function handleAddAnnualPlanItem(req, res, addedBy, organizationId) {
   const { fiscalYear, itemDescription, category, estimatedQuantity, unitOfMeasure, estimatedCost, procurementMethod, plannedQuarter, sourceOfFunds, notes } = req.body || {};
   if (!fiscalYear) return res.status(400).json({ error: "A fiscal year is required." });
   if (!itemDescription || !itemDescription.trim()) return res.status(400).json({ error: "A description of what's needed is required." });
@@ -543,8 +543,9 @@ async function handleAddAnnualPlanItem(req, res, addedBy) {
       status: "Planned",
       notes: notes || null,
       added_by: addedBy,
+      organization_id: organizationId,
     });
-    await logAnnualPlanActivity("Added Plan Item", `FY${fiscalYear} — "${itemDescription.trim()}"`, addedBy);
+    await logAnnualPlanActivity("Added Plan Item", `FY${fiscalYear} — "${itemDescription.trim()}"`, addedBy, organizationId);
     return res.status(200).json({ success: true, id: created.id });
   } catch (err) {
     console.error("addAnnualPlanItem error:", err);
@@ -552,13 +553,19 @@ async function handleAddAnnualPlanItem(req, res, addedBy) {
   }
 }
 
-async function handleEditAnnualPlanItem(req, res, editedBy) {
+async function handleEditAnnualPlanItem(req, res, editedBy, organizationId) {
   const { itemId, itemDescription, category, estimatedQuantity, unitOfMeasure, estimatedCost, procurementMethod, plannedQuarter, sourceOfFunds, status, notes } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { getById, update } = await import("../lib/postgresClient.js");
     const before = await getById("annual_plan_items", itemId).catch(() => null);
-    if (!before) return res.status(404).json({ error: "Plan item not found." });
+    // Confirmed directly, a real ownership check: getById alone has no
+    // organization awareness at all - without this, anyone could edit
+    // another organization's real budget item just by guessing or
+    // obtaining its id. Reported as a plain "not found," same as a
+    // genuinely missing id, rather than confirming a different org's
+    // item exists.
+    if (!before || before.organization_id !== organizationId) return res.status(404).json({ error: "Plan item not found." });
 
     const fields = { updated_at: new Date().toISOString() };
     const changes = [];
@@ -582,8 +589,8 @@ async function handleEditAnnualPlanItem(req, res, editedBy) {
     setIfChanged(notes, "notes", before.notes, "Notes", false);
 
     if (changes.length > 0) {
-      await update("annual_plan_items", itemId, fields);
-      await logAnnualPlanActivity("Edited Plan Item", `FY${before.fiscal_year} — "${before.item_description}": ${changes.join(", ")}`, editedBy);
+      await update("annual_plan_items", itemId, fields, organizationId);
+      await logAnnualPlanActivity("Edited Plan Item", `FY${before.fiscal_year} — "${before.item_description}": ${changes.join(", ")}`, editedBy, organizationId);
     }
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -592,15 +599,18 @@ async function handleEditAnnualPlanItem(req, res, editedBy) {
   }
 }
 
-async function handleDeleteAnnualPlanItem(req, res, deletedBy) {
+async function handleDeleteAnnualPlanItem(req, res, deletedBy, organizationId) {
   const { itemId } = req.body || {};
   if (!itemId) return res.status(400).json({ error: "itemId is required" });
   try {
     const { getById, query: pgQuery } = await import("../lib/postgresClient.js");
     const item = await getById("annual_plan_items", itemId).catch(() => null);
-    if (!item) return res.status(404).json({ error: "Plan item not found." });
-    await pgQuery("delete from annual_plan_items where id = $1", [itemId]);
-    await logAnnualPlanActivity("Deleted Plan Item", `FY${item.fiscal_year} — "${item.item_description}"`, deletedBy);
+    // Same real ownership check as edit above - without it, anyone
+    // could delete another organization's real budget item just by
+    // guessing or obtaining its id.
+    if (!item || item.organization_id !== organizationId) return res.status(404).json({ error: "Plan item not found." });
+    await pgQuery("delete from annual_plan_items where id = $1 and organization_id = $2", [itemId, organizationId]);
+    await logAnnualPlanActivity("Deleted Plan Item", `FY${item.fiscal_year} — "${item.item_description}"`, deletedBy, organizationId);
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("deleteAnnualPlanItem error:", err);

@@ -864,7 +864,7 @@ export default async function handler(req, res) {
   if (req.query.annualPlanYears === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select distinct fiscal_year from annual_plan_items order by fiscal_year desc");
+      const result = await pgQuery("select distinct fiscal_year from annual_plan_items where organization_id = $1 order by fiscal_year desc", [session.org]);
       return res.status(200).json({ years: result.rows.map(r => r.fiscal_year) });
     } catch (err) {
       console.error("annualPlanYears read error:", err);
@@ -879,7 +879,7 @@ export default async function handler(req, res) {
   if (req.query.annualPlanItems === "true" && req.query.year) {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from annual_plan_items where fiscal_year = $1 order by created_at asc", [Number(req.query.year)]);
+      const result = await pgQuery("select * from annual_plan_items where fiscal_year = $1 and organization_id = $2 order by created_at asc", [Number(req.query.year), session.org]);
       const items = result.rows.map(r => ({
         id: r.id, fiscalYear: r.fiscal_year, itemDescription: r.item_description, category: r.category,
         estimatedQuantity: r.estimated_quantity !== null ? Number(r.estimated_quantity) : null,
@@ -897,10 +897,12 @@ export default async function handler(req, res) {
     }
   }
 
+  // Real, per-organization now, confirmed directly as a genuine gap
+  // found and fixed alongside annual_plan_items itself above.
   if (req.query.annualPlanActivityLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from annual_plan_activity_log order by performed_at desc limit 200");
+      const result = await pgQuery("select * from annual_plan_activity_log where organization_id = $1 order by performed_at desc limit 200", [session.org]);
       return res.status(200).json({
         entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
       });
@@ -1498,7 +1500,7 @@ export default async function handler(req, res) {
   if (req.query.inventoryActivityLog === "true") {
     try {
       const { query: pgQuery } = await import("../lib/postgresClient.js");
-      const result = await pgQuery("select * from inventory_activity_log order by performed_at desc limit 200");
+      const result = await pgQuery("select * from inventory_activity_log where organization_id = $1 order by performed_at desc limit 200", [session.org]);
       return res.status(200).json({
         entries: result.rows.map(r => ({ action: r.action, details: r.details, performedBy: r.performed_by, performedAt: r.performed_at })),
       });

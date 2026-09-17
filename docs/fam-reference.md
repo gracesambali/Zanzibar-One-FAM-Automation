@@ -787,3 +787,42 @@ the real `organization_id` — the read query
 `organization_id = <requesting org> OR organization_id IS NULL`, so a
 viewer sees their own org's decommission history plus the shared global
 TRA log, but never another specific client's decommission events.
+
+## Cross-tenant audit of every Activity Log, following the Asset Tracking fix
+
+Confirmed directly: after fixing the Asset Tracking Activity Log's
+missing organization scoping, every other Activity Log in the app was
+checked the same way, not assumed safe.
+
+**Already properly scoped**: Fleet Activity Log, Staff Activity Log.
+
+**Found broken, same pattern, now fixed**: Annual Plan Activity Log,
+Inventory Activity Log.
+
+**Bigger finding along the way**: `annual_plan_items` itself — real
+fiscal-year budget data, not just its activity log — had never been
+organization-scoped at all. Reading, creating, editing, and deleting
+all had zero organization check in the code; edit/delete checked only
+by raw id via `getById()` (which has no organization awareness),
+meaning one client could in principle alter or remove another client's
+real budget item. Table was genuinely empty (0 rows) when this was
+found, so nothing had actually leaked in practice, but the gap was
+real in the code.
+
+Fixed: `annual_plan_items` and `annual_plan_activity_log` both got real
+`organization_id` columns. Every read (`annualPlanYears`,
+`annualPlanItems`, `annualPlanActivityLog` in `api/get-assets.js`) now
+filters by `session.org`. `handleEditAnnualPlanItem` and
+`handleDeleteAnnualPlanItem` (`api/manage-asset.js`) now check
+`before.organization_id === organizationId` after the initial fetch
+(since `getById()` itself can't check this) — a mismatch returns a
+plain "not found," identical to a genuinely missing id, rather than
+confirming a different org's item exists. The actual `update()` and
+`delete` calls also now pass/filter by `organization_id` directly, using
+the same real, already-proven `update()` ownership parameter used
+elsewhere in this codebase (a real id belonging to a different
+organization updates zero rows, not someone else's record).
+
+`inventory_activity_log` was a smaller fix — its table already stored
+`organization_id` correctly on every write; only the read query had no
+`WHERE` filter at all.
