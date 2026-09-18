@@ -11917,7 +11917,7 @@ function downloadAssetSheetTemplate() {
   const headers = [
     'Name*', 'Nature*', 'Category*', 'Building*', 'Facility*', 'Mobility', 'System',
     'Manufacturer', 'Model', 'Acquisition Cost (TZS)', 'Residual Value (TZS)',
-    'Expected Lifespan (Years)', 'Maintenance Interval (Days)', 'Install Date',
+    'Expected Lifespan (Years)', 'Maintenance Interval (Days)', 'Install Date', 'Warranty Expiry Date',
     'Floor', 'Room', 'Zone', 'Status', 'Critical Importance',
     'Seating Capacity', 'Load Capacity (Tonnes)', 'Agricultural Use', 'Plant & Machinery Subtype',
   ];
@@ -11927,7 +11927,7 @@ function downloadAssetSheetTemplate() {
   const exampleRow = [
     'Example: Office Desk', 'Tangible', 'Furniture', 'Head Office', 'Acme Ltd', 'Movable', '',
     'IKEA', 'BEKANT', '450000', '0',
-    '10', '90', '2026-01-15',
+    '10', '90', '2026-01-15', '2028-01-15',
     'GF', 'Reception', '', 'Good', 'High',
     '', '', '', '',
   ];
@@ -11968,7 +11968,7 @@ async function openUploadAssetSheetModal() {
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Upload Asset Sheet</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">A CSV or Excel file. First row treated as a header. Each row creates a NEW asset — this doesn't update existing ones.</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Column headers, in any order — matched by what each header says, not by position. Only Name, Nature, Category, Building, and Facility are required:</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.6">Name*, Nature*, Category*, Building*, Facility*, Mobility, System, Manufacturer, Model, Acquisition Cost, Residual Value, Expected Lifespan (Years), Maintenance Interval (Days), Install Date, Floor, Room and Zone (combined "Room/Zone", or two separate columns), Condition/Status, Critical Importance — plus, only where relevant: Seating Capacity, Load Capacity (Tonnes), Agricultural Use, Plant &amp; Machinery Subtype (used to automatically work out TRA depreciation class).</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.6">Name*, Nature*, Category*, Building*, Facility*, Mobility, System, Manufacturer, Model, Acquisition Cost, Residual Value, Expected Lifespan (Years), Maintenance Interval (Days), Install Date, Warranty Expiry Date, Floor, Room and Zone (combined "Room/Zone", or two separate columns), Condition/Status, Critical Importance — plus, only where relevant: Seating Capacity, Load Capacity (Tonnes), Agricultural Use, Plant &amp; Machinery Subtype (used to automatically work out TRA depreciation class).</div>
       <button onclick="downloadAssetSheetTemplate()" style="padding:6px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:7px;background:#fff;color:var(--navy);cursor:pointer;margin-bottom:12px">⬇ Download Template</button>
       <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Building must match a real, existing one exactly — here's what's actually set up:</div>
       ${knownPairsHtml}
@@ -12009,6 +12009,7 @@ const ASSET_SHEET_HEADER_ALIASES = {
   lifespan: ['expected lifespan', 'expected lifespan (years)', 'lifespan', 'useful life', 'useful life (years)'],
   maintenanceIntervalDays: ['maintenance interval', 'maintenance interval (days)', 'maintenance interval days'],
   installDate: ['install date', 'installation date', 'date installed'],
+  warrantyExpiryDate: ['warranty expiry date', 'warranty expiry', 'warranty', 'warranty date'],
   floor: ['floor', 'floor/level', 'floor level', 'level'],
   roomZone: ['room/zone', 'room zone', 'location'],
   room: ['room'],
@@ -12062,6 +12063,7 @@ function assetSheetRowFromColumns(c, headerMap) {
     mobility: get('mobility'), system: get('system'), manufacturer: get('manufacturer'), model: get('model'),
     acquisitionCost: get('acquisitionCost'), residualValue: get('residualValue'),
     lifespan: get('lifespan'), maintenanceIntervalDays: get('maintenanceIntervalDays'), installDate: get('installDate'),
+    warrantyExpiryDate: get('warrantyExpiryDate') || undefined,
     floor: get('floor'), room: finalRoom, zone: finalZone,
     status: rawStatus || undefined,
     criticality: rawCriticality === 'high' ? 'High' : (rawCriticality === 'low' ? 'Low' : ''),
