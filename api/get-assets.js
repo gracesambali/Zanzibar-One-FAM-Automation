@@ -653,6 +653,97 @@ export default async function handler(req, res) {
     }
   }
 
+  // One-Click Full Export, confirmed directly: Client Management only
+  // (Master staff viewing a specific client) - real, raw data for
+  // Assets, Work Orders, per-asset Activity Log, and Inventory, all
+  // scoped to the one target organization actually requested. Same
+  // real access rule already used for Staff Activity Log - a
+  // requested targetOrgId is only ever honored when the session's own
+  // organization IS the Master org, otherwise silently falls back to
+  // the session's own org so this can never be used to reach into a
+  // different client's data by guessing an id.
+  if (req.query.fullClientExport === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Only System Admin or Business Owner can export a client's full data." });
+    }
+    const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+    const requestedOrg = req.query.targetOrgId;
+    const exportOrgId = (requestedOrg && session.org === MASTER_ORG_ID) ? requestedOrg : session.org;
+
+    try {
+      const { query: pgQuery } = await import("../lib/postgresClient.js");
+
+      const assetsResult = await pgQuery(
+        `select asset_id, name, system, asset_category, floor_level, room_zone, building, manufacturer, model,
+                install_date, status, criticality, acquisition_cost_tzs, current_value_tzs, activity_log
+         from components where organization_id = $1 and active = true order by name`,
+        [exportOrgId]
+      );
+
+      const workOrdersResult = await pgQuery(
+        `select wo_id, asset_name, system, location, status, urgency, maintenance_type, created, completed_date, notes
+         from work_orders where organization_id = $1 order by created desc`,
+        [exportOrgId]
+      );
+
+      // Flattened, asset by asset - every real edit/status change ever
+      // recorded on each individual asset's own activity_log, plus the
+      // shared register-level events (decommissions - genuinely
+      // per-org; TRA class changes - genuinely global, included here
+      // too since they still affect this org's own assets).
+      const activityRows = [];
+      for (const a of assetsResult.rows) {
+        const log = Array.isArray(a.activity_log) ? a.activity_log : [];
+        for (const entry of log) {
+          activityRows.push([a.asset_id, a.name, entry.text || "", entry.by || "", entry.at || ""]);
+        }
+      }
+      const trackingLogResult = await pgQuery(
+        `select action, details, performed_by, performed_at from asset_tracking_activity_log
+         where organization_id = $1 or organization_id is null order by performed_at desc`,
+        [exportOrgId]
+      );
+      for (const r of trackingLogResult.rows) {
+        activityRows.push(["—", r.action, r.details || "", r.performed_by || "", r.performed_at || ""]);
+      }
+
+      const inventoryResult = await pgQuery(
+        `select item_code, name, category, unit_of_measure, current_quantity, reorder_level, location, building
+         from inventory_items where organization_id = $1 order by name`,
+        [exportOrgId]
+      );
+      const inventoryLogResult = await pgQuery(
+        `select action, details, performed_by, performed_at from inventory_activity_log
+         where organization_id = $1 order by performed_at desc limit 500`,
+        [exportOrgId]
+      );
+
+      return res.status(200).json({
+        assets: assetsResult.rows.map(a => ({
+          id: a.asset_id, name: a.name, system: a.system || "", category: a.asset_category || "",
+          floor: a.floor_level || "", room: a.room_zone || "", building: a.building || "",
+          manufacturer: a.manufacturer || "", model: a.model || "", installDate: a.install_date || "",
+          status: a.status || "", criticality: a.criticality || "",
+          acquisitionCost: a.acquisition_cost_tzs, currentValue: a.current_value_tzs,
+        })),
+        workOrders: workOrdersResult.rows.map(w => ({
+          id: w.wo_id, asset: w.asset_name || "", system: w.system || "", location: w.location || "",
+          status: w.status || "", urgency: w.urgency || "", type: w.maintenance_type || "",
+          created: w.created || "", completed: w.completed_date || "", notes: w.notes || "",
+        })),
+        activityLog: activityRows,
+        inventory: inventoryResult.rows.map(i => ({
+          code: i.item_code || "", name: i.name || "", category: i.category || "", unit: i.unit_of_measure || "",
+          quantity: i.current_quantity, reorderLevel: i.reorder_level, location: i.location || "", building: i.building || "",
+        })),
+        inventoryLog: inventoryLogResult.rows.map(r => [r.action, r.details || "", r.performed_by || "", r.performed_at || ""]),
+      });
+    } catch (err) {
+      console.error("fullClientExport error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // Everything that's happened on the Asset Tracking page - decommission
   // history plus TRA class assignments/edits/bulk imports. Real
   // org-scoping, confirmed directly as a genuine gap found and fixed

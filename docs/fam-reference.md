@@ -826,3 +826,32 @@ organization updates zero rows, not someone else's record).
 `inventory_activity_log` was a smaller fix — its table already stored
 `organization_id` correctly on every write; only the read query had no
 `WHERE` filter at all.
+
+## One-Click Full Export (Client Management)
+
+Confirmed directly: Master staff (Business Owner/System Admin only, same
+gate as Staff Activity Log) viewing a specific client from Client
+Management can export that client's full real data in one file — one
+combined CSV, or one combined PDF, reusing the exact same
+`exportSectionsToCsv`/`exportSectionsToPdf` helpers Finance's own exports
+already use, not a new mechanism.
+
+Four real sections in the one file: **Assets** (full register),
+**Work Orders** (full list), **Activity Log** — confirmed directly as
+"the full activity log, every change/action ever logged, asset by
+asset": every individual asset's own `activity_log` entries flattened,
+plus the shared `asset_tracking_activity_log` (decommissions — genuinely
+per-org; TRA class changes — genuinely global, included since they still
+affect this org's own assets) — and **Inventory** (current stock plus its
+own movement log as a fifth section).
+
+Backend: `api/get-assets.js` → `?fullClientExport=true&targetOrgId=<id>`.
+Same real access rule as Staff Activity Log — a requested `targetOrgId`
+is only ever honored when the session's own organization IS the Master
+org, otherwise silently falls back to the session's own org, so this can
+never be used to reach into a different client's data by guessing an id.
+
+Frontend: `downloadFullClientExport()`, two buttons ("⬇ Full Export
+(CSV)" / "⬇ Full Export (PDF)") next to the existing Branding/
+Notifications buttons shown when Master staff is viewing one specific
+client.
