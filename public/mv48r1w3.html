@@ -20693,26 +20693,57 @@ function mountFamChatbotWidget() {
 // hosted links go here once they exist; a video with no real url yet
 // shows "Coming soon" honestly instead of a dead or fake link.
 const FAM_HELP_VIDEOS = [
-  { title: "Dashboard", desc: "The real-time command center for your whole operation.", url: "" },
-  { title: "Asset Register", desc: "The full asset list, and one asset's own detail record.", url: "" },
-  { title: "Work Orders", desc: "Reporting and tracking a real job, start to finish.", url: "" },
-  { title: "Report a Breakdown", desc: "The no-login public reporting flow.", url: "" },
-  { title: "Helpful AI Features", desc: "What FAM's AI actually does, with real examples.", url: "" },
-  { title: "Ask about FAM: Chat & Documents", desc: "Both real tabs of the chatbot itself.", url: "" },
+  { title: "Dashboard", desc: "The real-time command center for your whole operation.", url: "/videos/01_dashboard.mp4" },
+  { title: "Asset Register", desc: "The full asset list, and one asset's own detail record.", url: "/videos/02_asset_register.mp4" },
+  { title: "Work Orders", desc: "Reporting and tracking a real job, start to finish.", url: "/videos/03_work_orders.mp4" },
+  { title: "Report a Breakdown", desc: "The no-login public reporting flow.", url: "/videos/04_report_a_breakdown.mp4" },
+  { title: "Helpful AI Features", desc: "What FAM's AI actually does, with real examples.", url: "/videos/05_helpful_ai_features.mp4" },
+  { title: "Ask about FAM: Chat & Documents", desc: "Both real tabs of the chatbot itself.", url: "/videos/06_ask_about_fam_chat_and_documents.mp4" },
 ];
 
 function renderFamChatbotVideosList() {
   const el = document.getElementById('famChatbotVideosList');
   if (!el) return;
-  el.innerHTML = FAM_HELP_VIDEOS.map(v => `
+  el.innerHTML = FAM_HELP_VIDEOS.map((v, i) => `
     <div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(v.title)}</div>
       <div style="font-size:11.5px;color:var(--muted);margin:2px 0 6px">${escapeHtml(v.desc)}</div>
       ${v.url
-        ? `<a href="${escapeHtml(v.url)}" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">▶ Watch</a>`
+        ? `<button onclick="toggleFamHelpVideo(${i})" id="famHelpVideoBtn_${i}" style="padding:5px 10px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">▶ Play</button>
+           <div id="famHelpVideoPlayer_${i}" style="display:none;margin-top:8px"></div>`
         : `<span style="font-size:11.5px;color:var(--muted);font-style:italic">Coming soon</span>`}
     </div>
   `).join('');
+}
+
+// Plays right inside the panel - confirmed directly, this is genuinely
+// self-hosted now (public/videos/, served directly from FAM's own
+// domain), not an external link out, so a real inline <video> works
+// with no cross-origin issues. Accordion-style: opening one closes
+// whichever other video was already playing, so the small panel
+// doesn't end up with several players stacked in it at once.
+let famHelpVideoOpenIndex = null;
+function toggleFamHelpVideo(i) {
+  if (famHelpVideoOpenIndex !== null && famHelpVideoOpenIndex !== i) {
+    const prevPlayer = document.getElementById(`famHelpVideoPlayer_${famHelpVideoOpenIndex}`);
+    const prevBtn = document.getElementById(`famHelpVideoBtn_${famHelpVideoOpenIndex}`);
+    if (prevPlayer) { prevPlayer.style.display = 'none'; prevPlayer.innerHTML = ''; }
+    if (prevBtn) prevBtn.textContent = '▶ Play';
+  }
+  const player = document.getElementById(`famHelpVideoPlayer_${i}`);
+  const btn = document.getElementById(`famHelpVideoBtn_${i}`);
+  const isOpen = player.style.display === 'block';
+  if (isOpen) {
+    player.style.display = 'none';
+    player.innerHTML = '';
+    btn.textContent = '▶ Play';
+    famHelpVideoOpenIndex = null;
+  } else {
+    player.innerHTML = `<video src="${escapeHtml(FAM_HELP_VIDEOS[i].url)}" controls autoplay style="width:100%;border-radius:6px"></video>`;
+    player.style.display = 'block';
+    btn.textContent = '✕ Close';
+    famHelpVideoOpenIndex = i;
+  }
 }
 
 function toggleFamChatbot() {

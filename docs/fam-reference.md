@@ -873,8 +873,18 @@ Video list is a small, hardcoded constant (`FAM_HELP_VIDEOS`) — title,
 short description, `url` — the same pattern already used for Helpful AI
 Features, rather than a new database table for something this small and
 rarely changing. A video with no real `url` set yet shows "Coming soon"
-honestly instead of a dead or placeholder link. Update the `url` fields
-directly once real hosted links exist.
+honestly instead of a dead or placeholder link.
+
+**Self-hosted, confirmed directly** — the six real video files live at
+`public/videos/` in the repo itself and deploy as ordinary static assets
+(this only touches `/public`, not `/api`, so it's completely unaffected
+by the Vercel Hobby serverless-function-count limit hit earlier). No
+external host (YouTube etc.) needed. Each plays with a real inline
+`<video controls>` element directly inside the panel (`toggleFamHelpVideo()`)
+rather than linking out to a new tab — genuinely in-app, matching what was
+actually asked for. Accordion-style: opening one video closes whichever
+other one was already playing, so the small panel never stacks multiple
+players at once.
 
 Current list: Dashboard, Asset Register, Work Orders, Report a
 Breakdown, Helpful AI Features, Ask about FAM: Chat & Documents.
