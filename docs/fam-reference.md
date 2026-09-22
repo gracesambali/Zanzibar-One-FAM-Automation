@@ -855,3 +855,26 @@ Frontend: `downloadFullClientExport()`, two buttons ("⬇ Full Export
 (CSV)" / "⬇ Full Export (PDF)") next to the existing Branding/
 Notifications buttons shown when Master staff is viewing one specific
 client.
+
+## Ask about FAM: third tab — Help Videos
+
+Confirmed directly: FAM already had three separate help entry points on
+every screen before this — "🧭 How to use FAM" (a guided tour), "✨ Helpful
+AI Features" (a static reference list), and the "💬 Ask about FAM" chat
+bubble (Chat + Documents tabs). Rather than add a fourth, competing entry
+point for short how-to videos, they live as a **third tab inside the
+existing chat bubble** — "🎥 Videos", alongside Chat and Documents. Same
+click target people already use, no new button added to the dashboard.
+
+`switchFamChatbotView()` now handles all three views generically (was a
+binary chat/knowledge toggle before this).
+
+Video list is a small, hardcoded constant (`FAM_HELP_VIDEOS`) — title,
+short description, `url` — the same pattern already used for Helpful AI
+Features, rather than a new database table for something this small and
+rarely changing. A video with no real `url` set yet shows "Coming soon"
+honestly instead of a dead or placeholder link. Update the `url` fields
+directly once real hosted links exist.
+
+Current list: Dashboard, Asset Register, Work Orders, Report a
+Breakdown, Helpful AI Features, Ask about FAM: Chat & Documents.

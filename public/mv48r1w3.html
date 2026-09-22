@@ -20660,6 +20660,7 @@ function mountFamChatbotWidget() {
       <div style="display:flex;border-bottom:1px solid var(--border)">
         <div id="famChatbotTab_chat" onclick="switchFamChatbotView('chat')" style="flex:1;text-align:center;padding:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy)">💬 Chat</div>
         <div id="famChatbotTab_knowledge" onclick="switchFamChatbotView('knowledge')" style="flex:1;text-align:center;padding:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent">📄 Documents</div>
+        <div id="famChatbotTab_videos" onclick="switchFamChatbotView('videos')" style="flex:1;text-align:center;padding:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent">🎥 Videos</div>
       </div>
       <div id="famChatbotMessages" style="flex:1;overflow-y:auto;padding:12px;font-size:12.5px;display:flex;flex-direction:column;gap:10px;min-height:180px;max-height:300px">
         <div style="color:var(--muted);font-size:12px">Ask a question about how FAM works — reporting issues, work orders, integrations, and so on.</div>
@@ -20677,8 +20678,41 @@ function mountFamChatbotWidget() {
         <div id="famChatbotKnowledgeStatus" style="font-size:11px;margin-bottom:8px"></div>
         <div id="famChatbotKnowledgeList" style="font-size:12px;color:var(--muted)">Loading…</div>
       </div>
+      <div id="famChatbotVideosView" style="display:none;flex:1;overflow-y:auto;padding:12px;flex-direction:column;min-height:180px;max-height:340px">
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Short videos walking through key parts of FAM.</div>
+        <div id="famChatbotVideosList"></div>
+      </div>
     </div>`;
   document.body.appendChild(wrap);
+  renderFamChatbotVideosList();
+}
+
+// Confirmed directly: kept as one real, small hardcoded list - same
+// pattern already used for Helpful AI Features - rather than a new
+// database table for something this small and rarely changing. Real
+// hosted links go here once they exist; a video with no real url yet
+// shows "Coming soon" honestly instead of a dead or fake link.
+const FAM_HELP_VIDEOS = [
+  { title: "Dashboard", desc: "The real-time command center for your whole operation.", url: "" },
+  { title: "Asset Register", desc: "The full asset list, and one asset's own detail record.", url: "" },
+  { title: "Work Orders", desc: "Reporting and tracking a real job, start to finish.", url: "" },
+  { title: "Report a Breakdown", desc: "The no-login public reporting flow.", url: "" },
+  { title: "Helpful AI Features", desc: "What FAM's AI actually does, with real examples.", url: "" },
+  { title: "Ask about FAM: Chat & Documents", desc: "Both real tabs of the chatbot itself.", url: "" },
+];
+
+function renderFamChatbotVideosList() {
+  const el = document.getElementById('famChatbotVideosList');
+  if (!el) return;
+  el.innerHTML = FAM_HELP_VIDEOS.map(v => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${escapeHtml(v.title)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin:2px 0 6px">${escapeHtml(v.desc)}</div>
+      ${v.url
+        ? `<a href="${escapeHtml(v.url)}" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">▶ Watch</a>`
+        : `<span style="font-size:11.5px;color:var(--muted);font-style:italic">Coming soon</span>`}
+    </div>
+  `).join('');
 }
 
 function toggleFamChatbot() {
@@ -20690,15 +20724,16 @@ function toggleFamChatbot() {
 }
 
 function switchFamChatbotView(view) {
-  const isChat = view === 'chat';
-  document.getElementById('famChatbotMessages').style.display = isChat ? 'flex' : 'none';
-  document.getElementById('famChatbotInputRow').style.display = isChat ? 'flex' : 'none';
-  document.getElementById('famChatbotKnowledgeView').style.display = isChat ? 'none' : 'flex';
-  document.getElementById('famChatbotTab_chat').style.color = isChat ? 'var(--navy)' : 'var(--muted)';
-  document.getElementById('famChatbotTab_chat').style.borderBottomColor = isChat ? 'var(--navy)' : 'transparent';
-  document.getElementById('famChatbotTab_knowledge').style.color = isChat ? 'var(--muted)' : 'var(--navy)';
-  document.getElementById('famChatbotTab_knowledge').style.borderBottomColor = isChat ? 'transparent' : 'var(--navy)';
-  if (!isChat) loadFamChatbotKnowledgeDocuments();
+  document.getElementById('famChatbotMessages').style.display = view === 'chat' ? 'flex' : 'none';
+  document.getElementById('famChatbotInputRow').style.display = view === 'chat' ? 'flex' : 'none';
+  document.getElementById('famChatbotKnowledgeView').style.display = view === 'knowledge' ? 'flex' : 'none';
+  document.getElementById('famChatbotVideosView').style.display = view === 'videos' ? 'flex' : 'none';
+  for (const v of ['chat', 'knowledge', 'videos']) {
+    const tab = document.getElementById(`famChatbotTab_${v}`);
+    tab.style.color = v === view ? 'var(--navy)' : 'var(--muted)';
+    tab.style.borderBottomColor = v === view ? 'var(--navy)' : 'transparent';
+  }
+  if (view === 'knowledge') loadFamChatbotKnowledgeDocuments();
 }
 
 async function loadFamChatbotKnowledgeDocuments() {
