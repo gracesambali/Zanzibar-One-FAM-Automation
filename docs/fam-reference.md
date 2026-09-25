@@ -981,3 +981,54 @@ real bar per pillar, count and share of total real activity.
 
 No new database columns — reads only from tables that already exist, so
 unlike ROI Tracking this one needs no pending migration to work.
+
+## Print Label (Asset Register) — barcode and QR, client's own branding
+
+Confirmed directly: matches the real physical layout a client may already
+have on existing asset tags (a real Kairuki Hospital tag was the
+reference) — logo left, "Property of {org}" at top, the asset's own
+`asset_id` text beneath the code — so a newly-printed FAM label reads as
+one consistent series with tags a client already has elsewhere, not a
+visibly different, unrelated design.
+
+Two real formats, client's choice each time a label is printed — no
+stored per-org preference, since either format is offered on demand
+directly from the asset detail page: **🖨 Print QR Label** and **🖨 Print
+Barcode Label**, both opening `openPrintLabelModal()`.
+
+QR reuses the existing `api.qrserver.com` service (encodes the full
+public-quickview URL). Barcode uses **Orca Scan's barcode image API**
+(`barcode.orcascan.com`, Code128) — confirmed directly this one is
+appropriate for a commercial product: it's explicitly used in Orca
+Scan's own production app and has no non-commercial-only restriction,
+unlike TEC-IT's otherwise-similar service, which explicitly limits
+generated output to non-commercial/private use only. Encodes the
+asset's own `asset_id` string directly — Grace confirmed she's aware a
+1D barcode only holds the ID, not a URL.
+
+Uses the client's own real, already-uploaded logo — the same signed URL
+already generated at login for the header (`currentUserOrgLogoUrl`, a
+new global alongside the existing `currentUserOrgName`) — with a plain
+text fallback for a client who hasn't uploaded one yet.
+
+`@media print` isolates just the label itself (`#printLabelArea`) when
+the browser's print dialog runs, so only the label prints, not the rest
+of the page around it.
+
+## Existing infrastructure relevant to per-client tag adoption
+
+Confirmed directly, while investigating whether a client's own
+pre-existing physical tags (e.g., Kairuki's real "KH-004214" tags) could
+be adopted without forcing a relabel: a real, dedicated
+`asset_barcode_links` table already exists, mapping an arbitrary scanned
+code to a specific asset record, entirely independent of that asset's
+own `asset_id`. The existing "Scan Asset Barcode or QR Code" flow
+(`?resolveAssetBarcode=true`) already supports linking an unrecognized
+scanned code to an asset on first scan. This means onboarding a client
+with their own real, existing tags doesn't need FAM to generate matching
+IDs at all — staff scan each real physical tag once to link it to the
+matching FAM asset (which keeps its own normal `asset_id` underneath),
+and the client's own tags keep working exactly as printed, permanently.
+FAM's own generated `asset_id` format stays the single default for every
+other client — this is a genuine per-client exception using existing
+infrastructure, not a systemic change to the naming scheme.

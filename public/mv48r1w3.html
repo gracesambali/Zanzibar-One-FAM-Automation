@@ -626,6 +626,7 @@ const CLIENT_CONFIG = {
 // safely sees an empty string rather than a real error - re-applied
 // from within loadAssetsAndInit itself once the real name is known.
 let currentUserOrgName = "";
+let currentUserOrgLogoUrl = null;
 
 const APP_BRAND_NAME = "Gracing Ventures FAM";
 
@@ -2335,12 +2336,14 @@ function showDetail(idx) {
   const canSeeCost = TEMP_SHOW_COST_TO_ALL || (currentUserPermissions && currentUserPermissions.viewCostAndDepreciation);
   const statusClass = (a.status||"").toLowerCase() === "good" ? "badge-good" : (a.status||"").toLowerCase() === "poor" ? "badge-warning" : "badge-overdue";
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.origin + '/qz9n36kf?id=' + a.id)}`;
+  const barcodeUrl = `https://barcode.orcascan.com?data=${encodeURIComponent(a.id)}&type=code128`;
 
   let html = `<button class="back-btn" onclick="${famCalendarReturnPending ? 'returnToFamCalendar()' : 'renderAssets()'}">${famCalendarReturnPending ? '← Back to Calendar' : '← Back to Asset Register'}</button>
   <div class="detail-panel"><div class="detail-header"><div>
   <div class="detail-title">${a.name}</div><div class="detail-sub">${a.id} · ${a.system}</div></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button onclick="downloadQrCode('${qrUrl}','${a.id}','${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">⬇ QR Code</button>
+    <button onclick="openPrintLabelModal('${a.id}','${(a.name||'').replace(/'/g,"\\'")}','qr')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🖨 Print QR Label</button>
+    <button onclick="openPrintLabelModal('${a.id}','${(a.name||'').replace(/'/g,"\\'")}','barcode')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🖨 Print Barcode Label</button>
     <button onclick="copyAssetShareLink('${a.id}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🔗 Share Link</button>
     ${canManage ? `<button onclick="openEditForm(${idx})" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✎ Edit</button>` : ""}
     ${canManage ? `<button onclick="scheduleInspection('${a.id}', '${(a.name || '').replace(/'/g,"\\'")}')" style="padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #7C3AED;border-radius:8px;background:#fff;color:#7C3AED;cursor:pointer">🔍 Schedule Inspection</button>` : ""}
@@ -10498,6 +10501,63 @@ async function loadPillarUsage(orgId) {
     body.innerHTML = `<div style="color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
   }
 }
+
+// Print Label, confirmed directly: matches the real physical layout
+// already used on this client's own existing asset tags (logo left,
+// "Property of {org}" at top, the code's own asset_id text beneath
+// it) — so a newly-printed FAM label reads as one consistent series
+// with tags a client may already have on other equipment, not a
+// visibly different, unrelated design. Uses the client's own real,
+// already-uploaded logo (same signed URL already shown in the header)
+// with a plain text fallback when none has been uploaded yet.
+function openPrintLabelModal(assetId, assetName, format) {
+  const codeImgUrl = format === 'barcode'
+    ? `https://barcode.orcascan.com?data=${encodeURIComponent(assetId)}&type=code128`
+    : `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(window.location.origin + '/qz9n36kf?id=' + assetId)}`;
+  const orgName = currentUserOrgName || 'Facility Asset Manager';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'printLabelOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:92vw">
+      <div id="printLabelArea" style="border:2px solid #1a1a1a;border-radius:6px;padding:14px;background:#fff">
+        <div style="text-align:center;font-size:13px;font-weight:700;color:#1a1a1a;margin-bottom:10px">Property of ${escapeHtml(orgName)}</div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="flex-shrink:0;width:64px;height:64px;display:flex;align-items:center;justify-content:center">
+            ${currentUserOrgLogoUrl
+              ? `<img src="${currentUserOrgLogoUrl}" alt="${escapeHtml(orgName)} logo" style="max-width:64px;max-height:64px;object-fit:contain">`
+              : `<div style="font-size:11px;font-weight:700;color:#1a1a1a;text-align:center;line-height:1.2">${escapeHtml(orgName)}</div>`}
+          </div>
+          <div style="flex:1;text-align:center">
+            <img src="${codeImgUrl}" alt="${format === 'barcode' ? 'Barcode' : 'QR code'} for ${escapeHtml(assetId)}" style="max-width:100%;height:${format === 'barcode' ? '50px' : '100px'}">
+            <div style="font-size:13px;font-weight:700;color:#1a1a1a;margin-top:4px;letter-spacing:0.5px">${escapeHtml(assetId)}</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('printLabelOverlay').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+        <button onclick="window.print()" style="padding:8px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">🖨 Print</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+// Isolates just the label itself when the browser's print dialog
+// actually runs — confirmed directly, this is the one standard,
+// reliable way to print a single element without also printing the
+// whole app page around it.
+(function injectPrintLabelStyles() {
+  const style = document.createElement('style');
+  style.textContent = `
+    @media print {
+      body * { visibility: hidden; }
+      #printLabelArea, #printLabelArea * { visibility: visible; }
+      #printLabelArea { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); }
+    }
+  `;
+  document.head.appendChild(style);
+})();
 
 function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColor) {
   const overlay = document.createElement('div');
@@ -20710,6 +20770,7 @@ async function loadAssetsAndInit() {
     }
     applyClientConfigToPage();
     if (data.organizationLogoUrl) {
+      currentUserOrgLogoUrl = data.organizationLogoUrl;
       const logoImg = document.querySelector('.header-logo img');
       if (logoImg) logoImg.src = data.organizationLogoUrl;
     }
