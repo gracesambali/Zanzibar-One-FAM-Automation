@@ -712,6 +712,30 @@ export default async function handler(req, res) {
     }
   }
 
+  // Pillar usage, confirmed directly: which of the four core pillars
+  // a client is actually acting in - real asset edits, real work
+  // orders, real stock movements, real floor plan activity - over a
+  // rolling recent window, not page views (would need new
+  // instrumentation across the whole frontend). Same real access rule
+  // as ROI Tracking and Full Export.
+  if (req.query.pillarUsage === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Only System Admin or Business Owner can view a client's pillar usage." });
+    }
+    const MASTER_ORG_ID_PU = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+    const requestedOrgPu = req.query.targetOrgId;
+    const puOrgId = (requestedOrgPu && session.org === MASTER_ORG_ID_PU) ? requestedOrgPu : session.org;
+
+    try {
+      const { computePillarUsage } = await import("../lib/pillarUsage.js");
+      const usage = await computePillarUsage(puOrgId);
+      return res.status(200).json(usage);
+    } catch (err) {
+      console.error("pillarUsage error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
 
   // (Master staff viewing a specific client) - real, raw data for
   // Assets, Work Orders, per-asset Activity Log, and Inventory, all

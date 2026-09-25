@@ -951,3 +951,33 @@ alter table organizations add column if not exists roi_checkpoint_90d_notified b
 alter table organizations add column if not exists roi_checkpoint_6mo_notified boolean not null default false;
 alter table organizations add column if not exists roi_checkpoint_1yr_notified boolean not null default false;
 ```
+
+## Pillar Usage (Client Management) — which pillar a client actually uses
+
+Confirmed directly: built to answer "let real market demand narrow both
+what FAM builds and what gets led with in a pitch" — after COSTECH
+advised focusing deeper on Asset Management specifically, rather than
+deciding this from a single meeting's advice alone, it's tracked as real
+evidence per live client instead.
+
+Computed from real actions each client is already generating — not page
+views, which would need new instrumentation across the whole frontend.
+Genuinely stronger evidence of reliance than someone merely opening a
+screen: a real asset edit, a real work order closed, a real stock
+movement, a real floor plan marker placed.
+
+`lib/pillarUsage.js` → `computePillarUsage()` — rolling 30-day window
+(reflects current behavior, not a lifetime total that stops moving once
+a client's been live a while):
+- **Asset Management** — real `components.activity_log` entries (creations, edits, decommissions)
+- **CMMS** — real `work_orders` created or closed
+- **Inventory** — real `inventory_activity_log` entries
+- **Scan-to-BIM** — real `floor_plans.activity_log` entries (markers placed/moved, drawings uploaded)
+
+Read endpoint: `api/get-assets.js` → `?pillarUsage=true&targetOrgId=<id>`,
+same access rule as ROI Tracking and Full Export. Frontend:
+`openPillarUsageModal()` in Client Management, next to ROI Tracking — a
+real bar per pillar, count and share of total real activity.
+
+No new database columns — reads only from tables that already exist, so
+unlike ROI Tracking this one needs no pending migration to work.
