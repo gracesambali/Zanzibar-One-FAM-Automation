@@ -653,7 +653,66 @@ export default async function handler(req, res) {
     }
   }
 
-  // One-Click Full Export, confirmed directly: Client Management only
+  // ROI tracking, confirmed directly: onboarding date, one-time
+  // baseline (if captured), and live "before/after FAM" figures
+  // computed fresh from real data every time this loads - never a
+  // stale export. Same real access rule as Full Export and Staff
+  // Activity Log - a requested targetOrgId only ever resolves when
+  // the session's own organization IS the Master org.
+  if (req.query.roiTracking === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Only System Admin or Business Owner can view a client's ROI tracking." });
+    }
+    const MASTER_ORG_ID_ROI = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+    const requestedOrgRoi = req.query.targetOrgId;
+    const roiOrgId = (requestedOrgRoi && session.org === MASTER_ORG_ID_ROI) ? requestedOrgRoi : session.org;
+
+    try {
+      const { getById } = await import("../lib/postgresClient.js");
+      const { computeOrgRoiFigures, ROI_CHECKPOINTS, daysSince } = await import("../lib/roiTracking.js");
+
+      const org = await getById("organizations", roiOrgId).catch(() => null);
+      if (!org) return res.status(404).json({ error: "Client not found." });
+
+      const hasBaseline = !!org.baseline_captured_at;
+      const sinceDate = org.onboarding_date || org.created_at;
+      const live = hasBaseline && org.onboarding_date
+        ? await computeOrgRoiFigures(roiOrgId, sinceDate)
+        : { maintenanceCostTzs: null, avgDowntimeHours: null, downtimeSampleSize: 0 };
+
+      let checkpoints = [];
+      if (org.onboarding_date) {
+        const elapsed = daysSince(org.onboarding_date);
+        checkpoints = ROI_CHECKPOINTS.map(c => {
+          const notified = !!org[c.flagColumn];
+          let status;
+          if (notified) status = "Notified";
+          else if (elapsed >= c.days) status = "Overdue";
+          else if (elapsed >= c.days - 14) status = "Due Soon";
+          else status = "Not Yet Due";
+          return { key: c.key, label: c.label, dueInDays: c.days - elapsed, status };
+        });
+      }
+
+      return res.status(200).json({
+        onboardingDate: org.onboarding_date,
+        hasBaseline,
+        baseline: hasBaseline ? {
+          maintenanceCostTzs: org.baseline_maintenance_cost_tzs !== null ? Number(org.baseline_maintenance_cost_tzs) : null,
+          downtimeHours: org.baseline_downtime_hours !== null ? Number(org.baseline_downtime_hours) : null,
+          capturedAt: org.baseline_captured_at,
+          capturedBy: org.baseline_captured_by,
+        } : null,
+        live,
+        checkpoints,
+      });
+    } catch (err) {
+      console.error("roiTracking error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+
   // (Master staff viewing a specific client) - real, raw data for
   // Assets, Work Orders, per-asset Activity Log, and Inventory, all
   // scoped to the one target organization actually requested. Same

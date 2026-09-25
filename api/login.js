@@ -107,6 +107,12 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "updateClientNotificationChannel") {
     return handleUpdateClientNotificationChannel(req, res);
   }
+  if (req.body && req.body.action === "setOrgOnboardingDate") {
+    return handleSetOrgOnboardingDate(req, res);
+  }
+  if (req.body && req.body.action === "captureOrgRoiBaseline") {
+    return handleCaptureOrgRoiBaseline(req, res);
+  }
   if (req.body && req.body.action === "listClients") {
     return handleListClients(req, res);
   }
@@ -629,6 +635,69 @@ async function handleEditClientBranding(req, res) {
     return res.status(200).json({ success: true, ...(logoWarning ? { warning: logoWarning } : {}) });
   } catch (err) {
     console.error("editClientBranding error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ROI tracking, confirmed directly: onboarding date is a real,
+// separate decision from account creation date - a client's real
+// FAM record can exist days before their real onboarding actually
+// starts (Inua Ventures being the real example that came up), so
+// this is deliberately its own field, editable by Master staff,
+// rather than reusing organizations.created_at.
+async function handleSetOrgOnboardingDate(req, res) {
+  const session = getSession(req);
+  if (!session || session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can set a client's onboarding date." });
+  }
+  const { targetOrgId, onboardingDate } = req.body || {};
+  if (!targetOrgId) return res.status(400).json({ error: "targetOrgId required" });
+  if (!onboardingDate) return res.status(400).json({ error: "onboardingDate required" });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const targetOrg = await getById("organizations", targetOrgId).catch(() => null);
+    if (!targetOrg) return res.status(404).json({ error: "Client not found." });
+
+    await update("organizations", targetOrgId, { onboarding_date: onboardingDate });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("setOrgOnboardingDate error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Real, one-time baseline capture - confirmed directly: locked after
+// the first entry, since this is meant to be the client's own honest
+// "before FAM" starting point, not something that quietly drifts if
+// re-edited later. A genuine correction is still possible, but it's
+// a deliberate override (allowOverride), not an accidental overwrite.
+async function handleCaptureOrgRoiBaseline(req, res) {
+  const session = getSession(req);
+  if (!session || session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can capture a client's ROI baseline." });
+  }
+  const { targetOrgId, baselineMaintenanceCostTzs, baselineDowntimeHours, allowOverride } = req.body || {};
+  if (!targetOrgId) return res.status(400).json({ error: "targetOrgId required" });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const targetOrg = await getById("organizations", targetOrgId).catch(() => null);
+    if (!targetOrg) return res.status(404).json({ error: "Client not found." });
+
+    if (targetOrg.baseline_captured_at && !allowOverride) {
+      return res.status(409).json({ error: "A baseline is already on record for this client. Pass allowOverride to replace it." });
+    }
+
+    await update("organizations", targetOrgId, {
+      baseline_maintenance_cost_tzs: baselineMaintenanceCostTzs != null && baselineMaintenanceCostTzs !== "" ? Number(baselineMaintenanceCostTzs) : null,
+      baseline_downtime_hours: baselineDowntimeHours != null && baselineDowntimeHours !== "" ? Number(baselineDowntimeHours) : null,
+      baseline_captured_at: new Date().toISOString(),
+      baseline_captured_by: session.u,
+    });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("captureOrgRoiBaseline error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

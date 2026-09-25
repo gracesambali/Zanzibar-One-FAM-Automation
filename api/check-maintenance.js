@@ -233,6 +233,12 @@ export default async function handler(req, res) {
     // everything else here rather than a separate notification system.
     const financeReminderCount = await checkFinanceReminders();
 
+    // Real ROI checkpoint reminders (90-day/6-month/1-year), confirmed
+    // directly: same daily check as everything else here, not a
+    // separate scheduled function (Vercel Hobby plan caps serverless
+    // functions - same reasoning as syncCurrentValues below).
+    const roiCheckpointCount = await checkRoiCheckpoints();
+
     // One real Daily Summary, replacing what used to be two separate,
     // overlapping emails to the same audience. Always sends, even on a
     // quiet day — "nothing open, nothing triggered" is still a real,
@@ -248,7 +254,7 @@ export default async function handler(req, res) {
     // accurate figure too, not something computed once and left stale.
     const valueSyncCount = await syncCurrentValues(records);
 
-    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, rentNoticesSent: rentNoticeCount, financeRemindersSent: financeReminderCount, results });
+    return res.status(200).json({ success: true, checked: records.length, alerted: results.length, valuesSynced: valueSyncCount, escalated: escalatedCount, planDeadlineAlerts: deadlineAlertCount, rentNoticesSent: rentNoticeCount, financeRemindersSent: financeReminderCount, roiCheckpointsNotified: roiCheckpointCount, results });
   } catch (err) {
     console.error("check-maintenance error:", err);
     await sendHeartbeat(null, null, err.message);
@@ -819,6 +825,89 @@ async function checkRentNoticesDue() {
 // resets itself once a bill or liability's due date genuinely
 // advances, with no separate reset step needed. One real combined
 // email + SMS digest for everything due, not one message per item.
+// Real ROI checkpoint reminders for the R&D "before/after FAM"
+// comparison, confirmed directly: fires once per checkpoint per
+// client (90-day, 6-month, 1-year), only for clients with both a real
+// onboarding date and a captured baseline - notifying before either
+// exists would just be noise with nothing to compare against yet.
+// Goes to the Master System's own system_admin for now (Grace's
+// explicit instruction) - a dedicated R&D-specific recipient is a
+// later, separate change to make, not a new mechanism.
+async function checkRoiCheckpoints() {
+  const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+  try {
+    const { query: pgQuery, update } = await import("../lib/postgresClient.js");
+    const { computeOrgRoiFigures, ROI_CHECKPOINTS, daysSince } = await import("../lib/roiTracking.js");
+
+    const result = await pgQuery(
+      `select id, name, onboarding_date, baseline_maintenance_cost_tzs, baseline_downtime_hours,
+              roi_checkpoint_90d_notified, roi_checkpoint_6mo_notified, roi_checkpoint_1yr_notified
+       from organizations
+       where onboarding_date is not null and baseline_captured_at is not null
+         and (roi_checkpoint_90d_notified = false or roi_checkpoint_6mo_notified = false or roi_checkpoint_1yr_notified = false)`
+    );
+
+    let notifiedCount = 0;
+    const contacts = [...await getContactsForRole("system_admin", MASTER_ORG_ID)];
+    const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+    const phones = [...new Set(contacts.map(c => c.phone).filter(Boolean))];
+
+    for (const org of result.rows) {
+      const elapsed = daysSince(org.onboarding_date);
+
+      for (const checkpoint of ROI_CHECKPOINTS) {
+        if (org[checkpoint.flagColumn]) continue; // already notified for this one
+        if (elapsed < checkpoint.days) continue; // not due yet
+
+        const live = await computeOrgRoiFigures(org.id, org.onboarding_date);
+        const baselineCost = org.baseline_maintenance_cost_tzs !== null ? Number(org.baseline_maintenance_cost_tzs) : null;
+        const baselineDowntime = org.baseline_downtime_hours !== null ? Number(org.baseline_downtime_hours) : null;
+
+        const lines = [
+          `Client: ${org.name}`,
+          `Checkpoint: ${checkpoint.label} (${elapsed} days since onboarding)`,
+          baselineCost !== null && live.maintenanceCostTzs !== null
+            ? `Maintenance cost — baseline: ${baselineCost.toLocaleString()} TZS, now: ${live.maintenanceCostTzs.toLocaleString()} TZS`
+            : `Maintenance cost — baseline: ${baselineCost !== null ? baselineCost.toLocaleString() + " TZS" : "not set"}, now: ${live.maintenanceCostTzs !== null ? live.maintenanceCostTzs.toLocaleString() + " TZS" : "no data yet"}`,
+          baselineDowntime !== null && live.avgDowntimeHours !== null
+            ? `Avg. downtime — baseline: ${baselineDowntime}h, now: ${live.avgDowntimeHours.toFixed(1)}h (from ${live.downtimeSampleSize} closed job${live.downtimeSampleSize === 1 ? "" : "s"})`
+            : `Avg. downtime — baseline: ${baselineDowntime !== null ? baselineDowntime + "h" : "not set"}, now: ${live.avgDowntimeHours !== null ? live.avgDowntimeHours.toFixed(1) + "h" : "no closed jobs yet"}`,
+        ];
+        const message = `FAM ROI checkpoint due — ${lines.join("\n")}`.slice(0, 320);
+
+        if (emails.length > 0) {
+          try {
+            await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: `${process.env.ALERT_FROM_NAME || "Facility Asset Management System"} <${process.env.ALERT_FROM_EMAIL}>`,
+                to: emails,
+                subject: `📊 ROI Checkpoint Due — ${org.name} (${checkpoint.label})`,
+                html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1A1A2E">${lines.map(l => `<p style="margin:4px 0">${l}</p>`).join("")}</div>`,
+              }),
+            });
+          } catch (err) { console.error("ROI checkpoint email failed:", err.message); }
+        }
+        if (phones.length > 0) {
+          try {
+            const { sendViaOrgPreferredChannel } = await import("../lib/notifications.js");
+            await sendViaOrgPreferredChannel(MASTER_ORG_ID, phones, message);
+          } catch (err) { console.error("ROI checkpoint message failed:", err.message); }
+        }
+
+        await update("organizations", org.id, { [checkpoint.flagColumn]: true }).catch(() => {});
+        notifiedCount++;
+      }
+    }
+
+    return notifiedCount;
+  } catch (err) {
+    console.error("checkRoiCheckpoints error:", err);
+    return 0;
+  }
+}
+
 async function checkFinanceReminders() {
   try {
     const { query: pgQuery, update } = await import("../lib/postgresClient.js");

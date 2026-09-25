@@ -9886,6 +9886,7 @@ function renderStaffManagementTable() {
         <button onclick="openClientNotificationChannelModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','${(clientsCache.find(c => c.id === viewingClientOrgId)?.notificationChannel) || 'sms'}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📱 Notifications</button>
         <button id="fullexport-csv-btn" onclick="downloadFullClientExport('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','csv')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬇ Full Export (CSV)</button>
         <button id="fullexport-pdf-btn" onclick="downloadFullClientExport('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','pdf')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬇ Full Export (PDF)</button>
+        <button onclick="openRoiTrackingModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📊 ROI Tracking</button>
         <button onclick="renderStaffManagement()" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">← Back to Clients</button>
       </div>
     </div>` : ''}
@@ -10306,6 +10307,146 @@ async function copyClientLoginLink(slug) {
   } catch (err) {
     alert('Could not copy — here is the link:\n' + url);
   }
+}
+
+function openRoiTrackingModal(orgId, orgName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'roiTrackingOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:92vw;max-height:85vh;overflow-y:auto">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">ROI Tracking — ${escapeHtml(orgName)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Real, before/after FAM figures for this client — for the R&D department's own comparison sheet.</div>
+      <div id="roiTrackingBody" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+      <div style="margin-top:16px;text-align:right">
+        <button onclick="document.getElementById('roiTrackingOverlay').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  loadRoiTracking(orgId, orgName);
+}
+
+async function loadRoiTracking(orgId, orgName) {
+  const body = document.getElementById('roiTrackingBody');
+  try {
+    const resp = await fetch(`/api/get-assets?roiTracking=true&targetOrgId=${encodeURIComponent(orgId)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load ROI tracking data');
+    renderRoiTracking(orgId, orgName, data);
+  } catch (err) {
+    body.innerHTML = `<div style="color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+const ROI_STATUS_COLORS = { 'Not Yet Due': 'var(--muted)', 'Due Soon': '#B45309', 'Overdue': 'var(--red)', 'Notified': 'var(--green)' };
+
+function renderRoiTracking(orgId, orgName, data) {
+  const body = document.getElementById('roiTrackingBody');
+  const fmtTzs = (n) => n !== null ? `${Number(n).toLocaleString()} TZS` : '—';
+  const fmtHrs = (n) => n !== null ? `${Number(n).toFixed(1)}h` : '—';
+
+  let html = '';
+
+  // Onboarding date
+  html += `
+    <div style="margin-bottom:14px">
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Onboarding Date</label>
+      <div style="display:flex;gap:6px">
+        <input id="roi_onboarding_date" type="date" value="${data.onboardingDate || ''}" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+        <button onclick="submitOnboardingDate('${orgId}','${escapeHtml(orgName)}')" style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:12px;cursor:pointer">Save</button>
+      </div>
+    </div>`;
+
+  if (!data.onboardingDate) {
+    html += `<div style="font-size:11.5px;color:var(--muted);font-style:italic">Set the onboarding date first — checkpoints and live figures need it to know where the clock starts.</div>`;
+    body.innerHTML = html;
+    return;
+  }
+
+  // Baseline
+  if (data.hasBaseline) {
+    html += `
+      <div style="background:var(--navy-pale);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Baseline (captured ${new Date(data.baseline.capturedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} by ${escapeHtml(data.baseline.capturedBy || '')})</div>
+        <div style="font-size:12px;color:var(--text)">Maintenance cost: <strong>${fmtTzs(data.baseline.maintenanceCostTzs)}</strong></div>
+        <div style="font-size:12px;color:var(--text)">Avg. downtime: <strong>${fmtHrs(data.baseline.downtimeHours)}</strong></div>
+        <div style="margin-top:6px"><a href="#" onclick="event.preventDefault();showRoiBaselineForm('${orgId}','${escapeHtml(orgName)}',true)" style="font-size:11px;color:var(--navy)">Correct baseline →</a></div>
+      </div>`;
+  } else {
+    html += `<div id="roi_baseline_form_wrap"></div>`;
+  }
+
+  // Live figures, next to baseline
+  if (data.hasBaseline) {
+    html += `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Live, since onboarding</div>
+        <div style="font-size:12px;color:var(--text)">Maintenance cost: <strong>${fmtTzs(data.live.maintenanceCostTzs)}</strong></div>
+        <div style="font-size:12px;color:var(--text)">Avg. downtime: <strong>${fmtHrs(data.live.avgDowntimeHours)}</strong>${data.live.downtimeSampleSize ? ` (${data.live.downtimeSampleSize} closed job${data.live.downtimeSampleSize === 1 ? '' : 's'})` : ''}</div>
+      </div>`;
+  }
+
+  // Checkpoints
+  html += `<div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">Checkpoints</div>`;
+  html += data.checkpoints.map(c => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+      <span>${c.label}</span>
+      <span style="color:${ROI_STATUS_COLORS[c.status] || 'var(--muted)'};font-weight:600">${c.status}</span>
+    </div>`).join('');
+
+  body.innerHTML = html;
+  if (!data.hasBaseline) showRoiBaselineForm(orgId, orgName, false);
+}
+
+function showRoiBaselineForm(orgId, orgName, isCorrection) {
+  const wrap = isCorrection ? document.getElementById('roiTrackingBody') : document.getElementById('roi_baseline_form_wrap');
+  if (!wrap) return;
+  const formHtml = `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">${isCorrection ? 'Correct' : 'Capture'} Baseline (real, one-time, client-reported "before FAM" figures)</div>
+      <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Baseline Maintenance Cost (TZS)</label>
+      <input id="roi_baseline_cost" type="number" placeholder="e.g. 4500000" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Baseline Avg. Hours to Resolve a Breakdown</label>
+      <input id="roi_baseline_downtime" type="number" placeholder="e.g. 48" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
+      <button onclick="submitRoiBaseline('${orgId}','${escapeHtml(orgName)}',${isCorrection})" style="width:100%;padding:8px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:12.5px;cursor:pointer">${isCorrection ? 'Save Correction' : 'Capture Baseline'}</button>
+    </div>`;
+  if (isCorrection) {
+    wrap.insertAdjacentHTML('afterbegin', formHtml);
+  } else {
+    wrap.innerHTML = formHtml;
+  }
+}
+
+async function submitOnboardingDate(orgId, orgName) {
+  const onboardingDate = document.getElementById('roi_onboarding_date').value;
+  if (!onboardingDate) return alert('Pick a date first.');
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'setOrgOnboardingDate', targetOrgId: orgId, onboardingDate }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not save');
+    loadRoiTracking(orgId, orgName);
+  } catch (err) { alert(`Could not save: ${err.message}`); }
+}
+
+async function submitRoiBaseline(orgId, orgName, isCorrection) {
+  const cost = document.getElementById('roi_baseline_cost').value;
+  const downtime = document.getElementById('roi_baseline_downtime').value;
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'captureOrgRoiBaseline', targetOrgId: orgId,
+        baselineMaintenanceCostTzs: cost, baselineDowntimeHours: downtime,
+        allowOverride: isCorrection,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not save');
+    loadRoiTracking(orgId, orgName);
+  } catch (err) { alert(`Could not save: ${err.message}`); }
 }
 
 function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColor) {

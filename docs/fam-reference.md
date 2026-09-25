@@ -888,3 +888,66 @@ players at once.
 
 Current list: Dashboard, Asset Register, Work Orders, Report a
 Breakdown, Helpful AI Features, Ask about FAM: Chat & Documents.
+
+## ROI Tracking (Client Management) — before/after FAM, per client
+
+Confirmed directly: real "before FAM vs. after FAM" tracking for the R&D
+department's own comparison sheet, built directly into Client Management
+rather than a separate spreadsheet — removes the real risk of a file
+nobody opens, and the "after" figures need no export at all since they're
+computed live from data FAM already has.
+
+**Per client, on `organizations`:** a real, separately-set `onboarding_date`
+(deliberately NOT reused from `created_at` — an account can exist before
+real onboarding starts, confirmed directly from the Inua Ventures
+experience), a one-time `baseline_maintenance_cost_tzs` /
+`baseline_downtime_hours` pair (locked after first capture; a genuine
+correction requires `allowOverride`, not a silent overwrite), and three
+notification flags (`roi_checkpoint_90d_notified` / `_6mo_notified` /
+`_1yr_notified`) so each checkpoint reminder fires once, not daily.
+
+**Live figures**, `lib/roiTracking.js` → `computeOrgRoiFigures()` — reuses
+the exact same real spend sources already proven for Finance Overview
+(`work_orders.cost_tzs` + paid, asset-linked requisitions), summed since
+`onboarding_date` rather than "last 6 months." Average downtime is new:
+average hours from `created` to `completed_date` across that org's real
+closed work orders since onboarding. Shared by both the live UI read
+(`api/get-assets.js` → `?roiTracking=true&targetOrgId=<id>`) and the daily
+cron check, so neither can drift out of sync with the other.
+
+**Checkpoint reminders** — `checkRoiCheckpoints()` in `api/check-maintenance.js`,
+called from the existing daily cron (no new scheduled function — same
+Vercel Hobby function-count reasoning as `syncCurrentValues`). 182 days for
+"6 months" matches the exact convention already used for the replacement
+alert elsewhere in this file. Fires only for clients with both a real
+onboarding date AND a captured baseline — notifying before either exists
+would be noise with nothing to compare against. Goes to the Master
+System's own `system_admin` (Grace's explicit instruction for now — a
+dedicated R&D-specific recipient is a real, separate future change, not
+a new mechanism) via email (Resend) and `sendViaOrgPreferredChannel`
+(SMS/WhatsApp) — the same dual-channel pattern already used for finance
+reminders.
+
+**Frontend**: `openRoiTrackingModal()` in Client Management, next to
+Branding/Notifications/Full Export — onboarding date editor, baseline
+capture (or correction) form, live figures beside baseline, and a real
+checkpoint status per client (Not Yet Due / Due Soon / Overdue / Notified).
+
+**⚠ Pending, not yet live**: the database migration adding these columns
+to `organizations` could not be applied this session — tool approval for
+`apply_migration` failed repeatedly, a genuine tool-availability issue,
+not a decision. The application code above is written and pushed, but
+will error against the live database until this migration actually runs.
+Exact SQL needed, ready to run directly in the Supabase SQL editor or via
+a future session:
+
+```sql
+alter table organizations add column if not exists onboarding_date date;
+alter table organizations add column if not exists baseline_maintenance_cost_tzs numeric;
+alter table organizations add column if not exists baseline_downtime_hours numeric;
+alter table organizations add column if not exists baseline_captured_at timestamptz;
+alter table organizations add column if not exists baseline_captured_by text;
+alter table organizations add column if not exists roi_checkpoint_90d_notified boolean not null default false;
+alter table organizations add column if not exists roi_checkpoint_6mo_notified boolean not null default false;
+alter table organizations add column if not exists roi_checkpoint_1yr_notified boolean not null default false;
+```
