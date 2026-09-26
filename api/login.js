@@ -502,8 +502,8 @@ async function handleResolveOrgSlug(req, res) {
     let logoUrl = null;
     if (org.logo_path) {
       try {
-        const { getSignedUrlSafe } = await import("../lib/storageClient.js");
-        logoUrl = await getSignedUrlSafe(org.logo_path);
+        const { resolveLogoUrl } = await import("../lib/storageClient.js");
+        logoUrl = await resolveLogoUrl(org.logo_path);
       } catch (err) {
         console.error("resolveOrgSlug logo signing error (non-fatal):", err.message);
       }
@@ -741,7 +741,7 @@ async function handleListClients(req, res) {
 
   try {
     const { query: pgQuery } = await import("../lib/postgresClient.js");
-    const { getSignedUrlSafe } = await import("../lib/storageClient.js");
+    const { resolveLogoUrl } = await import("../lib/storageClient.js");
     const result = await pgQuery(
       `select o.id, o.name, o.slug, o.created_at, o.logo_path, o.brand_color, o.notification_channel, count(u.id) filter (where u.active) as active_user_count
        from organizations o
@@ -752,7 +752,7 @@ async function handleListClients(req, res) {
     const clients = await Promise.all(result.rows.map(async r => ({
       id: r.id, name: r.name, slug: r.slug, createdAt: r.created_at,
       activeUserCount: Number(r.active_user_count),
-      logoUrl: r.logo_path ? await getSignedUrlSafe(r.logo_path).catch(() => null) : null,
+      logoUrl: r.logo_path ? await resolveLogoUrl(r.logo_path).catch(() => null) : null,
       brandColor: r.brand_color || null,
       notificationChannel: r.notification_channel || 'sms',
     })));

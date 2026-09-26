@@ -1803,8 +1803,8 @@ export default async function handler(req, res) {
     const logoPath = orgResult && orgResult.rows[0] ? orgResult.rows[0].logo_path : null;
     if (logoPath) {
       try {
-        const { getSignedUrlSafe } = await import("../lib/storageClient.js");
-        organizationLogoUrl = await getSignedUrlSafe(logoPath);
+        const { resolveLogoUrl } = await import("../lib/storageClient.js");
+        organizationLogoUrl = await resolveLogoUrl(logoPath);
       } catch (err) {
         console.error("Dashboard logo signing error (non-fatal):", err.message);
       }

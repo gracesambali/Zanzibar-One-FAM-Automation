@@ -1104,3 +1104,32 @@ middle segment is a location, not a sub-type.
 
 Zero duplicate `asset_id` values confirmed across the live register
 after all of this.
+
+## Real client logos on printed labels — fixed for all three real orgs
+
+Confirmed directly: Inua Ventures already had a real logo uploaded and
+stored correctly (file genuinely exists in the `fam-uploads` Storage
+bucket, `logo_path` correctly set) — the backend signing logic was
+already correct for it. Gracing Ventures and FAM Master System
+genuinely had no logo ever uploaded at all, which is why both fell back
+to plain initials ("GV" / "FMS") on printed labels — expected behavior
+given no logo existed, not a bug.
+
+Since direct upload to Supabase Storage isn't reachable from this
+environment (same network restriction already known from the daily
+backup and barcode work), the real GVC logo — re-extracted from the
+original proposal document — is self-hosted as a static file at
+`public/logos/gvc-logo.png`, the same proven pattern already used for
+the six help videos. `organizations.logo_path` for both Gracing
+Ventures and FAM Master System now points to this real file.
+
+New shared helper: `lib/storageClient.js` → `resolveLogoUrl(logoPath)`.
+A path starting with `/` or `http` is a real, self-hosted static file
+and is used directly, no signing needed or possible. Anything else is
+treated as a real Supabase Storage object path (the existing
+upload-via-Client-Management flow) and gets a short-lived signed URL as
+before. All three real call sites that resolve an organization's logo —
+the main dashboard load, the public login-page branding lookup, and the
+Client Management client list — now use this one shared function
+instead of three separate, potentially-drifting copies of the same
+"is this a real Storage path" check.
