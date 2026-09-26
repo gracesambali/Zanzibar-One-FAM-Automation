@@ -1032,3 +1032,75 @@ and the client's own tags keep working exactly as printed, permanently.
 FAM's own generated `asset_id` format stays the single default for every
 other client — this is a genuine per-client exception using existing
 infrastructure, not a systemic change to the naming scheme.
+
+## Print Label — real fix after visual verification, plus Bulk Print
+
+Confirmed directly: the original Print Label shipped without ever being
+visually verified — a real gap in process, not a one-off mistake. Caught
+via feedback that it looked "dispersed" with no visible logo. Rendered
+the actual HTML with a real headless browser (Playwright) before fixing
+anything a second time, rather than guess again. Root cause of the
+"broken barcode" seen during testing: the sandbox's own network egress
+restriction blocks any host not on its allowlist (matching the same
+restriction already known from the daily-backup work) — confirmed this
+via `web_fetch` reaching Orca Scan's real service successfully, and via
+Orca Scan's own documentation stating the API is designed to always
+return a valid image, never a broken one. The barcode API itself works
+correctly for real users; it was never actually broken.
+
+The genuine design fixes, verified with a locally-generated real
+barcode image before shipping: tighter padding throughout (closer to
+"full on print" rather than airy/spaced), a proper bordered
+logo/monogram box (org initials, e.g. "FMS") instead of small floating
+text when no real logo has been uploaded yet, and better proportioned
+code sizing so it doesn't look lost in empty space.
+
+**Bulk Print Labels** — new, on Asset Register's own header row.
+Filters the already-loaded `assets` array by System and/or Category (no
+new backend call — reuses what's already in memory client-side) and
+prints every matching asset's label on one continuous, paginating sheet,
+reusing the exact same tight layout as the single-asset Print Label.
+`page-break-inside: avoid` per label card so the browser's print
+pagination never splits one label across two pages.
+
+## Nomenclature backfill completed, plus Hospitals facility code
+
+Confirmed directly: the facility-prefixed nomenclature (discussed at
+length) is now applied across all 4 real organizations with real assets
+— Master System (86 of 87; see below), Inua Ventures (all 29), Gracing
+Ventures (both, already correctly formatted, confirmed as a clean
+no-op), and now Massana Hospital's one asset too.
+
+Two real data-quality bugs found and fixed as part of this, both
+confirmed with Grace before touching anything: one Master System asset
+(`CCTV-L12`) was misfiled under `building = 'Mall 1'` though its own
+name ("L12") matched Zanzibar One Tower's own floor-naming convention
+throughout — corrected to `building = 'Zanzibar One Tower'`. And all 29
+real Inua Ventures assets stored `facility = 'Inua Ventures'`, while the
+actual `facilities` record was named `'Inua Hub'` — an exact-name-match
+lookup, so this was the *actual* root cause of the missing prefix, not
+just "created before the feature existed" as first assumed. Fixed by
+renaming the one facility record to match the real assets, not the
+other way around.
+
+**The type-code component preserves each asset's own existing,
+meaningful prefix** (FD, CCTV, FCU, ACC, LFT, TX, etc.) rather than the
+formal `asset_category` field, which is empty on most of the original
+87 seeded assets (a separate, already-known gap from the TRA
+Depreciation work) — using the formal field would have collapsed 78
+different real asset types into the same generic "AST" prefix.
+
+**Hospitals now has a real facility code** (`HOS`) and Massana Hospital
+a building code (`MSN`) — added specifically to bring the one remaining
+exception, the MRI Scanner, into the same nomenclature. Manually set to
+`HOS-MSN-EQP-MRI-001` rather than through the automatic backfill query,
+since the general "take the first hyphen-separated segment as the type
+code" rule would have collapsed "EQP-MRI" down to just "EQP", losing
+the genuinely more specific and useful part of its own real identifier
+— confirmed as a real, asset-specific exception rather than adjusting
+the general rule, since the general rule is correct for every other
+multi-segment case (RTI-L1-01, ACC-L1-01, CCTV-B2-01, etc.), where the
+middle segment is a location, not a sub-type.
+
+Zero duplicate `asset_id` values confirmed across the live register
+after all of this.
