@@ -1200,3 +1200,28 @@ Per Grace's explicit direction: the system now defaults to the
 guideline's own figures. A specific client's own stated preference is
 handled as a deliberate per-asset override when it comes up, not by
 building a general override mechanism preemptively.
+
+## Standing policy: Tanzania's Public Assets Management Guideline 2019 is the default reference
+
+Confirmed directly, explicit standing instruction: unless Grace states
+otherwise for a specific case, this guideline is the default reference
+for FAM decisions touching asset classification, lifespans,
+identification, register format, maintenance planning, replacement
+planning, and disposal — not just the one-off lifespan fix already
+done. A specific client's own stated preference is still a legitimate,
+deliberate override when it comes up (already the working pattern for
+lifespans) — this policy sets the *default* everything falls back to,
+not a rule that overrides an explicit client requirement.
+
+## Print Label sizing — logo and code enlarged, verified with a real render
+
+Confirmed directly with a real before/after render: the logo and the
+code image (QR or barcode) were both genuinely undersized relative to
+the card's available space, leaving real unused white space around
+them — the same "dispersed" feeling flagged before, not fully resolved
+by the earlier layout fix alone. Single-asset Print Label: logo box
+52px → 76px, QR max-width 100px → 140px, barcode height 50px → 68px.
+Bulk Print Labels scaled proportionally smaller (since multiple labels
+share one page): logo 38px → 54px, QR max-width 70px → 98px, barcode
+height 34px → 48px. Initials-placeholder font size increased to match
+in both.
