@@ -1154,3 +1154,49 @@ placeholder (e.g. "GV"), where it still serves a real purpose (looking
 like an intentional placeholder rather than floating disconnected text
 — the earlier "dispersed" fix). Applies to both the single-asset Print
 Label and the Bulk Print Labels sheet.
+
+## Asset lifespans now matched to Tanzania's Public Assets Management Guideline 2019
+
+Confirmed directly against the real guideline document (Annex 3, Economic
+Life) and fixed both the data and the system default that was causing it
+to drift.
+
+**Root cause, fixed at the system level**: every new asset previously
+fell back to a flat 15 years whenever no lifespan was given, regardless
+of category — a real gap, not a one-off typo, and the reason so many
+existing assets had drifted from the guideline in the first place. New
+`guidelineDefaultLifespan(category)` in `api/manage-asset.js` replaces
+that flat fallback with the guideline's own figure for the three
+categories it gives one clear, unambiguous number for: Furniture (5),
+Computer Hardware (5), Plant & Machinery (15). Deliberately left
+"Equipment" and other broad categories on the conservative 15-year
+default rather than force a single number the guideline itself doesn't
+give for something spanning a 5-year office printer to 20-year HVAC
+plant in FAM's own real usage. Bulk import reuses this automatically,
+since it already shares the same `createOneAsset` function.
+
+**Existing data corrected to match**, confirmed with a full before/after
+comparison query:
+- Computer/electronic equipment was significantly overstated across all
+  three real orgs — a keyboard and a tablet at Gracing Ventures, and a
+  test asset at Master System, were all set to 15 years against the
+  guideline's 4-5 year standard. Corrected: desktops/laptops to the
+  guideline's exact 4 years, everything else in Computer Hardware to 5.
+- UPS corrected from 10 to the guideline's exact 7 years.
+- The Standby Generator corrected from 25 to 15, matching the
+  guideline's Plant & Machinery / heavy generator figure.
+- Both HV/LV Transformers were miscategorized under "Furniture" — a
+  real classification error independent of the lifespan number.
+  Recategorized to Plant & Machinery, with lifespan corrected to 15 to
+  match.
+- Inua Ventures' furniture was inconsistent within itself — chairs
+  correctly at 5 years, but desks/cabinet at 10 and couches at 7,
+  splitting across the guideline's two different furniture figures
+  (Administration vs. Infrastructural) with no clear reason. Confirmed
+  office furniture belongs under the Administration standard and
+  standardized everything to 5 years.
+
+Per Grace's explicit direction: the system now defaults to the
+guideline's own figures. A specific client's own stated preference is
+handled as a deliberate per-asset override when it comes up, not by
+building a general override mechanism preemptively.

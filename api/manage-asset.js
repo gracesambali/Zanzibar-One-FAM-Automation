@@ -1974,7 +1974,7 @@ async function createOneAsset(a, addedBy, addedByRole, organizationId) {
       model: a.model || null,
       install_date: a.installDate || new Date().toISOString().split("T")[0],
       warranty_expiry_date: a.warrantyExpiryDate || null,
-      expected_lifespan_years: Number(a.lifespan) || 15,
+      expected_lifespan_years: Number(a.lifespan) || guidelineDefaultLifespan(a.category),
       maintenance_interval_days: Number(a.maintenanceIntervalDays) || 90,
       acquisition_cost_tzs: a.acquisitionCost !== undefined ? Number(a.acquisitionCost) : null,
       residual_value_tzs: a.residualValue !== undefined ? Number(a.residualValue) : 0,
@@ -2138,6 +2138,28 @@ async function handleBulkImportAssets(req, res, addedBy, addedByRole, organizati
 }
 
 // Category → ID prefix mapping (replaces the old Class-based system)
+// Real default lifespan per asset category, confirmed directly
+// against Tanzania's own Public Assets Management Guideline 2019,
+// Annex 3 (Economic Life). Used only when no explicit lifespan is
+// given at creation - a real, category-aware improvement over the
+// flat 15-year fallback this replaced, which is what let so many
+// existing assets quietly drift away from the guideline in the first
+// place. Only categories the guideline gives one clear, unambiguous
+// figure for are covered here (Furniture, Computer Hardware, Plant &
+// Machinery); anything else - "Equipment" especially, which spans
+// everything from a 5-year office printer to 20-year HVAC plant in
+// FAM's own real usage - falls to the conservative 15-year default
+// rather than guess at a single number the guideline itself doesn't
+// give for that broad a category.
+function guidelineDefaultLifespan(category) {
+  const map = {
+    "Furniture": 5,
+    "Computer Hardware": 5,
+    "Plant & Machinery": 15,
+  };
+  return map[category] || 15;
+}
+
 function getCategoryPrefix(category) {
   const map = {
     "Furniture": "FURN", "Equipment": "EQP", "Computer Hardware": "PC",
