@@ -1133,3 +1133,14 @@ the main dashboard load, the public login-page branding lookup, and the
 Client Management client list — now use this one shared function
 instead of three separate, potentially-drifting copies of the same
 "is this a real Storage path" check.
+
+## Print Label logo cropping — real bug, verified fix
+
+Confirmed directly with a real side-by-side render before pushing:
+`object-fit:cover` on the logo box was deliberately scaling the real GVC
+logo to fill the square frame, cropping its left and right edges in the
+process — exactly the "boundary that cuts the logo" reported. Changed to
+`object-fit:contain` on both the single-asset Print Label and the Bulk
+Print Labels sheet, which scales the whole logo to fit inside the frame
+without cropping any of it, confirmed with a real render showing the
+full, uncropped logo before and after.
