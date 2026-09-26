@@ -1144,3 +1144,13 @@ process — exactly the "boundary that cuts the logo" reported. Changed to
 Print Labels sheet, which scales the whole logo to fit inside the frame
 without cropping any of it, confirmed with a real render showing the
 full, uncropped logo before and after.
+
+## Print Label — no border around a real logo, kept for the initials placeholder
+
+Confirmed directly: a real, uploaded logo now shows with no bounding
+box at all, matching how Kairuki's own real tag shows its logo — placed
+directly, not framed. The bordered box is kept only for the initials
+placeholder (e.g. "GV"), where it still serves a real purpose (looking
+like an intentional placeholder rather than floating disconnected text
+— the earlier "dispersed" fix). Applies to both the single-asset Print
+Label and the Bulk Print Labels sheet.
