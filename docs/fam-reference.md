@@ -1339,3 +1339,13 @@ and Floor Plan all depend on real asset data underneath them.
 Read endpoint: `api/get-assets.js` → `?pillarSettings=true&targetOrgId=<id>`.
 Write action: `api/login.js` → `setPillarSettings`. Both Master-only,
 same access rule as ROI Tracking and Pillar Usage.
+
+## Asset Register summary card renamed: "Critical Systems" → "High Criticality"
+
+Confirmed directly: the underlying logic was already correct and stays
+unchanged (counts assets where `criticality === "High"`) - only the
+label was misleading. "Critical Systems" read as a system-category
+rollup ("how many system types need attention"), but the number was
+always an asset-level count, unrelated to how many distinct systems
+those assets actually span. Renamed to "High Criticality" to match
+what it actually counts, confirmed as the intended meaning.
