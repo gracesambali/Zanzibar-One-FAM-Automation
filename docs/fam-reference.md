@@ -1349,3 +1349,47 @@ rollup ("how many system types need attention"), but the number was
 always an asset-level count, unrelated to how many distinct systems
 those assets actually span. Renamed to "High Criticality" to match
 what it actually counts, confirmed as the intended meaning.
+
+## Sidebar restructured to actually reflect the four-pillar architecture
+
+Confirmed directly: the pillar toggles built earlier (CMMS, Inventory,
+Floor Plan) were fully functional, but the sidebar's own visual
+grouping was never updated to match - it still showed the old
+"Operations" (a single mega-group mixing Asset Management, CMMS, and
+Floor Plan together) and "Holdings" (Inventory mixed with
+non-inventory items). A real, honest gap, not a deliberate choice.
+
+**New structure**:
+- **Asset Management** (collapsible group) — Asset Register, Systems, Level View
+- **CMMS** (collapsible group) — Sensor Monitoring, Calendar, Work Orders, Procurement, Planned Maintenance, Fleet Management
+- **Digital Twin Viewer** — a single, ungrouped top-level button (like Dashboard), not nested in a one-item collapsible group. Named "Digital Twin Viewer" per direct correction, not "Floor Plan"
+- **Inventory Management** (collapsible group) — Inventory, Annual Planning, Pharmacy. Annual Planning moved here per direct correction - it's stock/inventory planning, not asset planning
+- Tenant Management, Finance, Integrations, Client Management were already standalone, ungrouped buttons - confirmed directly and left untouched, no new "Administration" group needed
+
+**Real, related fixes caught and closed while restructuring, not just
+the group headers**:
+- `NAV_GROUP_MEMBERSHIP` (auto-expands the right group when landing
+  directly on a tab) was already stale even before this change - missing
+  several real tabs, referencing a `fixedassets` tab that doesn't match
+  anything real. Rebuilt completely and correctly against the new
+  groups.
+- The Technician role's flat-nav visibility function only knew about
+  the old two group ids - updated to the three new groups plus the new
+  standalone Digital Twin Viewer button, confirmed hidden for
+  Technicians the same as before (their own separate flat nav already
+  has its own Floor Plan tab, so the main nav's version would have
+  shown duplicated otherwise).
+- Two onboarding tour steps referencing the old group headers by id and
+  content were updated to match.
+
+**Deliberately left alone**: the Technician's own separate, isolated
+flat nav still uses the label "Floor Plan" for its own tab - explicitly
+called out in an existing comment as meant to stay untouched by this
+restructure. Worth a follow-up rename later for full consistency, not
+done here since it wasn't part of what was actually asked.
+
+**Confirmed still correct without any changes needed**: the pillar
+toggle visibility logic (`setTabVisible`, from the earlier hard-gating
+build) operates on `data-tab` attributes, not on group DOM structure or
+labels - so it kept working correctly through this entire
+reorganization with zero changes required.

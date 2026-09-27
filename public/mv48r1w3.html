@@ -424,39 +424,48 @@ button { font-family: inherit; cursor: pointer; }
   </button>
 
   <!-- Confirmed directly: grouped so the sidebar stops growing with
-       every new tab - Operations covers the day-to-day maintenance
-       and asset work, collapsed by default since that was the actual
-       point (less always-visible length, not just reorganization). -->
-  <div id="operationsGroup">
-    <button class="nav-group-header" id="operationsGroupHeader" onclick="toggleNavGroup('operations')">
+       every new tab - Asset Management covers the base asset data
+       every client has, collapsed by default since that was the
+       actual point (less always-visible length, not just
+       reorganization). -->
+  <div id="assetManagementGroup">
+    <button class="nav-group-header" id="assetManagementGroupHeader" onclick="toggleNavGroup('assetmanagement')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-      <span class="tab-label">Operations</span>
+      <span class="tab-label">Asset Management</span>
       <span class="nav-group-arrow">▸</span>
     </button>
-    <div id="navGroupItems-operations" style="display:none">
+    <div id="navGroupItems-assetmanagement" style="display:none">
       <button class="tab-btn nested" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')" onmouseenter="showSidebarTooltip(this, 'Asset Register')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
         <span class="tab-label">Asset Register</span>
-      </button>
-      <button class="tab-btn nested" data-tab="sensors" data-label="Sensor Monitoring" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensor Monitoring')" onmouseleave="hideSidebarTooltip()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span class="tab-label">Sensor Monitoring</span>
       </button>
       <button class="tab-btn nested" data-tab="systems" data-label="Systems" onclick="switchTab('systems')" onmouseenter="showSidebarTooltip(this, 'Systems')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1m17.36-6.36l-4.24 4.24M9.88 14.12l-4.24 4.24m0-13.72l4.24 4.24m4.24 4.24l4.24 4.24"/></svg>
         <span class="tab-label">Systems</span>
       </button>
-      <button class="tab-btn nested" data-tab="maintenance" data-label="Calendar" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Calendar')" onmouseleave="hideSidebarTooltip()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-        <span class="tab-label">Calendar</span>
-      </button>
       <button class="tab-btn nested" data-tab="levelview" data-label="Level View" onclick="switchTab('levelview')" onmouseenter="showSidebarTooltip(this, 'Level View')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
         <span class="tab-label">Level View</span>
       </button>
-      <button class="tab-btn nested" data-tab="floorplan" data-label="Floor Plan" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Floor Plan')" onmouseleave="hideSidebarTooltip()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
-        <span class="tab-label">Floor Plan</span>
+    </div>
+  </div>
+
+  <!-- Confirmed directly: CMMS - real, hard-gated pillar (cmms_enabled),
+       covers day-to-day maintenance and asset work. -->
+  <div id="cmmsGroup">
+    <button class="nav-group-header" id="cmmsGroupHeader" onclick="toggleNavGroup('cmms')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      <span class="tab-label">CMMS</span>
+      <span class="nav-group-arrow">▸</span>
+    </button>
+    <div id="navGroupItems-cmms" style="display:none">
+      <button class="tab-btn nested" data-tab="sensors" data-label="Sensor Monitoring" onclick="switchTab('sensors')" onmouseenter="showSidebarTooltip(this, 'Sensor Monitoring')" onmouseleave="hideSidebarTooltip()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span class="tab-label">Sensor Monitoring</span>
+      </button>
+      <button class="tab-btn nested" data-tab="maintenance" data-label="Calendar" onclick="switchTab('maintenance')" onmouseenter="showSidebarTooltip(this, 'Calendar')" onmouseleave="hideSidebarTooltip()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span class="tab-label">Calendar</span>
       </button>
       <button class="tab-btn nested" data-tab="workorders" data-label="Work Orders" onclick="switchTab('workorders')" onmouseenter="showSidebarTooltip(this, 'Work Orders')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -478,17 +487,26 @@ button { font-family: inherit; cursor: pointer; }
     </div>
   </div>
 
-  <!-- Confirmed directly: named "Holdings" for now, deliberately
-       distinct from the Procurement role name to avoid the two
-       meaning different things in the same sidebar - open to
-       revisiting the name later once it's been lived with. -->
-  <div id="holdingsGroup">
-    <button class="nav-group-header" id="holdingsGroupHeader" onclick="toggleNavGroup('holdings')">
+  <!-- Confirmed directly: real, hard-gated pillar (floor_plan_enabled) -
+       "Digital Twin Viewer" per direct correction, not "Floor Plan".
+       Only one item, so it stays a single, ungrouped tab like
+       Dashboard rather than a one-item collapsible group. -->
+  <button class="tab-btn" data-tab="floorplan" data-label="Digital Twin Viewer" id="digitalTwinViewerNavBtn" onclick="switchTab('floorplan')" onmouseenter="showSidebarTooltip(this, 'Digital Twin Viewer')" onmouseleave="hideSidebarTooltip()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/></svg>
+    <span class="tab-label">Digital Twin Viewer</span>
+  </button>
+
+  <!-- Confirmed directly: Inventory Management - real, hard-gated
+       pillar (inventory_enabled). Annual Planning moved here per
+       direct correction - it's inventory/stock planning, not asset
+       planning. -->
+  <div id="inventoryGroup">
+    <button class="nav-group-header" id="inventoryGroupHeader" onclick="toggleNavGroup('inventory')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-      <span class="tab-label">Holdings</span>
+      <span class="tab-label">Inventory Management</span>
       <span class="nav-group-arrow">▸</span>
     </button>
-    <div id="navGroupItems-holdings" style="display:none">
+    <div id="navGroupItems-inventory" style="display:none">
       <button class="tab-btn nested" data-tab="inventory" data-label="Inventory" id="inventoryNavBtn" onclick="switchTab('inventory')" onmouseenter="showSidebarTooltip(this, 'Inventory')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
         <span class="tab-label">Inventory</span>
@@ -502,7 +520,9 @@ button { font-family: inherit; cursor: pointer; }
            to it - it's a genuinely separate page, not part of this
            single-page nav. Uses whatever session is already logged
            in - no separate pharmacy login required for a role that
-           already has real inventory permission. -->
+           already has real inventory permission. Bringing this
+           natively into the app is a real, separate task, deliberately
+           left alone here. -->
       <button class="tab-btn nested" data-tab="pharmacyportal" data-label="Pharmacy" onclick="window.open('/ng47w5jm', '_blank')" onmouseenter="showSidebarTooltip(this, 'Pharmacy')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M12 8v6M9 11h6"/></svg>
         <span class="tab-label">Pharmacy</span>
@@ -1503,8 +1523,10 @@ function applySimplifiedNavIfNeeded() {
   // group shown with fewer items inside it.
   const technicianNav = document.getElementById('technicianFlatNav');
   const dashboardBtn = document.getElementById('dashboardNavBtn');
-  const operationsGroup = document.getElementById('operationsGroup');
-  const holdingsGroup = document.getElementById('holdingsGroup');
+  const assetManagementGroup = document.getElementById('assetManagementGroup');
+  const cmmsGroup = document.getElementById('cmmsGroup');
+  const digitalTwinViewerBtn = document.getElementById('digitalTwinViewerNavBtn');
+  const inventoryGroup = document.getElementById('inventoryGroup');
   const unitsBtn = document.getElementById('unitsNavBtn');
   const staffManagementBtn = document.getElementById('staffManagementNavBtn');
   const integrationsBtn = document.getElementById('integrationsNavBtn');
@@ -1513,8 +1535,10 @@ function applySimplifiedNavIfNeeded() {
   if (isTechnician) {
     if (technicianNav) technicianNav.style.display = '';
     if (dashboardBtn) dashboardBtn.style.display = 'none';
-    if (operationsGroup) operationsGroup.style.display = 'none';
-    if (holdingsGroup) holdingsGroup.style.display = 'none';
+    if (assetManagementGroup) assetManagementGroup.style.display = 'none';
+    if (cmmsGroup) cmmsGroup.style.display = 'none';
+    if (digitalTwinViewerBtn) digitalTwinViewerBtn.style.display = 'none';
+    if (inventoryGroup) inventoryGroup.style.display = 'none';
     if (unitsBtn) unitsBtn.style.display = 'none';
     if (staffManagementBtn) staffManagementBtn.style.display = 'none';
     if (integrationsBtn) integrationsBtn.style.display = 'none';
@@ -1522,14 +1546,18 @@ function applySimplifiedNavIfNeeded() {
     return;
   }
 
-  // Everyone else: the new nested structure. Dashboard and the two
-  // groups are visible to everyone in this branch — real restriction
-  // for Holdings' actual data happens on the backend, same as before;
-  // this only controls whether the nav entries are visible at all.
+  // Everyone else: the new nested structure. Dashboard and the three
+  // pillar groups plus Digital Twin Viewer are visible to everyone in
+  // this branch — real restriction for each pillar's actual data
+  // happens via the hard-gated toggles and the backend, same as
+  // before; this only controls whether the nav entries are visible at
+  // all for this role.
   if (technicianNav) technicianNav.style.display = 'none';
   if (dashboardBtn) dashboardBtn.style.display = '';
-  if (operationsGroup) operationsGroup.style.display = '';
-  if (holdingsGroup) holdingsGroup.style.display = '';
+  if (assetManagementGroup) assetManagementGroup.style.display = '';
+  if (cmmsGroup) cmmsGroup.style.display = '';
+  if (digitalTwinViewerBtn) digitalTwinViewerBtn.style.display = '';
+  if (inventoryGroup) inventoryGroup.style.display = '';
   if (unitsBtn) unitsBtn.style.display = '';
   // Confirmed directly: hard gate, same as Tenant Management for
   // Technician — hidden entirely for anyone without real manageUsers
@@ -1580,9 +1608,9 @@ function toggleNavGroup(groupName) {
 // still reveal it — an active tab hidden inside a closed group would
 // look like it silently vanished.
 const NAV_GROUP_MEMBERSHIP = {
-  assets: 'operations', sensors: 'operations', systems: 'operations', maintenance: 'operations',
-  levelview: 'operations', floorplan: 'operations', workorders: 'operations', plannedmaintenance: 'operations',
-  fixedassets: 'holdings', inventory: 'holdings',
+  assets: 'assetmanagement', systems: 'assetmanagement', levelview: 'assetmanagement',
+  sensors: 'cmms', maintenance: 'cmms', workorders: 'cmms', procurement: 'cmms', plannedmaintenance: 'cmms', fleetrequests: 'cmms',
+  inventory: 'inventory', annualplanning: 'inventory', pharmacyportal: 'inventory',
 };
 function ensureNavGroupExpandedFor(tab) {
   const group = NAV_GROUP_MEMBERSHIP[tab];
@@ -21474,8 +21502,9 @@ async function sendFamChatbotMessage() {
 const FAM_ONBOARDING_STEPS = [
   { selector: '#facilitySwitcher', title: 'Facility & Building switcher', text: 'Scope the whole dashboard to one facility or building at a time. Set to "All" to see everything at once.' },
   { selector: 'button[onclick="openMyReportBreakdownPage()"]', title: 'Report a Breakdown', text: 'Opens a shareable link/QR anyone can use to report a problem — no login needed. It becomes a real work order the moment it comes in.' },
-  { selector: '#operationsGroupHeader', title: 'Operations', text: 'Click here to expand day-to-day tools — Work Orders, Sensor Monitoring, Maintenance, Level View, Procurement, and more.' },
-  { selector: '#holdingsGroupHeader', title: 'Holdings', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
+  { selector: '#assetManagementGroupHeader', title: 'Asset Management', text: 'Click here to expand your core asset data — Asset Register, Systems, and Level View.' },
+  { selector: '#cmmsGroupHeader', title: 'CMMS', text: 'Click here to expand day-to-day maintenance tools — Work Orders, Sensor Monitoring, Calendar, Procurement, Planned Maintenance, and Fleet Management.' },
+  { selector: '#inventoryGroupHeader', title: 'Inventory Management', text: 'Inventory, Annual Planning, and Pharmacy live in this group.' },
   {
     // The urgency filter only exists once the Work Orders table has
     // actually rendered — it isn't in the DOM at all from Dashboard,
