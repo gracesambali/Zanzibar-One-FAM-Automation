@@ -32,6 +32,15 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: "Not logged in" });
   setSessionCookie(res, session.u, session.r, session.org);
 
+  // Real, hard-gated pillar check, confirmed directly - Sensor
+  // Monitoring is part of CMMS, same toggle and same enforcement
+  // standard as work-orders.js.
+  const { query: pgQuerySn } = await import("../lib/postgresClient.js");
+  const snOrgResult = await pgQuerySn("select cmms_enabled from organizations where id = $1", [session.org]).catch(() => null);
+  if (snOrgResult && snOrgResult.rows[0] && snOrgResult.rows[0].cmms_enabled === false) {
+    return res.status(403).json({ error: "CMMS is not enabled for this organization." });
+  }
+
   if (req.method === "GET") {
     if (req.query.categories === "true") return handleGetCategories(req, res);
     if (req.query.readingsHistory === "true") return handleGetReadingsHistory(req, res, session.org);

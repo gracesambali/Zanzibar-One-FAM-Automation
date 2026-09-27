@@ -80,6 +80,18 @@ export default async function handler(req, res) {
   }
   setSessionCookie(res, session.u, session.r, session.org);
 
+  // Real, hard-gated pillar check, confirmed directly - covers every
+  // action in this entire file in one place, since they all funnel
+  // through this single entry point. Matches the enforcement
+  // discipline finance.js's own comments describe, closing a gap that
+  // exists there today (finance_enabled itself is currently never
+  // checked server-side, only role is).
+  const { query: pgQueryWo } = await import("../lib/postgresClient.js");
+  const woOrgResult = await pgQueryWo("select cmms_enabled from organizations where id = $1", [session.org]).catch(() => null);
+  if (woOrgResult && woOrgResult.rows[0] && woOrgResult.rows[0].cmms_enabled === false) {
+    return res.status(403).json({ error: "CMMS is not enabled for this organization." });
+  }
+
   // Merged endpoints: ?report=true for maintenance report, ?checklist=CLASS for checklists
   if (req.method === "GET" && req.query.report === "true") {
     return handleMaintenanceReport(req, res, session.org);

@@ -1225,3 +1225,72 @@ Bulk Print Labels scaled proportionally smaller (since multiple labels
 share one page): logo 38px → 54px, QR max-width 70px → 98px, barcode
 height 34px → 48px. Initials-placeholder font size increased to match
 in both.
+
+## Real, hard-gated pillar toggles: CMMS, Inventory, Floor Plan
+
+Confirmed directly through extended discussion first, then built: three
+new per-organization toggles - `cmms_enabled`, `inventory_enabled`,
+`floor_plan_enabled` on `organizations`, all defaulting true so every
+existing client (Master System, Inua Ventures, Gracing Ventures) is
+completely unaffected.
+
+**Asset Management is deliberately NOT a fourth toggle.** Confirmed as
+a real architectural finding during the build, not assumed going in:
+Work Orders, Inventory, and Floor Plan all depend on real asset data
+underneath them - toggling Asset Management off would leave the other
+three pillars with nothing to actually operate on, even if switched on.
+It stays the permanent base every client has. This matches Grace's own
+original framing exactly ("Asset Management can stand on its own") -
+the church's case was never "Asset Management off," it's Asset
+Management on, CMMS off.
+
+**Real, honest finding surfaced while building this**: `finance_enabled`,
+the existing precedent this was modeled on, is NOT actually checked
+server-side anywhere in `api/finance.js` today - only role is. The
+"hard gate, not a soft restriction" language in the frontend comments
+describes the sidebar button's own role-check, not real enforcement of
+the toggle itself. The new pillar toggles built here go further than
+Finance's own current implementation, closing exactly the kind of gap
+the codebase's own stated discipline warns against ("a hidden button
+doesn't stop a direct API call"). Retrofitting real `finance_enabled`
+backend enforcement to match is real, valuable follow-up work, not done
+as part of this change.
+
+**Backend enforcement, real scope confirmed honestly**: `work-orders.js`
+and `sensors.js` each have a single, shared entry point that every
+action in the file funnels through, so one gate at the top of each
+covers the whole file - this means Work Orders, Procurement, Planned
+Maintenance, Fleet Management (all in work-orders.js) and Sensor
+Monitoring are genuinely, fully covered by the `cmms_enabled` check.
+Inventory's primary endpoint (`?inventoryItems=true`) and Floor Plan's
+primary endpoint (`?floorplan=`) are gated in `api/get-assets.js`.
+
+**What this does NOT yet cover, stated plainly rather than implied
+complete**: `api/get-assets.js` has roughly 60 separate query-param
+endpoints total; only the two primary ones above (Inventory, Floor
+Plan) got a real backend check in this pass. The other Inventory-
+adjacent endpoints there (movements, batches, categories, locations,
+snapshots, activity log) are not yet individually gated - a real,
+well-scoped follow-up if full exhaustive backend coverage is wanted,
+not something this pass claims to have finished.
+
+**Frontend**: every relevant sidebar tab is hidden via `data-tab`
+attribute (not a fixed id, since several of these tabs appear in both
+the main nested nav and the separate Technician flat nav, and not all
+had an explicit id already) - `workorders`, `procurement`,
+`plannedmaintenance`, `fleetrequests`, `maintenance` (Calendar's real
+internal tab name), and `sensors` for CMMS; `inventory` and
+`pharmacyportal` for Inventory; `floorplan` for Floor Plan.
+
+## Digital Twin renamed to Digital Twin Viewer
+
+Confirmed directly through discussion: "Digital Twin" alone implied FAM
+produces the twin. What's actually true is FAM displays one a client
+captures separately via their own Matterport account, at their own
+cost. Renamed the real button and the modal's own heading (previously
+"Digital Twin Lite") to "Digital Twin Viewer" throughout - honest about
+displaying, not producing. FAM's own native, live-linked 2D Floor Plan
+(Good/Poor/Critical asset condition shown on real markers) is the
+legitimate "Digital Twin" going forward in any client-facing material -
+it's a real digital twin under the accepted definition (synchronized
+with live data), just 2D rather than an immersive 3D tour.

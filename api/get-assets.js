@@ -895,6 +895,15 @@ export default async function handler(req, res) {
   }
 
   if (req.query.inventoryItems === "true") {
+    // Real, hard-gated pillar check, confirmed directly - matching
+    // the exact enforcement discipline finance.js's own comments
+    // describe, closing a gap that exists there today (finance_enabled
+    // itself is currently never checked server-side, only role is).
+    const { query: pgQueryInv } = await import("../lib/postgresClient.js");
+    const invOrgResult = await pgQueryInv("select inventory_enabled from organizations where id = $1", [session.org]).catch(() => null);
+    if (invOrgResult && invOrgResult.rows[0] && invOrgResult.rows[0].inventory_enabled === false) {
+      return res.status(403).json({ error: "Inventory is not enabled for this organization." });
+    }
     try {
       const { listAllRecords: pgListAllRecords } = await import("../lib/postgresClient.js");
       const { isLowStock } = await import("../lib/inventory.js");
@@ -1702,6 +1711,13 @@ export default async function handler(req, res) {
 
   // Floor plan image for a given floor code
   if (req.query.floorplan) {
+    // Real, hard-gated pillar check, confirmed directly - same
+    // enforcement standard as the new Inventory gate above.
+    const { query: pgQueryFp } = await import("../lib/postgresClient.js");
+    const fpOrgResult = await pgQueryFp("select floor_plan_enabled from organizations where id = $1", [session.org]).catch(() => null);
+    if (fpOrgResult && fpOrgResult.rows[0] && fpOrgResult.rows[0].floor_plan_enabled === false) {
+      return res.status(403).json({ error: "Floor Plan is not enabled for this organization." });
+    }
     return handleGetFloorPlan(req, res, session.org);
   }
 
@@ -1794,8 +1810,17 @@ export default async function handler(req, res) {
     // here at the same time as everything else needed at login, not a
     // separate round trip the frontend has to remember to make.
     const { query: pgQuery } = await import("../lib/postgresClient.js");
-    const orgResult = await pgQuery("select name, finance_enabled, logo_path, brand_color from organizations where id = $1", [session.org]).catch(() => null);
+    const orgResult = await pgQuery("select name, finance_enabled, cmms_enabled, inventory_enabled, floor_plan_enabled, logo_path, brand_color from organizations where id = $1", [session.org]).catch(() => null);
     const financeEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].finance_enabled : true;
+    // Real, hard-gated pillar toggles, confirmed directly - matching
+    // the exact same pattern already proven for financeEnabled, not a
+    // new mechanism. Asset Management is deliberately not one of
+    // these: Work Orders, Inventory, and Floor Plan all depend on real
+    // asset data underneath them, so it stays the permanent base every
+    // client has, never toggled off.
+    const cmmsEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].cmms_enabled : true;
+    const inventoryEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].inventory_enabled : true;
+    const floorPlanEnabled = orgResult && orgResult.rows[0] ? orgResult.rows[0].floor_plan_enabled : true;
     const organizationName = orgResult && orgResult.rows[0] ? orgResult.rows[0].name : "";
     const orgBrandColor = orgResult && orgResult.rows[0] ? orgResult.rows[0].brand_color : null;
 
@@ -1818,7 +1843,7 @@ export default async function handler(req, res) {
       console.error("system_catalog read error (non-fatal, frontend falls back to its own list):", err.message);
     }
 
-    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", hasSeenOnboarding: staffEntry?.hasSeenOnboarding ?? true, financeEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor, systemCatalog });
+    return res.status(200).json({ assets, count: assets.length, role, username: session.u, displayName: staffEntry?.displayName || session.u, photoUrl: staffEntry?.photoUrl || "", hasSeenOnboarding: staffEntry?.hasSeenOnboarding ?? true, financeEnabled, cmmsEnabled, inventoryEnabled, floorPlanEnabled, organizationId: session.org, organizationName, organizationLogoUrl, organizationBrandColor: orgBrandColor, systemCatalog });
   } catch (err) {
     console.error("get-assets error:", err);
     return res.status(500).json({ error: err.message });

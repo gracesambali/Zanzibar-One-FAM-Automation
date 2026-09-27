@@ -702,6 +702,9 @@ let assets = []; // populated live from Airtable via /api/get-assets
 let currentUserRole = "technician";
 let currentUserPermissions = null; // filled in after login by loadAssetsAndInit(), see ROLE_PERMISSIONS below
 let financeEnabled = true; // filled in after login by loadAssetsAndInit() from the real organization setting
+let cmmsEnabled = true;
+let inventoryEnabled = true;
+let floorPlanEnabled = true;
 let currentUserOrgId = ""; // filled in after login by loadAssetsAndInit(), from the verified session
 let famHasSeenOnboarding = true; // filled in by loadAssetsAndInit(); false only means "genuinely this user's first login"
 const MASTER_ORG_ID = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
@@ -1544,6 +1547,20 @@ function applySimplifiedNavIfNeeded() {
   // in api/finance.js's own server-side check, which applies
   // regardless of what this button shows.
   if (financeBtn) financeBtn.style.display = financeEnabled ? '' : 'none';
+
+  // Real, hard-gated pillar toggles, confirmed directly - matching
+  // the same enforcement standard as the new backend checks. Using
+  // querySelectorAll by data-tab rather than a fixed id, since several
+  // of these tabs appear in more than one nav layout (the main nested
+  // nav and the simplified Technician flat nav) and not all of them
+  // have an explicit id today.
+  const setTabVisible = (tabName, visible) => {
+    document.querySelectorAll(`[data-tab="${tabName}"]`).forEach(el => { el.style.display = visible ? '' : 'none'; });
+  };
+  ['workorders', 'procurement', 'plannedmaintenance', 'fleetrequests', 'maintenance', 'sensors'].forEach(t => setTabVisible(t, cmmsEnabled));
+  setTabVisible('inventory', inventoryEnabled);
+  setTabVisible('pharmacyportal', inventoryEnabled);
+  setTabVisible('floorplan', floorPlanEnabled);
 }
 
 // Confirmed directly: collapsed by default — the actual point of
@@ -15309,7 +15326,7 @@ async function openDigitalTwinSettingsModal() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:90vw;max-height:85vh;overflow-y:auto">
-      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Digital Twin Lite</div>
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">Digital Twin Viewer</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">A real Matterport link for each — genuinely separate captures, not tied to each other.</div>
 
       ${building ? `
@@ -15448,7 +15465,7 @@ async function renderFloorPlan() {
     ${canManage ? `<button id="floorPlanPlacementBtn" class="filter-btn${floorPlanPlacementMode?' active':''}" onclick="toggleFloorPlanPlacementMode()">${floorPlanPlacementMode ? '✕ Exit Placement Mode' : '📍 Place Markers'}</button>` : ''}
     ${canManage ? `<button class="filter-btn" onclick="toggleFloorPlanUploadPanel()">⬆ Upload Drawing</button>` : ''}
     ${canManage ? `<span id="floorPlanRoomMappingBtn"></span>` : ''}
-    ${DIGITAL_TWIN_CAN_MANAGE() ? `<button class="filter-btn" onclick="openDigitalTwinSettingsModal()">🎥 Digital Twin</button>` : ''}
+    ${DIGITAL_TWIN_CAN_MANAGE() ? `<button class="filter-btn" onclick="openDigitalTwinSettingsModal()">🎥 Digital Twin Viewer</button>` : ''}
   </div>
   <div id="floorPlanUploadPanel" style="display:none;background:#F0F4FA;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
     <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:10px">Upload a floor plan drawing</div>
@@ -20887,6 +20904,9 @@ async function loadAssetsAndInit() {
     }
     currentUsername = data.username || "";
     financeEnabled = data.financeEnabled !== false;
+    cmmsEnabled = data.cmmsEnabled !== false;
+    inventoryEnabled = data.inventoryEnabled !== false;
+    floorPlanEnabled = data.floorPlanEnabled !== false;
     currentUserOrgId = data.organizationId || "";
     currentUserOrgName = data.organizationName || "";
     if (Array.isArray(data.systemCatalog) && data.systemCatalog.length > 0) {
