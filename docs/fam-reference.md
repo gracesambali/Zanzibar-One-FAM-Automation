@@ -1294,3 +1294,31 @@ displaying, not producing. FAM's own native, live-linked 2D Floor Plan
 legitimate "Digital Twin" going forward in any client-facing material -
 it's a real digital twin under the accepted definition (synchronized
 with live data), just 2D rather than an immersive 3D tour.
+
+## Bulk-identical asset creation — same name, unique ID per unit
+
+Confirmed directly: for a real, common case (50 identical chairs, a
+batch of uniforms, matching tools bought together) that neither the
+one-at-a-time Add Asset form nor building a full spreadsheet for
+Upload Sheet fit well. A new **Quantity** field on Add Asset itself -
+fill the form once, enter a quantity, get that many real, individual
+asset records, each with its own unique `asset_id` (sequentially
+numbered, same facility-building-type-number pattern as everything
+else), sharing every other field entered once.
+
+Real, hard cap at 200 per submission (`MAX_BULK_IDENTICAL_QUANTITY`) -
+a sane guardrail, not arbitrary: catches a typo (500 instead of 50)
+before it silently creates an enormous batch, and keeps one request
+comfortably within a normal timeout even at the ceiling. A genuinely
+larger batch should go through Upload Sheet instead.
+
+Loop is deliberately sequential (each `createOneAsset` call awaited
+one at a time), not run in parallel - `generateNextAssetId` reads the
+current highest number for that prefix from the database each time it
+runs, so parallel calls would all read the same "next" number before
+any of them actually saved, producing duplicate IDs instead of a real,
+incrementing sequence.
+
+A nameplate photo, if provided, is applied to every unit created in
+the batch - reasonable for genuinely identical items, since the
+photographed label would be the same across all of them.

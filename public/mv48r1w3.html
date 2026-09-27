@@ -20461,6 +20461,9 @@ function openAddAssetForm() {
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Name *</label>
       <input id="na_name" placeholder="e.g. Fire Pump — East Riser" oninput="applyAssetSuggestion(this.value)" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
       <div id="na_suggestion_hint" style="font-size:10.5px;color:var(--green);margin-bottom:6px;display:none"></div>
+      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Quantity</label>
+      <input id="na_quantity" type="number" min="1" max="200" value="1" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:4px">
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">For identical items bought together — e.g. 50 chairs. Each still gets its own real asset ID; only the name and details below are shared.</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">System</label>
       <select id="na_system" onchange="userTouchedSystem=true" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
         ${systemDefs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('')}
@@ -20802,6 +20805,7 @@ async function submitNewAsset() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name, nature, mobility, category, customPrefix,
+        quantity: document.getElementById('na_quantity').value,
         building: document.getElementById('na_building').value,
         facility: document.getElementById('na_facility').value,
         system: document.getElementById('na_system').value,
@@ -20828,8 +20832,12 @@ async function submitNewAsset() {
     if (!resp.ok) throw new Error(data.error || 'Failed to add asset');
 
     closeAddAssetForm();
-    loadAssetsAndInit(); // refresh live data so the new asset appears immediately
-    alert(`Asset added — ID auto-generated as ${data.assetId}`);
+    loadAssetsAndInit(); // refresh live data so the new asset(s) appear immediately
+    if (data.quantityCreated && data.quantityCreated > 1) {
+      alert(`${data.quantityCreated} assets added — IDs ${data.assetIds[0]} through ${data.assetIds[data.assetIds.length - 1]}`);
+    } else {
+      alert(`Asset added — ID auto-generated as ${data.assetId}`);
+    }
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';

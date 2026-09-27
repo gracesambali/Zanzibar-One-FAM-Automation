@@ -1993,8 +1993,63 @@ async function createOneAsset(a, addedBy, addedByRole, organizationId) {
   return { created, assetId, needsReview };
 }
 
+// Real, hard cap - confirmed directly as a sane guardrail, not
+// arbitrary: prevents a typo (500 instead of 50) from silently
+// generating an enormous batch, and keeps a single request comfortably
+// within a normal timeout even at the ceiling.
+const MAX_BULK_IDENTICAL_QUANTITY = 200;
+
 async function handleAddAsset(req, res, addedBy, addedByRole, organizationId) {
   const a = req.body || {};
+  const quantity = Math.floor(Number(a.quantity)) || 1;
+
+  if (quantity > MAX_BULK_IDENTICAL_QUANTITY) {
+    return res.status(400).json({ error: `Quantity can't exceed ${MAX_BULK_IDENTICAL_QUANTITY} in one submission. For a larger batch, use Upload Sheet instead.` });
+  }
+
+  // Bulk-identical creation, confirmed directly: same name, same
+  // details, entered once - each unit still gets its own real, unique
+  // asset_id. Calls are deliberately sequential (awaited one at a
+  // time), not run in parallel - createOneAsset's own id generator
+  // reads the current highest number for that prefix from the
+  // database, so a parallel batch would have every call read the same
+  // "next" number before any of them actually saved, producing
+  // duplicate ids instead of a real, incrementing sequence.
+  if (quantity > 1) {
+    const createdAssets = [];
+    let anyNeedsReview = false;
+    try {
+      for (let i = 0; i < quantity; i++) {
+        const { created, assetId, needsReview } = await createOneAsset(a, addedBy, addedByRole, organizationId);
+        createdAssets.push({ id: created.id, assetId });
+        if (needsReview) anyNeedsReview = true;
+
+        if (a.nameplatePhotoBase64 && a.nameplatePhotoFilename) {
+          try {
+            const { uploadFile } = await import("../lib/storageClient.js");
+            const photoPath = `components/${created.id}/nameplate-${a.nameplatePhotoFilename}`;
+            await uploadFile(photoPath, a.nameplatePhotoBase64, a.nameplatePhotoContentType || "image/jpeg");
+            const { update } = await import("../lib/postgresClient.js");
+            await update("components", created.id, { nameplate_photo_url: photoPath, nameplate_photo_filename: a.nameplatePhotoFilename });
+          } catch (photoErr) {
+            console.error("Nameplate photo upload error (bulk-identical, non-fatal):", photoErr);
+          }
+        }
+      }
+      return res.status(200).json({
+        success: true,
+        quantityCreated: createdAssets.length,
+        assetIds: createdAssets.map(c => c.assetId),
+        needsTechnicalReview: anyNeedsReview,
+      });
+    } catch (err) {
+      console.error("manage-asset bulk-identical POST error:", err);
+      return res.status(500).json({
+        error: err.message,
+        ...(createdAssets.length > 0 ? { partialSuccess: true, quantityCreated: createdAssets.length, assetIds: createdAssets.map(c => c.assetId) } : {}),
+      });
+    }
+  }
 
   try {
     const { created, assetId, needsReview } = await createOneAsset(a, addedBy, addedByRole, organizationId);
