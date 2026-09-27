@@ -429,12 +429,12 @@ button { font-family: inherit; cursor: pointer; }
        actual point (less always-visible length, not just
        reorganization). -->
   <div id="assetManagementGroup">
-    <button class="nav-group-header" id="assetManagementGroupHeader" onclick="toggleNavGroup('assetmanagement')">
+    <button class="nav-group-header" id="assetManagementGroupHeader" onclick="toggleNavGroup('assetManagement')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
       <span class="tab-label">Asset Management</span>
       <span class="nav-group-arrow">▸</span>
     </button>
-    <div id="navGroupItems-assetmanagement" style="display:none">
+    <div id="navGroupItems-assetManagement" style="display:none">
       <button class="tab-btn nested" data-tab="assets" data-label="Asset Register" onclick="switchTab('assets')" onmouseenter="showSidebarTooltip(this, 'Asset Register')" onmouseleave="hideSidebarTooltip()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
         <span class="tab-label">Asset Register</span>
@@ -1609,7 +1609,7 @@ function toggleNavGroup(groupName) {
 // still reveal it — an active tab hidden inside a closed group would
 // look like it silently vanished.
 const NAV_GROUP_MEMBERSHIP = {
-  assets: 'assetmanagement', systems: 'assetmanagement', levelview: 'assetmanagement',
+  assets: 'assetManagement', systems: 'assetManagement', levelview: 'assetManagement',
   sensors: 'cmms', maintenance: 'cmms', workorders: 'cmms', procurement: 'cmms', plannedmaintenance: 'cmms', fleetrequests: 'cmms',
   inventory: 'inventory', annualplanning: 'inventory', pharmacyportal: 'inventory',
 };
