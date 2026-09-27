@@ -113,6 +113,9 @@ export default async function handler(req, res) {
   if (req.body && req.body.action === "captureOrgRoiBaseline") {
     return handleCaptureOrgRoiBaseline(req, res);
   }
+  if (req.body && req.body.action === "setPillarSettings") {
+    return handleSetPillarSettings(req, res);
+  }
   if (req.body && req.body.action === "listClients") {
     return handleListClients(req, res);
   }
@@ -663,6 +666,36 @@ async function handleSetOrgOnboardingDate(req, res) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("setOrgOnboardingDate error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Real, hard-gated pillar toggles - confirmed directly, staff-controlled
+// only, matching the decision reached in discussion: a client doesn't
+// flip these themselves. Asset Management is deliberately not
+// settable here at all - it's the permanent base every client has,
+// not one of the three real toggles.
+async function handleSetPillarSettings(req, res) {
+  const session = getSession(req);
+  if (!session || session.org !== MASTER_ORG_ID) {
+    return res.status(403).json({ error: "Only the Master System can change a client's pillar settings." });
+  }
+  const { targetOrgId, cmmsEnabled, inventoryEnabled, floorPlanEnabled } = req.body || {};
+  if (!targetOrgId) return res.status(400).json({ error: "targetOrgId required" });
+
+  try {
+    const { getById, update } = await import("../lib/postgresClient.js");
+    const targetOrg = await getById("organizations", targetOrgId).catch(() => null);
+    if (!targetOrg) return res.status(404).json({ error: "Client not found." });
+
+    await update("organizations", targetOrgId, {
+      cmms_enabled: !!cmmsEnabled,
+      inventory_enabled: !!inventoryEnabled,
+      floor_plan_enabled: !!floorPlanEnabled,
+    });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("setPillarSettings error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

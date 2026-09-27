@@ -1322,3 +1322,20 @@ incrementing sequence.
 A nameplate photo, if provided, is applied to every unit created in
 the batch - reasonable for genuinely identical items, since the
 photographed label would be the same across all of them.
+
+## Pillar Settings (Client Management) — who actually sets the toggles
+
+Confirmed directly: staff-controlled only, matching the earlier
+decision — a client doesn't flip these themselves. New **⚙ Pillar
+Settings** button in Client Management, next to Branding, ROI
+Tracking, Pillar Usage, and Full Export.
+
+Shows the three real, hard-gated toggles (CMMS, Inventory, Floor
+Plan) as checkboxes, plus a plain, visible explanation that Asset
+Management is always on — not a fourth toggle hiding somewhere, but
+the permanent base every client has, since Work Orders, Inventory,
+and Floor Plan all depend on real asset data underneath them.
+
+Read endpoint: `api/get-assets.js` → `?pillarSettings=true&targetOrgId=<id>`.
+Write action: `api/login.js` → `setPillarSettings`. Both Master-only,
+same access rule as ROI Tracking and Pillar Usage.

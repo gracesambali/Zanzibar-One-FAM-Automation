@@ -9909,6 +9909,7 @@ function renderStaffManagementTable() {
         <button id="fullexport-pdf-btn" onclick="downloadFullClientExport('${viewingClientOrgId}','${escapeHtml(viewingClientName)}','pdf')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⬇ Full Export (PDF)</button>
         <button onclick="openRoiTrackingModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📊 ROI Tracking</button>
         <button onclick="openPillarUsageModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">📈 Pillar Usage</button>
+        <button onclick="openPillarSettingsModal('${viewingClientOrgId}','${escapeHtml(viewingClientName)}')" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">⚙ Pillar Settings</button>
         <button onclick="renderStaffManagement()" style="padding:5px 12px;font-size:11.5px;font-weight:600;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);cursor:pointer">← Back to Clients</button>
       </div>
     </div>` : ''}
@@ -10650,6 +10651,79 @@ function orgInitials(name) {
   const words = (name || 'FAM').trim().split(/\s+/).filter(Boolean);
   const initials = words.slice(0, 3).map(w => w[0]).join('').toUpperCase();
   return initials || 'FAM';
+}
+
+// Pillar Settings, confirmed directly: staff-controlled only, matching
+// the decision reached in discussion - shows the three real,
+// hard-gated toggles (CMMS, Inventory, Floor Plan) plus a plain
+// explanation that Asset Management is always on, not a fourth toggle
+// hiding somewhere - it's the permanent base every client has, since
+// Work Orders, Inventory, and Floor Plan all depend on real asset
+// data underneath them.
+function openPillarSettingsModal(orgId, orgName) {
+  const overlay = document.createElement('div');
+  overlay.id = 'pillarSettingsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1100;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:92vw">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Pillar Settings — ${escapeHtml(orgName)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Which parts of FAM this client actually sees and can use.</div>
+      <div id="pillarSettingsBody" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+      <div style="margin-top:16px;text-align:right">
+        <button onclick="document.getElementById('pillarSettingsOverlay').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  loadPillarSettings(orgId, orgName);
+}
+
+async function loadPillarSettings(orgId, orgName) {
+  const body = document.getElementById('pillarSettingsBody');
+  try {
+    const resp = await fetch(`/api/get-assets?pillarSettings=true&targetOrgId=${encodeURIComponent(orgId)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not load pillar settings');
+    renderPillarSettings(orgId, orgName, data);
+  } catch (err) {
+    body.innerHTML = `<div style="color:var(--red)">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderPillarSettings(orgId, orgName, data) {
+  const body = document.getElementById('pillarSettingsBody');
+  const toggleRow = (id, label, checked) => `
+    <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer">
+      <span style="font-size:13px;color:var(--text)">${escapeHtml(label)}</span>
+      <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+    </label>`;
+  body.innerHTML = `
+    <div style="background:var(--navy-pale);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11.5px;color:var(--navy)">
+      <strong>Asset Management is always on</strong> — it's the base every client has. Work Orders, Inventory, and Floor Plan all depend on real asset data underneath them, so it isn't a toggle here.
+    </div>
+    ${toggleRow('ps_cmms', 'CMMS (Work Orders, Procurement, Planned Maintenance, Fleet, Sensors, Calendar)', data.cmmsEnabled)}
+    ${toggleRow('ps_inventory', 'Inventory Management (Inventory, Pharmacy)', data.inventoryEnabled)}
+    ${toggleRow('ps_floorplan', 'Floor Plan (2D layout, Digital Twin, Digital Twin Viewer)', data.floorPlanEnabled)}
+    <button onclick="savePillarSettings('${orgId}','${escapeHtml(orgName)}')" style="width:100%;margin-top:14px;padding:9px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:13px;cursor:pointer">Save</button>
+  `;
+}
+
+async function savePillarSettings(orgId, orgName) {
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'setPillarSettings', targetOrgId: orgId,
+        cmmsEnabled: document.getElementById('ps_cmms').checked,
+        inventoryEnabled: document.getElementById('ps_inventory').checked,
+        floorPlanEnabled: document.getElementById('ps_floorplan').checked,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Could not save');
+    document.getElementById('pillarSettingsOverlay').remove();
+  } catch (err) {
+    alert(`Could not save: ${err.message}`);
+  }
 }
 
 function openPrintLabelModal(assetId, assetName, format) {

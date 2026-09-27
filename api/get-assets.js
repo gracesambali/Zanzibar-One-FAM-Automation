@@ -736,6 +736,36 @@ export default async function handler(req, res) {
     }
   }
 
+  // Pillar Settings, confirmed directly: read-side of the same
+  // real, hard-gated toggles enforced in work-orders.js, sensors.js,
+  // and the Inventory/Floor Plan primary endpoints here. Asset
+  // Management is deliberately not one of these three - it's the
+  // permanent base every client has, since Work Orders, Inventory,
+  // and Floor Plan all depend on real asset data underneath them.
+  // Same real access rule as ROI Tracking and Pillar Usage.
+  if (req.query.pillarSettings === "true") {
+    if (!can(session.r, "manageUsers")) {
+      return res.status(403).json({ error: "Only System Admin or Business Owner can view a client's pillar settings." });
+    }
+    const MASTER_ORG_ID_PS = "73ae9f3b-bbef-4f4a-b3df-3cca81c49063";
+    const requestedOrgPs = req.query.targetOrgId;
+    const psOrgId = (requestedOrgPs && session.org === MASTER_ORG_ID_PS) ? requestedOrgPs : session.org;
+
+    try {
+      const { query: pgQueryPs } = await import("../lib/postgresClient.js");
+      const psResult = await pgQueryPs("select cmms_enabled, inventory_enabled, floor_plan_enabled from organizations where id = $1", [psOrgId]);
+      if (!psResult.rows[0]) return res.status(404).json({ error: "Client not found." });
+      return res.status(200).json({
+        cmmsEnabled: psResult.rows[0].cmms_enabled,
+        inventoryEnabled: psResult.rows[0].inventory_enabled,
+        floorPlanEnabled: psResult.rows[0].floor_plan_enabled,
+      });
+    } catch (err) {
+      console.error("pillarSettings error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
 
   // (Master staff viewing a specific client) - real, raw data for
   // Assets, Work Orders, per-asset Activity Log, and Inventory, all
