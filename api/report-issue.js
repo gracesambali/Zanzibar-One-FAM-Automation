@@ -731,7 +731,7 @@ export default async function handler(req, res) {
   // above. This is the only route in this file that needs explicit
   // CORS handling (called cross-origin from
   // grace.gracingventures.com) — every other route here is only ever
-  // called same-origin from fam.gracingventures.com itself, so the
+  // called same-origin from assetmeneja.gracingventures.com itself, so the
   // CORS headers are set only inside this one block, not globally for
   // the whole file.
   if (req.query.leadCapture === "true") {

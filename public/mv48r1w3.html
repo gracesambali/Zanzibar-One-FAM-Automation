@@ -369,9 +369,9 @@ button { font-family: inherit; cursor: pointer; }
 
 <div class="header" style="display:none;">
   <div class="header-left">
-    <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
+    <div class="header-logo"><img src="/logos/assetmeneja-icon.png" alt="AssetMeneja"></div>
     <div>
-      <div class="header-title" id="header-title">Gracing Ventures FAM</div>
+      <div class="header-title" id="header-title">Gracing Ventures AssetMeneja</div>
       <div class="header-sub" id="header-subtitle">AssetMeneja</div>
     </div>
   </div>
@@ -649,7 +649,7 @@ const CLIENT_CONFIG = {
 let currentUserOrgName = "";
 let currentUserOrgLogoUrl = null;
 
-const APP_BRAND_NAME = "Gracing Ventures FAM";
+const APP_BRAND_NAME = "Gracing Ventures AssetMeneja";
 
 // Confirmed directly as a real, reported gap: only the header
 // background was ever actually getting a client's own brand color -
@@ -1715,7 +1715,7 @@ function renderDashboard() {
   html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
     <div style="font-size:13px;font-weight:600;color:var(--navy)">📍 Viewing: ${scopeLabel}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="startFamOnboardingTour()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧭 How to use FAM</button>
+      <button onclick="startFamOnboardingTour()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">🧭 How to use AssetMeneja</button>
       <button onclick="openHelpfulAiFeaturesModal()" style="padding:7px 14px;font-size:12px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer">✨ Helpful AI Features</button>
     </div>
   </div>`;
@@ -2734,7 +2734,7 @@ function openEditForm(idx) {
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Replacement Date</label>
       <input id="ea_replacementdate" type="date" value="${a.replacementDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
-      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Shows on the Calendar; an email alert fires automatically 6 months before this date. Leave blank to use FAM's own calculated estimate instead (Install Date + Expected Lifespan) once that's within its last year.</div>
+      <div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px">Shows on the Calendar; an email alert fires automatically 6 months before this date. Leave blank to use AssetMeneja's own calculated estimate instead (Install Date + Expected Lifespan) once that's within its last year.</div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Disposed Date</label>
       <input id="ea_disposeddate" type="date" value="${a.disposedDate||''}" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
@@ -3160,7 +3160,7 @@ async function renderSensorMonitorFromData(sensors, categories, isRefresh) {
       const headerHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div>
           <h2 style="font-size:20px;font-weight:800;color:var(--navy);margin:0">Sensor Monitoring</h2>
-          <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, water, and any other condition monitoring — from your own sensors, smart equipment, fleet devices, or a connected BMS. FAM bridges it to notifications and maintenance.</p>
+          <p style="font-size:12.5px;color:var(--muted);margin:2px 0 0">Alarms, environmental conditions, runtime, electrical, water, and any other condition monitoring — from your own sensors, smart equipment, fleet devices, or a connected BMS. AssetMeneja bridges it to notifications and maintenance.</p>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
           <button onclick="openBmsDecommissionedModal()" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:1px solid var(--muted);border-radius:8px;background:#fff;color:var(--muted);cursor:pointer">👁 Decommissioned</button>
@@ -9909,7 +9909,7 @@ function renderStaffManagementTable() {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div>
           <div style="font-size:15px;font-weight:700;color:var(--navy)">Clients</div>
-          <div style="font-size:12px;color:var(--muted)">Every real client running on FAM Master System. Click a client to see and manage their own staff directly.</div>
+          <div style="font-size:12px;color:var(--muted)">Every real client running on AssetMeneja. Click a client to see and manage their own staff directly.</div>
         </div>
         <button onclick="openAddClientModal()" style="padding:7px 14px;font-size:12.5px;font-weight:600;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:pointer">+ Onboard New Client</button>
       </div>
@@ -10232,7 +10232,7 @@ function openRoiTrackingModal(orgId, orgName) {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:440px;max-width:92vw;max-height:85vh;overflow-y:auto">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">ROI Tracking — ${escapeHtml(orgName)}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Real, before/after FAM figures for this client — for the R&D department's own comparison sheet.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Real, before/after AssetMeneja figures for this client — for the R&D department's own comparison sheet.</div>
       <div id="roiTrackingBody" style="font-size:12.5px;color:var(--muted)">Loading…</div>
       <div style="margin-top:16px;text-align:right">
         <button onclick="document.getElementById('roiTrackingOverlay').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
@@ -10319,7 +10319,7 @@ function showRoiBaselineForm(orgId, orgName, isCorrection) {
   if (!wrap) return;
   const formHtml = `
     <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">${isCorrection ? 'Correct' : 'Capture'} Baseline (real, one-time, client-reported "before FAM" figures)</div>
+      <div style="font-size:11px;font-weight:600;color:var(--navy);margin-bottom:6px">${isCorrection ? 'Correct' : 'Capture'} Baseline (real, one-time, client-reported "before AssetMeneja" figures)</div>
       <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Baseline Maintenance Cost (TZS)</label>
       <input id="roi_baseline_cost" type="number" placeholder="e.g. 4500000" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;margin-bottom:8px;box-sizing:border-box">
       <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Baseline Avg. Hours to Resolve a Breakdown</label>
@@ -10541,9 +10541,9 @@ function generateBulkPrintSheet() {
 })();
 
 function orgInitials(name) {
-  const words = (name || 'FAM').trim().split(/\s+/).filter(Boolean);
+  const words = (name || 'AssetMeneja').trim().split(/\s+/).filter(Boolean);
   const initials = words.slice(0, 3).map(w => w[0]).join('').toUpperCase();
-  return initials || 'FAM';
+  return initials || 'AM';
 }
 
 // Pillar Settings, confirmed directly: staff-controlled only, matching
@@ -10560,7 +10560,7 @@ function openPillarSettingsModal(orgId, orgName) {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:92vw">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Pillar Settings — ${escapeHtml(orgName)}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Which parts of FAM this client actually sees and can use.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Which parts of AssetMeneja this client actually sees and can use.</div>
       <div id="pillarSettingsBody" style="font-size:12.5px;color:var(--muted)">Loading…</div>
       <div style="margin-top:16px;text-align:right">
         <button onclick="document.getElementById('pillarSettingsOverlay').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;font-size:13px;cursor:pointer">Close</button>
@@ -12315,7 +12315,7 @@ function downloadAssetSheetTemplate() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'FAM_Asset_Upload_Template.csv';
+  a.download = 'AssetMeneja_Asset_Upload_Template.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -21065,7 +21065,7 @@ function mountFamChatbotWidget() {
     <button id="famChatbotToggle" onclick="toggleFamChatbot()" style="width:52px;height:52px;border-radius:50%;background:var(--navy);color:#fff;border:none;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center">💬</button>
     <div id="famChatbotPanel" style="display:none;position:absolute;bottom:64px;right:0;width:320px;max-height:460px;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.2);display:none;flex-direction:column;overflow:hidden">
       <div style="background:var(--navy);color:#fff;padding:12px 14px;font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center">
-        <span>Ask about FAM</span>
+        <span>Ask about AssetMeneja</span>
         <span onclick="toggleFamChatbot()" style="cursor:pointer;font-size:16px;opacity:0.8">✕</span>
       </div>
       <div style="display:flex;border-bottom:1px solid var(--border)">
@@ -21074,7 +21074,7 @@ function mountFamChatbotWidget() {
         <div id="famChatbotTab_videos" onclick="switchFamChatbotView('videos')" style="flex:1;text-align:center;padding:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent">🎥 Videos</div>
       </div>
       <div id="famChatbotMessages" style="flex:1;overflow-y:auto;padding:12px;font-size:12.5px;display:flex;flex-direction:column;gap:10px;min-height:180px;max-height:300px">
-        <div style="color:var(--muted);font-size:12px">Ask a question about how FAM works — reporting issues, work orders, integrations, and so on.</div>
+        <div style="color:var(--muted);font-size:12px">Ask a question about how AssetMeneja works — reporting issues, work orders, integrations, and so on.</div>
       </div>
       <div id="famChatbotInputRow" style="border-top:1px solid var(--border);padding:8px;display:flex;gap:6px">
         <input id="famChatbotInput" onkeydown="if(event.key==='Enter')sendFamChatbotMessage()" placeholder="Type a question…" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
@@ -21090,7 +21090,7 @@ function mountFamChatbotWidget() {
         <div id="famChatbotKnowledgeList" style="font-size:12px;color:var(--muted)">Loading…</div>
       </div>
       <div id="famChatbotVideosView" style="display:none;flex:1;overflow-y:auto;padding:12px;flex-direction:column;min-height:180px;max-height:340px">
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Short videos walking through key parts of FAM.</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Short videos walking through key parts of AssetMeneja.</div>
         <div id="famChatbotVideosList"></div>
       </div>
     </div>`;
@@ -21108,7 +21108,7 @@ const FAM_HELP_VIDEOS = [
   { title: "Asset Register", desc: "The full asset list, and one asset's own detail record.", url: "/videos/02_asset_register.mp4" },
   { title: "Work Orders", desc: "Reporting and tracking a real job, start to finish.", url: "/videos/03_work_orders.mp4" },
   { title: "Report a Breakdown", desc: "The no-login public reporting flow.", url: "/videos/04_report_a_breakdown.mp4" },
-  { title: "Helpful AI Features", desc: "What FAM's AI actually does, with real examples.", url: "/videos/05_helpful_ai_features.mp4" },
+  { title: "Helpful AI Features", desc: "What AssetMeneja's AI actually does, with real examples.", url: "/videos/05_helpful_ai_features.mp4" },
   { title: "Ask about FAM: Chat & Documents", desc: "Both real tabs of the chatbot itself.", url: "/videos/06_ask_about_fam_chat_and_documents.mp4" },
 ];
 
@@ -21270,7 +21270,7 @@ async function submitChatbotKnowledgeUpload(inputEl) {
 }
 
 async function removeChatbotKnowledgeDocument(linkId) {
-  if (!confirm('Remove this document from the chatbot\'s knowledge? This does not affect the reference doc for how FAM itself works.')) return;
+  if (!confirm('Remove this document from the chatbot\'s knowledge? This does not affect the reference doc for how AssetMeneja itself works.')) return;
   try {
     const resp = await fetch('/api/manage-asset', {
       method: 'PUT',
@@ -21341,7 +21341,7 @@ function appendFamChatbotBubble(text, fromUser, escalation) {
     const escBox = document.createElement('div');
     escBox.style.cssText = 'align-self:flex-start;display:flex;gap:6px;flex-wrap:wrap;margin-top:-2px';
     if (escalation.email) {
-      escBox.innerHTML += `<a href="mailto:${escalation.email}?subject=${encodeURIComponent('FAM question')}" style="padding:6px 10px;border:1px solid var(--navy);border-radius:7px;font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">✉ Email ${escapeHtml(escalation.displayName)}</a>`;
+      escBox.innerHTML += `<a href="mailto:${escalation.email}?subject=${encodeURIComponent('AssetMeneja question')}" style="padding:6px 10px;border:1px solid var(--navy);border-radius:7px;font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">✉ Email ${escapeHtml(escalation.displayName)}</a>`;
     }
     if (escalation.phone) {
       escBox.innerHTML += `<a href="tel:${escalation.phone}" style="padding:6px 10px;border:1px solid var(--navy);border-radius:7px;font-size:11.5px;font-weight:600;color:var(--navy);text-decoration:none">📞 Call ${escapeHtml(escalation.displayName)}</a>`;
@@ -21426,10 +21426,10 @@ const FAM_ONBOARDING_STEPS = [
     // from Dashboard until that tab is actually opened.
     selector: '[data-tab="maintenance"]',
     title: 'Calendar',
-    text: 'Every real date FAM tracks in one place — scheduled maintenance, replacement planning, Planned Maintenance projects, and Annual Planning. Click any day to see what\'s due and jump straight to it.',
+    text: 'Every real date AssetMeneja tracks in one place — scheduled maintenance, replacement planning, Planned Maintenance projects, and Annual Planning. Click any day to see what\'s due and jump straight to it.',
     beforeShow: () => switchTab('maintenance'),
   },
-  { selector: 'button[onclick="openScanAssetBarcodeModal()"]', title: 'Scan Barcode / QR', text: "Scan any asset's barcode or QR code to jump straight to its record — from anywhere in FAM." },
+  { selector: 'button[onclick="openScanAssetBarcodeModal()"]', title: 'Scan Barcode / QR', text: "Scan any asset's barcode or QR code to jump straight to its record — from anywhere in AssetMeneja." },
   { selector: '#famChatbotToggle', title: 'Ask about FAM', text: "Stuck on how something works? Ask right here, anytime. If it can't answer, it'll connect you straight to your admin." },
 ];
 
@@ -21465,7 +21465,7 @@ function openHelpfulAiFeaturesModal() {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:480px;max-width:90vw;margin:20px 0">
       <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">✨ Helpful AI Features</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every AI feature in FAM suggests — it never decides on its own. You always see and confirm before anything changes.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Every AI feature in AssetMeneja suggests — it never decides on its own. You always see and confirm before anything changes.</div>
       <div style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto">
         ${HELPFUL_AI_FEATURES.map((f, i) => `
           <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">

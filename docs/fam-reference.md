@@ -1501,3 +1501,57 @@ same `--navy` CSS variable back, which now simply never gets set away
 from the real, uniform default, so every client's exports now
 consistently use the same navy rather than a fragmented per-client
 color.
+
+## Full rebrand completed: every user-visible "FAM" replaced, new domain live, real logo deployed
+
+Confirmed directly, done carefully given the real risk of a blind
+find-and-replace across a large, live codebase: every genuine
+user-facing occurrence of "FAM" was located and changed individually,
+while internal code identifiers that happen to contain "fam"
+(`FAM_HELP_VIDEOS`, `FAM_ONBOARDING_STEPS`, `FAM_CALENDAR_QUARTER_ANCHOR`,
+`startFamOnboardingTour`, etc.) were deliberately left untouched -
+renaming these provides zero user-visible benefit and real risk of
+breaking a call site if even one reference were missed. Developer-only
+comments were also left alone as lower priority, since they're
+invisible to users - a handful of trivial, safe ones were updated
+anyway while already in the area.
+
+**Real, new domain — added and confirmed live, not just planned**:
+`assetmeneja.gracingventures.com` added to the Vercel project and came
+back `verified: true` immediately - `gracingventures.com` already has
+a working wildcard DNS setup, so this required no manual DNS work at
+all. The original `fam.gracingventures.com` was deliberately left
+fully working alongside it, not retired - any existing bookmarked
+client login link keeps working exactly as before. Two hardcoded
+backend fallback URLs (`api/integrations.js`, `api/login.js`, used for
+generated links when no environment variable is set - matters for
+email/SMS notification links specifically, since server-side code has
+no "current browser" to derive a domain from) were updated to the new
+domain. Every frontend-generated link (login links, Report a
+Breakdown, QR codes) already used `window.location.origin`, so they
+automatically reflect whichever domain is actually being used to
+access AssetMeneja - no code change was needed for those specifically,
+they just need staff to start administering from the new domain.
+
+**Real logo deployed, not just referenced**: the actual AssetMeneja
+icon (the mountain/ascending-bars mark), cropped from the real
+combined logo+wordmark file to isolate just the icon - using the full
+image would have duplicated the name, since both the login page and
+the in-app header render "AssetMeneja" as separate text next to the
+logo, not baked into one image. Self-hosted at
+`public/logos/assetmeneja-icon.png`, same pattern as the GVC logo and
+help videos. Now the real default logo on the login page (universal,
+matching the earlier rebrand decision) and the in-app header's
+fallback for any client who hasn't uploaded their own logo yet
+(previously the old GVC logo, which no longer matched the new
+branding direction).
+
+**One real, deliberately deferred decision, not silently changed**:
+"FAM Master System" is the actual organization's real name in the
+database (`organizations.name`), not just display copy - the visible
+UI text referencing it was updated to say "AssetMeneja" generically
+instead, but the underlying organization record itself was
+deliberately left unrenamed, since that's a real data change with
+broader implications (it's what shows as the org name everywhere for
+Master System staff) that deserves its own explicit decision rather
+than being bundled silently into a text-and-branding pass.

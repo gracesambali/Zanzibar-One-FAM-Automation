@@ -170,7 +170,7 @@ function providerConfigured(key, connectionRow) {
 }
 
 function getAppBaseUrl() {
-  return process.env.APP_BASE_URL || "https://fam.gracingventures.com";
+  return process.env.APP_BASE_URL || "https://assetmeneja.gracingventures.com";
 }
 
 // Confirmed directly: a real, verifiable link between the redirect
