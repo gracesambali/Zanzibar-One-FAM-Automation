@@ -1441,3 +1441,63 @@ this same pass.
   rather than touching every individual write action across the app -
   a far smaller, lower-risk change with the same real protection, and
   completely inert during normal online operation.
+
+## Rebranding: login page now universally AssetMeneja, in-app header stays client-branded, per-client colors removed entirely
+
+Confirmed directly, precise spec agreed before building given how visible
+this is (the first thing every user of every client sees):
+
+**Login page (`pk7x2m9q.html`)** — no longer client-branded at all.
+Shows AssetMeneja's own logo and name universally, with the real
+client's name as small text above the username field (the
+`orgSubtitle` element already existed and already resolved this - a
+much more surgical change than expected). Footer corrected from "BIM
+Information Management" to "Facility Asset Management."
+
+**In-app header** — inverted from the login page, per direct
+instruction: client's own logo and name stay primary (`header-title`
+already resolved to `currentUserOrgName` - no change needed there),
+with "AssetMeneja" now the small secondary text
+(`CLIENT_CONFIG.clientName`, previously "Facility Asset Manager").
+Same footer fix applied.
+
+**The real color-glitch bug, found and fixed at its actual source**:
+confirmed directly in the code - both the login page and the main app
+used to render with default navy first, then visibly repaint the
+h1/button/labels (login page) or the `--navy`/`--navy-pale` CSS
+variables (main app) a beat later, once a client's `brand_color`
+resolved from a separate fetch. That visible repaint *was* the glitch.
+Removed entirely rather than patched - per-client brand color no
+longer gets applied anywhere, so there's nothing left to repaint.
+
+**What stayed, per direct instruction**: the logo-upload capability
+itself, unchanged, in both Client Management's Edit Branding modal and
+the Add Client (onboarding) form. Only the color customization is
+gone.
+
+**Real scope of the removal, more than just two color pickers**:
+found and removed the entire self-contained color-math feature set
+that existed solely to support brand-color selection - WCAG contrast
+checking (`checkBrandColorContrast`, `darkenForContrast`,
+`contrastRatioAgainstWhite`, `relativeLuminance`), dominant-color
+extraction from an uploaded logo (`suggestBrandColorFromImage`, and
+the separate, near-identical version inside the Edit Branding modal,
+`handleBrandingLogoSelected`), and the underlying color-space helpers
+(`hexToRgb`, `rgbToHex`, `rgbToHsl`, `hslToRgb`) - confirmed each had
+no other real use anywhere else in the codebase before removing them,
+rather than assuming.
+
+**Existing `brand_color` values in the database were deliberately left
+untouched, not deleted** - the backend's own existing
+`if (brandColor !== undefined)` check on the edit-branding action
+already means a field that's simply never sent again is silently left
+alone. No backend or database change was needed at all for this whole
+rebrand - confirmed directly before concluding this, not assumed.
+
+**Genuinely unaffected, confirmed directly rather than assumed**: every
+document export that calls `getClientBrandColor()` (work order PDFs,
+reports, checklists) keeps working exactly as before - it reads the
+same `--navy` CSS variable back, which now simply never gets set away
+from the real, uniform default, so every client's exports now
+consistently use the same navy rather than a fragmented per-client
+color.

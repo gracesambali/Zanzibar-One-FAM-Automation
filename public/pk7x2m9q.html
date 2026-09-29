@@ -38,9 +38,9 @@
       <div style="width:32px;height:32px;border:3px solid #E2E6ED;border-top-color:#1A3566;border-radius:50%;margin:0 auto;animation:spin 0.8s linear infinite;"></div>
     </div>
     <div class="logo-row" id="logoRow" style="display:none;">
-      <div class="logo"><img id="orgLogoImg" src="/logo.png" alt="GVC"></div>
+      <div class="logo"><img id="orgLogoImg" src="/logo.png" alt="AssetMeneja"></div>
       <div>
-        <h1>Facility Asset Manager</h1>
+        <h1>AssetMeneja</h1>
         <div class="sub" id="orgSubtitle">Loading…</div>
       </div>
     </div>
@@ -69,7 +69,7 @@
       <a href="/fd8s17px" style="font-size:12.5px;color:#6B7280;text-decoration:none">Forgot / need to set your password?</a>
     </div>
 
-    <div class="footer">Gracing Ventures · BIM Information Management · Tanzania</div>
+    <div class="footer">Gracing Ventures · Facility Asset Management · Tanzania</div>
   </div>
 
 <script>
@@ -78,6 +78,14 @@
 // URL itself (?org=<slug>) - no slug at all correctly means the
 // Master System, matching the real, existing default everywhere
 // else a session's own organization is determined.
+//
+// The login page itself is now universally AssetMeneja-branded -
+// confirmed directly, per-client logo and brand color are no longer
+// applied here at all. This also closes the real color-glitch bug:
+// the page used to render with default styling first, then repaint
+// the h1/button/labels a beat later once a client's brand color
+// resolved - that visible repaint was the glitch itself, and it's
+// gone now that there's nothing left to repaint.
 (async function resolveOrgSubtitle() {
   const subtitleEl = document.getElementById('orgSubtitle');
   const logoLoadingEl = document.getElementById('logoRowLoading');
@@ -87,18 +95,6 @@
     const resp = await fetch(`/api/login?resolveOrgSlug=true&slug=${encodeURIComponent(slug)}`);
     const data = await resp.json();
     subtitleEl.textContent = resp.ok && data.name ? data.name : 'Sign in to view your building\'s live data';
-
-    // Confirmed directly: falls back to the shared default logo/navy
-    // color whenever a client hasn't set their own - most clients,
-    // at least at first, genuinely won't have.
-    if (resp.ok && data.logoUrl) {
-      document.getElementById('orgLogoImg').src = data.logoUrl;
-    }
-    if (resp.ok && data.brandColor) {
-      document.querySelector('h1').style.color = data.brandColor;
-      document.getElementById('loginBtn').style.background = data.brandColor;
-      document.querySelectorAll('label').forEach(el => { el.style.color = data.brandColor; });
-    }
   } catch (err) {
     subtitleEl.textContent = "Sign in to view your building's live data";
   } finally {

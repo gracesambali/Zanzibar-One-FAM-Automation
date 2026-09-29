@@ -372,7 +372,7 @@ button { font-family: inherit; cursor: pointer; }
     <div class="header-logo"><img src="/logo.png" alt="GVC"></div>
     <div>
       <div class="header-title" id="header-title">Gracing Ventures FAM</div>
-      <div class="header-sub" id="header-subtitle">Facility Asset Manager</div>
+      <div class="header-sub" id="header-subtitle">AssetMeneja</div>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:16px">
@@ -615,7 +615,7 @@ button { font-family: inherit; cursor: pointer; }
 </div>
 </div>
 
-<div class="footer" style="display:none;">Gracing Ventures · BIM Information Management · Tanzania</div>
+<div class="footer" style="display:none;">Gracing Ventures · Facility Asset Management · Tanzania</div>
 
 <script>
 // ============================================================
@@ -629,7 +629,7 @@ button { font-family: inherit; cursor: pointer; }
 // already showing, so nothing breaks.
 // ============================================================
 const CLIENT_CONFIG = {
-  clientName: "Facility Asset Manager",
+  clientName: "AssetMeneja",
   buildingLabel: "Facility Asset Manager",
   region: "Arusha",
   district: "Arusha",
@@ -10170,138 +10170,8 @@ function onClientLogoSelected(input) {
   const reader = new FileReader();
   reader.onload = () => {
     clientLogoBase64 = reader.result.split(',')[1];
-    suggestBrandColorFromImage(reader.result);
   };
   reader.readAsDataURL(file);
-}
-
-// A real, reasonable dominant-color guess from the uploaded logo -
-// near-white, near-black, and transparent pixels are skipped, since
-// those are almost always background or outline rather than the
-// actual brand color. Confirmed directly as a suggestion the admin
-// can still see and adjust via the color picker, not a silent,
-// unreviewable choice.
-// Real, objective color math - not a subjective "looks too light"
-// guess. WCAG's own relative luminance and contrast ratio formulas,
-// confirmed directly as the right standard to check against, since
-// this exact color ends up as a background behind white text on
-// buttons and the header ribbon.
-function hexToRgb(hex) {
-  const clean = hex.replace('#', '');
-  return { r: parseInt(clean.slice(0,2), 16), g: parseInt(clean.slice(2,4), 16), b: parseInt(clean.slice(4,6), 16) };
-}
-function rgbToHex(r, g, b) {
-  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
-}
-function relativeLuminance({ r, g, b }) {
-  const [rs, gs, bs] = [r, g, b].map(c => {
-    const cs = c / 255;
-    return cs <= 0.03928 ? cs / 12.92 : Math.pow((cs + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
-}
-function contrastRatioAgainstWhite(hex) {
-  const l = relativeLuminance(hexToRgb(hex));
-  return (1.0 + 0.05) / (l + 0.05);
-}
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h, s; const l = (max + min) / 2;
-  if (max === min) { h = s = 0; }
-  else {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
-    else if (max === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h /= 6;
-  }
-  return { h, s, l };
-}
-function hslToRgb(h, s, l) {
-  if (s === 0) { const v = l * 255; return { r: v, g: v, b: v }; }
-  const hue2rgb = (p, q, t) => {
-    if (t < 0) t += 1; if (t > 1) t -= 1;
-    if (t < 1/6) return p + (q - p) * 6 * t;
-    if (t < 1/2) return q;
-    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-    return p;
-  };
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  return { r: hue2rgb(p, q, h + 1/3) * 255, g: hue2rgb(p, q, h) * 255, b: hue2rgb(p, q, h - 1/3) * 255 };
-}
-// Same hue and saturation, just darker - a real, calculated "on-brand"
-// variant rather than an arbitrary fallback, stepping lightness down
-// in small increments until the contrast ratio against white
-// genuinely clears the WCAG AA threshold for UI components (3:1).
-function darkenForContrast(hex, targetRatio) {
-  const rgb = hexToRgb(hex);
-  const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
-  let newL = l;
-  let candidateHex = hex;
-  while (newL > 0.12 && contrastRatioAgainstWhite(candidateHex) < targetRatio) {
-    newL -= 0.04;
-    const newRgb = hslToRgb(h, s, newL);
-    candidateHex = rgbToHex(newRgb.r, newRgb.g, newRgb.b);
-  }
-  return candidateHex;
-}
-
-const BRAND_COLOR_CONTRAST_TARGET = 3; // WCAG AA for UI components/large text, matching this color's actual use on buttons
-
-function checkBrandColorContrast(hex) {
-  const warningBox = document.getElementById('client_colorWarning');
-  if (!warningBox) return;
-  const ratio = contrastRatioAgainstWhite(hex);
-  if (ratio >= BRAND_COLOR_CONTRAST_TARGET) {
-    warningBox.style.display = 'none';
-    return;
-  }
-  const darker = darkenForContrast(hex, BRAND_COLOR_CONTRAST_TARGET);
-  warningBox.style.display = 'flex';
-  warningBox.innerHTML = `
-    <span style="font-size:11px;color:#B45309">This color is too light for buttons and the header ribbon.</span>
-    <button type="button" onclick="document.getElementById('client_brandColor').value='${darker}';checkBrandColorContrast('${darker}');document.getElementById('client_colorHint').textContent='Adjusted for readability';" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:11px;font-weight:600;color:var(--navy)">
-      <span style="width:14px;height:14px;border-radius:3px;background:${darker};display:inline-block"></span> Use darker version
-    </button>`;
-}
-
-function suggestBrandColorFromImage(dataUrl) {
-  const img = new Image();
-  img.onload = () => {
-    const canvas = document.createElement('canvas');
-    const size = 50;
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, size, size);
-    let pixels;
-    try {
-      pixels = ctx.getImageData(0, 0, size, size).data;
-    } catch (err) {
-      return; // canvas may be tainted for cross-origin images - keep the default color
-    }
-
-    const buckets = {};
-    for (let i = 0; i < pixels.length; i += 4) {
-      const [r, g, b, a] = [pixels[i], pixels[i+1], pixels[i+2], pixels[i+3]];
-      if (a < 128) continue; // transparent
-      if (r > 235 && g > 235 && b > 235) continue; // near-white background
-      if (r < 20 && g < 20 && b < 20) continue; // near-black outline
-      const key = `${Math.round(r/16)*16},${Math.round(g/16)*16},${Math.round(b/16)*16}`;
-      buckets[key] = (buckets[key] || 0) + 1;
-    }
-
-    const best = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0];
-    if (!best) return; // nothing usable found - keep the default color
-    const [r, g, b] = best[0].split(',').map(Number);
-    const hex = '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
-    document.getElementById('client_brandColor').value = hex;
-    document.getElementById('client_colorHint').textContent = 'Suggested from the logo — adjust if needed';
-    checkBrandColorContrast(hex);
-  };
-  img.src = dataUrl;
 }
 
 function openAddClientModal() {
@@ -10319,13 +10189,7 @@ function openAddClientModal() {
       <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">Branding</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Logo (optional)</label>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Their real base starts with its own brand from day one — this can also be added later.</div>
-      <input id="client_logo" type="file" accept="image/*" onchange="onClientLogoSelected(this)" style="width:100%;margin-bottom:10px;font-size:12px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <label style="font-size:11px;font-weight:600;color:var(--navy);margin:0">Brand Color</label>
-        <input id="client_brandColor" type="color" value="#003566" onchange="checkBrandColorContrast(this.value);document.getElementById('client_colorHint').textContent='';" style="width:44px;height:30px;padding:2px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
-        <span id="client_colorHint" style="font-size:10.5px;color:var(--muted)">Defaults to navy — auto-suggested once a logo is chosen</span>
-      </div>
-      <div id="client_colorWarning" style="display:none;align-items:center;gap:10px;background:#FEF6E7;border:1px solid #F5D89A;border-radius:8px;padding:8px 10px;margin-bottom:14px"></div>
+      <input id="client_logo" type="file" accept="image/*" onchange="onClientLogoSelected(this)" style="width:100%;margin-bottom:14px;font-size:12px">
 
       <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.03em">First User</div>
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Username *</label>
@@ -10811,19 +10675,11 @@ function openEditClientBrandingModal(orgId, orgName, currentLogoUrl, currentColo
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw">
       <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px">Branding — ${escapeHtml(orgName)}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Add or change this client's logo and brand color any time — not just at onboarding.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Add or change this client's logo any time — not just at onboarding.</div>
 
       <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">${currentLogoUrl ? 'Change Logo' : 'Add Logo'}</label>
       ${currentLogoUrl ? `<img src="${currentLogoUrl}" alt="Current logo" style="max-width:120px;max-height:60px;object-fit:contain;border-radius:6px;border:1px solid var(--border);display:block;margin-bottom:6px;padding:4px">` : ''}
-      <input id="ecb_logo" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:10px" onchange="handleBrandingLogoSelected(this.files[0])">
-
-      <div id="ecb_swatches_wrap" style="display:none;margin-bottom:10px">
-        <div style="font-size:10.5px;color:var(--muted);margin-bottom:5px">Picked from this logo — tap one, or set a color manually below:</div>
-        <div id="ecb_swatches" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      </div>
-
-      <label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:4px">Brand Color</label>
-      <input id="ecb_color" type="color" value="${currentColor || '#003566'}" style="width:100%;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+      <input id="ecb_logo" type="file" accept="image/*" style="width:100%;font-size:12px;margin-bottom:14px">
 
       <div id="ecb_error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
@@ -10898,63 +10754,8 @@ async function submitClientNotificationChannel(orgId) {
 // almost always background or outline, not the intended brand color -
 // automatic and immediate, the moment a logo file is chosen, no
 // separate step needed.
-function handleBrandingLogoSelected(file) {
-  const wrap = document.getElementById('ecb_swatches_wrap');
-  const swatchesEl = document.getElementById('ecb_swatches');
-  if (!file) { wrap.style.display = 'none'; return; }
-
-  const img = new Image();
-  img.onload = () => {
-    const canvas = document.createElement('canvas');
-    const size = 60; // downscaled deliberately - exact resolution doesn't matter for a real, dominant-color read, only real relative frequency does
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, size, size);
-
-    let pixels;
-    try {
-      pixels = ctx.getImageData(0, 0, size, size).data;
-    } catch (err) {
-      wrap.style.display = 'none'; // a real, cross-origin-tainted canvas would throw here - fails quietly, manual color picker still works fine
-      return;
-    }
-
-    const buckets = {};
-    const bucketSize = 24; // groups genuinely similar shades together, so near-identical pixels count as the same real color rather than splitting their frequency apart
-    for (let i = 0; i < pixels.length; i += 4) {
-      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
-      if (a < 100) continue; // meaningfully transparent - not a real, visible color in the logo
-      if (r > 240 && g > 240 && b > 240) continue; // near-white background
-      if (r < 15 && g < 15 && b < 15) continue; // near-black outline/background
-      const key = `${Math.round(r / bucketSize)}-${Math.round(g / bucketSize)}-${Math.round(b / bucketSize)}`;
-      if (!buckets[key]) buckets[key] = { r: 0, g: 0, b: 0, count: 0 };
-      buckets[key].r += r; buckets[key].g += g; buckets[key].b += b; buckets[key].count++;
-    }
-
-    const ranked = Object.values(buckets)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6)
-      .map(b => {
-        const r = Math.round(b.r / b.count), g = Math.round(b.g / b.count), bl = Math.round(b.b / b.count);
-        return '#' + [r, g, bl].map(v => v.toString(16).padStart(2, '0')).join('');
-      });
-
-    if (ranked.length === 0) { wrap.style.display = 'none'; return; }
-
-    swatchesEl.innerHTML = ranked.map(hex => `
-      <button type="button" onclick="document.getElementById('ecb_color').value='${hex}'" title="${hex}"
-        style="width:32px;height:32px;border-radius:6px;border:2px solid var(--border);background:${hex};cursor:pointer;padding:0"></button>
-    `).join('');
-    wrap.style.display = 'block';
-    document.getElementById('ecb_color').value = ranked[0]; // the single most common real color in the logo, picked automatically as the default
-  };
-  img.onerror = () => { wrap.style.display = 'none'; };
-  img.src = URL.createObjectURL(file);
-}
-
 async function submitEditClientBranding(orgId) {
   const logoFile = document.getElementById('ecb_logo').files[0];
-  const brandColor = document.getElementById('ecb_color').value;
   const errorBox = document.getElementById('ecb_error');
   const btn = document.getElementById('ecb_submit');
   errorBox.style.display = 'none';
@@ -10973,7 +10774,7 @@ async function submitEditClientBranding(orgId) {
     const resp = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'editClientBranding', targetOrgId: orgId, brandColor,
+        action: 'editClientBranding', targetOrgId: orgId,
         logoBase64, logoFilename: logoFile ? logoFile.name : undefined,
         logoContentType: logoFile ? logoFile.type : undefined,
       }),
@@ -10998,7 +10799,6 @@ async function submitAddClient() {
   const email = document.getElementById('client_email').value.trim();
   const role = document.getElementById('client_role').value;
   const password = document.getElementById('client_password').value;
-  const brandColor = document.getElementById('client_brandColor').value;
   const errorBox = document.getElementById('client_error');
   const btn = document.getElementById('client_submit');
   errorBox.style.display = 'none';
@@ -11012,7 +10812,7 @@ async function submitAddClient() {
     const resp = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'createClient', clientName, username, displayName, email, role, password, brandColor,
+        action: 'createClient', clientName, username, displayName, email, role, password,
         logoBase64: clientLogoBase64, logoFilename: clientLogoFilename, logoContentType: clientLogoContentType,
       }),
     });
@@ -21030,9 +20830,17 @@ async function loadAssetsAndInit() {
       const logoImg = document.querySelector('.header-logo img');
       if (logoImg) logoImg.src = data.organizationLogoUrl;
     }
-    if (data.organizationBrandColor) {
-      applyBrandColorThroughoutApp(data.organizationBrandColor);
-    }
+    // Confirmed directly: per-client brand color removed entirely -
+    // this was the real source of the color glitch, the page
+    // rendering in default navy first, then visibly repainting a beat
+    // later once a client's brand color resolved. Client logo stays,
+    // matching direct instruction - only the color customization is
+    // gone. applyBrandColorThroughoutApp() itself is left defined but
+    // now genuinely unused, kept only because getClientBrandColor()
+    // still reads the same --navy variable back for document exports
+    // - with nothing left to ever set it away from the real, uniform
+    // default, that function now correctly returns the same navy for
+    // every client, which is exactly the intended new behavior.
     populateLoggedInUserBadge(data.username, currentUserRole, data.photoUrl, data.displayName);
 
     // Full Facility -> Building structure for the switcher — fetched
