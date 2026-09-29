@@ -1555,3 +1555,43 @@ deliberately left unrenamed, since that's a real data change with
 broader implications (it's what shows as the org name everywhere for
 Master System staff) that deserves its own explicit decision rather
 than being bundled silently into a text-and-branding pass.
+
+## Demo account built for safely showing prospects the real product
+
+Confirmed directly: a real, separate organization ("AssetMeneja Demo",
+slug `demo`, id `78f0c181-58a8-4b14-b00f-7f018644ee20`) - lets Grace
+stop showing real Master System production data to prospects. All
+three real pillars enabled, `business_owner` role for full feature
+visibility (cost data, procurement, staff performance).
+
+Login: `demo` / `AssetMenejaDemo2026` at
+`https://assetmeneja.gracingventures.com/pk7x2m9q?org=demo`. Password
+hash generated directly with Node-compatible scrypt parameters
+(n=16384, r=8, p=1, dklen=64) - confirmed identical Node vs Python
+output for the same input before writing anything to the live
+database, so the account is genuinely able to log in, not just
+present in the table.
+
+**Client Management explicitly hidden for the demo org specifically,
+regardless of role** - confirmed directly this required a real,
+separate fix, not just relying on the existing role gate. Both real
+roles capable of a full-featured demo (`business_owner`,
+`system_admin`) carry the same `manageUsers` permission that shows
+Client Management, since that's the correct, intended behavior for a
+*real* client's owner managing their own team. Downgrading the demo
+account's role instead would have also stripped other legitimate,
+useful demo capabilities sharing that same permission (cost
+visibility, procurement, staff performance). Added a small, explicit
+exclusion for the demo org's id specifically, on top of the existing
+permission check - confirmed directly first that the backend already
+safely restricts what this tab would show even without the frontend
+fix (the demo org's own empty staff list, never other real clients -
+`listClients` and the cross-org target-org override are both
+separately hard-gated to Master System only), so this was a real UX
+fix, not a security one.
+
+**Still pending, not part of this build**: realistic sample data
+(assets, work orders) to populate the demo org. Was mid-planning this
+when the Client Management request came in - facility structure exists
+(`Commercial` / `Demo Business Complex`, prefix `C-DBC`), no assets or
+work orders inserted yet.

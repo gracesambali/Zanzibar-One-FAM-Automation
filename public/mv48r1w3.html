@@ -1564,7 +1564,21 @@ function applySimplifiedNavIfNeeded() {
   // Technician — hidden entirely for anyone without real manageUsers
   // permission, not just softly discouraged. Matches exactly what the
   // backend itself enforces on the actual create/list actions.
-  if (staffManagementBtn) staffManagementBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers) ? '' : 'none';
+  //
+  // The real demo org is also explicitly excluded here, regardless of
+  // its role's own permission level, confirmed directly per explicit
+  // instruction: a "Client Management" tab makes no sense to a
+  // prospect looking at a demo, even though the backend itself
+  // already safely restricts what it would show (the demo org's own
+  // empty staff list, never other real clients - listClients and the
+  // cross-org target override are both separately hard-gated to
+  // Master System only). This is a real UX fix, not a security one -
+  // downgrading the demo account's role instead would also strip
+  // other legitimate, useful demo capabilities (cost visibility,
+  // procurement, staff performance) that share the same permission.
+  const DEMO_ORG_ID = "78f0c181-58a8-4b14-b00f-7f018644ee20";
+  const isDemoOrg = currentUserOrgId === DEMO_ORG_ID;
+  if (staffManagementBtn) staffManagementBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers && !isDemoOrg) ? '' : 'none';
   if (integrationsBtn) integrationsBtn.style.display = (currentUserPermissions && currentUserPermissions.manageUsers) ? '' : 'none';
   // Matches api/finance.js's own FINANCE_ROLES exactly - a hidden
   // button here is a UX nicety, not the real gate; the backend
