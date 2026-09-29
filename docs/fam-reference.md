@@ -1393,3 +1393,51 @@ toggle visibility logic (`setTabVisible`, from the earlier hard-gating
 build) operates on `data-tab` attributes, not on group DOM structure or
 labels - so it kept working correctly through this entire
 reorganization with zero changes required.
+
+## Read-only offline mode — first increment, real scope stated honestly
+
+Confirmed directly: this is the first, deliberately scoped step toward
+offline support, not full offline read-write with sync — that remains
+a genuinely larger, separate undertaking (local write queueing, replay
+on reconnect, conflict handling) not attempted here.
+
+**What this actually covers**: if the app is already open (or the
+browser has it in its own cache/back-forward cache) and connectivity
+drops - mid-session, or on a refresh - `loadAssetsAndInit()` falls back
+to a real, locally-cached snapshot of that organization's last
+successful load (assets, work orders, facilities, exchange rates)
+instead of showing a broken error screen. A persistent, honest banner
+states plainly when that cached snapshot was taken, so cached data is
+never mistaken for live data.
+
+**What this does NOT yet cover, stated plainly**: a technician opening
+a genuinely fresh browser tab with zero connectivity and zero prior
+cache for that page would still fail to load anything at all - the
+browser needs to fetch the HTML/JS shell itself before any of this
+JavaScript can even run. Closing that gap needs a real service worker
+to cache the app shell itself - a separate, meaningfully higher-risk
+addition (a badly configured service worker can break the live app for
+every user, not just the offline case), deliberately not attempted in
+this same pass.
+
+**Real safeguards built in**:
+- Cache is only written in `loadAssetsAndInit()` after every piece of
+  real data has already loaded successfully - a partial, half-loaded
+  state is never cached, so a later restore is always a genuinely
+  complete snapshot.
+- The fallback only triggers on a real network failure (`fetch()`
+  throwing a `TypeError`, exactly what real browsers throw when there's
+  no connectivity at all) - a genuine HTTP error from the server (401,
+  500, etc.) still shows the existing real error message, never
+  silently papered over with stale cached data.
+- `localStorage` rather than IndexedDB, deliberately - the real data
+  involved (one org's assets, work orders, facilities) comfortably
+  fits within its real size limits, and it's synchronous, keeping this
+  first version simple rather than adding a second async layer.
+- **Read-only enforced centrally**: `window.fetch` is wrapped once,
+  blocking any non-GET request while `isOfflineMode` is true, showing
+  a clear "can't be saved until you're back online" message rather
+  than silently failing or appearing to succeed. One centralized check
+  rather than touching every individual write action across the app -
+  a far smaller, lower-risk change with the same real protection, and
+  completely inert during normal online operation.

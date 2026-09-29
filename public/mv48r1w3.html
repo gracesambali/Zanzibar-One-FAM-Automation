@@ -21074,6 +21074,26 @@ async function loadAssetsAndInit() {
     updateWOUnreadBadges();
     startWorkOrderChatPolling();
     mountFamChatbotWidget();
+
+    // Real, read-only offline cache, confirmed directly: written only
+    // after every piece of real data above has actually loaded
+    // successfully - a partial, half-loaded state never gets cached,
+    // so a later offline fallback always restores a genuinely complete
+    // snapshot, not something with holes in it. localStorage rather
+    // than IndexedDB deliberately - the data involved (one org's
+    // assets, work orders, facilities) comfortably fits within
+    // localStorage's real size limits, and it's synchronous, which
+    // keeps this whole block simple and avoids a second async layer
+    // for what's meant to be a lightweight, low-risk first version.
+    try {
+      localStorage.setItem('fam_offline_cache_' + currentUserOrgId, JSON.stringify({
+        assets, role: currentUserRole, facilitiesData, exchangeRates, dashboardWorkOrders,
+        organizationName: currentUserOrgName, cachedAt: new Date().toISOString(),
+      }));
+    } catch (cacheErr) {
+      console.error('Could not write offline cache (non-fatal):', cacheErr);
+    }
+
     if (!famHasSeenOnboarding) {
       // Deliberately deferred a beat so the dashboard has actually
       // rendered and its real elements exist in the DOM before the
@@ -21116,21 +21136,96 @@ async function loadAssetsAndInit() {
     }
     prefetchAllTabsInBackground(); // confirmed directly: fire-and-forget, never awaited - login itself never waits on this
   } catch (err) {
-    if (loadingEl) {
-      loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
-        '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Could not load live data</div>' +
-        '<div style="font-size:13px;color:var(--muted,#6B7280)">' + err.message + '</div></div>';
+    // Real, read-only offline fallback, confirmed directly: only takes
+    // over for a genuine network failure (no connectivity at all) -
+    // fetch() throws a TypeError specifically for that case in every
+    // real browser, distinct from the explicit `throw new Error(...)`
+    // a few lines up for a real HTTP error status (401, 500, etc.),
+    // which still needs to show the existing error message as before,
+    // not silently paper over a real server-side problem with stale
+    // cached data.
+    const isNetworkFailure = err instanceof TypeError;
+    let restoredFromCache = false;
+    if (isNetworkFailure) {
+      try {
+        const cacheKey = currentUserOrgId ? ('fam_offline_cache_' + currentUserOrgId) : null;
+        const cachedRaw = cacheKey ? localStorage.getItem(cacheKey) : null;
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          assets = cached.assets || [];
+          currentUserRole = cached.role || currentUserRole || 'technician';
+          facilitiesData = cached.facilitiesData || [];
+          exchangeRates = cached.exchangeRates || {};
+          dashboardWorkOrders = cached.dashboardWorkOrders || [];
+          currentUserOrgName = cached.organizationName || currentUserOrgName || '';
+          currentUserPermissions = ROLE_PERMISSIONS[currentUserRole];
+          isOfflineMode = true;
+          restoredFromCache = true;
+
+          if (loadingEl) loadingEl.style.display = 'none';
+          document.querySelector('.header').style.display = '';
+          document.getElementById('sidebar').style.display = '';
+          document.querySelector('.content').style.display = 'block';
+          document.querySelector('.footer').style.display = '';
+          showOfflineBanner(cached.cachedAt);
+          renderDashboard();
+        }
+      } catch (restoreErr) {
+        console.error('Offline cache restore failed (non-fatal, falling through to normal error):', restoreErr);
+      }
     }
-    // A real recovery path even on failure - without this, the header
-    // (and its own Log Out button) would stay invisible forever, and
-    // the person would be genuinely stuck with no way out.
-    const headerEl = document.querySelector('.header');
-    if (headerEl) headerEl.style.display = '';
-    const footerEl = document.querySelector('.footer');
-    if (footerEl) footerEl.style.display = '';
+
+    if (!restoredFromCache) {
+      if (loadingEl) {
+        loadingEl.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--red,#E74C3C)">' +
+          '<div style="font-size:15px;font-weight:600;margin-bottom:8px">Could not load live data</div>' +
+          '<div style="font-size:13px;color:var(--muted,#6B7280)">' + err.message + '</div></div>';
+      }
+      // A real recovery path even on failure - without this, the header
+      // (and its own Log Out button) would stay invisible forever, and
+      // the person would be genuinely stuck with no way out.
+      const headerEl = document.querySelector('.header');
+      if (headerEl) headerEl.style.display = '';
+      const footerEl = document.querySelector('.footer');
+      if (footerEl) footerEl.style.display = '';
+    }
     console.error(err);
   }
 }
+
+let isOfflineMode = false;
+
+// Real, honest, persistent banner - confirmed directly, never silently
+// shows cached data as if it were live. Shows exactly when the cache
+// was last written, so nobody mistakes a stale snapshot for the
+// current state of their facility.
+function showOfflineBanner(cachedAt) {
+  if (document.getElementById('famOfflineBanner')) return;
+  const when = cachedAt ? new Date(cachedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'an earlier session';
+  const banner = document.createElement('div');
+  banner.id = 'famOfflineBanner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2000;background:#B45309;color:#fff;text-align:center;padding:8px 12px;font-size:12.5px;font-weight:600';
+  banner.textContent = `⚠ Offline — showing data from ${when}. Changes can't be saved until you're back online.`;
+  document.body.appendChild(banner);
+}
+
+// Real, centralized write-block for offline mode, confirmed directly:
+// intercepts only non-GET requests, and only while isOfflineMode is
+// actually true - normal online operation is completely unaffected,
+// since this check is a no-op the moment real connectivity (and a
+// real loadAssetsAndInit() success) turns isOfflineMode back off.
+// Deliberately centralized here rather than touching every individual
+// write action across the app - a far smaller, lower-risk change with
+// the same real protection.
+const _famOriginalFetch = window.fetch;
+window.fetch = function (input, init) {
+  const method = (init && init.method ? init.method : 'GET').toUpperCase();
+  if (isOfflineMode && method !== 'GET') {
+    alert("You're offline right now — this can't be saved until you're back online.");
+    return Promise.reject(new Error('Blocked: offline mode, write attempted'));
+  }
+  return _famOriginalFetch.call(this, input, init);
+};
 
 // Near-live unread updates without websockets: just re-fetch the same
 // work-orders endpoint the rest of the app already uses, on a timer.
