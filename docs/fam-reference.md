@@ -1590,8 +1590,40 @@ fix (the demo org's own empty staff list, never other real clients -
 separately hard-gated to Master System only), so this was a real UX
 fix, not a security one.
 
-**Still pending, not part of this build**: realistic sample data
-(assets, work orders) to populate the demo org. Was mid-planning this
-when the Client Management request came in - facility structure exists
-(`Commercial` / `Demo Business Complex`, prefix `C-DBC`), no assets or
-work orders inserted yet.
+**Real sample data populated, adapted from Master System's real asset
+list as a structural template, not sensitive Master System data
+itself** - confirmed directly, per explicit direction, the real asset
+names/systems/categories from Zanzibar One Tower were reused as the
+template (since they already represent a genuine, realistic commercial
+building's real asset mix), but real cost figures, real work order
+notes, and the real facility/building name were deliberately NOT
+copied - the demo lives entirely under its own fictional
+"Commercial" / "Demo Business Complex" facility (prefix `C-DBC`), with
+fresh guideline-consistent lifespans, not real Master System values.
+
+32 assets across CCTV & Access Control, Controls, Electrical, Fire
+Detection, Fire Protection, HVAC, Parking System, Plumbing, Retail
+Tenant Interface, Vertical Transport, plus Furniture and Computer
+Hardware for Asset Management breadth. Heavy per-floor repetition in
+the real template (13 Fire Detection Loops, 13 Fan Coil Units, etc.)
+was deliberately trimmed to a representative sample rather than
+copied in full - a demo doesn't need the same bulk a real 14-floor
+tower does.
+
+A genuine, deliberate status spread rather than an all-green demo:
+mostly Good, several real Poor examples (Standby Generator, Chiller —
+Secondary, Fire Pump — Diesel Standby, Sump Pump — Basement), and one
+real Critical example (Fire Detection Loop — L7) specifically so the
+Dashboard's Critical Alerts card shows something real and compelling,
+not zero.
+
+4 real work orders added showing the actual CMMS workflow across
+different real states: Open/Critical (generator failed its test run),
+Open/Critical (fire loop fault), Ready for Review (a real repair
+awaiting sign-off), and Closed (a completed preventive service) - not
+just static assets, a demo that shows the product's actual workflow in
+motion.
+
+Verified directly before finishing: 32 assets, 4 work orders, zero
+duplicate asset_ids anywhere in the live system (not just within the
+demo org) after this insert.
